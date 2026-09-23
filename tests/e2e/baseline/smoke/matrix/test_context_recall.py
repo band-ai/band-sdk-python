@@ -31,9 +31,9 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra, model_turn_retrying
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_infra, model_turn_retrying
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -145,30 +145,28 @@ async def test_recalls_after_rejoin(
     )
 
     # Run 1: state the note, then stop the agent (exit the run context).
-    async with cell.run_as(identity):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                REMEMBER.format(note=note),
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            await capture.wait_for_processed(mid, identity.id)
+    async with cell.run_as(identity), reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            REMEMBER.format(note=note),
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        await capture.wait_for_processed(mid, identity.id)
 
     # Run 2: a brand-new adapter under the SAME identity — no in-memory history,
     # so a correct recall proves the platform rehydrated the room on bootstrap.
-    async with cell.run_as(identity):
-        async with reply_capture(room_id) as capture:
-            # Re-ask on a model bad moment (a false "I don't recall") — a cheap
-            # per-turn retry, not a whole-test rerun. A persistent miss still fails.
-            async for attempt in model_turn_retrying():
-                with attempt:
-                    mark = capture.messages.snapshot()  # scope to this recall turn
-                    mid = await user_ops.send_message(
-                        room_id,
-                        RECALL,
-                        mention_id=identity.id,
-                        mention_name=identity.name,
-                    )
-                    replies = await capture.wait_for_reply(mid, identity.id, since=mark)
-                    replies.assert_contains_any([note])
+    async with cell.run_as(identity), reply_capture(room_id) as capture:
+        # Re-ask on a model bad moment (a false "I don't recall") — a cheap
+        # per-turn retry, not a whole-test rerun. A persistent miss still fails.
+        async for attempt in model_turn_retrying():
+            with attempt:
+                mark = capture.messages.snapshot()  # scope to this recall turn
+                mid = await user_ops.send_message(
+                    room_id,
+                    RECALL,
+                    mention_id=identity.id,
+                    mention_name=identity.name,
+                )
+                replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+                replies.assert_contains_any([note])

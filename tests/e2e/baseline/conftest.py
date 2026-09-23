@@ -14,6 +14,12 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
+from tests.e2e.baseline.agents import (
+    LANE_MARKER,
+    PER_ADAPTER_MARKER,
+    WITH_ADAPTERS_MARKER,
+)
 from tests.e2e.baseline.fixtures.agents import (
     adapter_id,
     agent,
@@ -32,12 +38,6 @@ from tests.e2e.baseline.fixtures.platform import (
     resource_manager,
     user_ops,
 )
-from tests.e2e.baseline.agents import (
-    LANE_MARKER,
-    WITH_ADAPTERS_MARKER,
-    PER_ADAPTER_MARKER,
-)
-from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
 from tests.e2e.baseline.flaky import assert_flaky_is_classified
 from tests.e2e.baseline.lane_selection import (
     apply_lane_skips,

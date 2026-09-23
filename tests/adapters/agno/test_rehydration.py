@@ -14,9 +14,8 @@ from agno.models.message import Message
 from agno.run.agent import RunOutput
 
 from band.runtime.formatters import format_history_for_llm
-from tests.framework_configs.fixtures import TOOL_CALL_SEARCH, TOOL_RESULT_SEARCH
-
 from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_input
+from tests.framework_configs.fixtures import TOOL_CALL_SEARCH, TOOL_RESULT_SEARCH
 
 
 class TestRehydrationPipeline:

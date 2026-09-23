@@ -6,14 +6,14 @@ from band import (
     AdapterFeatures,
     AgentRuntime,
     AgentTools,
-    Capability,
-    Emit,
-    ExecutionContext,
     BandConfigError,
     BandConnectionError,
     BandError,
     BandLink,
     BandToolError,
+    Capability,
+    Emit,
+    ExecutionContext,
 )
 
 
@@ -40,7 +40,7 @@ def test_capability_enum_values():
 
 def test_emit_enum_values():
     """Emit enum exports the expected members."""
-    assert Emit.EXECUTION == "execution"
+    assert Emit.TOOL_CALLS == "tool_calls"
     assert Emit.THOUGHTS == "thoughts"
     assert Emit.TASK_EVENTS == "task_events"
 
@@ -65,7 +65,10 @@ def test_adapter_features_constructible():
 
 def test_can_import_letta_adapter_via_lazy_loader():
     """LettaAdapter resolves through the adapters lazy loader."""
-    from band.adapters import LettaAdapter, LettaAdapterConfig
+    from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        LettaAdapter,
+        LettaAdapterConfig,
+    )
 
     assert LettaAdapter is not None
     assert LettaAdapterConfig is not None
@@ -73,7 +76,7 @@ def test_can_import_letta_adapter_via_lazy_loader():
 
 def test_can_import_langgraph_integrations():
     """Verify we can import LangGraph integration utilities."""
-    from band.integrations.langgraph import (
+    from band.integrations.langgraph import (  # noqa: PLC0415 -- pins the exact import path this test exercises
         agent_tools_to_langchain,
         graph_as_tool,
     )

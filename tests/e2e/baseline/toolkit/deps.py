@@ -74,6 +74,7 @@ class Lane(StrEnum):
     BACKENDS = "backends"
     GOOGLE = "google"
     LETTA = "letta"
+    PARLANT = "parlant"
 
 
 # The shared default lane: every provider-key adapter with no special isolation
@@ -91,12 +92,13 @@ class Extra(StrEnum):
 
     DEV = "dev"
     DEV_CREWAI = "dev-crewai"
+    DEV_PARLANT = "dev-parlant"
 
 
 # Lane -> the ``uv`` extra a lane's job installs. Lane id and extra are separate:
 # several lanes share the ``dev`` extra but are split out for isolation (their own
-# server/CLI, or rate-limit flakiness). crewai is the one lane that *needs* its own
-# conflicting extra (see pyproject [tool.uv] conflicts).
+# server/CLI, or rate-limit flakiness). crewai and parlant are lanes that *need*
+# their own conflicting extra (see pyproject [tool.uv] conflicts).
 LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.CORE: Extra.DEV,
     Lane.CREWAI: Extra.DEV_CREWAI,
@@ -108,6 +110,10 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     # Letta runs the ``dev`` extra but stands up its own self-hosted server, so it
     # gets its own lane (split out of ``backends``, which keeps codex + opencode).
     Lane.LETTA: Extra.DEV,
+    # Parlant's own `griffe`/`griffelib` transitive deps collide with pydantic-ai's
+    # (same import path, two distributions), so it needs its own extra entirely —
+    # `dev` can no longer install parlant at all (see pyproject [tool.uv] conflicts).
+    Lane.PARLANT: Extra.DEV_PARLANT,
 }
 
 

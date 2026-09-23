@@ -6,24 +6,39 @@ import asyncio
 import json
 import logging
 import time as _time
-import warnings
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Any, Callable, Literal, Protocol
+from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from band_sdk_core import AgentFailure
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
+from band.core.delivery import (
+    DeliveryFailedError,
+    deliver_reply,
+    reraise_delivery_cause,
+)
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+    send_event_safe,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     AgentInput,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -31,15 +46,17 @@ from band.core.types import (
 from band.integrations.codex import (
     CodexJsonRpcError,
     CodexStdioClient,
-    CodexWebSocketClient,
     RpcEvent,
 )
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
+    CODEX_PROVIDER,
     ApprovalAuditEntry,
+    CodexApprovalMethod,
+    CodexItemType,
     CodexSessionState,
     CodexTokenUsage,
-    build_structured_error_metadata,
+    build_agent_failure,
     parse_plan_steps,
 )
 from band.runtime.custom_tools import (
@@ -50,10 +67,37 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools import is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    image_block_placeholder,
+    is_image_passthrough_result,
+    is_room_posting_tool,
+    redact_tool_call_args,
+)
+from band.workspaces import (
+    WorkspaceResolver,
+    claim_room_workspace,
+    release_room_workspace,
+    resolve_room_workspace,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """An image tool result as Codex app-server ``inputImage`` content items.
+
+    Inlined as a data: URI -- the protocol's ``imageUrl`` is a bare string with
+    no documented inline-vs-http distinction.
+    """
+    return [
+        {
+            "type": "inputImage",
+            "imageUrl": f"data:{block['mimeType']};base64,{block['data']}",
+        }
+        for block in result["content"]
+    ]
+
 
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -98,6 +142,40 @@ _MAX_TASK_TITLES = 500
 # multi-byte content (emoji, CJK).
 _MAX_DIFF_METADATA_BYTES = 64 * 1024
 
+# item/completed "type" values gated on Emit.TOOL_CALLS; dispatched in
+# _extract_tool_item.
+_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {
+        CodexItemType.COMMAND_EXECUTION,
+        CodexItemType.FILE_CHANGE,
+        CodexItemType.MCP_TOOL_CALL,
+        CodexItemType.WEB_SEARCH,
+        CodexItemType.IMAGE_VIEW,
+        CodexItemType.COLLAB_AGENT_TOOL_CALL,
+        CodexItemType.DYNAMIC_TOOL_CALL,
+    }
+)
+
+# item/completed "type" values gated on Emit.THOUGHTS; dispatched in
+# _extract_thought_text.
+_THOUGHT_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {
+        CodexItemType.REASONING,
+        CodexItemType.PLAN,
+        CodexItemType.CONTEXT_COMPACTION,
+        CodexItemType.ENTERED_REVIEW_MODE,
+        CodexItemType.EXITED_REVIEW_MODE,
+    }
+)
+
+
+class CodexToolItem(NamedTuple):
+    """(name, args, output) for one tool-like item/completed entry."""
+
+    name: str
+    args: dict[str, Any]
+    output: str
+
 
 # ---------------------------------------------------------------------------
 # Self-configuration tools — let Codex change its own model/reasoning at runtime
@@ -124,11 +202,12 @@ class SetReasoningInput(BaseModel):
 
 
 # Hardcoded default — update when OpenAI rotates model IDs.
-# Override at runtime via CodexAdapterConfig.model or CODEX_MODEL env var.
+# Override at construction via CodexAdapterConfig(model=...) or the
+# CODEX_MODEL environment variable.
 _DEFAULT_MODEL = "gpt-5.5"
 
 
-class _CodexClientProtocol(Protocol):
+class CodexClientProtocol(Protocol):
     async def connect(self) -> None: ...
 
     async def initialize(
@@ -166,7 +245,7 @@ class _CodexClientProtocol(Protocol):
 
 
 @dataclass
-class _PendingApproval:
+class PendingApproval:
     request_id: int | str
     method: str
     summary: str
@@ -176,7 +255,7 @@ class _PendingApproval:
 
 
 @dataclass
-class _TurnResult:
+class TurnResult:
     """Aggregated result from processing a single Codex turn's event stream."""
 
     final_text: str = ""
@@ -186,8 +265,38 @@ class _TurnResult:
 
 
 @dataclass
-class CodexAdapterConfig:
+class RoomCodexClient:
+    """The process and protocol state owned by one Band room."""
+
+    workspace: str
+    client: CodexClientProtocol | None = None
+    initialized: bool = False
+    model_override: str | None = None
+    selected_model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    # Serializes this room's turn processing so only one turn/RPC call is in
+    # flight at a time for this room. A pending manual approval blocks
+    # further turns in this room only, for up to ``approval_wait_timeout_s``
+    # (300s default) -- other rooms are unaffected. Approval resolution
+    # commands (/approve, /decline) are handled outside this lock in
+    # ``on_message`` so they can unblock a waiting turn.
+    rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+
+
+class CodexAdapterConfig(BaseSettings):
     """Runtime configuration for Codex adapter sessions.
+
+    Every field can be set explicitly (highest priority) or via a
+    ``CODEX_``-prefixed environment variable (e.g. ``CODEX_MODEL``,
+    ``CODEX_TRANSPORT``, ``CODEX_APPROVAL_MODE``); ``codex_ws_url`` is
+    sourced from ``CODEX_WS_URL`` (the field name already carries the
+    ``codex_`` part), ``emit_turn_task_markers`` also accepts the legacy
+    ``CODEX_TURN_TASK_MARKERS``, and ``codex_command`` is sourced from the
+    established ``CODEX_COMMAND`` (not the doubly-prefixed
+    ``CODEX_CODEX_COMMAND``), parsed the same way as an explicit tuple: a
+    whitespace-split shell string (e.g. ``"custom-codex --args"``). An
+    explicit constructor kwarg always wins over the environment.
 
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
@@ -199,6 +308,20 @@ class CodexAdapterConfig:
         when its extra metadata is desired.
     """
 
+    # extra="forbid" (not the usual settings "ignore"): this config is
+    # commonly built with many explicit kwargs, so a typo'd field name
+    # must fail construction instead of silently vanishing.
+    # populate_by_name: an aliased field stays constructible by its field name
+    # and keeps its prefix-derived environment variable.
+    model_config = SettingsConfigDict(
+        env_prefix="CODEX_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+    )
+
     transport: TransportKind = "stdio"
     model: str | None = None
     reasoning_effort: (
@@ -206,6 +329,7 @@ class CodexAdapterConfig:
     ) = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
     cwd: str | None = None
+    workspace_for_room: WorkspaceResolver | None = Field(default=None, exclude=True)
     approval_policy: str = "never"
     personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
     sandbox: str | None = None
@@ -214,9 +338,13 @@ class CodexAdapterConfig:
     custom_section: str = ""
     include_base_instructions: bool = True
     experimental_api: bool = True
-    enable_task_events: bool = True
-    emit_turn_task_markers: bool = False
-    emit_thought_events: bool = False
+    # A validation_alias names an environment variable verbatim (env_prefix is
+    # not applied), so aliases must be full CODEX_* names — an unprefixed alias
+    # would read a bare env var set for something else entirely.
+    emit_turn_task_markers: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CODEX_TURN_TASK_MARKERS"),
+    )
     fallback_send_agent_text: bool = True
     approval_mode: ApprovalMode = "manual"
     approval_text_notifications: bool = True
@@ -226,12 +354,17 @@ class CodexAdapterConfig:
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
-    codex_command: tuple[str, ...] | None = None
+    codex_command: tuple[str, ...] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CODEX_COMMAND"),
+    )
     codex_env: dict[str, str] | None = None
-    codex_ws_url: str = "ws://127.0.0.1:8765"
-    enable_execution_reporting: bool = False
+    codex_ws_url: str = Field(
+        default="ws://127.0.0.1:8765",
+        validation_alias=AliasChoices("CODEX_WS_URL"),
+    )
     enable_self_config_tools: bool = False
-    additional_dynamic_tools: list[dict[str, Any]] = field(default_factory=list)
+    additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
     max_pending_approvals_per_room: int = 50
@@ -265,8 +398,6 @@ class CodexAdapterConfig:
     # File-change approvals always key on the sorted set of paths being
     # modified, independent of this flag.
     session_approval_granularity: Literal["binary", "full_command"] = "full_command"
-    # --- Phase 1: Structured errors & enriched approvals ---
-    structured_errors: bool = True
     # --- Phase 2: Plan & task lifecycle ---
     stream_plan_events: bool = False
     emit_turn_lifecycle_events: bool = False
@@ -277,20 +408,33 @@ class CodexAdapterConfig:
     emit_diff_events: bool = False
     emit_token_usage_events: bool = False
 
+    @field_validator("codex_command", mode="before")
+    @classmethod
+    def _split_codex_command(cls, value: Any) -> Any:
+        """CODEX_COMMAND is a shell string; an explicit tuple/list kwarg
+        passes through unchanged."""
+        if isinstance(value, str):
+            return value.split()
+        return value
+
 
 class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
     One Band room maps to one Codex thread. Mapping is persisted in task
-    events metadata and restored via CodexHistoryConverter on bootstrap.
+    events metadata and restored via CodexHistoryConverter on bootstrap --
+    so narrowing ``emit`` to exclude ``Emit.TASK_EVENTS`` doesn't just silence
+    narration, it also stops thread-resume persistence: every restart starts
+    a fresh Codex thread instead of resuming. Leave it in ``emit`` unless
+    that's intended.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -299,64 +443,43 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         *,
         additional_tools: list[CustomToolDef] | None = None,
         history_converter: CodexHistoryConverter | None = None,
-        client_factory: Callable[[CodexAdapterConfig], _CodexClientProtocol]
+        client_factory: Callable[[CodexAdapterConfig], CodexClientProtocol]
         | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         self._config = config or CodexAdapterConfig()
 
-        # --- Deprecation shim: boolean → features migration ---
-        # Only trigger for non-default booleans (enable_task_events defaults
-        # to True, so it doesn't count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_execution_reporting or self._config.emit_thought_events
-        )
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in CodexAdapterConfig "
-                "(enable_execution_reporting / emit_thought_events) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
-        if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_execution_reporting and emit_thought_events in "
-                    "CodexAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(emit={Emit.EXECUTION, "
-                    "Emit.THOUGHTS}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.emit_thought_events:
-                emit = emit | frozenset({Emit.THOUGHTS})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=frozenset(), emit=emit)
-
         super().__init__(
             history_converter=history_converter or CodexHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = self._config
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
-        self._client_factory = client_factory
-        self._client: _CodexClientProtocol | None = None
-        self._initialized = False
-        self._selected_model: str | None = None
+        if self.config.cwd is not None:
+            raise ValueError(
+                "cwd is not supported; use workspace_for_room or the default"
+            )
+        if self.config.transport != "stdio":
+            raise ValueError(
+                "only stdio Codex transport guarantees room process isolation"
+            )
+        if client_factory is not None:
+            raise ValueError(
+                "custom Codex clients cannot guarantee room process isolation"
+            )
+        self._room_clients: dict[str, RoomCodexClient] = {}
+        self._workspace_rooms: dict[str, str] = {}
+        self._active_room: ContextVar[str | None] = ContextVar(
+            "codex_active_room", default=None
+        )
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
-        self._task_titles_by_id: OrderedDict[str, str] = OrderedDict()
+        self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
-        self._pending_approvals: dict[str, dict[str, _PendingApproval]] = {}
+        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -369,13 +492,87 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._session_approved: dict[str, OrderedDict[str, None]] = {}
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
-        # Single client receive queue means turn processing must be serialized
-        # — the lock is adapter-wide, not per-room.  A pending manual approval
-        # in room A therefore blocks turn processing in every other room for
-        # up to ``approval_wait_timeout_s`` (300s default). Approval resolution
-        # commands (/approve, /decline) are handled *outside* this lock in
-        # ``on_message`` so they can unblock a waiting turn.
-        self._rpc_lock = asyncio.Lock()
+
+    def _release_room_workspace(self, room: RoomCodexClient, room_id: str) -> None:
+        """Release this room's workspace claim (see ``release_room_workspace``)."""
+        release_room_workspace(room_id, room.workspace, self._workspace_rooms)
+
+    def _room_client(self, room_id: str) -> RoomCodexClient:
+        room = self._room_clients.get(room_id)
+        if room is None:
+            workspace = resolve_room_workspace(room_id, self.config.workspace_for_room)
+            claim_room_workspace(room_id, workspace, self._workspace_rooms)
+            room = RoomCodexClient(workspace=workspace)
+            self._room_clients[room_id] = room
+        else:
+            claim_room_workspace(room_id, room.workspace, self._workspace_rooms)
+        return room
+
+    def _active_client_state(self) -> RoomCodexClient | None:
+        room_id = self._active_room.get()
+        return self._room_clients.get(room_id) if room_id is not None else None
+
+    def _require_active_client_state(self) -> RoomCodexClient:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex operation requires a room context")
+        return state
+
+    @property
+    def _task_titles_by_id(self) -> OrderedDict[str, str]:
+        room_id = self._active_room.get()
+        if room_id is None:
+            raise RuntimeError("Codex task state requires a room context")
+        return self._room_task_titles.setdefault(room_id, OrderedDict())
+
+    @property
+    def _client(self) -> CodexClientProtocol | None:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.client
+
+    @_client.setter
+    def _client(self, value: CodexClientProtocol | None) -> None:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        state.client = value
+
+    @property
+    def _initialized(self) -> bool:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.initialized
+
+    @_initialized.setter
+    def _initialized(self, value: bool) -> None:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        state.initialized = value
+
+    @property
+    def _selected_model(self) -> str | None:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.selected_model
+
+    @_selected_model.setter
+    def _selected_model(self, value: str | None) -> None:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        state.selected_model = value
+
+    @property
+    def _rpc_lock(self) -> asyncio.Lock:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.rpc_lock
 
     def _build_self_config_tools(self) -> list[CustomToolDef]:
         """Build custom tools that let Codex change its own model/reasoning.
@@ -390,7 +587,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         def _handle_set_model(inp: SetModelInput) -> str:
             if not adapter._rpc_lock.locked():
                 raise RuntimeError("_handle_set_model must run under _rpc_lock")
-            adapter.config.model = inp.model
+            adapter._require_active_client_state().model_override = inp.model
             adapter._selected_model = inp.model
             return f"Model changed to {inp.model} for subsequent turns."
 
@@ -404,7 +601,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         f"Invalid reasoning effort '{inp.effort}'. "
                         f"Valid: {', '.join(sorted(_REASONING_EFFORTS))}."
                     )
-                adapter.config.reasoning_effort = inp.effort  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
+                adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
             if inp.summary is not None:
                 if inp.summary not in _REASONING_SUMMARIES:
@@ -412,7 +609,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         f"Invalid reasoning summary '{inp.summary}'. "
                         f"Valid: {', '.join(sorted(_REASONING_SUMMARIES))}."
                     )
-                adapter.config.reasoning_summary = inp.summary  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
+                adapter._require_active_client_state().reasoning_summary = inp.summary
                 parts.append(f"summary={inp.summary}")
             if not parts:
                 return (
@@ -429,8 +626,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
-        async with self._rpc_lock:
-            await self._ensure_client_ready()
         self._log_startup_config(agent_name)
 
     def _log_startup_config(self, agent_name: str) -> None:
@@ -455,13 +650,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             "execution_reporting=%s, self_config_tools=%s, "
             "task_events=%s, turn_markers=%s, thought_events=%s, "
             "stream_reasoning=%s, stream_plan=%s, stream_commentary=%s, "
-            "diffs=%s, token_usage=%s, structured_errors=%s",
+            "diffs=%s, token_usage=%s",
             agent_name,
             self.config.transport,
-            self._selected_model or self.config.model or "auto",
+            self.config.model or "auto",
             self.config.sandbox or "default",
             self.config.approval_mode,
-            Emit.EXECUTION in self.features.emit,
+            Emit.TOOL_CALLS in self.features.emit,
             self.config.enable_self_config_tools,
             Emit.TASK_EVENTS in self.features.emit,
             self.config.emit_turn_task_markers,
@@ -471,7 +666,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self.config.stream_commentary_events,
             self.config.emit_diff_events,
             self.config.emit_token_usage_events,
-            self.config.structured_errors,
         )
 
     async def on_event(self, inp: AgentInput) -> None:
@@ -494,6 +688,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        self._room_client(room_id)
+        self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
         if command is not None and command[0] in {
             "approve",
@@ -501,88 +697,99 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             "decline",
             "approvals",
         }:
-            handled = await self._handle_approval_command(
-                tools=tools,
-                msg=msg,
-                room_id=room_id,
-                command=command[0],
-                args=command[1],
-            )
-            if handled:
-                return
-
-        async with self._rpc_lock:
-            await self._ensure_client_ready()
-            if self._client is None:
-                raise RuntimeError(
-                    "Codex client not initialized after _ensure_client_ready"
-                )
-
-            if command is not None:
-                handled = await self._handle_local_command(
+            try:
+                handled = await self._handle_approval_command(
                     tools=tools,
                     msg=msg,
-                    history=history,
                     room_id=room_id,
                     command=command[0],
                     args=command[1],
                 )
-                if handled:
-                    return
+            except DeliveryFailedError as e:
+                reraise_delivery_cause(e)
+            if handled:
+                return
 
-            thread_id = await self._ensure_thread(
-                room_id=room_id,
-                history=history,
-                tools=tools,
-                is_session_bootstrap=is_session_bootstrap,
-            )
+        async with self._rpc_lock:
+            thread_id: str | None = None
+            turn_id: str | None = None
+            try:
+                await self._ensure_client_ready()
+                if self._client is None:
+                    raise RuntimeError(
+                        "Codex client not initialized after _ensure_client_ready"
+                    )
 
-            turn_input, has_pending_prompt_injection = self._build_turn_input(
-                msg=msg,
-                participants_msg=participants_msg,
-                contacts_msg=contacts_msg,
-                room_id=room_id,
-            )
+                if command is not None:
+                    handled = await self._handle_local_command(
+                        tools=tools,
+                        msg=msg,
+                        history=history,
+                        room_id=room_id,
+                        command=command[0],
+                        args=command[1],
+                    )
+                    if handled:
+                        return
 
-            turn_params: dict[str, Any] = {
-                "threadId": thread_id,
-                "input": turn_input,
-            }
-            self._apply_turn_overrides(turn_params, room_id=room_id)
-
-            turn_started = await self._start_turn(turn_params)
-            if has_pending_prompt_injection:
-                self._prompt_injected_rooms.add(room_id)
-            turn = turn_started.get("turn") if isinstance(turn_started, dict) else {}
-            turn_id = str((turn or {}).get("id") or "")
-
-            if (
-                Emit.TASK_EVENTS in self.features.emit
-                and self.config.emit_turn_task_markers
-            ):
-                await tools.send_event(
-                    content=self._build_task_event_content(
-                        task_id=turn_id or None,
-                        task="Codex turn",
-                        status="started",
-                        summary=f"Thread: {thread_id}",
-                    ),
-                    message_type="task",
-                    metadata={
-                        "codex_thread_id": thread_id,
-                        "codex_turn_id": turn_id or None,
-                        "codex_room_id": room_id,
-                    },
+                thread_id = await self._ensure_thread(
+                    room_id=room_id,
+                    history=history,
+                    tools=tools,
+                    is_session_bootstrap=is_session_bootstrap,
                 )
 
-            # Phase 2: Turn STARTED lifecycle event with input summary
-            if (
-                self.config.emit_turn_lifecycle_events
-                and Emit.TASK_EVENTS in self.features.emit
-            ):
-                input_summary = (msg.content or "")[:200]
-                try:
-                    await tools.send_event(
+                turn_input, has_pending_prompt_injection = self._build_turn_input(
+                    msg=msg,
+                    participants_msg=participants_msg,
+                    contacts_msg=contacts_msg,
+                    room_id=room_id,
+                )
+
+                turn_params: dict[str, Any] = {
+                    "threadId": thread_id,
+                    "input": turn_input,
+                }
+                self._apply_turn_overrides(turn_params, room_id=room_id)
+
+                turn_started = await self._start_turn(turn_params)
+                if has_pending_prompt_injection:
+                    self._prompt_injected_rooms.add(room_id)
+                turn = (
+                    turn_started.get("turn") if isinstance(turn_started, dict) else {}
+                )
+                turn_id = str((turn or {}).get("id") or "")
+
+                if (
+                    Emit.TASK_EVENTS in self.features.emit
+                    and self.config.emit_turn_task_markers
+                ):
+                    await send_event_safe(
+                        tools,
+                        content=self._build_task_event_content(
+                            task_id=turn_id or None,
+                            task="Codex turn",
+                            status="started",
+                            summary=f"Thread: {thread_id}",
+                        ),
+                        message_type="task",
+                        metadata={
+                            "codex_thread_id": thread_id,
+                            "codex_turn_id": turn_id or None,
+                            "codex_room_id": room_id,
+                        },
+                        log_label="turn started task event",
+                        log_level=logging.DEBUG,
+                    )
+
+                # Phase 2: Turn STARTED lifecycle event with input summary
+                if (
+                    self.config.emit_turn_lifecycle_events
+                    and Emit.TASK_EVENTS in self.features.emit
+                ):
+                    input_summary = (msg.content or "")[:200]
+                    await send_event_safe(
+                        tools,
                         content=self._build_task_event_content(
                             task_id=turn_id or None,
                             task="Codex turn lifecycle",
@@ -598,56 +805,135 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             "codex_turn_status": "started",
                             "codex_input_summary": input_summary,
                         },
+                        log_label="turn started lifecycle event",
+                        log_level=logging.DEBUG,
                     )
+
+                # Reset per-turn token deltas for the new turn.
+                usage_obj = self._token_usage.get(thread_id)
+                if usage_obj is not None:
+                    usage_obj.reset_turn_deltas()
+
+                # perf_counter (not monotonic): highest-resolution clock, so a fast
+                # turn still measures a non-zero duration on Windows, where
+                # monotonic()'s coarse tick can round an instant turn to 0.0.
+                _turn_start = _time.perf_counter()
+                try:
+                    result = await self._process_turn_events(
+                        tools=tools,
+                        msg=msg,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id or None,
+                        turn_start=_turn_start,
+                    )
+                except TurnResultAlreadyReported:
+                    # A nested handler (e.g. the turn-timeout branch) already
+                    # reported this failure via send_failure; propagate it
+                    # without emitting a friendly _emit_turn_outcome reply or
+                    # a generic "Internal error" fallback.
+                    raise
+                except CodexJsonRpcError as error:
+                    result = TurnResult(
+                        turn_status="failed",
+                        turn_error=str(error),
+                    )
+                    await self._emit_failed_turn_outcome(
+                        tools=tools,
+                        msg=msg,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id or None,
+                        result=result,
+                        turn_start=_turn_start,
+                    )
+                    raise
                 except Exception:
-                    logger.debug(
-                        "Failed to emit turn started lifecycle event",
-                        exc_info=True,
+                    logger.exception(
+                        "Unexpected error during Codex turn event processing "
+                        "(thread=%s, turn=%s)",
+                        thread_id,
+                        turn_id,
                     )
+                    result = TurnResult(
+                        turn_status="failed",
+                        turn_error="Internal error during turn processing",
+                    )
+                    await tools.send_failure(
+                        AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    await self._emit_failed_turn_outcome(
+                        tools=tools,
+                        msg=msg,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id or None,
+                        result=result,
+                        turn_start=_turn_start,
+                    )
+                    raise TurnResultAlreadyReported(
+                        "Internal error during turn processing"
+                    ) from None
 
-            # Reset per-turn token deltas for the new turn.
-            usage_obj = self._token_usage.get(thread_id)
-            if usage_obj is not None:
-                usage_obj.reset_turn_deltas()
-
-            # perf_counter (not monotonic): highest-resolution clock, so a fast
-            # turn still measures a non-zero duration on Windows, where
-            # monotonic()'s coarse tick can round an instant turn to 0.0.
-            _turn_start = _time.perf_counter()
-            try:
-                result = await self._process_turn_events(
+                _turn_duration_s = _time.perf_counter() - _turn_start
+                await self._emit_turn_outcome(
                     tools=tools,
                     msg=msg,
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_id=turn_id or None,
-                    turn_start=_turn_start,
+                    turn_status=result.turn_status,
+                    turn_error=result.turn_error,
+                    final_text=result.final_text,
+                    saw_send_message_tool=result.saw_send_message_tool,
+                    duration_s=_turn_duration_s,
                 )
+            except DeliveryFailedError as e:
+                reraise_delivery_cause(e)
+            except TurnResultAlreadyReported:
+                raise
+            except CodexJsonRpcError as e:
+                # A structured RPC error from the app-server (e.g. "model not
+                # available") is safe, curated text -- unlike an arbitrary
+                # caught exception, it's worth showing verbatim.
+                await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
+                raise
             except Exception:
                 logger.exception(
-                    "Unexpected error during Codex turn event processing "
-                    "(thread=%s, turn=%s)",
+                    "Unexpected error in Codex on_message (thread=%s, turn=%s)",
                     thread_id,
                     turn_id,
                 )
-                result = _TurnResult(
-                    turn_status="failed",
-                    turn_error="Internal error during turn processing",
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
+                raise
 
-            _turn_duration_s = _time.perf_counter() - _turn_start
-            await self._emit_turn_outcome(
-                tools=tools,
-                msg=msg,
-                room_id=room_id,
-                thread_id=thread_id,
-                turn_id=turn_id or None,
-                turn_status=result.turn_status,
-                turn_error=result.turn_error,
-                final_text=result.final_text,
-                saw_send_message_tool=result.saw_send_message_tool,
-                duration_s=_turn_duration_s,
-            )
+    async def _emit_failed_turn_outcome(
+        self,
+        *,
+        tools: AgentToolsProtocol,
+        msg: PlatformMessage,
+        room_id: str,
+        thread_id: str,
+        turn_id: str | None,
+        result: TurnResult,
+        turn_start: float,
+    ) -> None:
+        """Emit failure lifecycle events without posting a second reply."""
+        await self._emit_turn_outcome(
+            tools=tools,
+            msg=msg,
+            room_id=room_id,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            turn_status=result.turn_status,
+            turn_error=result.turn_error,
+            final_text=result.final_text,
+            saw_send_message_tool=result.saw_send_message_tool,
+            duration_s=_time.perf_counter() - turn_start,
+            include_reply=False,
+        )
 
     async def _process_turn_events(
         self,
@@ -658,12 +944,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         thread_id: str,
         turn_id: str | None,
         turn_start: float,
-    ) -> _TurnResult:
+    ) -> TurnResult:
         """Consume the Codex event stream for a single turn and return the result."""
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None during turn event loop")
 
-        result = _TurnResult()
+        result = TurnResult()
+        failure_reported = False
         try:
             while True:
                 _remaining = max(
@@ -700,13 +987,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     continue
 
                 if event.method == "error":
-                    await self._handle_error_event(
+                    reported = await self._handle_error_event(
                         tools=tools,
                         params=params,
                         room_id=room_id,
                         thread_id=thread_id,
                         turn_id=turn_id,
                     )
+                    failure_reported = failure_reported or reported
                     continue
 
                 # --- Phase 3: Real-time streaming ---
@@ -717,45 +1005,42 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     if self.config.stream_reasoning_events:
                         delta = params.get("delta", "")
                         item_id = str(params.get("itemId") or "")
-                        try:
-                            await tools.send_event(
-                                content=str(delta),
-                                message_type="thought",
-                                metadata={
-                                    "streaming": True,
-                                    "codex_item_id": item_id,
-                                    "codex_event_type": event.method,
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": thread_id,
-                                    "codex_turn_id": turn_id,
-                                },
-                            )
-                        except Exception:
-                            logger.debug(
-                                "Failed to stream reasoning delta",
-                                exc_info=True,
-                            )
+                        await send_event_safe(
+                            tools,
+                            content=str(delta),
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "codex_item_id": item_id,
+                                "codex_event_type": event.method,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                            log_label="reasoning delta",
+                            log_level=logging.DEBUG,
+                        )
                     continue
 
                 if event.method == "item/plan/delta":
                     if self.config.stream_plan_events:
                         delta = params.get("delta", "")
                         item_id = str(params.get("itemId") or "")
-                        try:
-                            await tools.send_event(
-                                content=str(delta),
-                                message_type="thought",
-                                metadata={
-                                    "streaming": True,
-                                    "subtype": "plan",
-                                    "codex_item_id": item_id,
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": thread_id,
-                                    "codex_turn_id": turn_id,
-                                },
-                            )
-                        except Exception:
-                            logger.debug("Failed to stream plan delta", exc_info=True)
+                        await send_event_safe(
+                            tools,
+                            content=str(delta),
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "subtype": "plan",
+                                "codex_item_id": item_id,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                            log_label="plan delta",
+                            log_level=logging.DEBUG,
+                        )
                     continue
 
                 # --- Phase 2: Plan step tracking ---
@@ -789,27 +1074,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     ):
                         compacted_thread = str(params.get("threadId") or thread_id)
                         compacted_turn = str(params.get("turnId") or turn_id or "")
-                        try:
-                            await tools.send_event(
-                                content=self._build_task_event_content(
-                                    task_id=compacted_turn or None,
-                                    task="Codex context compaction",
-                                    status="completed",
-                                    summary=f"Thread: {compacted_thread}",
-                                ),
-                                message_type="task",
-                                metadata={
-                                    "codex_event_type": "context_compaction",
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": compacted_thread,
-                                    "codex_turn_id": compacted_turn or None,
-                                },
-                            )
-                        except Exception:
-                            logger.debug(
-                                "Failed to emit context compaction event",
-                                exc_info=True,
-                            )
+                        await send_event_safe(
+                            tools,
+                            content=self._build_task_event_content(
+                                task_id=compacted_turn or None,
+                                task="Codex context compaction",
+                                status="completed",
+                                summary=f"Thread: {compacted_thread}",
+                            ),
+                            message_type="task",
+                            metadata={
+                                "codex_event_type": "context_compaction",
+                                "codex_room_id": room_id,
+                                "codex_thread_id": compacted_thread,
+                                "codex_turn_id": compacted_turn or None,
+                            },
+                            log_label="context compaction event",
+                            log_level=logging.DEBUG,
+                        )
                     continue
 
                 # --- Phase 4: Aggregated diffs ---
@@ -836,26 +1118,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             and self.config.stream_commentary_events
                         ):
                             # Stream as thought; exclude from final_text.
-                            try:
-                                await tools.send_event(
-                                    content=delta,
-                                    message_type="thought",
-                                    metadata={
-                                        "streaming": True,
-                                        "subtype": "commentary",
-                                        "codex_item_id": str(
-                                            params.get("itemId") or ""
-                                        ),
-                                        "codex_room_id": room_id,
-                                        "codex_thread_id": thread_id,
-                                        "codex_turn_id": turn_id,
-                                    },
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "Failed to stream commentary delta",
-                                    exc_info=True,
-                                )
+                            await send_event_safe(
+                                tools,
+                                content=delta,
+                                message_type="thought",
+                                metadata={
+                                    "streaming": True,
+                                    "subtype": "commentary",
+                                    "codex_item_id": str(params.get("itemId") or ""),
+                                    "codex_room_id": room_id,
+                                    "codex_thread_id": thread_id,
+                                    "codex_turn_id": turn_id,
+                                },
+                                log_label="commentary delta",
+                                log_level=logging.DEBUG,
+                            )
                         else:
                             # When streaming is disabled, commentary accumulates
                             # into final_text for backward compatibility.
@@ -866,7 +1143,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     item = params.get("item") if isinstance(params, dict) else {}
                     if isinstance(item, dict):
                         item_type = item.get("type")
-                        if item_type == "agentMessage":
+                        if item_type == CodexItemType.AGENT_MESSAGE:
                             text = item.get("text")
                             if isinstance(text, str) and text:
                                 result.final_text = text
@@ -893,15 +1170,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     # Also drop token-usage entries keyed by the dead thread
                     # ids; otherwise they leak until the last-room teardown
                     # because on_cleanup can no longer resolve their keys.
-                    stale_rooms = list(self._room_threads.keys())
-                    stale_threads = list(self._room_threads.values())
-                    self._room_threads.clear()
-                    self._raw_history_by_room.clear()
-                    for stale_thread in stale_threads:
+                    stale_thread = self._room_threads.pop(room_id, None)
+                    self._raw_history_by_room.pop(room_id, None)
+                    if stale_thread:
                         self._token_usage.pop(stale_thread, None)
-                    for stale_room in stale_rooms:
-                        self._clear_pending_approvals_for_room(stale_room)
-                    break
+                    self._clear_pending_approvals_for_room(room_id)
+                    # Skipped when an earlier "error" notification in this same
+                    # turn already reported one, so one incident isn't posted
+                    # twice -- but the turn still fails either way.
+                    if not failure_reported:
+                        await tools.send_failure(
+                            AgentFailure(
+                                CODEX_PROVIDER, result.turn_error, "transport_closed"
+                            )
+                        )
+                    raise TurnResultAlreadyReported(result.turn_error)
 
                 if event.method == "turn/completed":
                     turn_payload = (
@@ -914,8 +1197,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         continue
                     result.turn_status = str(turn_payload.get("status") or "failed")
                     result.turn_error = self._extract_turn_error(turn_payload)
-                    # Phase 1: structured error for failed turns
-                    if result.turn_status == "failed" and self.config.structured_errors:
+                    if result.turn_status != "failed":
+                        break
+                    # Skipped when an earlier "error" notification in this same
+                    # turn already reported one, so one incident isn't posted
+                    # twice -- but the turn still fails either way.
+                    if not failure_reported:
                         await self._emit_structured_turn_error(
                             tools=tools,
                             turn_payload=turn_payload,
@@ -923,8 +1210,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             thread_id=thread_id,
                             turn_id=turn_id,
                         )
-                    break
-        except asyncio.TimeoutError:
+                    raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
+        except TurnResultAlreadyReported as error:
+            result.turn_status = "failed"
+            result.turn_error = str(error)
+            await self._emit_failed_turn_outcome(
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                result=result,
+                turn_start=turn_start,
+            )
+            raise
+        except TimeoutError:
             logger.error(
                 "Codex turn timed out after %ss (thread=%s, turn=%s)",
                 self.config.turn_timeout_s,
@@ -942,16 +1242,38 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "Failed to send turn/interrupt after timeout",
                         exc_info=True,
                     )
-            result.turn_status = "interrupted"
-            result.turn_error = "Turn timed out"
+            timeout_message = (
+                f"Codex turn timed out after {self.config.turn_timeout_s}s"
+            )
+            await tools.send_failure(
+                AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+            )
+            result.turn_status = "failed"
+            result.turn_error = timeout_message
+            # A raise from here lands in this try's own except clauses, not the
+            # sibling `except TurnResultAlreadyReported` above -- Python never
+            # matches an exception raised inside one except against a sibling
+            # of the same try. Call the same failed-turn telemetry directly
+            # (as on_message's CodexJsonRpcError branch already does) so a
+            # timeout still gets the "Codex turn"/lifecycle failed-status
+            # events every other TurnResultAlreadyReported path emits.
+            await self._emit_failed_turn_outcome(
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                result=result,
+                turn_start=turn_start,
+            )
+            raise TurnResultAlreadyReported(timeout_message)
         return result
 
     async def on_cleanup(self, room_id: str) -> None:
-        # NOTE: _rpc_lock is adapter-wide, so cleanup for room B blocks if
-        # room A holds the lock during a pending manual approval (up to
-        # approval_wait_timeout_s).  This is a known limitation of the single-
-        # client architecture — the lock serializes all turn processing and
-        # cleanup across rooms.
+        room = self._room_clients.get(room_id)
+        if room is None:
+            return
+        self._active_room.set(room_id)
         async with self._rpc_lock:
             thread_id = self._room_threads.pop(room_id, None)
             if thread_id:
@@ -963,9 +1285,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._approval_audit.pop(room_id, None)
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
-            if self._room_threads:
-                return
+            self._room_task_titles.pop(room_id, None)
             if self._client is None:
+                self._room_clients.pop(room_id, None)
+                self._release_room_workspace(room, room_id)
                 return
             try:
                 close_coro = self._client.close()
@@ -973,7 +1296,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 if timeout is not None:
                     try:
                         await asyncio.wait_for(close_coro, timeout=timeout)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "Codex client.close() exceeded %ss timeout; "
                             "dropping client reference",
@@ -985,24 +1308,36 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._client = None
                 self._initialized = False
                 self._selected_model = None
-                self._task_titles_by_id.clear()
-                # Defensive: wipe all pending approvals globally on last-room
-                # teardown.  Per-room cleanup already resolves futures to
-                # "decline" via _clear_pending_approvals_for_room, so this
-                # catches any leaked entries from rooms whose cleanup failed.
-                self._pending_approvals.clear()
-                self._token_usage.clear()
-                self._approval_audit.clear()
-                self._session_approved.clear()
-                self._sandbox_overrides.clear()
+                self._room_clients.pop(room_id, None)
+                self._release_room_workspace(room, room_id)
+
+    async def cleanup_all(self) -> None:
+        """Close every room-owned Codex process during agent shutdown."""
+        room_ids = list(self._room_clients)
+        results = await asyncio.gather(
+            *(self.on_cleanup(room_id) for room_id in room_ids),
+            return_exceptions=True,
+        )
+        for room_id, result in zip(room_ids, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Failed to clean up Codex client for room %s: %s",
+                    room_id,
+                    result,
+                )
 
     async def _ensure_client_ready(self) -> None:
         if self._client is None:
             self._client = self._build_client(self.config)
 
-        if not self._initialized:
-            await self._client.connect()
-            await self._client.initialize(
+        client = self._client
+        if client is None:
+            raise RuntimeError("Codex client was not created")
+        if self._initialized:
+            return
+        try:
+            await client.connect()
+            await client.initialize(
                 client_name=self.config.client_name,
                 client_title=self.config.client_title,
                 client_version=self.config.client_version,
@@ -1010,21 +1345,41 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             self._selected_model = await self._select_model()
             self._initialized = True
+        except Exception:
+            if self._client is client:
+                self._client = None
+                try:
+                    await client.close()
+                except Exception:
+                    logger.warning(
+                        "Failed to close unsuccessfully initialized Codex client",
+                        exc_info=True,
+                    )
+                # Release the workspace claim (unconditionally -- whether or not
+                # close() itself also raised) but keep the room's RoomCodexClient,
+                # so model_override/reasoning settings survive a failed rebuild
+                # for the next retry. _release_room_workspace's ownership check
+                # keeps this safe even though the stale entry outlives the claim.
+                room_id = self._active_room.get()
+                state = self._active_client_state()
+                if room_id is not None and state is not None:
+                    self._release_room_workspace(state, room_id)
+            raise
 
-    def _build_client(self, config: CodexAdapterConfig) -> _CodexClientProtocol:
-        if self._client_factory is not None:
-            return self._client_factory(config)
-
-        if config.transport == "ws":
-            return CodexWebSocketClient(ws_url=config.codex_ws_url)
-
+    def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client creation requires a room context")
         return CodexStdioClient(
             command=config.codex_command,
-            cwd=config.cwd,
+            cwd=state.workspace,
             env=config.codex_env,
         )
 
     async def _select_model(self) -> str:
+        state = self._require_active_client_state()
+        if state.model_override:
+            return state.model_override
         if self.config.model:
             return self.config.model
 
@@ -1074,7 +1429,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     self._room_threads[room_id] = thread_id
                     self._raw_history_by_room.pop(room_id, None)
                     if Emit.TASK_EVENTS in self.features.emit:
-                        await tools.send_event(
+                        await send_event_safe(
+                            tools,
                             content=self._build_task_event_content(
                                 task_id=thread_id,
                                 task="Codex thread",
@@ -1087,6 +1443,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                                 "codex_room_id": room_id,
                                 "codex_resumed": True,
                             },
+                            log_label="thread resumed task event",
+                            log_level=logging.DEBUG,
                         )
                     return thread_id
             except CodexJsonRpcError as exc:
@@ -1105,7 +1463,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         dynamic_tools = self._build_dynamic_tools(tools)
         start_params: dict[str, Any] = {
             "model": self._selected_model,
-            "cwd": self.config.cwd,
+            "cwd": self._room_client(room_id).workspace,
             "approvalPolicy": self.config.approval_policy,
             "personality": self.config.personality,
             "dynamicTools": dynamic_tools,
@@ -1121,7 +1479,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._room_threads[room_id] = thread_id
 
         if Emit.TASK_EVENTS in self.features.emit:
-            await tools.send_event(
+            await send_event_safe(
+                tools,
                 content=self._build_task_event_content(
                     task_id=thread_id,
                     task="Codex thread",
@@ -1132,9 +1491,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 metadata={
                     "codex_thread_id": thread_id,
                     "codex_room_id": room_id,
-                    "codex_created_at": datetime.now(timezone.utc).isoformat(),
+                    "codex_created_at": datetime.now(UTC).isoformat(),
                     "codex_transport": self.config.transport,
                 },
+                log_label="thread mapped task event",
+                log_level=logging.DEBUG,
             )
 
         return thread_id
@@ -1144,8 +1505,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         seen: set[str] = set()
 
         for schema in tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         ):
             if not isinstance(schema, dict):
                 continue
@@ -1271,12 +1631,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     ) -> bool:
         """Dispatch a server-initiated request (tool call, approval).
 
-        Concurrency model: this coroutine mutates adapter state
+        Concurrency model: this coroutine mutates room-scoped adapter state
         (``_pending_approvals``, ``_session_approved``, ``_approval_audit``,
         ``_task_titles_by_id``) without an explicit lock.  It is safe
         because the only call site is the turn-processing loop in
-        ``_process_turn_events``, which is already serialized by
-        ``_rpc_lock``.
+        ``_process_turn_events``, which already serializes this room's turns
+        via its room's ``_rpc_lock`` -- and every structure it touches is
+        keyed (or routed via ``_active_room``) per room, so a concurrent
+        turn in a different room never touches the same state.
 
         Because asyncio runs one coroutine at a time, every synchronous
         span inside this method is atomic.  If a new caller is ever added
@@ -1300,7 +1662,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             # Don't emit reporting for codex-local slash commands — they already
             # surface their outcome in the room themselves.
             should_report = (
-                Emit.EXECUTION in self.features.emit
+                Emit.TOOL_CALLS in self.features.emit
                 and tool_name not in _SILENT_REPORTING_TOOLS
             )
 
@@ -1309,7 +1671,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     content=json.dumps(
                         {
                             ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: arguments,
+                            ToolEventKey.ARGS: redact_tool_call_args(
+                                tool_name, arguments
+                            ),
                             ToolEventKey.TOOL_CALL_ID: call_id,
                         }
                     ),
@@ -1330,15 +1694,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                text_result = (
-                    result
-                    if isinstance(result, str)
-                    else json.dumps(result, default=str)
-                )
+                if success and is_image_passthrough_result(tool_name, result):
+                    content_items = _image_content_items(result)
+                    text_result = image_block_placeholder(len(content_items))
+                else:
+                    text_result = (
+                        result
+                        if isinstance(result, str)
+                        else json.dumps(result, default=str)
+                    )
+                    content_items = [{"type": "inputText", "text": text_result}]
                 await self._client.respond(
                     event.id,
                     {
-                        "contentItems": [{"type": "inputText", "text": text_result}],
+                        "contentItems": content_items,
                         "success": success,
                     },
                 )
@@ -1505,29 +1874,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 logger.exception("Failed to send approval policy notification")
 
         if Emit.THOUGHTS in self.features.emit:
-            try:
-                await tools.send_event(
-                    content=(
-                        f"Codex approval request handled automatically ({decision})."
-                    ),
-                    message_type="thought",
-                    metadata={
-                        "codex_approval_method": event.method,
-                        "codex_approval_type": self._approval_type(event.method),
-                        "codex_approval_options": [
-                            "accept",
-                            "acceptForSession",
-                            "decline",
-                        ],
-                    },
-                )
-            except Exception:
-                # Best-effort telemetry — never fail the turn on thought
-                # emission failures.
-                logger.debug(
-                    "Failed to emit approval thought event",
-                    exc_info=True,
-                )
+            # Best-effort telemetry — never fail the turn on thought emission
+            # failures.
+            await send_event_safe(
+                tools,
+                content=(f"Codex approval request handled automatically ({decision})."),
+                message_type="thought",
+                metadata={
+                    "codex_approval_method": event.method,
+                    "codex_approval_type": self._approval_type(event.method),
+                    "codex_approval_options": [
+                        "accept",
+                        "acceptForSession",
+                        "decline",
+                    ],
+                },
+                log_label="approval thought event",
+                log_level=logging.DEBUG,
+            )
 
     @staticmethod
     def _turn_usage(usage: CodexTokenUsage | None) -> TurnUsage:
@@ -1563,6 +1927,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         final_text: str,
         saw_send_message_tool: bool,
         duration_s: float = 0.0,
+        include_reply: bool = True,
     ) -> None:
         # Look up token usage once for both marker and lifecycle events.
         usage = self._token_usage.get(thread_id)
@@ -1593,7 +1958,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 metadata["codex_duration_s"] = round(duration_s, 2)
             if has_usage:
                 metadata.update(usage.to_metadata())
-            await tools.send_event(
+            await send_event_safe(
+                tools,
                 content=self._build_task_event_content(
                     task_id=turn_id,
                     task="Codex turn",
@@ -1602,6 +1968,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 ),
                 message_type="task",
                 metadata=metadata,
+                log_label="turn outcome task event",
+                log_level=logging.DEBUG,
             )
 
         # Phase 2: Enriched turn lifecycle events
@@ -1626,19 +1994,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 lifecycle_metadata["codex_error"] = turn_error
             if has_usage:
                 lifecycle_metadata.update(usage.to_metadata())
-            try:
-                await tools.send_event(
-                    content=self._build_task_event_content(
-                        task_id=turn_id,
-                        task="Codex turn lifecycle",
-                        status=turn_status,
-                        summary=f"Duration: {duration_s:.1f}s | Thread: {thread_id}",
-                    ),
-                    message_type="task",
-                    metadata=lifecycle_metadata,
-                )
-            except Exception:
-                logger.debug("Failed to emit turn lifecycle event", exc_info=True)
+            await send_event_safe(
+                tools,
+                content=self._build_task_event_content(
+                    task_id=turn_id,
+                    task="Codex turn lifecycle",
+                    status=turn_status,
+                    summary=f"Duration: {duration_s:.1f}s | Thread: {thread_id}",
+                ),
+                message_type="task",
+                metadata=lifecycle_metadata,
+                log_label="turn lifecycle event",
+                log_level=logging.DEBUG,
+            )
+
+        if not include_reply:
+            return
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
@@ -1648,11 +2019,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 and final_text.strip()
                 and not saw_send_message_tool
             ):
-                await tools.send_message(final_text.strip(), mentions=mention)
+                await deliver_reply(tools, final_text.strip(), mentions=mention)
             return
 
         if turn_status == "interrupted":
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "I stopped before completing this request.",
                 mentions=mention,
             )
@@ -1663,7 +2035,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if not turn_error
             else f"I couldn't complete this request ({turn_status}): {turn_error}"
         )
-        await tools.send_message(error_text, mentions=mention)
+        await deliver_reply(tools, error_text, mentions=mention)
 
     async def _emit_item_completed_events(
         self,
@@ -1717,17 +2089,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         metadata: dict[str, Any],
     ) -> None:
         """Inner dispatch for item events — may raise on API errors."""
-        # Tool-like items gated on Emit.EXECUTION
-        if item_type in {
-            "commandExecution",
-            "fileChange",
-            "mcpToolCall",
-            "webSearch",
-            "imageView",
-            "collabAgentToolCall",
-            "dynamicToolCall",
-        }:
-            if Emit.EXECUTION not in self.features.emit:
+        # Tool-like items gated on Emit.TOOL_CALLS
+        if item_type in _TOOL_ITEM_TYPES:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
             name, args, output = self._extract_tool_item(item_type, item)
             await tools.send_event(
@@ -1755,16 +2119,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return
 
         # Thought-like items gated on Emit.THOUGHTS
-        if item_type in {
-            "reasoning",
-            "plan",
-            "contextCompaction",
-            "enteredReviewMode",
-            "exitedReviewMode",
-        }:
+        if item_type in _THOUGHT_ITEM_TYPES:
             if Emit.THOUGHTS not in self.features.emit:
                 return
             text = self._extract_thought_text(item_type, item)
+            if not text:
+                # Empty reasoning/plan items carry no information — skip rather
+                # than posting a placeholder like "(reasoning)" / "(plan)".
+                return
             await tools.send_event(
                 content=text,
                 message_type="thought",
@@ -1773,110 +2135,137 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return
 
         # Skip known non-actionable types
-        if item_type in {"userMessage", "agentMessage"}:
+        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
 
     @staticmethod
-    def _extract_tool_item(
-        item_type: str, item: dict[str, Any]
-    ) -> tuple[str, dict[str, Any], str]:
+    def _extract_tool_item(item_type: str, item: dict[str, Any]) -> CodexToolItem:
         """Extract (name, args, output) for a tool-like item."""
-        if item_type == "commandExecution":
-            command = item.get("command", "")
-            cwd = item.get("cwd", "")
-            args: dict[str, Any] = {"command": command, "cwd": cwd}
-            output_parts: list[str] = []
-            if item.get("aggregated_output"):
-                output_parts.append(str(item["aggregated_output"]))
-            exit_code = item.get("exitCode")
-            if exit_code is not None:
-                output_parts.append(f"exit_code={exit_code}")
-            status = item.get("status", "")
-            output = "\n".join(output_parts) if output_parts else str(status)
-            return "exec", args, output
+        match item_type:
+            case CodexItemType.COMMAND_EXECUTION:
+                return CodexAdapter._extract_command_execution(item)
+            case CodexItemType.FILE_CHANGE:
+                return CodexAdapter._extract_file_change(item)
+            case CodexItemType.MCP_TOOL_CALL:
+                return CodexAdapter._extract_mcp_tool_call(item)
+            case CodexItemType.WEB_SEARCH:
+                return CodexAdapter._extract_web_search(item)
+            case CodexItemType.IMAGE_VIEW:
+                return CodexAdapter._extract_image_view(item)
+            case CodexItemType.COLLAB_AGENT_TOOL_CALL:
+                return CodexAdapter._extract_collab_agent_tool_call(item)
+            case CodexItemType.DYNAMIC_TOOL_CALL:
+                return CodexAdapter._extract_dynamic_tool_call(item)
+            case _:
+                return CodexToolItem(item_type, {}, "completed")
 
-        if item_type == "fileChange":
-            changes = item.get("changes", [])
-            if not isinstance(changes, list):
-                changes = []
-            file_paths = [c.get("path", "") for c in changes if isinstance(c, dict)]
-            return (
-                "file_edit",
-                {"files": file_paths},
-                str(item.get("status", "applied")),
-            )
+    @staticmethod
+    def _extract_command_execution(item: dict[str, Any]) -> CodexToolItem:
+        command = item.get("command", "")
+        cwd = item.get("cwd", "")
+        args: dict[str, Any] = {"command": command, "cwd": cwd}
+        output_parts: list[str] = []
+        if item.get("aggregated_output"):
+            output_parts.append(str(item["aggregated_output"]))
+        exit_code = item.get("exitCode")
+        if exit_code is not None:
+            output_parts.append(f"exit_code={exit_code}")
+        status = item.get("status", "")
+        output = "\n".join(output_parts) if output_parts else str(status)
+        return CodexToolItem("exec", args, output)
 
-        if item_type == "mcpToolCall":
-            server = item.get("server", "")
-            tool = item.get("tool", "")
-            name = f"mcp:{server}/{tool}"
-            mcp_args = item.get("arguments", {})
-            if not isinstance(mcp_args, dict):
-                mcp_args = {}
-            result = item.get("result")
-            error = item.get("error")
-            if result is not None:
-                output = json.dumps(result, default=str)
-            elif error is not None:
-                output = json.dumps(error, default=str)
-            else:
-                output = "completed"
-            return name, mcp_args, output
+    @staticmethod
+    def _extract_file_change(item: dict[str, Any]) -> CodexToolItem:
+        changes = item.get("changes", [])
+        if not isinstance(changes, list):
+            changes = []
+        file_paths = [c.get("path", "") for c in changes if isinstance(c, dict)]
+        return CodexToolItem(
+            "file_edit",
+            {"files": file_paths},
+            str(item.get("status", "applied")),
+        )
 
-        if item_type == "webSearch":
-            query = item.get("query", "")
-            action = item.get("action")
-            output = json.dumps(action, default=str) if action else "completed"
-            return "web_search", {"query": query}, output
+    @staticmethod
+    def _extract_mcp_tool_call(item: dict[str, Any]) -> CodexToolItem:
+        server = item.get("server", "")
+        tool = item.get("tool", "")
+        name = f"mcp:{server}/{tool}"
+        mcp_args = item.get("arguments", {})
+        if not isinstance(mcp_args, dict):
+            mcp_args = {}
+        # redact_tool_call_args compares against the bare tool name (e.g.
+        # "band_send_room_file"), not the "mcp:{server}/{tool}" display name
+        # this method returns -- redact before that prefix is applied.
+        mcp_args = redact_tool_call_args(tool, mcp_args)
+        output = CodexAdapter._stringify_tool_output(
+            item.get("result"),
+            item.get("error"),
+            default="completed",
+            raw_fallback=True,
+        )
+        return CodexToolItem(name, mcp_args, output)
 
-        if item_type == "imageView":
-            path = item.get("path", "")
-            return "view_image", {"path": path}, str(item.get("status", "viewed"))
+    @staticmethod
+    def _extract_web_search(item: dict[str, Any]) -> CodexToolItem:
+        query = item.get("query", "")
+        output = CodexAdapter._stringify_tool_output(
+            item.get("action"), default="completed", raw_fallback=True
+        )
+        return CodexToolItem("web_search", {"query": query}, output)
 
-        if item_type == "collabAgentToolCall":
-            collab_tool = item.get("tool", "")
-            name = f"collab:{collab_tool}"
-            collab_args: dict[str, Any] = {}
-            if item.get("prompt"):
-                collab_args["prompt"] = item["prompt"]
-            if item.get("agents"):
-                collab_args["agents"] = item["agents"]
-            result = item.get("result")
-            output = (
-                json.dumps(result, default=str) if result is not None else "completed"
-            )
-            return name, collab_args, output
+    @staticmethod
+    def _extract_image_view(item: dict[str, Any]) -> CodexToolItem:
+        path = item.get("path", "")
+        return CodexToolItem(
+            "view_image",
+            {"path": path},
+            str(item.get("status", "viewed")),
+        )
 
-        if item_type == "dynamicToolCall":
-            tool = item.get("tool") or item.get("name") or item.get("toolName")
-            if isinstance(tool, dict):
-                tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
-            name = str(tool or "dynamic_tool")
+    @staticmethod
+    def _extract_collab_agent_tool_call(item: dict[str, Any]) -> CodexToolItem:
+        collab_tool = item.get("tool", "")
+        name = f"collab:{collab_tool}"
+        collab_args: dict[str, Any] = {}
+        if item.get("prompt"):
+            collab_args["prompt"] = item["prompt"]
+        if item.get("agents"):
+            collab_args["agents"] = item["agents"]
+        output = CodexAdapter._stringify_tool_output(
+            item.get("result"), default="completed", raw_fallback=True
+        )
+        return CodexToolItem(name, collab_args, output)
 
-            raw_args = (
-                item.get("arguments")
-                if "arguments" in item
-                else item.get("args")
-                if "args" in item
-                else item.get("input")
-                if "input" in item
-                else item.get("inputJson", {})
-            )
-            args = CodexAdapter._coerce_tool_args(raw_args)
+    @staticmethod
+    def _extract_dynamic_tool_call(item: dict[str, Any]) -> CodexToolItem:
+        tool = item.get("tool") or item.get("name") or item.get("toolName")
+        if isinstance(tool, dict):
+            tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
+        name = str(tool or "dynamic_tool")
 
-            output = CodexAdapter._stringify_tool_output(
-                item.get("result"),
-                item.get("output"),
-                item.get("content"),
-                item.get("error"),
-                item.get("contentItems"),
-                default=str(item.get("status", "completed")),
-            )
-            return name, args, output
+        raw_args = (
+            item.get("arguments")
+            if "arguments" in item
+            else item.get("args")
+            if "args" in item
+            else item.get("input")
+            if "input" in item
+            else item.get("inputJson", {})
+        )
+        args = CodexAdapter._coerce_tool_args(raw_args)
 
-        return item_type, {}, "completed"
+        output = CodexAdapter._stringify_tool_output(
+            item.get("result"),
+            item.get("output"),
+            item.get("content"),
+            item.get("error"),
+            item.get("contentItems"),
+            default=str(item.get("status", "completed")),
+        )
+        return CodexToolItem(name, args, output)
 
     @staticmethod
     def _coerce_tool_args(value: Any) -> dict[str, Any]:
@@ -1896,49 +2285,85 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return {"input": value}
 
     @staticmethod
-    def _stringify_tool_output(*values: Any, default: str) -> str:
-        """Return the first present tool output as displayable text."""
+    def _stringify_tool_output(
+        *values: Any, default: str, raw_fallback: bool = False
+    ) -> str:
+        """Return the first present value as displayable text.
+
+        Shared by tool-result narration and thought extraction: strings pass
+        through; lists contribute joined ``str`` / ``dict["text"]`` entries.
+
+        A list with nothing extractable has two different honest readings
+        depending on the caller:
+
+        - Thought extraction (``raw_fallback=False``, the default): the list is
+          treated as carrying no information, so it is skipped in favor of the
+          next candidate value (or ``default``) rather than becoming a
+          placeholder like ``"[]"``.
+        - Real tool output (``raw_fallback=True``): a non-text list (e.g. an
+          MCP image/resource content block) is still real data, so it is
+          dumped as JSON instead of being discarded.
+        """
+
+        def list_item_text(item: Any) -> str | None:
+            if isinstance(item, str):
+                return item
+            if isinstance(item, dict):
+                text = item.get("text")
+                return text if isinstance(text, str) else None
+            return None
+
         for value in values:
             if value is None:
                 continue
             if isinstance(value, str):
                 return value
             if isinstance(value, list):
-                text_parts: list[str] = []
-                for item in value:
-                    if isinstance(item, dict):
-                        text = item.get("text")
-                        if isinstance(text, str):
-                            text_parts.append(text)
-                    elif isinstance(item, str):
-                        text_parts.append(item)
+                text_parts = [
+                    text for item in value if (text := list_item_text(item)) is not None
+                ]
                 if text_parts:
                     return "\n".join(text_parts)
+                if raw_fallback:
+                    return json.dumps(value, default=str)
+                continue
             return json.dumps(value, default=str)
         return default
 
     @staticmethod
-    def _extract_thought_text(item_type: str, item: dict[str, Any]) -> str:
-        """Extract display text for a thought-like item."""
-        if item_type == "reasoning":
-            summary = item.get("summary", [])
-            if isinstance(summary, list):
-                return "\n".join(str(s) for s in summary) or "(reasoning)"
-            return str(summary) or "(reasoning)"
+    def _extract_thought_text(item_type: str, item: dict[str, Any]) -> str | None:
+        """Extract display text for a thought-like item.
 
-        if item_type == "plan":
-            return str(item.get("text", "")) or "(plan)"
+        Reasoning summaries and plan text go through
+        :meth:`_stringify_tool_output` (single source of truth for turning
+        protocol payloads into display text). Returns ``None`` when nothing
+        informative is present so callers can skip emission instead of posting
+        a placeholder.
+        """
+        match item_type:
+            case CodexItemType.REASONING:
+                text = CodexAdapter._stringify_tool_output(
+                    item.get("summary"), default=""
+                ).strip()
+                return text or None
 
-        if item_type == "contextCompaction":
-            return "Context compaction performed"
+            case CodexItemType.PLAN:
+                text = CodexAdapter._stringify_tool_output(
+                    item.get("text"), default=""
+                ).strip()
+                return text or None
 
-        if item_type in {"enteredReviewMode", "exitedReviewMode"}:
-            text = item.get("text", "")
-            if text:
-                return str(text)
-            return f"Review mode: {item_type}"
+            case CodexItemType.CONTEXT_COMPACTION:
+                return "Context compaction performed"
 
-        return str(item.get("text", "")) or item_type
+            case CodexItemType.ENTERED_REVIEW_MODE | CodexItemType.EXITED_REVIEW_MODE:
+                text = CodexAdapter._stringify_tool_output(
+                    item.get("text"), default=""
+                ).strip()
+                return text or f"Review mode: {item_type}"
+
+            case _:
+                return None
 
     async def _resolve_manual_approval(
         self,
@@ -1955,11 +2380,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise RuntimeError("approval request must have an id")
         token = self._approval_token(event.id, params)
         loop = asyncio.get_running_loop()
-        pending = _PendingApproval(
+        pending = PendingApproval(
             request_id=event.id,
             method=event.method,
             summary=summary,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             future=loop.create_future(),
             session_key=self._session_approval_key(event.method, params),
         )
@@ -2007,23 +2432,44 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 net_ctx = params.get("networkContext") or params.get("network_context")
                 if net_ctx:
                     approval_metadata["codex_network_context"] = net_ctx
-                try:
-                    await tools.send_event(
-                        content=self._build_task_event_content(
-                            task_id=token,
-                            task="Codex approval request",
-                            status="pending",
-                            summary=summary,
-                        ),
-                        message_type="task",
-                        metadata=approval_metadata,
+                await send_event_safe(
+                    tools,
+                    content=self._build_task_event_content(
+                        task_id=token,
+                        task="Codex approval request",
+                        status="pending",
+                        summary=summary,
+                    ),
+                    message_type="task",
+                    metadata=approval_metadata,
+                    log_label="approval request task event",
+                    log_level=logging.DEBUG,
+                )
+            try:
+                await tools.send_message(approval_msg, mentions=mention)
+            except Exception:
+                # The room was never notified, so waiting out the full
+                # approval_wait_timeout_s would misreport a Band delivery
+                # hiccup as a genuine human-decision timeout. Report it now,
+                # rather than letting it silently decline with no signal at
+                # all, same as every other failure path in this file. Re-raise
+                # (rather than returning "decline" here) so the caller's own
+                # except-block attributes this to "system_fallback" instead
+                # of crediting/blaming the human sender for a decision they
+                # were never actually notified about.
+                logger.exception(
+                    "Failed to notify room %s about pending approval %s",
+                    room_id,
+                    token,
+                )
+                await tools.send_failure(
+                    AgentFailure(
+                        CODEX_PROVIDER,
+                        "Failed to notify the room about a pending approval "
+                        "request; defaulting to decline.",
                     )
-                except Exception:
-                    logger.debug(
-                        "Failed to emit approval request task event",
-                        exc_info=True,
-                    )
-            await tools.send_message(approval_msg, mentions=mention)
+                )
+                raise
             decision_raw = await asyncio.wait_for(
                 pending.future,
                 timeout=self.config.approval_wait_timeout_s,
@@ -2031,7 +2477,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if decision_raw in {"accept", "acceptForSession"}:
                 return decision_raw  # type: ignore[return-value]
             return "decline"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timeout_decision = self.config.approval_timeout_decision
             try:
                 await tools.send_message(
@@ -2111,8 +2557,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         room_id: str,
         thread_id: str,
         turn_id: str | None,
-    ) -> None:
-        """Handle an ``error`` notification from Codex."""
+    ) -> bool:
+        """Handle an ``error`` notification from Codex.
+
+        Returns whether a failure was actually reported, so the turn loop can
+        skip a redundant second report if ``turn/completed`` also arrives with
+        a failed status for the same incident.
+        """
         error_obj = params.get("error") or {}
         if isinstance(error_obj, dict):
             error_msg = error_obj.get("message", "")
@@ -2134,29 +2585,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 turn_id,
                 error_msg,
             )
-            return
+            return False
 
         logger.error("Codex error: %s", error_msg)
-        if self.config.structured_errors:
-            content, err_meta = build_structured_error_metadata(
-                error_obj, thread_id=thread_id, turn_id=turn_id
+        await tools.send_failure(
+            build_agent_failure(
+                error_obj, thread_id=thread_id, turn_id=turn_id, room_id=room_id
             )
-            err_meta["codex_room_id"] = room_id
-            await tools.send_event(
-                content=content or f"Codex error: {error_msg}",
-                message_type="error",
-                metadata=err_meta,
-            )
-        else:
-            await tools.send_event(
-                content=f"Codex error: {error_msg}",
-                message_type="error",
-                metadata={
-                    "codex_room_id": room_id,
-                    "codex_thread_id": thread_id,
-                    "codex_turn_id": turn_id,
-                },
-            )
+        )
+        return True
 
     async def _emit_structured_turn_error(
         self,
@@ -2170,19 +2607,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         """Emit a structured error event when turn/completed reports failure."""
         error = turn_payload.get("error")
         if not isinstance(error, dict):
-            return
-        content, err_meta = build_structured_error_metadata(
-            error, thread_id=thread_id, turn_id=turn_id
+            # A falsy scalar (``""``, ``0``, ``None``) has no useful message to
+            # carry; build_agent_failure's own fallback covers it uniformly
+            # instead of shipping a degenerate literal string like "None".
+            error = {"message": str(error)} if error else {}
+        logger.error(
+            "Codex turn failed (thread=%s, turn=%s): %s",
+            thread_id,
+            turn_id,
+            error.get("message", ""),
         )
-        err_meta["codex_room_id"] = room_id
-        try:
-            await tools.send_event(
-                content=content,
-                message_type="error",
-                metadata=err_meta,
+        await tools.send_failure(
+            build_agent_failure(
+                error, thread_id=thread_id, turn_id=turn_id, room_id=room_id
             )
-        except Exception:
-            logger.debug("Failed to emit structured turn error", exc_info=True)
+        )
 
     # ------------------------------------------------------------------
     # Phase 2: Plan step tracking
@@ -2202,24 +2641,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if not steps:
             return
         step_dicts = [{"step": s.step, "status": s.status} for s in steps]
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex plan",
-                    status="updated",
-                    summary=f"{len(steps)} steps",
-                ),
-                message_type="task",
-                metadata={
-                    "codex_plan_steps": step_dicts,
-                    "codex_room_id": room_id,
-                    "codex_thread_id": thread_id,
-                    "codex_turn_id": turn_id,
-                },
-            )
-        except Exception:
-            logger.debug("Failed to forward plan steps", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=self._build_task_event_content(
+                task_id=turn_id,
+                task="Codex plan",
+                status="updated",
+                summary=f"{len(steps)} steps",
+            ),
+            message_type="task",
+            metadata={
+                "codex_plan_steps": step_dicts,
+                "codex_room_id": room_id,
+                "codex_thread_id": thread_id,
+                "codex_turn_id": turn_id,
+            },
+            log_label="plan steps",
+            log_level=logging.DEBUG,
+        )
 
     # ------------------------------------------------------------------
     # Phase 4: Token usage & diffs
@@ -2250,14 +2689,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         metadata = usage.to_metadata()
         metadata["codex_thread_id"] = thread_id
         metadata["codex_room_id"] = room_id
-        try:
-            await tools.send_event(
-                content=usage.format_summary(),
-                message_type="task",
-                metadata=metadata,
-            )
-        except Exception:
-            logger.debug("Failed to emit token usage event", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=usage.format_summary(),
+            message_type="task",
+            metadata=metadata,
+            log_label="token usage event",
+            log_level=logging.DEBUG,
+        )
 
     async def _forward_diff_event(
         self,
@@ -2313,19 +2752,19 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             metadata["codex_diff_truncated"] = True
             metadata["codex_diff_original_length"] = original_length
             metadata["codex_diff_original_bytes"] = original_byte_length
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex diff",
-                    status="updated",
-                    summary=summary,
-                ),
-                message_type="task",
-                metadata=metadata,
-            )
-        except Exception:
-            logger.debug("Failed to forward diff event", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=self._build_task_event_content(
+                task_id=turn_id,
+                task="Codex diff",
+                status="updated",
+                summary=summary,
+            ),
+            message_type="task",
+            metadata=metadata,
+            log_label="diff event",
+            log_level=logging.DEBUG,
+        )
 
     # ------------------------------------------------------------------
     # Phase 1: Approval audit trail
@@ -2365,7 +2804,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             method=method,
             decision=decision,
             decided_by=decided_by,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             summary=summary,
             session_level=session_level,
         )
@@ -2386,27 +2825,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         """Emit a task event for an approval decision."""
         if Emit.TASK_EVENTS not in self.features.emit:
             return
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=str(entry.request_id),
-                    task="Codex approval",
-                    status=entry.decision,
-                    summary=entry.summary,
-                ),
-                message_type="task",
-                metadata={
-                    "codex_event_type": "approval_resolution",
-                    "codex_approval_method": entry.method,
-                    "codex_approval_decision": entry.decision,
-                    "codex_decided_by": entry.decided_by,
-                    "codex_session_level": entry.session_level,
-                    "codex_room_id": room_id,
-                    "codex_timestamp": entry.timestamp,
-                },
-            )
-        except Exception:
-            logger.debug("Failed to emit approval audit event", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=self._build_task_event_content(
+                task_id=str(entry.request_id),
+                task="Codex approval",
+                status=entry.decision,
+                summary=entry.summary,
+            ),
+            message_type="task",
+            metadata={
+                "codex_event_type": "approval_resolution",
+                "codex_approval_method": entry.method,
+                "codex_approval_decision": entry.decision,
+                "codex_decided_by": entry.decided_by,
+                "codex_session_level": entry.session_level,
+                "codex_room_id": room_id,
+                "codex_timestamp": entry.timestamp,
+            },
+            log_label="approval audit event",
+            log_level=logging.DEBUG,
+        )
 
     async def _handle_local_command(
         self,
@@ -2421,7 +2860,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
         if command == "help":
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "Codex commands: "
                 "`/status`, `/model`, `/models`, `/model list`, `/models list`, `/model <id>`, "
                 "`/reasoning [none|minimal|low|medium|high|xhigh]`, "
@@ -2458,13 +2898,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 f"- token_usage: {usage_line}\n"
                 f"- turn_task_markers: {self.config.emit_turn_task_markers}"
             )
-            await tools.send_message(status_text, mentions=mention)
+            await deliver_reply(tools, status_text, mentions=mention)
             return True
 
         if command in {"model", "models"}:
             model_arg = args.strip()
             if not model_arg:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Current model: "
                     f"`{self._selected_model or 'unknown'}` "
                     f"(configured: `{self.config.model or 'auto'}`). "
@@ -2482,20 +2923,25 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     preview = ", ".join(models[:10])
                     if len(models) > 10:
                         preview += ", ..."
-                    await tools.send_message(
+                    await deliver_reply(
+                        tools,
                         f"Available models ({len(models)}): {preview}",
                         mentions=mention,
                     )
                 else:
-                    await tools.send_message(
+                    await deliver_reply(
+                        tools,
                         "No visible models returned by Codex app-server.",
                         mentions=mention,
                     )
                 return True
 
-            self.config.model = model_arg
+            # Model selection belongs to the room's process, never adapter-wide config.
+            state = self._require_active_client_state()
+            state.model_override = model_arg
             self._selected_model = model_arg
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Model override set to `{model_arg}` for subsequent turns.",
                 mentions=mention,
             )
@@ -2504,7 +2950,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if command == "reasoning":
             effort_arg = args.strip().lower()
             if not effort_arg:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
                     f"Use `/reasoning <{'|'.join(sorted(_REASONING_EFFORTS))}>` to override.",
@@ -2512,14 +2959,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 return True
             if effort_arg not in _REASONING_EFFORTS:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Invalid reasoning effort `{effort_arg}`. "
                     f"Valid values: {', '.join(sorted(_REASONING_EFFORTS))}.",
                     mentions=mention,
                 )
                 return True
-            self.config.reasoning_effort = effort_arg  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
-            await tools.send_message(
+            self._require_active_client_state().reasoning_effort = effort_arg
+            await deliver_reply(
+                tools,
                 f"Reasoning effort set to `{effort_arg}` for subsequent turns.",
                 mentions=mention,
             )
@@ -2528,7 +2977,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # --- Phase 1: /sandbox and /permissions commands ---
         if command == "sandbox":
             if self.config.sandbox_policy is not None:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Cannot override sandbox: a `sandbox_policy` is configured. "
                     "Remove `sandbox_policy` from config to use per-room `/sandbox` overrides.",
                     mentions=mention,
@@ -2537,7 +2987,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             mode_arg = args.strip()
             if not mode_arg:
                 effective = self._effective_sandbox(room_id) or "default"
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Current sandbox: `{effective}`. "
                     "Use `/sandbox <read-only|workspace-write|danger-full-access>` to change.",
                     mentions=mention,
@@ -2549,7 +3000,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             confirm_flag = "--confirm" in tokens
             mode_tokens = [tok for tok in tokens if tok != "--confirm"]
             if len(mode_tokens) != 1:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Usage: `/sandbox <read-only|workspace-write|danger-full-access> "
                     "[--confirm]`.",
                     mentions=mention,
@@ -2558,14 +3010,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             mode_token = mode_tokens[0]
             normalized = self._normalize_sandbox_mode(mode_token)
             if normalized is None:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Invalid sandbox mode `{mode_token}`. "
                     "Valid: read-only, workspace-write, danger-full-access.",
                     mentions=mention,
                 )
                 return True
             if normalized == "danger-full-access" and not confirm_flag:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Escalating to `danger-full-access` removes all sandbox "
                     "restrictions. Re-run with `--confirm` to proceed:\n"
                     "`/sandbox danger-full-access --confirm`",
@@ -2580,7 +3034,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     msg.sender_name or msg.sender_type or "unknown",
                 )
             self._sandbox_overrides[room_id] = normalized
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Sandbox mode set to `{normalized}` for subsequent turns in this room.",
                 mentions=mention,
             )
@@ -2604,7 +3059,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         f"  - [{entry.timestamp}] {entry.method}: "
                         f"{entry.decision} by {entry.decided_by}"
                     )
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
         # --- Phase 2: /threads, /thread info, /thread archive ---
@@ -2613,22 +3068,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if command == "threads" or not subcommand:
                 # List all room->thread mappings
                 if not self._room_threads:
-                    await tools.send_message(
-                        "No active thread mappings.", mentions=mention
+                    await deliver_reply(
+                        tools, "No active thread mappings.", mentions=mention
                     )
                     return True
                 lines = ["Active thread mappings:"]
                 for rid, tid in self._room_threads.items():
                     current = " (current)" if rid == room_id else ""
                     lines.append(f"- room `{rid}` → thread `{tid}`{current}")
-                await tools.send_message("\n".join(lines), mentions=mention)
+                await deliver_reply(tools, "\n".join(lines), mentions=mention)
                 return True
 
             if subcommand == "info":
                 mapped_thread = self._room_threads.get(room_id)
                 if not mapped_thread:
-                    await tools.send_message(
-                        "No thread mapped for this room.", mentions=mention
+                    await deliver_reply(
+                        tools, "No thread mapped for this room.", mentions=mention
                     )
                     return True
                 usage = self._token_usage.get(mapped_thread)
@@ -2643,7 +3098,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     f"- room_id: {room_id}\n"
                     f"- token_usage: {usage_line}"
                 )
-                await tools.send_message(info_text, mentions=mention)
+                await deliver_reply(tools, info_text, mentions=mention)
                 return True
 
             if subcommand == "archive":
@@ -2652,7 +3107,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._token_usage.pop(mapped_thread or "", None)
                 self._raw_history_by_room.pop(room_id, None)
                 self._needs_history_injection.discard(room_id)
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Thread `{mapped_thread or 'none'}` archived. "
                     "A new thread will be created on next message.",
                     mentions=mention,
@@ -2665,19 +3121,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if command == "usage":
             mapped_thread = self._room_threads.get(room_id)
             if not mapped_thread:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "No thread mapped for this room — no usage data.",
                     mentions=mention,
                 )
                 return True
             usage = self._token_usage.get(mapped_thread)
             if not usage or usage.total_tokens == 0:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "No token usage recorded for this thread.",
                     mentions=mention,
                 )
                 return True
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Thread `{mapped_thread}` — {usage.format_summary()}",
                 mentions=mention,
             )
@@ -2699,21 +3158,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
         if command == "approvals":
             if not pending:
-                await tools.send_message("No pending approvals.", mentions=mention)
+                await deliver_reply(tools, "No pending approvals.", mentions=mention)
                 return True
             lines = ["Pending approvals:"]
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for token, item in list(pending.items()):
                 age_s = int((now - item.created_at).total_seconds())
                 lines.append(f"- {token}: {item.summary} ({age_s}s)")
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
         if command not in {"approve", "decline", "approve-session"}:
             return False
 
         if not pending:
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "No pending approvals to resolve.",
                 mentions=mention,
             )
@@ -2724,7 +3184,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             selected = pending.get(token)
             if selected is None:
                 available = ", ".join(sorted(pending.keys()))
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Unknown approval id `{token}`. Pending: {available}",
                     mentions=mention,
                 )
@@ -2733,7 +3194,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             token, selected = next(iter(pending.items()))
         else:
             available = ", ".join(sorted(pending.keys()))
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "Multiple approvals pending. "
                 f"Use `/{command} <id>`. Pending: {available}",
                 mentions=mention,
@@ -2749,7 +3211,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # an empty string in _session_approved or report a misleading
         # "Future `` requests will be auto-approved" message to the user.
         if is_session and not selected.session_key:
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Approval `{token}` cannot be resolved as session-level: "
                 "this request has no command signature to match against. "
                 f"Use `/approve {token}` for a one-shot approval instead.",
@@ -2770,13 +3233,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Session-level: register the session key for auto-approval
         if is_session:
             self._record_session_approval(room_id, selected.session_key)
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Approval `{token}` resolved as `acceptForSession` (session-level). "
                 f"Future `{selected.session_key}` requests will be auto-approved.",
                 mentions=mention,
             )
         else:
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Approval `{token}` resolved as `{decision_value}`.",
                 mentions=mention,
             )
@@ -2798,14 +3263,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _apply_turn_overrides(
         self, params: dict[str, Any], *, room_id: str | None = None
     ) -> None:
+        state = self._require_active_client_state()
         params["model"] = self._selected_model
-        params["cwd"] = self.config.cwd
+        params["cwd"] = state.workspace
         params["approvalPolicy"] = self.config.approval_policy
         params["personality"] = self.config.personality
-        if self.config.reasoning_effort is not None:
-            params["effort"] = self.config.reasoning_effort
-        if self.config.reasoning_summary is not None:
-            params["summary"] = self.config.reasoning_summary
+        if state.reasoning_effort or self.config.reasoning_effort:
+            params["effort"] = state.reasoning_effort or self.config.reasoning_effort
+        if state.reasoning_summary or self.config.reasoning_summary:
+            params["summary"] = state.reasoning_summary or self.config.reasoning_summary
         self._apply_turn_sandbox(params, room_id=room_id)
 
     async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -2861,7 +3327,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     # This mapping bridges the two.  If the Codex protocol renames tags,
     # update both this mapping and _canonical_sandbox_key's aliases.
     # Reference: codex-app-server protocol types (thread/start, turn/start).
-    _SANDBOX_MODE_TO_POLICY_TYPE: dict[str, str] = {
+    _SANDBOX_MODE_TO_POLICY_TYPE: ClassVar[dict[str, str]] = {
         "read-only": "readOnly",
         "workspace-write": "workspaceWrite",
         "danger-full-access": "dangerFullAccess",
@@ -2953,26 +3419,30 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
     @staticmethod
     def _approval_summary(method: str, params: dict[str, Any]) -> str:
-        if method == "item/commandExecution/requestApproval":
-            command = params.get("command")
-            if isinstance(command, str) and command:
-                return f"command: {command}"
-            return "command execution"
-        if method == "item/fileChange/requestApproval":
-            reason = params.get("reason")
-            if isinstance(reason, str) and reason:
-                return f"file changes: {reason}"
-            return "file changes"
-        return method
+        match method:
+            case CodexApprovalMethod.COMMAND_EXECUTION:
+                command = params.get("command")
+                if isinstance(command, str) and command:
+                    return f"command: {command}"
+                return "command execution"
+            case CodexApprovalMethod.FILE_CHANGE:
+                reason = params.get("reason")
+                if isinstance(reason, str) and reason:
+                    return f"file changes: {reason}"
+                return "file changes"
+            case _:
+                return method
 
     @staticmethod
     def _approval_type(method: str) -> str:
         """Return a short label for the approval request type."""
-        if method == "item/commandExecution/requestApproval":
-            return "commandExecution"
-        if method == "item/fileChange/requestApproval":
-            return "fileChange"
-        return method
+        match method:
+            case CodexApprovalMethod.COMMAND_EXECUTION:
+                return CodexItemType.COMMAND_EXECUTION.value
+            case CodexApprovalMethod.FILE_CHANGE:
+                return CodexItemType.FILE_CHANGE.value
+            case _:
+                return method
 
     def _session_approval_key(self, method: str, params: dict[str, Any]) -> str:
         """Build a key for session-level auto-approval matching.
@@ -2992,26 +3462,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         ``/approve-session`` into a blanket "approve every future file change"
         switch, which is a security footgun.
         """
-        if method == "item/commandExecution/requestApproval":
-            command = params.get("command")
-            if isinstance(command, str) and command.strip():
-                cmd = command.strip()
-                if self.config.session_approval_granularity == "binary":
-                    return f"commandExecution:{cmd.split()[0]}"
-                return f"commandExecution:{cmd}"
-            # No identifiable command — return empty so session-level approval
-            # is not possible (avoids a blanket wildcard match).
-            return ""
-
-        if method == "item/fileChange/requestApproval":
-            paths = self._extract_file_change_paths(params)
-            if not paths:
-                # No identifiable paths — refuse session-level approval so
-                # one /approve-session can't auto-approve every future file
-                # change in this room.
+        match method:
+            case CodexApprovalMethod.COMMAND_EXECUTION:
+                command = params.get("command")
+                if isinstance(command, str) and command.strip():
+                    cmd = command.strip()
+                    if self.config.session_approval_granularity == "binary":
+                        return f"commandExecution:{cmd.split()[0]}"
+                    return f"commandExecution:{cmd}"
+                # No identifiable command — return empty so session-level
+                # approval is not possible (avoids a blanket wildcard match).
                 return ""
-            # Sort for a stable key regardless of change order.
-            return "fileChange:" + "|".join(sorted(paths))
+
+            case CodexApprovalMethod.FILE_CHANGE:
+                paths = self._extract_file_change_paths(params)
+                if not paths:
+                    # No identifiable paths — refuse session-level approval so
+                    # one /approve-session can't auto-approve every future
+                    # file change in this room.
+                    return ""
+                # Sort for a stable key regardless of change order.
+                return "fileChange:" + "|".join(sorted(paths))
 
         # Unknown method — refuse session-level approval rather than key on
         # the bare method string (which would collapse all future requests

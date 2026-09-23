@@ -9,14 +9,15 @@ bare name, so the adapter strips its own server's prefix at those boundaries.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapter, TurnResultAlreadyReported
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.core.types import AdapterFeatures, Emit, PlatformMessage
+from band.core.types import Emit, PlatformMessage
 
 
 def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
@@ -31,11 +32,7 @@ def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_call_event_uses_bare_name() -> None:
-    from claude_agent_sdk import AssistantMessage, ToolUseBlock
-
-    adapter = ClaudeSDKAdapter(
-        features=AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-    )
+    adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
 
     message = PlatformMessage(
         id="m1",
@@ -46,10 +43,11 @@ async def test_tool_call_event_uses_bare_name() -> None:
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     tools = MagicMock()
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
 
     assistant = AssistantMessage(
         content=[
@@ -57,9 +55,21 @@ async def test_tool_call_event_uses_bare_name() -> None:
         ],
         model="claude-test",
     )
+    result = ResultMessage(
+        subtype="success",
+        duration_ms=100,
+        duration_api_ms=100,
+        is_error=False,
+        num_turns=1,
+        session_id="sess-1",
+        result=None,
+        errors=None,
+        api_error_status=None,
+    )
 
     async def receive():
         yield assistant
+        yield result
 
     client = MagicMock()
     client.query = AsyncMock()
@@ -69,15 +79,16 @@ async def test_tool_call_event_uses_bare_name() -> None:
 
     with patch("band.adapters.claude_sdk.ClaudeSessionManager", return_value=manager):
         await adapter.on_started(agent_name="Bot", agent_description="d")
-        await adapter.on_message(
-            msg=message,
-            tools=tools,
-            history=ClaudeSDKSessionState(text=""),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg=message,
+                tools=tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
     tool_calls = [
         call

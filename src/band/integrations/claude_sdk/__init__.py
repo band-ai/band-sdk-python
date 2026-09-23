@@ -15,8 +15,8 @@ Use the new composition-based pattern instead:
 Internal modules (session_manager, prompts) are used by the new adapter.
 """
 
-from .session_manager import ClaudeSessionManager
 from .prompts import generate_claude_sdk_agent_prompt
+from .session_manager import ClaudeSessionManager
 
 __all__ = [
     "ClaudeSessionManager",

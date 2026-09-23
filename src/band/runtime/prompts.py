@@ -2,8 +2,8 @@
 System prompt rendering for Band agents.
 
 Combines agent identity + custom instructions + base environment instructions.
-Capability-gated: memory/contact tool instruction sections are only included
-when the corresponding AdapterFeatures capabilities are enabled.
+Capability-gated: memory/contact/file tool instruction sections are only
+included when the corresponding AdapterFeatures capabilities are enabled.
 
 Example:
     from band.runtime.prompts import render_system_prompt
@@ -26,11 +26,10 @@ from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
     MemorySystem,
-    WorkingLongTermMemoryType,
+    MemoryType,
     enum_values,
 )
 from band.core.types import AdapterFeatures, Capability
-
 
 # Base instructions appended to user's custom prompt
 BASE_INSTRUCTIONS = """
@@ -89,10 +88,10 @@ Use `band_supersede_memory` to mark outdated memories and
 
 
 _MEMORY_COMMON_PATTERNS = f"""Common patterns:
-- Facts learned about other agents/entities: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
-- Events that occurred: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.EPISODIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
-- User preferences or profile info: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.USER.value}"`
-- How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
+- Facts learned about other agents/entities: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- Events that occurred: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.EPISODIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- User preferences or profile info: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.USER.value}"`
+- How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
 
 
 _MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` whenever the memory is about a specific person or agent, so it
@@ -102,8 +101,12 @@ real `subject_id` UUID: for someone in the current room (e.g. the user you are t
 A handle or name is never a valid `subject_id` — always look up the UUID `id` field.
 A memory the sender frames about themselves in the first person ("me", "my", "I") has that sender
 as its subject, so resolve the sender's `id` — not your own.
+Default to `scope="{MemoryStoreScope.AGENT.value}"` for anything private to you that is not about one
+subject and is not meant to be shared org-wide — this always works, whether or not you belong to an
+organization.
 Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization
-and is not about any one subject (e.g. cross-room memories not tied to one subject).
+and is not about any one subject (e.g. cross-room memories not tied to one subject). This requires
+your owner to belong to an organization; it fails otherwise.
 """
 
 
@@ -117,14 +120,7 @@ must use these exact values (case-sensitive):
 - **segment**: {_quote_choices(enum_values(MemorySegment))}
 - **scope**: {_quote_choices(enum_values(MemoryStoreScope))}"""
 
-    return "\n\n".join(
-        [
-            _MEMORY_INTRO.strip(),
-            field_rules.strip(),
-            _MEMORY_COMMON_PATTERNS.strip(),
-            _MEMORY_SCOPE_GUIDANCE.strip(),
-        ]
-    )
+    return f"{_MEMORY_INTRO.strip()}\n\n{field_rules.strip()}\n\n{_MEMORY_COMMON_PATTERNS.strip()}\n\n{_MEMORY_SCOPE_GUIDANCE.strip()}"
 
 
 MEMORY_SECTION = _memory_section()
@@ -134,6 +130,14 @@ CONTACT_SECTION = """
 You have access to contact management tools. Use `band_list_contacts`
 to see your contacts, `band_add_contact` to send contact requests,
 and `band_respond_contact_request` to handle incoming requests.
+"""
+FILES_SECTION = """
+## Room File Tools
+
+You have access to file tools for the current room. Use
+`band_list_room_files` to see files shared in the room, `band_read_room_file`
+to fetch one by id, and `band_send_room_file` to upload text content as a
+file and share it in the room.
 """
 
 # Backward-compatible template dict — DEPRECATED.
@@ -179,23 +183,30 @@ def render_system_prompt(
     """
     identity = f"You are {agent_name}, {agent_description}."
 
+    # Capability-gated sections: independent of include_base_instructions, so a
+    # minimal-prompt caller (e.g. an adapter whose own CLI/agent already supplies
+    # base behavior) still tells the model about tools its capabilities enabled.
+    capability_sections: list[str] = []
+    if features:
+        if Capability.MEMORY in features.capabilities:
+            capability_sections.append(MEMORY_SECTION.strip())
+        if Capability.CONTACTS in features.capabilities:
+            capability_sections.append(CONTACT_SECTION.strip())
+        if Capability.FILES in features.capabilities:
+            capability_sections.append(FILES_SECTION.strip())
+
     if not include_base_instructions:
-        # Minimal prompt: identity + adapter sections + custom section only
-        parts = [identity, *(s.strip() for s in extra_sections)]
+        # Minimal prompt: identity + capability/adapter sections + custom section.
+        parts = [
+            identity,
+            *capability_sections,
+            *(s.strip() for s in extra_sections),
+        ]
         if custom_section:
             parts.append(custom_section)
         return "\n\n".join(parts)
 
-    parts = [identity]
-    parts.append(BASE_INSTRUCTIONS.strip())
-
-    # Capability-gated sections
-    if features:
-        if Capability.MEMORY in features.capabilities:
-            parts.append(MEMORY_SECTION.strip())
-        if Capability.CONTACTS in features.capabilities:
-            parts.append(CONTACT_SECTION.strip())
-
+    parts = [identity, BASE_INSTRUCTIONS.strip(), *capability_sections]
     parts.extend(s.strip() for s in extra_sections)
 
     # Developer instructions at the end

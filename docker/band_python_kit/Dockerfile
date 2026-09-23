@@ -3,7 +3,7 @@
 # pin human-legible; the digest is what actually gets resolved — re-pin by
 # passing --build-arg to bump either, but always keep both in sync (the tag
 # is documentation, not an independent fallback).
-ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
 # Shared by both stages so the venv is built at the exact absolute path it
 # will live at in the runtime image — see UV_PROJECT_ENVIRONMENT below.
@@ -30,6 +30,13 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
+# The lockfile's [tool.uv.workspace] includes packages/* (today, only
+# band-mcp); `uv sync --locked` validates every member's pyproject.toml
+# against the lock even though this image only installs the root band-sdk
+# project, so --locked fails as stale without it. Verified: only the
+# manifest is read for that check, not the member's src/ or README — a
+# second workspace member under packages/ needs its own line here too.
+COPY packages/band-mcp/pyproject.toml ./packages/band-mcp/pyproject.toml
 
 # Prefer HTTPS for GitHub URLs to avoid SSH key requirements in container builds.
 RUN git config --global --add url."https://github.com/".insteadOf "git@github.com:" \

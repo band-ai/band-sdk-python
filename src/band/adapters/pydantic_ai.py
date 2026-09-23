@@ -1,7 +1,9 @@
 """
 Pydantic AI adapter using SimpleAdapter pattern.
 
-Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
+Owns the agent lifecycle only — prompt, history, streaming, custom tools. The
+built-in Band tool surface is built by
+``band.integrations.pydantic_ai.tools.build_band_pydantic_ai_tools``.
 """
 
 from __future__ import annotations
@@ -9,22 +11,23 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import warnings
 from collections.abc import Callable
 from typing import Any, ClassVar, get_origin, get_type_hints
 
-import httpx
+from band_sdk_core import AgentFailure
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstrumentationSettings,
     RunContext,
     UnexpectedModelBehavior,
     capture_run_messages,
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -33,24 +36,27 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext
+from typing_extensions import Unpack
 
-from band_rest.core.api_error import ApiError
-
-from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
-from band.core.types import (
-    AdapterFeatures,
-    Capability,
-    Emit,
-    PlatformMessage,
-    ToolEventKey,
-    TurnUsage,
-)
 from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
 )
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import (
+    Capability,
+    Emit,
+    FeatureKwargs,
+    PlatformMessage,
+    ToolEventKey,
+    TurnUsage,
+)
+from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
@@ -60,13 +66,15 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
-    get_tool_description,
+    image_block_placeholder,
     is_terminal_success,
     missing_reply_error,
-    serialize_tool_result,
+    redact_tool_call_args,
 )
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "pydantic_ai"
 
 
 OUTPUT_RETRIES_EXHAUSTED = "exceeded maximum output retries"
@@ -202,8 +210,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
 
-    Uses Pydantic AI's Agent for LLM interactions,
-    with platform tools registered via @agent.tool decorators.
+    Uses Pydantic AI's Agent for LLM interactions, built with the platform
+    tools ``band.integrations.pydantic_ai.tools`` derives from the registry.
 
     Example:
         adapter = PydanticAIAdapter(
@@ -214,9 +222,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -224,11 +232,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         model: str,
         system_prompt: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: PydanticAIHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        instrument: bool | InstrumentationSettings | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Pydantic AI adapter.
@@ -240,8 +247,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 ``openai-chat:`` for Chat Completions.
             system_prompt: Optional custom system prompt (overrides default)
             custom_section: Optional custom section added to default system prompt
-            enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
-            enable_memory_tools: Deprecated. Use features=AdapterFeatures(capabilities={Capability.MEMORY}).
             history_converter: Optional custom history converter
             additional_tools: Optional list of PydanticAI-compatible tool functions
                 and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
@@ -250,42 +255,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 and is registered via agent.tool() alongside platform tools. A
                 context-free callable (no leading ``RunContext``) goes to
                 agent.tool_plain() instead — pydantic-ai rejects it on the other path.
-            features: Shared adapter feature settings (capabilities, emit, tool filters).
+            instrument: OpenTelemetry instrumentation for the pydantic-ai agent.
+                ``None`` (default) inherits whatever ``Agent.instrument_all()`` the
+                host set, ``False`` opts this agent out of it, ``True`` enables
+                pydantic-ai's defaults, and an ``InstrumentationSettings`` customizes
+                them (for example a specific ``tracer_provider``). Band never creates
+                a provider or exporter — the host owns the telemetry pipeline; see
+                ``examples/opentelemetry/``.
+            **features: emit, capabilities, include_tools, exclude_tools,
+                include_categories -- see FeatureKwargs.
         """
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or PydanticAIHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
         self.system_prompt = system_prompt
         self.custom_section = custom_section
+        self.instrument = instrument
         self._system_prompt: str | None = None
 
         self._agent: Agent[AgentToolsProtocol, str | None] | None = None
@@ -312,9 +300,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._agent = self._create_agent()
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
-    # --- Copied from BandPydanticAgent._create_agent ---
     def _create_agent(self) -> Agent[AgentToolsProtocol, str | None]:
-        """Create Pydantic AI Agent with platform tools."""
+        """Create the Pydantic AI Agent: prompt, run policy, and tools."""
         system = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
             agent_description=self.agent_description or "An AI assistant",
@@ -363,303 +350,16 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 ProcessHistory(_drop_non_replayable_messages),
                 Hooks(after_model_request=_drop_blank_text),
             ],
+            # The built-in Band surface, selected and built from the tool
+            # registry. Custom tools keep their own registration paths below.
+            tools=build_band_pydantic_ai_tools(self.features),
         )
 
-        # Register platform tools dynamically from centralized definitions
-        # All tools catch exceptions and return error strings so LLM can see failures
-
-        async def band_send_message(
-            ctx: RunContext[AgentToolsProtocol],
-            content: str,
-            mentions: list[str],
-        ) -> dict[str, Any] | str:
-            try:
-                return await ctx.deps.send_message(content, mentions)
-            except Exception as e:
-                return f"Error sending message: {e}"
-
-        band_send_message.__doc__ = get_tool_description("band_send_message")
-        agent.tool(band_send_message)
-
-        async def band_send_event(
-            ctx: RunContext[AgentToolsProtocol],
-            content: str,
-            message_type: str,
-            metadata: dict[str, Any] | None = None,
-        ) -> dict[str, Any] | str:
-            try:
-                return await ctx.deps.send_event(content, message_type, metadata)
-            except Exception as e:
-                return f"Error sending event: {e}"
-
-        band_send_event.__doc__ = get_tool_description("band_send_event")
-        agent.tool(band_send_event)
-
-        async def band_add_participant(
-            ctx: RunContext[AgentToolsProtocol],
-            identifier: str,
-            role: str = "member",
-        ) -> dict[str, Any] | str:
-            try:
-                return await ctx.deps.add_participant(identifier, role)
-            except Exception as e:
-                return f"Error adding participant '{identifier}': {e}"
-
-        band_add_participant.__doc__ = get_tool_description("band_add_participant")
-        agent.tool(band_add_participant)
-
-        async def band_remove_participant(
-            ctx: RunContext[AgentToolsProtocol],
-            identifier: str,
-        ) -> dict[str, Any] | str:
-            try:
-                return await ctx.deps.remove_participant(identifier)
-            except Exception as e:
-                return f"Error removing participant '{identifier}': {e}"
-
-        band_remove_participant.__doc__ = get_tool_description(
-            "band_remove_participant"
-        )
-        agent.tool(band_remove_participant)
-
-        async def band_lookup_peers(
-            ctx: RunContext[AgentToolsProtocol],
-            page: int = 1,
-            page_size: int = 50,
-        ) -> dict[str, Any] | str:
-            try:
-                return serialize_tool_result(
-                    await ctx.deps.lookup_peers(page, page_size)
-                )
-            except Exception as e:
-                return f"Error looking up peers: {e}"
-
-        band_lookup_peers.__doc__ = get_tool_description("band_lookup_peers")
-        agent.tool(band_lookup_peers)
-
-        async def band_get_participants(
-            ctx: RunContext[AgentToolsProtocol],
-        ) -> list[dict[str, Any]] | str:
-            try:
-                return await ctx.deps.get_participants()
-            except Exception as e:
-                return f"Error getting participants: {e}"
-
-        band_get_participants.__doc__ = get_tool_description("band_get_participants")
-        agent.tool(band_get_participants)
-
-        async def band_create_chatroom(
-            ctx: RunContext[AgentToolsProtocol],
-            task_id: str | None = None,
-        ) -> str:
-            try:
-                return await ctx.deps.create_chatroom(task_id)
-            except Exception as e:
-                return f"Error creating chatroom (task_id={task_id}): {e}"
-
-        band_create_chatroom.__doc__ = get_tool_description("band_create_chatroom")
-        agent.tool(band_create_chatroom)
-
-        # Contact management tools (opt-in via Capability.CONTACTS)
-        if Capability.CONTACTS in self.features.capabilities:
-
-            async def band_list_contacts(
-                ctx: RunContext[AgentToolsProtocol],
-                page: int = 1,
-                page_size: int = 50,
-            ) -> dict[str, Any] | str:
-                try:
-                    return serialize_tool_result(
-                        await ctx.deps.list_contacts(page, page_size)
-                    )
-                except Exception as e:
-                    return f"Error listing contacts: {e}"
-
-            band_list_contacts.__doc__ = get_tool_description("band_list_contacts")
-            agent.tool(band_list_contacts)
-
-            async def band_add_contact(
-                ctx: RunContext[AgentToolsProtocol],
-                handle: str,
-                message: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.add_contact(handle, message)
-                except Exception as e:
-                    return f"Error adding contact '{handle}': {e}"
-
-            band_add_contact.__doc__ = get_tool_description("band_add_contact")
-            agent.tool(band_add_contact)
-
-            async def band_remove_contact(
-                ctx: RunContext[AgentToolsProtocol],
-                handle: str | None = None,
-                contact_id: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.remove_contact(handle, contact_id)
-                except Exception as e:
-                    return f"Error removing contact: {e}"
-
-            band_remove_contact.__doc__ = get_tool_description("band_remove_contact")
-            agent.tool(band_remove_contact)
-
-            async def band_list_contact_requests(
-                ctx: RunContext[AgentToolsProtocol],
-                page: int = 1,
-                page_size: int = 50,
-                sent_status: str = "pending",
-            ) -> dict[str, Any] | str:
-                try:
-                    return serialize_tool_result(
-                        await ctx.deps.list_contact_requests(
-                            page, page_size, sent_status
-                        )
-                    )
-                except Exception as e:
-                    return f"Error listing contact requests: {e}"
-
-            band_list_contact_requests.__doc__ = get_tool_description(
-                "band_list_contact_requests"
-            )
-            agent.tool(band_list_contact_requests)
-
-            async def band_respond_contact_request(
-                ctx: RunContext[AgentToolsProtocol],
-                action: str,
-                handle: str | None = None,
-                request_id: str | None = None,
-            ) -> dict[str, Any] | str:
-                logger.info(
-                    "band_respond_contact_request called: action=%s, handle=%s, request_id=%s",
-                    action,
-                    handle,
-                    request_id,
-                )
-                try:
-                    result = await ctx.deps.respond_contact_request(
-                        action, handle, request_id
-                    )
-                    logger.info("band_respond_contact_request result: %s", result)
-                    return result
-                except Exception as e:
-                    logger.error("band_respond_contact_request error: %s", e)
-                    error_msg = f"Error responding to contact request: {e}"
-                    # Auto-send error event so it's visible in the room
-                    try:
-                        await ctx.deps.send_event(error_msg, "error")
-                    except Exception:
-                        pass  # Don't fail if error reporting fails
-                    return error_msg
-
-            band_respond_contact_request.__doc__ = get_tool_description(
-                "band_respond_contact_request"
-            )
-            agent.tool(band_respond_contact_request)
-
-        # Memory management tools (enterprise only - opt-in)
-        if Capability.MEMORY in self.features.capabilities:
-
-            async def band_list_memories(
-                ctx: RunContext[AgentToolsProtocol],
-                subject_id: str | None = None,
-                scope: str | None = None,
-                system: str | None = None,
-                type: str | None = None,
-                segment: str | None = None,
-                content_query: str | None = None,
-                page_size: int = 50,
-                status: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    response = await ctx.deps.list_memories(
-                        subject_id=subject_id,
-                        scope=scope,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        content_query=content_query,
-                        page_size=page_size,
-                        status=status,
-                    )
-                    return serialize_tool_result(response)
-                except Exception as e:
-                    return f"Error listing memories: {e}"
-
-            band_list_memories.__doc__ = get_tool_description("band_list_memories")
-            agent.tool(band_list_memories)
-
-            async def band_store_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                content: str,
-                system: str,
-                type: str,
-                segment: str,
-                thought: str,
-                scope: str,
-                subject_id: str | None = None,
-                metadata: dict[str, Any] | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return serialize_tool_result(
-                        await ctx.deps.store_memory(
-                            content=content,
-                            system=system,
-                            type=type,
-                            segment=segment,
-                            thought=thought,
-                            scope=scope,
-                            subject_id=subject_id,
-                            metadata=metadata,
-                        )
-                    )
-                except Exception as e:
-                    return f"Error storing memory: {e}"
-
-            band_store_memory.__doc__ = get_tool_description("band_store_memory")
-            agent.tool(band_store_memory)
-
-            async def band_get_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                memory_id: str,
-            ) -> dict[str, Any] | str:
-                try:
-                    return serialize_tool_result(await ctx.deps.get_memory(memory_id))
-                except Exception as e:
-                    return f"Error getting memory: {e}"
-
-            band_get_memory.__doc__ = get_tool_description("band_get_memory")
-            agent.tool(band_get_memory)
-
-            async def band_supersede_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                memory_id: str,
-            ) -> dict[str, Any] | str:
-                try:
-                    return serialize_tool_result(
-                        await ctx.deps.supersede_memory(memory_id)
-                    )
-                except Exception as e:
-                    return f"Error superseding memory: {e}"
-
-            band_supersede_memory.__doc__ = get_tool_description(
-                "band_supersede_memory"
-            )
-            agent.tool(band_supersede_memory)
-
-            async def band_archive_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                memory_id: str,
-            ) -> dict[str, Any] | str:
-                try:
-                    return serialize_tool_result(
-                        await ctx.deps.archive_memory(memory_id)
-                    )
-                except Exception as e:
-                    return f"Error archiving memory: {e}"
-
-            band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
-            agent.tool(band_archive_memory)
+        # Instrumentation is a property, not a constructor argument, so it is
+        # assigned rather than passed. Always assigned: the tri-state is meaningful
+        # end to end — None is pydantic-ai's own "inherit Agent.instrument_all()",
+        # which is exactly what a caller who passed nothing wants.
+        agent.instrument = self.instrument
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on
         # the path their signature calls for — pydantic-ai keeps the two apart.
@@ -772,19 +472,22 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) as events:
                 async for event in events:
                     if isinstance(event, FunctionToolCallEvent):
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.ARGS: event.part.args,
+                                            ToolEventKey.ARGS: redact_tool_call_args(
+                                                event.part.tool_name,
+                                                event.part.args_as_dict(),
+                                            ),
                                             ToolEventKey.TOOL_CALL_ID: event.part.tool_call_id,
                                         }
                                     ),
                                     message_type="tool_call",
                                 )
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
                         # Custom tools count as terminal only if they opted in
@@ -799,21 +502,32 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             custom_terminal=result_name in self._custom_terminal_names,
                         ):
                             tool_executed = True
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
+                            output = event.part.content
+                            if (
+                                isinstance(output, list)
+                                and output
+                                and all(
+                                    isinstance(item, BinaryContent) for item in output
+                                )
+                            ):
+                                # str() on BinaryContent embeds its raw `data`
+                                # bytes -- band_read_room_file's image result
+                                # would otherwise dump the full file into this
+                                # event instead of a bounded placeholder.
+                                output = image_block_placeholder(len(output))
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.OUTPUT: str(
-                                                event.part.content
-                                            ),
+                                            ToolEventKey.OUTPUT: str(output),
                                             ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
                                         }
                                     ),
                                     message_type="tool_result",
                                 )
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning(
                                     "Failed to send tool_result event: %s", e
                                 )
@@ -836,17 +550,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 room_id,
                                 dropped,
                             )
-        except UnexpectedModelBehavior as e:
+        except Exception as e:
             # A turn that already did its work must not fail over the reply the model
             # owes pydantic-ai. Allowing `None` — and normalizing blank text into it
             # — ends the ordinary nothing-left-to-say response cleanly, but some
             # other response the run cannot turn into output can still spend the
             # refused output budget. Once a terminal tool has run (a
             # band_send_message reply, a band_store_memory, ...) the work already went
-            # out, so that exhaustion is benign — mirror the crewai adapter and
-            # swallow it. Genuine no-response failures (no terminal tool ran — only
-            # read-only lookups or failed tools) still propagate.
-            if tool_executed and _is_output_retries_exhausted(e):
+            # out, so that exhaustion is benign — swallow it. Every other exception —
+            # a different UnexpectedModelBehavior, or any other type now that this
+            # catches broadly for send_failure reporting — still surfaces and
+            # propagates. Unlike the crewai adapter, which cannot tell a genuine
+            # failure apart from the empty completion that ends its every turn,
+            # pydantic-ai raises the exhausted-retries case as its own distinct type,
+            # so the isinstance check (not just the message match) is load-bearing.
+            if (
+                tool_executed
+                and isinstance(e, UnexpectedModelBehavior)
+                and _is_output_retries_exhausted(e)
+            ):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted its output retries after "
                     "the agent already did productive work this turn; treating as "
@@ -866,6 +588,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 return
+            logger.exception("Room %s: Pydantic AI turn failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
         finally:
             capture_cm.__exit__(None, None, None)
@@ -885,7 +611,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # either answered in plain text or said nothing at all. Surface it as an
         # error (mirrors the crewai adapter) instead of letting it vanish.
         if not tool_executed:
-            await self._report_error(tools, missing_reply_error("Pydantic AI"))
+            logger.warning(
+                "Room %s: Pydantic AI turn produced nothing for the room", room_id
+            )
+            detail = missing_reply_error("Pydantic AI")
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
+            raise TurnResultAlreadyReported(detail)
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
@@ -922,7 +653,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         """
         try:
             usage = result.usage
-        except Exception as e:  # pragma: no cover - defensive; usage is best-effort
+        except Exception as e:  # pragma: no cover - defensive; usage is best-effort  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Could not read pydantic-ai run usage: %s", e)
             return TurnUsage()
         return PydanticAIAdapter._usage_from_usage_obj(usage)
@@ -960,18 +691,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             if isinstance(message, ModelResponse):
                 total = total + PydanticAIAdapter._usage_from_usage_obj(message.usage)
         return total
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send an error event to the room (best effort).
-
-        Structurally mirrors the crewai adapter, but narrows the catch to the REST
-        call's real failure modes (ApiError = HTTP status, httpx = transport) so a
-        failed error-report never crashes the turn — while a real bug still raises.
-        """
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except (ApiError, httpx.HTTPError) as e:
-            logger.warning("Failed to send error event: %s", e)
 
     # --- Copied from BandPydanticAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:

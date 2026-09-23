@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, MessagesState, StateGraph
 
-from band.adapters.langgraph import LangGraphAdapter
+from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD, LangGraphAdapter
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import PlatformMessage
 
 from .helpers import make_capture_graph
@@ -124,8 +127,6 @@ class TestOnCleanup:
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
         """Should log a warning when _bootstrapped_rooms reaches threshold."""
-        from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD
-
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
@@ -136,7 +137,7 @@ class TestOnCleanup:
             (f"room-{i}", None) for i in range(_BOOTSTRAP_TRACKING_WARN_THRESHOLD)
         )
 
-        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
+        mock_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with (
@@ -213,9 +214,6 @@ class TestOnCleanup:
         self, mock_tools
     ):
         """Persistent checkpointer state should suppress duplicate bootstrap history."""
-        from langgraph.checkpoint.memory import InMemorySaver
-        from langgraph.graph import END, START, MessagesState, StateGraph
-
         checkpointer = InMemorySaver()
         seen_contents: list[list[str]] = []
         seen_system_counts: list[int] = []
@@ -246,7 +244,7 @@ class TestOnCleanup:
                 sender_name="Alice",
                 message_type="text",
                 metadata={},
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
             tools=mock_tools,
             history=[HumanMessage(content="hydrated prior turn")],
@@ -268,7 +266,7 @@ class TestOnCleanup:
                 sender_name="Alice",
                 message_type="text",
                 metadata={},
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
             tools=mock_tools,
             history=[HumanMessage(content="hydrated prior turn")],
@@ -284,8 +282,6 @@ class TestOnCleanup:
 
     @pytest.mark.asyncio
     async def test_empty_checkpointer_state_still_allows_bootstrap_hydration(self):
-        from langgraph.checkpoint.memory import InMemorySaver
-
         adapter = LangGraphAdapter(graph=MagicMock(), inject_system_prompt=True)
 
         assert (
@@ -309,7 +305,7 @@ class TestErrorHandling:
         await adapter.on_started("TestBot", "Test bot")
 
         async def failing_stream(*args, **kwargs):
-            raise Exception("Graph error!")
+            raise RuntimeError("Graph error!")
             yield  # Make it async generator
 
         mock_graph = MagicMock()
@@ -332,11 +328,48 @@ class TestErrorHandling:
                     room_id="room-123",
                 )
 
-            # Should have tried to report an error event, AND that event
-            # must NOT include the raw exception text (it can carry DB
-            # strings, paths, tokens, etc.). The full traceback only goes
-            # to the agent log via logger.exception.
-            mock_tools.send_event.assert_awaited()
-            call_kwargs = mock_tools.send_event.call_args.kwargs
-            assert call_kwargs["message_type"] == "error"
-            assert "Graph error!" not in call_kwargs["content"]
+            # Should have tried to report a failure, AND that failure must
+            # NOT include the raw exception text anywhere -- message, code,
+            # or detail (it can carry DB strings, paths, tokens, etc.). The
+            # full traceback only goes to the agent log via logger.exception.
+            mock_tools.send_failure.assert_awaited_once()
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "langgraph"
+            assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+            assert failure.code is None
+            assert failure.detail is None
+
+    @pytest.mark.asyncio
+    async def test_reports_error_when_graph_factory_yields_no_graph(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """A bad graph factory's RuntimeError must be reported, not escape unreported."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
+        await adapter.on_started("TestBot", "Test bot")
+        adapter.graph_factory = MagicMock(return_value=None)
+
+        with patch(
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.return_value = []
+
+            with pytest.raises(RuntimeError, match="No graph available"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "langgraph"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert failure.code is None
+        assert failure.detail is None

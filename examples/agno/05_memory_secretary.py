@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]", "anthropic>=0.75.0"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
 # ///
 """
 Agno agent with Band memory tools enabled.
@@ -34,18 +31,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability
 
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -62,50 +57,36 @@ SECRETARY_INSTRUCTIONS = (
 )
 
 
-def get_required_env(name: str) -> str:
-    """Return a required environment variable or raise a clear error."""
-    value = os.environ.get(name)
-    if not value:
-        raise ValueError(f"{name} environment variable is required")
-    return value
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
-
-def load_environment() -> tuple[str, str]:
-    """Load env vars, validate credentials, and return (ws_url, rest_url)."""
-    load_dotenv()
-
-    get_required_env("ANTHROPIC_API_KEY")
-    ws_url = get_required_env("BAND_WS_URL")
-    rest_url = get_required_env("BAND_REST_URL")
-    return ws_url, rest_url
+    anthropic_api_key: str
+    anthropic_model: str = "claude-sonnet-4-6"
 
 
 async def main() -> None:
-    ws_url, rest_url = load_environment()
+    load_dotenv()
+    LogSettings().for_application().configure()
+    settings = Settings()
 
     agno_agent = AgnoAgent(
-        model=Claude(id=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")),
+        model=Claude(id=settings.anthropic_model),
         instructions=SECRETARY_INSTRUCTIONS,
     )
 
-    adapter = AgnoAdapter(
-        agno_agent,
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY},
-            # Useful while learning: memory tool calls are visible as room events.
-            emit={Emit.EXECUTION},
-        ),
-    )
-
-    agent = Agent.from_config(
-        "agno_agent",
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
+    # capabilities=Capability.MEMORY exposes Band memory tools. Emit defaults
+    # to everything the adapter supports, so memory tool calls are visible as
+    # room events without an explicit emit=.
+    adapter = AgnoAdapter(agno_agent, capabilities=Capability.MEMORY)
 
     logger.info("Starting Agno memory secretary...")
-    await agent.run()
+    async with Agent.from_config(
+        "agno_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

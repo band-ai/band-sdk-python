@@ -1,7 +1,7 @@
 """Tests for idle-timeout resync and reconnect resync (INT-333).
 
 Covers:
-- request_resync() enqueues _ResyncRequest sentinel
+- request_resync() enqueues ResyncRequest sentinel
 - Sentinel wakes Phase 2 loop and calls _resync_pending_messages()
 - Idle timeout calls _resync_pending_messages() after configured seconds
 - _resync_pending_messages() happy path: processes missed message
@@ -14,28 +14,17 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.execution import ExecutionContext, _ResyncRequest
+from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.presence import RoomPresence
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage, SessionConfig
-
-
-async def wait_for_condition(
-    predicate, *, timeout: float = 1.0, interval: float = 0.01
-) -> None:
-    """Wait until a predicate becomes true, failing fast on timeout."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate():
-            return
-        await asyncio.sleep(interval)
-    pytest.fail("Timed out waiting for condition")
-
+from tests.conftest import make_message_event
+from tests.runtime.conftest import admit_room, wait_for_condition
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -102,7 +91,7 @@ def make_platform_message(
         sender_name="Tester",
         message_type="text",
         metadata={},
-        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 
@@ -115,14 +104,14 @@ class TestRequestResync:
     """Tests for ExecutionContext.request_resync()."""
 
     async def test_enqueues_resync_sentinel(self, mock_link, mock_handler):
-        """request_resync() should put a _ResyncRequest onto the queue."""
+        """request_resync() should put a ResyncRequest onto the queue."""
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
 
         await ctx.request_resync()
 
         assert ctx.queue.qsize() == 1
         item = ctx.queue.get_nowait()
-        assert isinstance(item, _ResyncRequest)
+        assert isinstance(item, ResyncRequest)
 
     async def test_sentinel_triggers_resync(self, mock_link, mock_handler):
         """Enqueueing a sentinel should cause the Phase 2 loop to call /next."""
@@ -187,8 +176,6 @@ class TestIdleTimeout:
         self, mock_link, mock_handler
     ):
         """If events arrive before timeout, resync should not add extra /next calls."""
-        from tests.conftest import make_message_event
-
         config = SessionConfig(idle_resync_seconds=60)  # very long timeout
         ctx = ExecutionContext("room-1", mock_link, mock_handler, config=config)
         await ctx.start()
@@ -461,7 +448,7 @@ class TestPresenceReconnectOnReconnectedCallback:
         )
 
         presence = RoomPresence(mock_presence_link, auto_subscribe_existing=True)
-        presence.rooms = {"room-old"}
+        admit_room(presence, "room-old")
         presence.on_reconnected = on_reconnected
 
         await presence._handle_reconnect()

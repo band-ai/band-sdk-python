@@ -25,7 +25,7 @@ LangChainMessages = list[AIMessage | HumanMessage | ToolMessage]
 
 
 @dataclass
-class _PendingToolCall:
+class PendingToolCall:
     name: str
     args: dict[str, Any]
     match_ids: tuple[str, ...]
@@ -33,7 +33,7 @@ class _PendingToolCall:
 
 
 @dataclass
-class _ParsedToolResult:
+class LangChainParsedToolResult:
     name: str
     output: Any
     match_ids: tuple[str, ...]
@@ -77,7 +77,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
     def convert(self, raw: list[dict[str, Any]]) -> LangChainMessages:
         """Convert platform history to LangChain messages."""
         messages: LangChainMessages = []
-        pending_tool_calls: list[_PendingToolCall | dict[str, Any]] = []
+        pending_tool_calls: list[PendingToolCall | dict[str, Any]] = []
 
         for hist in raw:
             message_type = hist.get("message_type", "text")
@@ -89,7 +89,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
                 parsed_call = parse_tool_call(content)
                 if parsed_call:
                     pending_tool_calls.append(
-                        _PendingToolCall(
+                        PendingToolCall(
                             name=parsed_call.name,
                             args=parsed_call.args,
                             match_ids=(parsed_call.tool_call_id,),
@@ -105,7 +105,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
             elif message_type == "tool_result":
                 parsed_result = parse_tool_result(content)
                 if parsed_result:
-                    tool_result = _ParsedToolResult(
+                    tool_result = LangChainParsedToolResult(
                         name=parsed_result.name,
                         output=parsed_result.output,
                         match_ids=(parsed_result.tool_call_id,),
@@ -176,11 +176,11 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
 
     @staticmethod
     def _pop_matching_tool_call(
-        pending_tool_calls: list[_PendingToolCall | dict[str, Any]],
+        pending_tool_calls: list[PendingToolCall | dict[str, Any]],
         *,
         tool_name: str,
         match_ids: tuple[str, ...],
-    ) -> _PendingToolCall | dict[str, Any] | None:
+    ) -> PendingToolCall | dict[str, Any] | None:
         for match_id in match_ids:
             for i, call in enumerate(pending_tool_calls):
                 call_match_ids = LangChainHistoryConverter._call_match_ids(call)
@@ -218,8 +218,8 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         return None
 
     @staticmethod
-    def _call_match_ids(call: _PendingToolCall | dict[str, Any]) -> tuple[str, ...]:
-        if isinstance(call, _PendingToolCall):
+    def _call_match_ids(call: PendingToolCall | dict[str, Any]) -> tuple[str, ...]:
+        if isinstance(call, PendingToolCall):
             return call.match_ids
 
         ids: list[str] = []
@@ -232,22 +232,22 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         return tuple(dict.fromkeys(ids))
 
     @staticmethod
-    def _call_name(call: _PendingToolCall | dict[str, Any]) -> str | None:
-        if isinstance(call, _PendingToolCall):
+    def _call_name(call: PendingToolCall | dict[str, Any]) -> str | None:
+        if isinstance(call, PendingToolCall):
             return call.name
         value = call.get("name")
         return value if isinstance(value, str) else None
 
     @staticmethod
-    def _call_args(call: _PendingToolCall | dict[str, Any]) -> dict[str, Any]:
-        if isinstance(call, _PendingToolCall):
+    def _call_args(call: PendingToolCall | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(call, PendingToolCall):
             return call.args
         value = call.get("args", {})
         return value if isinstance(value, dict) else {}
 
     @staticmethod
-    def _call_emit_id(call: _PendingToolCall | dict[str, Any]) -> str:
-        if isinstance(call, _PendingToolCall):
+    def _call_emit_id(call: PendingToolCall | dict[str, Any]) -> str:
+        if isinstance(call, PendingToolCall):
             return call.emit_tool_call_id
         for key in ("emit_tool_call_id", "tool_call_id", "run_id"):
             value = call.get(key)
@@ -256,7 +256,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         return "unknown"
 
     @classmethod
-    def _parse_legacy_tool_call(cls, content: str) -> _PendingToolCall | None:
+    def _parse_legacy_tool_call(cls, content: str) -> PendingToolCall | None:
         try:
             event = json.loads(content)
         except json.JSONDecodeError:
@@ -279,7 +279,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
 
         run_id = event.get("run_id")
         match_ids = (run_id,) if isinstance(run_id, str) else ()
-        return _PendingToolCall(
+        return PendingToolCall(
             name=tool_name,
             args=tool_input,
             match_ids=match_ids,
@@ -287,7 +287,9 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         )
 
     @classmethod
-    def _parse_legacy_tool_result(cls, content: str) -> _ParsedToolResult | None:
+    def _parse_legacy_tool_result(
+        cls, content: str
+    ) -> LangChainParsedToolResult | None:
         try:
             event = json.loads(content)
         except json.JSONDecodeError:
@@ -322,7 +324,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
             )
             return None
 
-        return _ParsedToolResult(
+        return LangChainParsedToolResult(
             name=tool_name,
             output=output,
             match_ids=match_ids,

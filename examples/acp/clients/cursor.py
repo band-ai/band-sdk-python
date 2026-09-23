@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 Cursor ACP Client - Use Cursor's AI agent from Band.
@@ -51,30 +48,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
-    # Working directory for Cursor sessions
-    cwd = os.getenv("ACP_AGENT_CWD", ".")
-
-    # Cursor authentication environment — passed to the subprocess
+    # Cursor authentication environment — passed to the subprocess, so left as
+    # a direct os.getenv pair rather than a Settings field.
     cursor_env: dict[str, str] = {}
     cursor_api_key = os.getenv("CURSOR_API_KEY")
     cursor_auth_token = os.getenv("CURSOR_AUTH_TOKEN")
@@ -88,25 +84,19 @@ async def main() -> None:
     # - Band tools are injected through a local localhost-only MCP server
     adapter = ACPClientAdapter(
         command=[os.path.expanduser("~/.local/bin/agent"), "acp"],
-        cwd=cwd,
         env=cursor_env or None,
-        rest_url=rest_url,
         inject_band_tools=True,
         auth_method="cursor_login",
         profile=CursorACPClientProfile(),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
-        "cursor_agent",
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info("Starting Cursor ACP client bridge...")
     logger.info("Messages from Band will be forwarded to Cursor's agent.")
-    await agent.run()
+    async with Agent.from_config(
+        "cursor_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

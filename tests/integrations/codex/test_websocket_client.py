@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from band import BandConnectionError
 from band.integrations.codex import (
     CodexJsonRpcError,
     CodexWebSocketClient,
@@ -50,19 +51,20 @@ class FakeCodexWebSocket:
                 )
                 return
 
-            if self.scenario in {"retry_once", "always_overload"}:
-                if self.scenario == "always_overload" or not self.sent_overload_once:
-                    self.sent_overload_once = True
-                    await self._emit(
-                        {
-                            "id": message["id"],
-                            "error": {
-                                "code": -32001,
-                                "message": "Server overloaded; retry later.",
-                            },
-                        }
-                    )
-                    return
+            if self.scenario in {"retry_once", "always_overload"} and (
+                self.scenario == "always_overload" or not self.sent_overload_once
+            ):
+                self.sent_overload_once = True
+                await self._emit(
+                    {
+                        "id": message["id"],
+                        "error": {
+                            "code": -32001,
+                            "message": "Server overloaded; retry later.",
+                        },
+                    }
+                )
+                return
 
             await self._emit(
                 {"id": message["id"], "result": {"thread": {"id": "thr_ws"}}}
@@ -251,6 +253,22 @@ async def test_websocket_client_connect_sets_large_max_size(
         assert captured_kwargs.get("max_size") == 16 * 1024 * 1024
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_refused_connection_names_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing app-server must fail with instructions, not a raw OSError."""
+
+    async def refused_connect(*_args, **_kwargs):
+        raise ConnectionRefusedError("connect call failed")
+
+    monkeypatch.setattr("websockets.asyncio.client.connect", refused_connect)
+
+    client = CodexWebSocketClient(ws_url="ws://127.0.0.1:8765")
+    with pytest.raises(BandConnectionError, match="codex app-server --listen"):
+        await client.connect()
 
 
 @pytest.mark.asyncio

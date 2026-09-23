@@ -27,7 +27,7 @@ from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
-from band.runtime.mcp_server import LOCAL_MCP_HTTP_PATH, LOCAL_MCP_SSE_PATH
+from band.integrations.mcp.local_server import LOCAL_MCP_HTTP_PATH, LOCAL_MCP_SSE_PATH
 from band.runtime.tools import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def bounded_teardown(
             timeout_s,
             action,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
         logger.warning("Failed to %s during Letta teardown: %s", action, e)
     return False
 
@@ -342,10 +342,10 @@ class LettaMCPBridge:
                     "server_url": server_url,
                 },
             )
-        except Exception as create_error:
+        except Exception:
             server = await self._find(client, server_name)
             if server is None:
-                raise create_error
+                raise
             logger.info(
                 "MCP server %r create conflicted; recovered committed "
                 "registration (id=%s)",

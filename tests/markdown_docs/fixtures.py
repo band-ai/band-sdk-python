@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import inspect
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from band import Agent
+from band.client.rest import AsyncRestClient
+from band.config import loader
 from tests.markdown_docs.globals import (
     MARKDOWN_AGENT_ID,
     MARKDOWN_API_KEY,
@@ -48,7 +51,7 @@ def _stub_offline_rest(
         if isinstance(body, dict):
             captured_json.append(body)
 
-        payload = _payload_for_path(path, datetime.now(timezone.utc).isoformat())
+        payload = _payload_for_path(path, datetime.now(UTC).isoformat())
 
         class _Response:
             status_code = 200
@@ -77,8 +80,6 @@ def _seed_markdown_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
     """Back `fixture:client` snippets with a generated client and fake HTTP."""
-    from band.client.rest import AsyncRestClient
-
     # Use the generated client so docs fail if Fern namespaces drift.
     rest_client = AsyncRestClient(
         api_key=MARKDOWN_API_KEY,
@@ -112,7 +113,6 @@ def _prepare_markdown_docs_runtime(
         close = getattr(coro, "close", None)
         if callable(close):
             close()
-        return None
 
     monkeypatch.setattr(asyncio, "run", noop_run)
 
@@ -120,8 +120,6 @@ def _prepare_markdown_docs_runtime(
 @pytest.fixture
 def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Back `fixture:agent_config_path` snippets with temporary credentials."""
-    from band import Agent
-    from band.config import loader
 
     async def run_noop(self: Agent) -> None:
         return None

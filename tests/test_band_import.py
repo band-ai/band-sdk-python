@@ -4,12 +4,12 @@ import importlib.util
 
 
 def test_band_import_surface_exposes_agent_and_link() -> None:
-    from band import (
+    from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
         Agent,
         BandLink,
-        LogLevel,
         LoggingConfig,
         LoggingStyle,
+        LogLevel,
         LogStream,
         build_logging_config,
         configure_logging,
@@ -36,18 +36,27 @@ def test_legacy_root_package_is_not_available() -> None:
 
 
 def test_band_submodule_imports_use_band_modules() -> None:
-    import band.adapters
-    import band.integrations.acp
+    import band.adapters  # noqa: PLC0415 -- pins the exact import path this test exercises
+    import band.integrations.acp  # noqa: PLC0415 -- pins the exact import path this test exercises
 
     assert band.adapters.__name__ == "band.adapters"
     assert band.integrations.acp.__name__ == "band.integrations.acp"
 
 
 def test_acp_facades_expose_band_names_only() -> None:
-    import band.adapters as adapters
-    import band.integrations.acp as acp
-    from band.adapters import BandACPServerAdapter as BandAdapterFacade
-    from band.integrations.acp import BandACPClient, BandACPServerAdapter
+    from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        adapters,
+    )
+    from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        BandACPServerAdapter as BandAdapterFacade,
+    )
+    from band.integrations import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        acp,
+    )
+    from band.integrations.acp import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        BandACPClient,
+        BandACPServerAdapter,
+    )
 
     legacy_prefix = "Then" + "voi"
 
@@ -59,8 +68,13 @@ def test_acp_facades_expose_band_names_only() -> None:
 
 
 def test_mcp_facade_exposes_band_backend_names_only() -> None:
-    import band.integrations.mcp as mcp
-    from band.integrations.mcp import BandMCPBackend, BandMCPBackendKind
+    from band.integrations import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        mcp,
+    )
+    from band.integrations.mcp import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        BandMCPBackend,
+        BandMCPBackendKind,
+    )
 
     legacy_prefix = "Then" + "voi"
 

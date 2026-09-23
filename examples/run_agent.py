@@ -2,12 +2,9 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]",
+#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=1.2.0",
 #   "python-dotenv>=1.1.1",
 # ]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Run Band SDK agents using the composition pattern.
@@ -32,8 +29,7 @@ Usage:
     uv run python examples/run_agent.py --example crewai
     uv run python examples/run_agent.py --example crewai --streaming  # Show tool calls
     uv run python examples/run_agent.py --example codex
-    uv run python examples/run_agent.py --example codex --agent darter --codex-transport stdio
-    uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
+    uv run python examples/run_agent.py --example codex --agent darter
     uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000  # A2A bridge
     uv run python examples/run_agent.py --example a2a_gateway              # A2A Gateway (exposes peers)
     uv run python examples/run_agent.py --example a2a_gateway --gateway-port 8080  # Custom port
@@ -66,10 +62,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from band import Agent
+from band import Agent, LogSettings
 from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
-from band.platform.event import ContactRequestReceivedEvent, ContactEvent
+from band.core.types import Emit
+from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -97,15 +93,14 @@ def build_contact_config(
 
         async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
             """Auto-approve all contact requests."""
-            if isinstance(event, ContactRequestReceivedEvent):
-                if event.payload:
-                    logger.info(
-                        "Auto-approving contact request from %s",
-                        event.payload.from_handle,
-                    )
-                    await tools.respond_contact_request(
-                        "approve", request_id=event.payload.id
-                    )
+            if isinstance(event, ContactRequestReceivedEvent) and event.payload:
+                logger.info(
+                    "Auto-approving contact request from %s",
+                    event.payload.from_handle,
+                )
+                await tools.respond_contact_request(
+                    "approve", request_id=event.payload.id
+                )
 
         return ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
@@ -128,13 +123,9 @@ def build_contact_config(
     raise ValueError(f"Unknown contacts mode: {mode}")
 
 
-def setup_logging(level: str = "INFO") -> logging.Logger:
-    """Configure logging."""
-    log_level = level.upper()
-    logging.basicConfig(
-        level=getattr(logging, log_level, logging.INFO),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+def setup_logging(level: str | None = None) -> logging.Logger:
+    """Configure logging from an explicit level or BAND_LOG_*."""
+    LogSettings.create(log_level=level).for_application().configure()
     return logging.getLogger(__name__)
 
 
@@ -175,7 +166,7 @@ _DEFAULT_MODELS: dict[str, str] = {
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-5.4-mini",
+    # parlant: deliberately omitted — its model comes from the NLP service.
     "crewai": "gpt-5.4-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
@@ -225,16 +216,20 @@ User: "add john as a contact"
 async def run_langgraph_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     custom_section: str,
     logger: logging.Logger,
 ) -> None:
     """Run the LangGraph agent."""
-    from langchain_openai import ChatOpenAI
-    from langgraph.checkpoint.memory import InMemorySaver
+    from langchain_openai import (  # noqa: PLC0415 -- only load the langgraph extra when this example is the one selected to run
+        ChatOpenAI,
+    )
+    from langgraph.checkpoint.memory import (  # noqa: PLC0415 -- only load the langgraph extra when this example is the one selected to run
+        InMemorySaver,
+    )
 
-    from band.adapters import LangGraphAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        LangGraphAdapter,
+    )
 
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model="gpt-5.4-mini"),
@@ -242,23 +237,18 @@ async def run_langgraph_agent(
         custom_section=custom_section,
     )
 
-    agent = Agent.create(
+    logger.info("Starting LangGraph agent...")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting LangGraph agent...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_pydantic_ai_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
@@ -266,7 +256,9 @@ async def run_pydantic_ai_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Pydantic AI agent."""
-    from band.adapters import PydanticAIAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     # Augment custom_section for contact modes
     section = custom_section
@@ -283,16 +275,7 @@ async def run_pydantic_ai_agent(
     adapter = PydanticAIAdapter(
         model=model,
         custom_section=section,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=contact_config,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     streaming_str = " with execution reporting" if enable_streaming else ""
@@ -307,14 +290,18 @@ async def run_pydantic_ai_agent(
         streaming_str,
         contacts_str,
     )
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        contact_config=contact_config,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_anthropic_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
@@ -322,21 +309,14 @@ async def run_anthropic_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Anthropic SDK agent."""
-    from band.adapters import AnthropicAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        AnthropicAdapter,
+    )
 
     adapter = AnthropicAdapter(
         model=model,
         prompt=custom_section,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=contact_config,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     streaming_str = " with execution reporting" if enable_streaming else ""
@@ -349,14 +329,18 @@ async def run_anthropic_agent(
         streaming_str,
         contacts_str,
     )
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        contact_config=contact_config,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_claude_sdk_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str | None,
     fallback_model: str | None,
     custom_section: str,
@@ -366,23 +350,16 @@ async def run_claude_sdk_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Claude Agent SDK agent."""
-    from band.adapters import ClaudeSDKAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        ClaudeSDKAdapter,
+    )
 
     adapter = ClaudeSDKAdapter(
         model=model,
         fallback_model=fallback_model,
         custom_section=custom_section,
         max_thinking_tokens=10000 if enable_thinking else None,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=contact_config,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     options = []
@@ -398,53 +375,64 @@ async def run_claude_sdk_agent(
     logger.info(
         "Starting Claude SDK agent with model: %s%s", model or "auto", options_str
     )
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        contact_config=contact_config,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_parlant_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
     logger: logging.Logger,
 ) -> None:
     """Run the Parlant agent."""
-    from band.adapters import ParlantAdapter
+    import parlant.sdk as p  # noqa: PLC0415 -- only load the parlant extra when this example is the one selected to run
 
-    adapter = ParlantAdapter(
-        model=model,
-        custom_section=custom_section,
-        guidelines=PARLANT_GUIDELINES,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        ParlantAdapter,
     )
 
-    agent = Agent.create(
+    # Parlant chooses its model via the NLP service, not a model string;
+    # the OpenAI service reads OPENAI_API_KEY. Its adapter has no emit kinds
+    # to opt into (Parlant's engine handles tool execution invisibly), so
+    # enable_streaming has no effect here — unlike every other framework in
+    # this file.
+    del enable_streaming
+    adapter = ParlantAdapter(
+        custom_section=custom_section,
+        nlp_service=p.NLPServices.openai,
+    )
+    for guideline in PARLANT_GUIDELINES:
+        adapter.add_guideline(**guideline)
+
+    logger.info("Starting Parlant agent (OpenAI NLP service)")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting Parlant agent with model: %s", model)
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_crewai_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
     logger: logging.Logger,
 ) -> None:
     """Run the CrewAI agent."""
-    from band.adapters import CrewAIAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        CrewAIAdapter,
+    )
 
     adapter = CrewAIAdapter(
         model=model,
@@ -452,29 +440,23 @@ async def run_crewai_agent(
         goal=CREWAI_DEFAULTS["goal"],
         backstory=CREWAI_DEFAULTS["backstory"],
         custom_section=custom_section,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     logger.info("Starting CrewAI agent with model: %s", model)
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_codex_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     custom_section: str,
     codex_transport: str,
-    codex_ws_url: str,
     codex_model: str | None,
     codex_personality: str,
     codex_approval_policy: str,
@@ -486,51 +468,52 @@ async def run_codex_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Codex app-server adapter."""
-    from band.adapters import CodexAdapter
-    from band.adapters.codex import CodexAdapterConfig
+    from band import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        create_room_workspace_resolver,
+    )
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        CodexAdapter,
+    )
+    from band.adapters.codex import (  # noqa: PLC0415 -- only load the codex extra when this example is the one selected to run
+        CodexAdapterConfig,
+    )
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
-            cwd=codex_cwd,
+            workspace_for_room=create_room_workspace_resolver(codex_cwd),
             model=codex_model,
             personality=codex_personality,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             approval_policy=codex_approval_policy,
             approval_mode=codex_approval_mode,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             sandbox=codex_sandbox,
             reasoning_effort=codex_reasoning_effort,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
-            codex_ws_url=codex_ws_url,
             custom_section=custom_section,
             include_base_instructions=True,
             emit_turn_task_markers=codex_turn_task_markers,
             fallback_send_agent_text=True,
             experimental_api=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        emit=Emit.TASK_EVENTS,
     )
 
     logger.info(
-        "Starting Codex agent (transport=%s, model=%s, cwd=%s)",
+        "Starting Codex agent (transport=%s, model=%s, workspace_root=%s)",
         codex_transport,
         codex_model or "auto",
         codex_cwd,
     )
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_pydantic_ai_contacts_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -543,32 +526,29 @@ async def run_pydantic_ai_contacts_agent(
     - "reject bob"
     - "add john as a contact"
     """
-    from band.adapters import PydanticAIAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     adapter = PydanticAIAdapter(
         model=model,
         custom_section=CONTACTS_INSTRUCTIONS,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),  # Show tool calls
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        emit=Emit.TOOL_CALLS,  # Show tool calls
     )
 
     logger.info("Starting Pydantic AI contacts agent with model: %s", model)
     logger.info("Try: 'check my contact requests', 'list contacts', 'approve X'")
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_contacts_auto_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -579,19 +559,17 @@ async def run_contacts_auto_agent(
     - Auto-approve logic for contact requests
     - broadcast_changes=True to notify all rooms of contact updates
     """
-    from band.adapters import PydanticAIAdapter
-    from band.platform.event import ContactRequestReceivedEvent
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
-    async def auto_approve(event: "ContactEvent", tools: "ContactTools") -> None:
+    async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
         """Auto-approve all contact requests."""
-        if isinstance(event, ContactRequestReceivedEvent):
-            if event.payload:
-                logger.info(
-                    "Auto-approving contact request from %s", event.payload.from_handle
-                )
-                await tools.respond_contact_request(
-                    "approve", request_id=event.payload.id
-                )
+        if isinstance(event, ContactRequestReceivedEvent) and event.payload:
+            logger.info(
+                "Auto-approving contact request from %s", event.payload.from_handle
+            )
+            await tools.respond_contact_request("approve", request_id=event.payload.id)
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.CALLBACK,
@@ -603,29 +581,24 @@ async def run_contacts_auto_agent(
         model=model,
         custom_section="""You are a helpful assistant. Contact requests are handled automatically.
 When you see system messages about new contacts, acknowledge them to the user.""",
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=config,
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting contacts auto-approve agent with model: %s", model)
     logger.info("Contact requests will be automatically approved")
     logger.info("All rooms will see broadcast: '@handle (name) is now a contact'")
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        contact_config=config,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_contacts_hub_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -637,7 +610,9 @@ async def run_contacts_hub_agent(
     - Agent can reason about requests and respond using tools
     - broadcast_changes=True to notify all rooms of outcomes
     """
-    from band.adapters import PydanticAIAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.HUB_ROOM,
@@ -662,29 +637,24 @@ Actions available:
 - band_respond_contact_request(action="approve", handle="...")
 - band_respond_contact_request(action="reject", handle="...")
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=config,
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting contacts hub room agent with model: %s", model)
     logger.info("Contact events will appear in hub room for LLM reasoning")
     logger.info("All rooms will see broadcasts when contacts change")
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        contact_config=config,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_contacts_broadcast_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -695,7 +665,9 @@ async def run_contacts_broadcast_agent(
     - broadcast_changes=True for awareness in all rooms
     - User can manually manage contacts via chat commands
     """
-    from band.adapters import PydanticAIAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.DISABLED,  # No auto-handling
@@ -712,35 +684,32 @@ You will receive system messages when contacts are added or removed.
 These appear as "[Contacts]: @handle (name) is now a contact" or similar.
 Acknowledge these updates to the user when you see them.
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
-    )
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=config,
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting contacts broadcast-only agent with model: %s", model)
     logger.info("Contact changes will be broadcast to all rooms")
     logger.info("Use chat commands to manually manage contacts")
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        contact_config=config,
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_a2a_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     a2a_url: str,
     enable_debug: bool,
     logger: logging.Logger,
 ) -> None:
     """Run the A2A bridge agent."""
-    from band.adapters import A2AAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        A2AAdapter,
+    )
 
     # Enable debug logging for A2A adapter to trace context_id and rehydration
     if enable_debug:
@@ -752,23 +721,18 @@ async def run_a2a_agent(
         streaming=True,
     )
 
-    agent = Agent.create(
+    logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 async def run_a2a_gateway_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     gateway_port: int,
     enable_debug: bool,
     logger: logging.Logger,
@@ -779,36 +743,33 @@ async def run_a2a_gateway_agent(
     as A2A endpoints. Remote A2A agents can call these peers via standard
     A2A protocol.
     """
-    from band.adapters import A2AGatewayAdapter
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        A2AGatewayAdapter,
+    )
 
     # Enable debug logging for gateway adapter
     if enable_debug:
         logging.getLogger("band.integrations.a2a.gateway").setLevel(logging.DEBUG)
 
-    gateway_url = f"http://localhost:{gateway_port}"
-
     adapter = A2AGatewayAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
-        gateway_url=gateway_url,
         port=gateway_port,
     )
 
-    agent = Agent.create(
+    logger.info("Starting A2A Gateway on %s...", adapter.gateway_url)
+    logger.info("Peers will be exposed at:")
+    logger.info(
+        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
+        adapter.gateway_url,
+    )
+    logger.info(
+        "  - %s/agents/{peer_id}/v1/message:stream (messaging)", adapter.gateway_url
+    )
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A Gateway on %s...", gateway_url)
-    logger.info("Peers will be exposed at:")
-    logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
-    )
-    logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 async def main() -> None:
@@ -839,7 +800,6 @@ Examples:
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
   uv run python examples/run_agent.py --example codex --agent darter      # Run Codex as darter agent
   uv run python examples/run_agent.py --example codex --codex-transport stdio
-  uv run python examples/run_agent.py --example codex --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
   uv run python examples/run_agent.py --example a2a                       # A2A bridge (default: localhost:10000)
   uv run python examples/run_agent.py --example a2a --debug               # A2A with debug logging (context_id tracing)
   uv run python examples/run_agent.py --example a2a --a2a-url http://remote:8080  # A2A with custom URL
@@ -904,8 +864,10 @@ Examples:
     parser.add_argument(
         "--log-level",
         "-l",
-        default=os.getenv("LOG_LEVEL", "INFO"),
-        help="Logging level (default: INFO or LOG_LEVEL env var)",
+        default=None,
+        type=str.upper,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (env: BAND_LOG_LEVEL, default: INFO)",
     )
     parser.add_argument(
         "--thinking",
@@ -921,14 +883,9 @@ Examples:
     )
     parser.add_argument(
         "--codex-transport",
-        choices=["stdio", "ws"],
+        choices=["stdio"],
         default="stdio",
         help="Codex transport mode (default: stdio)",
-    )
-    parser.add_argument(
-        "--codex-ws-url",
-        default=os.getenv("CODEX_WS_URL", "ws://127.0.0.1:8765"),
-        help="Codex WebSocket URL when --codex-transport=ws",
     )
     parser.add_argument(
         "--codex-role",
@@ -949,7 +906,7 @@ Examples:
     parser.add_argument(
         "--codex-cwd",
         default=os.getcwd(),
-        help="Working directory given to Codex app-server (default: current directory)",
+        help="Root directory for per-room Codex workspaces (default: current directory)",
     )
     parser.add_argument(
         "--codex-reasoning-effort",
@@ -1031,25 +988,14 @@ Examples:
     if args.agent is None:
         args.agent = default_agents.get(args.example, "simple_agent")
 
-    # Load URLs from environment
-    rest_url = os.getenv("BAND_REST_URL")
-    ws_url = os.getenv("BAND_WS_URL")
-
-    if not rest_url:
-        parser.error("BAND_REST_URL environment variable is required")
-    if not ws_url:
-        parser.error("BAND_WS_URL environment variable is required")
-
     # Load agent credentials
     try:
         agent_id, api_key = load_agent_config(args.agent)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         parser.error(f"Failed to load agent config '{args.agent}': {e}")
 
     logger.info("Agent: %s (%s)", args.agent, agent_id)
     logger.info("Example: %s", args.example)
-    logger.info("REST URL: %s", rest_url)
-    logger.info("WS URL: %s", ws_url)
 
     # Build contact config if specified
     contact_config = build_contact_config(args.contacts, logger)
@@ -1072,8 +1018,6 @@ Examples:
             await run_langgraph_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 custom_section=args.custom_section,
                 logger=logger,
             )
@@ -1081,8 +1025,6 @@ Examples:
             await run_pydantic_ai_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1093,8 +1035,6 @@ Examples:
             await run_pydantic_ai_contacts_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1102,8 +1042,6 @@ Examples:
             await run_contacts_auto_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1111,8 +1049,6 @@ Examples:
             await run_contacts_hub_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1120,8 +1056,6 @@ Examples:
             await run_contacts_broadcast_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1129,8 +1063,6 @@ Examples:
             await run_anthropic_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1141,8 +1073,6 @@ Examples:
             await run_claude_sdk_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 fallback_model=args.fallback_model,
                 custom_section=args.custom_section,
@@ -1155,8 +1085,6 @@ Examples:
             await run_parlant_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1166,8 +1094,6 @@ Examples:
             await run_crewai_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1196,11 +1122,8 @@ Examples:
             await run_codex_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 custom_section=codex_custom,
                 codex_transport=args.codex_transport,
-                codex_ws_url=args.codex_ws_url,
                 codex_model=args.codex_model,
                 codex_personality=args.codex_personality,
                 codex_approval_policy=args.codex_approval_policy,
@@ -1215,8 +1138,6 @@ Examples:
             await run_a2a_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 a2a_url=args.a2a_url,
                 enable_debug=args.debug,
                 logger=logger,
@@ -1225,8 +1146,6 @@ Examples:
             await run_a2a_gateway_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 gateway_port=args.gateway_port,
                 enable_debug=args.debug,
                 logger=logger,

@@ -43,7 +43,7 @@ class ContactTools:
         )
     """
 
-    def __init__(self, rest: "AsyncRestClient"):
+    def __init__(self, rest: AsyncRestClient):
         """
         Initialize ContactTools.
 

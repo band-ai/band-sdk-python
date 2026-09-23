@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -17,32 +18,6 @@ logger = logging.getLogger(__name__)
 
 # Type alias for custom tool definition: (InputModel, callable)
 CustomToolDef = tuple[type[BaseModel], Callable[..., Any]]
-
-
-def custom_tool_to_mcp_schema(
-    input_model: type[BaseModel],
-    *,
-    include_room_id: bool = False,
-) -> dict[str, type]:
-    """Convert a Pydantic tool model to the simple MCP SDK schema format."""
-    schema = input_model.model_json_schema()
-    properties = schema.get("properties", {})
-    mcp_schema: dict[str, type] = {"room_id": str} if include_room_id else {}
-
-    for prop_name, prop_def in properties.items():
-        prop_type = prop_def.get("type", "string")
-        if prop_type == "string":
-            mcp_schema[prop_name] = str
-        elif prop_type == "number":
-            mcp_schema[prop_name] = float
-        elif prop_type == "integer":
-            mcp_schema[prop_name] = int
-        elif prop_type == "boolean":
-            mcp_schema[prop_name] = bool
-        else:
-            mcp_schema[prop_name] = str
-
-    return mcp_schema
 
 
 def is_marked_terminal(tool: Any) -> bool:
@@ -69,8 +44,7 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
         SearchWebInput -> "searchweb"
     """
     name = input_model.__name__
-    if name.endswith("Input"):
-        name = name[:-5]  # Remove "Input" suffix
+    name = name.removesuffix("Input")  # Remove "Input" suffix
     return name.lower()
 
 

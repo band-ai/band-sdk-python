@@ -10,16 +10,15 @@ never enters this VM.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import subprocess
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
 
@@ -31,8 +30,6 @@ class Identity(BaseSettings):
 
     agent_id: str
     api_key: str
-    ws_url: str
-    rest_url: str
 
 
 class DevConfig(BaseSettings):
@@ -67,7 +64,11 @@ def login_codex() -> None:
     if not key:
         return
     result = subprocess.run(
-        ["codex", "login", "--with-api-key"], input=key, text=True, capture_output=True
+        ["codex", "login", "--with-api-key"],
+        check=False,
+        input=key,
+        text=True,
+        capture_output=True,
     )
     if result.returncode != 0:
         # Fail here, not later with a confusing 401. Redact the key from the error.
@@ -78,30 +79,27 @@ def login_codex() -> None:
 async def main() -> None:
     # INFO so the Band lifecycle trace (messages, tool calls, replies) shows in the
     # sandbox log the demo pane tails — without this, only WARNING+ would surface.
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    LogSettings().configure()
     expose_llm_key()
     login_codex()
     identity = Identity()
     config = DevConfig()
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            model=config.model, approval_policy="never", custom_section=build_persona()
+            model=config.model,
+            approval_policy="never",
+            custom_section=build_persona(),
         ),
         # Emit tool_call/tool_result and reasoning to the room, keeping the default
-        # per-turn task markers. Codex's Band tools come from band-mcp, so there is
-        # no MEMORY capability to toggle on this adapter.
-        features=AdapterFeatures(
-            emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
-        ),
+        # per-turn task markers but excluding usage events. Codex's Band tools
+        # come from band-mcp, so there is no MEMORY capability to toggle on this
+        # adapter.
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
     )
     agent = Agent.create(
         adapter=adapter,
         agent_id=identity.agent_id,
         api_key=identity.api_key,
-        ws_url=identity.ws_url,
-        rest_url=identity.rest_url,
     )
     await run_with_graceful_shutdown(agent)
 

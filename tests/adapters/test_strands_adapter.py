@@ -8,35 +8,58 @@ usage, and cleanup.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+import json
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import UTC, datetime
 from functools import partial
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from pydantic import BaseModel
 
+from tests.strandskit import text, tool_call, tool_result
+
 pytest.importorskip("strands", reason="strands extra not installed")
 
-from strands import tool as strands_tool  # noqa: E402
-from strands.types.exceptions import EventLoopException  # noqa: E402
+import itertools
 
-from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
-from band.converters.strands import StrandsHistoryConverter  # noqa: E402
-from band.core.protocols import AgentToolsProtocol  # noqa: E402
-from band.core.types import (  # noqa: E402
-    AdapterFeatures,
+from strands import tool as strands_tool
+from strands.models.openai import OpenAIModel
+from strands.types.content import Messages
+from strands.types.exceptions import EventLoopException
+from strands.types.streaming import StreamEvent
+from strands.types.tools import ToolChoice, ToolSpec
+
+from band.adapters.strands import (
+    CustomToolBridge,
+    StrandsAdapter,
+    _result_text,
+    _tool_result,
+)
+from band.converters.strands import StrandsHistoryConverter
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
+from band.core.types import (
+    USAGE_METADATA_KEY,
+    AgentInput,
     Capability,
     Emit,
+    HistoryProvider,
     PlatformMessage,
     TurnUsage,
+    is_usage_event,
 )
-from band.testing import (  # noqa: E402
+from band.runtime.tools import get_tool_description
+from band.testing import (
     ErrorTurn,
     FakeAgentTools,
     ScriptedStrandsModel,
     ScriptedTurn,
     ToolTurn,
+    reported_failures,
 )
 
 _INPUT_TOKENS_PER_CALL = 7
@@ -56,7 +79,7 @@ def _make_msg(room_id: str, content: str = "Hello") -> PlatformMessage:
         sender_name="Tester",
         message_type="text",
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -123,11 +146,7 @@ def _tool_results(adapter: StrandsAdapter, room_id: str = ROOM) -> list[str]:
 def _alternates(history: list) -> bool:
     """Whether the transcript never puts two same-role turns in a row."""
     roles = [message["role"] for message in history]
-    return all(first != second for first, second in zip(roles, roles[1:]))
-
-
-def _errors(tools: FakeAgentTools) -> list[str]:
-    return [e["content"] for e in tools.events_sent if e["message_type"] == "error"]
+    return all(first != second for first, second in itertools.pairwise(roles))
 
 
 class TestCustomToolWiring:
@@ -222,9 +241,7 @@ class TestToolRegistration:
     async def test_capability_gated_tools_registered(self):
         adapter = StrandsAdapter(
             model="m",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY, Capability.CONTACTS}
-            ),
+            capabilities=Capability.MEMORY | Capability.CONTACTS,
         )
         await adapter.on_started("Bot", "A bot")
 
@@ -234,7 +251,6 @@ class TestToolRegistration:
 
     @pytest.mark.asyncio
     async def test_platform_tool_descriptions_from_registry(self):
-        from band.runtime.tools import get_tool_description
 
         adapter = StrandsAdapter(model="m")
         await adapter.on_started("Bot", "A bot")
@@ -252,7 +268,7 @@ class TestToolRegistration:
         """Reaching a tool is enough to execute it, so a filter must apply here."""
         adapter = StrandsAdapter(
             model="m",
-            features=AdapterFeatures(exclude_tools=["band_remove_participant"]),
+            exclude_tools=["band_remove_participant"],
         )
         await adapter.on_started("Bot", "A bot")
 
@@ -307,6 +323,97 @@ class TestPromptConfiguration:
         assert "Keep replies concise." in adapter._system_prompt
 
 
+class TestOpenAIRehydration:
+    """Cold-boot history remains valid when it reaches OpenAI."""
+
+    _HISTORY: ClassVar[list[dict]] = [
+        tool_call("calc", {"expr": "2+2"}, "call-1"),
+        text("also, hello"),
+        tool_result("calc", "4", "call-1"),
+    ]
+
+    class RecordingOpenAIModel(OpenAIModel):
+        """Run the real OpenAI serializer, then answer from the offline model."""
+
+        def __init__(self) -> None:
+            super().__init__(client_args={"api_key": "test"}, model_id="gpt-4o-mini")
+            self.requests: list[list[dict[str, Any]]] = []
+            self._scripted = ScriptedStrandsModel([SEND_TURN])
+
+        async def stream(
+            self,
+            messages: Messages,
+            tool_specs: list[ToolSpec] | None = None,
+            system_prompt: str | None = None,
+            *,
+            tool_choice: ToolChoice | None = None,
+            **kwargs: Any,
+        ) -> AsyncGenerator[StreamEvent, None]:
+            self.requests.append(self.format_request_messages(messages, system_prompt))
+            async for event in self._scripted.stream(
+                messages,
+                tool_specs,
+                system_prompt,
+                tool_choice=tool_choice,
+                **kwargs,
+            ):
+                yield event
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "history_converter",
+        [None, StrandsHistoryConverter()],
+        ids=["default-converter", "custom-converter"],
+    )
+    async def test_openai_serialization_keeps_the_tool_result_adjacent(
+        self, history_converter, tools
+    ):
+        model = self.RecordingOpenAIModel()
+        adapter = StrandsAdapter(
+            model=model,
+            history_converter=history_converter,
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        await adapter.on_event(
+            AgentInput(
+                msg=_make_msg(ROOM),
+                tools=cast("AgentToolsProtocol", tools),
+                history=HistoryProvider(raw=self._HISTORY),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id=ROOM,
+            )
+        )
+
+        tool_call_index = next(
+            index
+            for index, message in enumerate(model.requests[0])
+            if "tool_calls" in message
+        )
+        assert model.requests[0][tool_call_index : tool_call_index + 3] == [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "arguments": '{"expr": "2+2"}',
+                            "name": "calc",
+                        },
+                        "id": "call-1",
+                        "type": "function",
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "4"},
+            {
+                "role": "user",
+                "content": [{"text": "[Alice]: also, hello", "type": "text"}],
+            },
+        ]
+
+
 class TestOnMessage:
     @pytest.mark.asyncio
     async def test_send_message_turn_dispatches_and_persists_history(
@@ -343,11 +450,16 @@ class TestOnMessage:
         A later turn that reseeded would replay the room's own transcript on top
         of the one the adapter is already holding.
         """
-        adapter = await scripted(SEND_TURN, SEND_TURN)
+        adapter = await scripted(SEND_TURN)
         await _run_message(adapter, tools, history=[])
         after_first = list(adapter._message_history[ROOM])
 
-        await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
+        # The scripted model has no turn left for a second reply, so this
+        # turn ends without calling band_send_message -- irrelevant to what
+        # this test checks (the transcript isn't re-seeded), so only the
+        # failure is asserted here, not suppressed.
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
 
         assert adapter._message_history[ROOM][: len(after_first)] == after_first
 
@@ -379,9 +491,7 @@ class TestOnMessage:
                 raise RuntimeError("events down")
 
         tools = NoEventTools(room_id=ROOM)
-        adapter = await scripted(
-            SEND_TURN, features=AdapterFeatures(emit={Emit.EXECUTION})
-        )
+        adapter = await scripted(SEND_TURN, emit=Emit.TOOL_CALLS)
 
         await _run_message(adapter, tools)
 
@@ -393,12 +503,10 @@ class TestOnMessage:
             SEND_TURN,
             input_tokens=_INPUT_TOKENS_PER_CALL,
             output_tokens=_OUTPUT_TOKENS_PER_CALL,
-            features=AdapterFeatures(emit={Emit.USAGE}),
+            emit=Emit.USAGE,
         )
 
         await _run_message(adapter, tools)
-
-        from band.core.types import USAGE_METADATA_KEY, is_usage_event
 
         usage_events = [e for e in tools.events_sent if is_usage_event(e["metadata"])]
         assert len(usage_events) == 1
@@ -426,10 +534,14 @@ class TestTurnProductivity:
         tools = FailingTools(room_id=ROOM)
         adapter = await scripted(SEND_TURN)
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert tools.messages_sent == []
-        assert len(_errors(tools)) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "strands"
+        assert "band_send_message" in failures[0]["message"]
         # The shared bridge returns a normalized, model-visible tool failure.
         assert any(
             text.startswith("Error executing band_send_message:")
@@ -446,11 +558,10 @@ class TestTurnProductivity:
                 raise RuntimeError("backend down")
 
         tools = FailingTools(room_id=ROOM)
-        adapter = await scripted(
-            SEND_TURN, features=AdapterFeatures(emit={Emit.EXECUTION})
-        )
+        adapter = await scripted(SEND_TURN, emit=Emit.TOOL_CALLS)
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         rehydrated = StrandsHistoryConverter(agent_name="Bot").convert(
             [
@@ -472,11 +583,14 @@ class TestTurnProductivity:
         """Looking peers up succeeds but posts nothing, so the reply is still missing."""
         adapter = await scripted(ToolTurn("band_lookup_peers", {}))
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert _tool_results(adapter)  # the lookup did run and succeed
         assert tools.messages_sent == []
-        assert "band_send_message" in _errors(tools)[0]
+        failure = reported_failures(tools)[0]
+        assert failure["provider"] == "strands"
+        assert "band_send_message" in failure["message"]
 
     @pytest.mark.asyncio
     async def test_invalid_tool_arguments_are_answered_not_raised(
@@ -485,7 +599,8 @@ class TestTurnProductivity:
         """A malformed call is the model's mistake to correct, not a turn-ending crash."""
         adapter = await scripted(ToolTurn("band_send_message", {"mentions": ["@x"]}))
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert tools.messages_sent == []
         assert _tool_results(adapter) == [
@@ -506,7 +621,8 @@ class TestTurnProductivity:
             ToolTurn("boom", {"note": "go"}), additional_tools=[(BoomInput, boom)]
         )
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
 
@@ -525,13 +641,11 @@ class TestTurnFailure:
             SEND_TURN,
             ErrorTurn(RuntimeError("provider down")),
             input_tokens=_INPUT_TOKENS_PER_CALL,
-            features=AdapterFeatures(emit={Emit.USAGE}),
+            emit=Emit.USAGE,
         )
 
         with pytest.raises(EventLoopException, match="provider down"):
             await _run_message(adapter, tools)
-
-        from band.core.types import USAGE_METADATA_KEY, is_usage_event
 
         tools.assert_message_sent(content="hi", count=1)
         assert _tool_results(adapter)  # the completed call is still in the transcript
@@ -539,12 +653,15 @@ class TestTurnFailure:
         assert usage[0]["metadata"][USAGE_METADATA_KEY]["input_tokens"] == (
             _INPUT_TOKENS_PER_CALL
         )
+        failure = reported_failures(tools)[0]
+        assert failure["provider"] == "strands"
+        assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
 class TestUsageMapping:
     def test_usage_from_agent_maps_all_fields(self):
         class _Metrics:
-            accumulated_usage = {
+            accumulated_usage: ClassVar[dict[str, int]] = {
                 "inputTokens": 10,
                 "outputTokens": 5,
                 "totalTokens": 15,
@@ -580,3 +697,118 @@ class TestCleanup:
         await adapter.on_cleanup(ROOM)
 
         assert ROOM not in adapter._message_history
+
+
+class TestReadRoomFileImagePassthrough:
+    def test_image_result_becomes_image_content_block(self):
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert result["content"] == [
+            {"image": {"format": "png", "source": {"bytes": b"fake"}}}
+        ]
+
+    def test_non_image_result_stays_text(self):
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {"name": "notes.txt", "content_type": "text/plain"}
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert result["content"] == [
+            {"text": '{"name": "notes.txt", "content_type": "text/plain"}'}
+        ]
+
+    def test_image_shaped_value_on_error_stays_text(self):
+        """An error path (ok=False) must never be treated as an image result,
+        even if the error value happens to look MCP-content-shaped."""
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {"content": [{"type": "image", "data": "x", "mimeType": "image/png"}]}
+
+        result = _tool_result(tool_use, value=value, ok=False)
+
+        assert result["status"] == "error"
+        assert "text" in result["content"][0]
+
+    def test_multi_image_result_reports_one_placeholder_with_total_count(self):
+        """A multi-image result must flatten to one placeholder naming the
+        total count, not one placeholder line per image block."""
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {
+            "content": [
+                {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"},
+                {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"},
+                {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"},
+            ]
+        }
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert _result_text(result) == "<3 image content block(s)>"
+
+    def test_malformed_image_data_returns_error_result(self):
+        """A decode_image_block failure (invalid base64) must degrade to an
+        error result, not raise uncaught out of stream()'s async generator --
+        this runs after _execute's own try/except already succeeded, so
+        _tool_result needs its own boundary around the decode step."""
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {"content": [{"type": "image", "data": "A", "mimeType": "image/png"}]}
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert result["status"] == "error"
+        assert "text" in result["content"][0]
+
+    def test_result_text_keeps_images_at_their_original_position(self):
+        """A combined image placeholder must appear where the first image
+        block occurred among text/json blocks, not get shoved to the end."""
+        result = {
+            "toolUseId": "t1",
+            "status": "success",
+            "content": [
+                {"text": "before"},
+                {"image": {"format": "png", "source": {"bytes": b"a"}}},
+                {"image": {"format": "png", "source": {"bytes": b"b"}}},
+                {"text": "after"},
+            ],
+        }
+
+        assert _result_text(result) == "before\n<2 image content block(s)>\nafter"
+
+
+class TestSendRoomFileArgsRedaction:
+    @pytest.mark.asyncio
+    async def test_tool_call_event_redacts_content_not_raw_bytes(self, tools):
+        """band_send_room_file's tool_call event must report a bounded
+        placeholder for content, not the raw file bytes -- generic ARGS
+        reporting has no idea this one tool's content argument can carry up
+        to MAX_SEND_CONTENT_BYTES of real file data."""
+        adapter = StrandsAdapter(
+            model=ScriptedStrandsModel(
+                (
+                    ToolTurn(
+                        "band_send_room_file",
+                        {"content": "raw file bytes", "filename": "notes.txt"},
+                    ),
+                )
+            ),
+            capabilities=Capability.FILES,
+            emit=Emit.TOOL_CALLS,
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
+
+        tool_calls = [
+            json.loads(e["content"])
+            for e in tools.events_sent
+            if e["message_type"] == "tool_call"
+        ]
+        [send_room_file_call] = [
+            c for c in tool_calls if c["name"] == "band_send_room_file"
+        ]
+        assert send_room_file_call["args"]["content"] == "<14 byte file content>"

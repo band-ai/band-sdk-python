@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from band_sdk_core import AgentFailure
 from pydantic import ValidationError
 
 from band.converters.copilot_sdk import (
@@ -21,7 +22,13 @@ from band.converters.copilot_sdk import (
     CopilotSDKHistoryConverter,
     CopilotSDKSessionState,
 )
+from band.core.delivery import (
+    DeliveryFailedError,
+    deliver_reply,
+    reraise_delivery_cause,
+)
 from band.core.exceptions import BandConfigError
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_safe
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import Capability, Emit, MessageType, ToolEventKey, TurnUsage
@@ -42,10 +49,23 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category, is_room_posting_tool
+from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
+    get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    is_room_posting_tool,
+    redact_tool_call_args,
+)
 
 try:
-    from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
+    from copilot import (
+        CopilotClient,
+        PermissionHandler,
+        Tool,
+        ToolBinaryResult,
+        ToolResult,
+    )
     from copilot.generated.session_events import (
         AssistantReasoningData,
         AssistantUsageData,
@@ -67,17 +87,27 @@ if TYPE_CHECKING:
         UserInputRequest,
         UserInputResponse,
     )
+    from typing_extensions import Unpack
 
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
-    from band.core.types import AdapterFeatures, PlatformMessage
+    from band.core.types import FeatureKwargs, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "copilot_sdk"
 
 
 @dataclass(frozen=True)
 class CopilotSDKAdapterConfig:
     """Runtime configuration for Copilot SDK adapter sessions.
+
+    Stays a plain dataclass rather than adopting ``pydantic_settings.BaseSettings``
+    like CodexAdapterConfig/LettaAdapterConfig/OpencodeAdapterConfig: ``provider``
+    holds an external SDK type (``ProviderConfig``) and ``ask_user`` a callable,
+    both a poor fit for settings validation — env-var precedent on individual
+    fields (``github_token``, ``base_directory``/``COPILOT_HOME``) doesn't
+    outweigh that.
 
     Attributes:
         model: Copilot model to use (None = Copilot CLI default).
@@ -192,17 +222,17 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     Example:
         adapter = CopilotSDKAdapter(
             CopilotSDKAdapterConfig(model="gpt-5"),
-            # Event reporting is off by default; opt in explicitly.
-            features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+            # Narrowing is opt-in; the default is everything supported.
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )
         agent = Agent.create(adapter=adapter, agent_id=..., api_key=...)
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -211,9 +241,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         *,
         history_converter: HistoryConverter[CopilotSDKSessionState] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         client: Any | None = None,
         client_factory: Callable[[], Any] | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """Initialize the Copilot SDK adapter.
 
@@ -222,7 +252,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 prompts, timeouts) — see :class:`CopilotSDKAdapterConfig`.
             history_converter: Override the default history converter.
             additional_tools: Developer custom tools as (InputModel, handler).
-            features: Shared adapter feature settings.
             client: Externally-owned ``CopilotClient`` shared with other
                 adapters (one client, many sessions). The adapter borrows it —
                 it never calls ``stop()`` on it; the caller owns its lifecycle.
@@ -245,7 +274,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         super().__init__(
             history_converter=history_converter or CopilotSDKHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = config or CopilotSDKAdapterConfig()
         ask_user = self.config.ask_user
@@ -383,9 +412,16 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         # Same-session calls must not interleave; other rooms run concurrently.
         async with self._session_manager.turn_lock(room_id):
-            session, inject_text = await self._obtain_session(
-                room_id, history, tools, is_session_bootstrap=is_session_bootstrap
-            )
+            try:
+                session, inject_text = await self._obtain_session(
+                    room_id, history, tools, is_session_bootstrap=is_session_bootstrap
+                )
+            except Exception:
+                logger.exception("Room %s: Copilot session setup failed", room_id)
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
+                raise
             prompt = self._compose_prompt(
                 msg,
                 participants_msg,
@@ -405,12 +441,14 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             self._turn_state[room_id] = turn
             try:
                 final_text = await self._run_turn(session, prompt, turn)
-            except Exception as exc:
+            except Exception:
                 logger.exception("Room %s: Copilot turn failed", room_id)
                 # Abort any work the runtime is still doing for this turn and
                 # drop the session; the next message resumes it fresh by id.
                 await self._session_manager.evict_session(room_id)
-                await self._report_error(tools, str(exc))
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
                 raise
             finally:
                 self._turn_state.pop(room_id, None)
@@ -424,13 +462,19 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             # Session errors raise out of send_and_wait, so a None here
             # with no room output means the model genuinely said nothing.
             if final_text is None and not turn.replied_in_room:
-                await self._report_error(tools, "no assistant reply")
+                logger.warning("Room %s: Copilot turn produced no reply", room_id)
+                await tools.send_failure(AgentFailure(_PROVIDER, "no assistant reply"))
                 raise RuntimeError("Copilot turn produced no reply")
 
             # The turn may already have replied into the room; sending its
             # final text too would duplicate the reply.
             if final_text and not turn.replied_in_room:
-                await tools.send_message(final_text, mentions=[turn.sender_mention])
+                try:
+                    await deliver_reply(
+                        tools, final_text, mentions=[turn.sender_mention]
+                    )
+                except DeliveryFailedError as e:
+                    reraise_delivery_cause(e)
 
             await self._persist_session_id(room_id, tools)
 
@@ -452,8 +496,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         """
         if self.config.session_id_prefix is not None:
             return self.config.session_id_prefix
-        if agent_id := getattr(self, "_band_agent_id", None):
-            return f"band-{agent_id}-"
+        if self.platform is not None:
+            return f"band-{self.platform.agent_id}-"
         # Adapters driven without the Band runtime fall back to the name.
         agent_slug = re.sub(r"[^a-z0-9]+", "-", self.agent_name.lower()).strip("-")
         return f"band-{agent_slug or 'agent'}-"
@@ -514,7 +558,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             session = await self._session_manager.client.resume_session(
                 stored_id, **kwargs
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: resume failed for session %s: %s — creating fresh",
                 room_id,
@@ -597,7 +641,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         rendered = render_room_question(request)
         try:
             await room_tools.send_message(rendered, mentions=[turn.sender_mention])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: ask_user question delivery failed: %s", room_id, exc
             )
@@ -626,8 +670,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     ) -> list[Tool]:
         """Bridge Band platform tools + developer custom tools as Copilot tools."""
         schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
         schemas = filter_tool_schemas(
             schemas,
@@ -694,7 +737,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = Emit.EXECUTION in self.features.emit
+        should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
 
@@ -733,14 +776,35 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 room_tools, invocation, f"Error: {exc}", report=should_report
             )
 
-        text_result = (
-            result if isinstance(result, str) else json.dumps(result, default=str)
-        )
+        binary_results: list[ToolBinaryResult] | None = None
+        if is_image_passthrough_result(tool_name, result):
+            # Same failure path as the tool-execution try/except above: a
+            # malformed or future-extended content block must still route
+            # through _fail_tool_call, not raise uncaught past it.
+            try:
+                binary_results = [
+                    ToolBinaryResult(
+                        data=block["data"], mime_type=block["mimeType"], type="image"
+                    )
+                    for block in result["content"]
+                ]
+            except (KeyError, TypeError) as exc:
+                logger.exception("Malformed image content block for %s", tool_name)
+                return await self._fail_tool_call(
+                    room_tools, invocation, f"Error: {exc}", report=should_report
+                )
+            text_result = image_block_placeholder(len(binary_results))
+        else:
+            text_result = (
+                result if isinstance(result, str) else json.dumps(result, default=str)
+            )
         if is_room_posting_tool(tool_name) and turn is not None:
             self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)
-        return ToolResult(text_result_for_llm=text_result)
+        return ToolResult(
+            text_result_for_llm=text_result, binary_results_for_llm=binary_results
+        )
 
     async def _fail_tool_call(
         self,
@@ -768,12 +832,14 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         invocation: ToolInvocation,
         arguments: dict[str, Any],
     ) -> None:
-        await self._send_event_safe(
+        await send_event_safe(
             room_tools,
             json.dumps(
                 {
                     ToolEventKey.NAME: invocation.tool_name,
-                    ToolEventKey.ARGS: arguments,
+                    ToolEventKey.ARGS: redact_tool_call_args(
+                        invocation.tool_name, arguments
+                    ),
                     ToolEventKey.TOOL_CALL_ID: invocation.tool_call_id,
                 }
             ),
@@ -786,7 +852,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         invocation: ToolInvocation,
         output: str,
     ) -> None:
-        await self._send_event_safe(
+        await send_event_safe(
             room_tools,
             json.dumps(
                 {
@@ -809,7 +875,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         room_id: str,
         inject_text: str | None,
     ) -> str:
-        room_context = f"[room_id: {room_id}]"
+        # Label must read "chat_id" (the model-facing name everywhere else,
+        # e.g. claude_sdk.py's own room_context), not the Python-side room_id
+        # it's built from.
+        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
         parts: list[str] = []
         if inject_text:
             parts.append(f"[Previous conversation context:]\n{inject_text}")
@@ -875,7 +944,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     async def _emit_thoughts(self, turn: TurnState, tools: AgentToolsProtocol) -> None:
         if Emit.THOUGHTS in self.features.emit:
             for reasoning in turn.reasonings.values():
-                await self._send_event_safe(tools, reasoning, MessageType.THOUGHT)
+                await send_event_safe(tools, reasoning, MessageType.THOUGHT)
 
     async def _persist_session_id(
         self, room_id: str, tools: AgentToolsProtocol
@@ -887,7 +956,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         """
         ids = self._ids(room_id)
         if ids.current and ids.persisted != ids.current:
-            sent = await self._send_event_safe(
+            sent = await send_event_safe(
                 tools,
                 "Copilot SDK session",
                 MessageType.TASK,
@@ -897,26 +966,3 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 # Only mark persisted on success so a transient send failure
                 # is retried next turn instead of silently losing resume.
                 ids.persisted = ids.current
-
-    async def _send_event_safe(
-        self,
-        tools: AgentToolsProtocol,
-        content: str,
-        message_type: MessageType,
-        metadata: dict[str, Any] | None = None,
-    ) -> bool:
-        """Send a platform event, downgrading failures to a warning.
-
-        Returns True when the event was accepted by the platform.
-        """
-        try:
-            await tools.send_event(
-                content=content, message_type=message_type, metadata=metadata
-            )
-        except Exception as exc:
-            logger.warning("Failed to send %s event: %s", message_type, exc)
-            return False
-        return True
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        await self._send_event_safe(tools, f"Error: {error}", MessageType.ERROR)

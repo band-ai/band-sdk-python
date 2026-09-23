@@ -12,11 +12,11 @@ import asyncio
 import logging
 
 import pytest
-
-from band.integrations.a2a.gateway import A2AGatewayAdapter
 from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
 from band_rest.core.api_error import ApiError
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
+
+from band.integrations.a2a.gateway import A2AGatewayAdapter
 
 from .conftest import fetch_all_context, requires_api
 
@@ -73,10 +73,12 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with real REST client credentials
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.band_base_url,
-            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
+            rest_client=AsyncRestClient(
+                base_url=integration_settings.band_base_url,
+                api_key=integration_settings.band_api_key,
+            ),
         )
         adapter._peers = {peer.name.lower().replace(" ", "-"): peer}
         adapter._peers_by_uuid = {peer.id: peer}
@@ -148,7 +150,7 @@ class TestA2AGatewayContextIdWithPlatform:
 
         Uses session-scoped shared_room to avoid creating new rooms.
         Pre-populates context mapping and participant set so _get_or_create_room()
-        adds the second peer via _ensure_participant without creating a room.
+        adds the second peer via ensure_in_room without creating a room.
         """
         # Get multiple peers
         response = await api_client.agent_api_peers.list_agent_peers()
@@ -159,10 +161,12 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with both peers
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.band_base_url,
-            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
+            rest_client=AsyncRestClient(
+                base_url=integration_settings.band_base_url,
+                api_key=integration_settings.band_api_key,
+            ),
         )
         adapter._peers = {
             peer_1.name.lower().replace(" ", "-"): peer_1,

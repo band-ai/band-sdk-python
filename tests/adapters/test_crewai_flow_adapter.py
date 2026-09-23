@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -33,14 +33,15 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from band.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from band.core.exceptions import BandConfigError  # noqa: E402
-from band.core.types import PlatformMessage  # noqa: E402
-from band.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.core.exceptions import BandConfigError
+from band.core.types import PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
+from band.testing.platform import platform_connection_stub
 
 
 def _factory():
@@ -57,7 +58,7 @@ def _msg(*, id: str = "msg-1", content: str = "hi") -> PlatformMessage:
         sender_name="Pat",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -262,7 +263,7 @@ class TestOnStartedAndNamespace:
     @pytest.mark.asyncio
     async def test_default_namespace_resolves_with_agent_id(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
-        adapter._band_agent_id = "agent-id-A"
+        adapter.platform = platform_connection_stub(agent_id="agent-id-A")
         await adapter.on_started("Router", "desc")
         assert adapter.metadata_namespace == "crewai_flow:agent-id-A"
 
@@ -270,8 +271,8 @@ class TestOnStartedAndNamespace:
     async def test_two_adapters_get_distinct_namespaces(self) -> None:
         a = CrewAIFlowAdapter(flow_factory=_factory)
         b = CrewAIFlowAdapter(flow_factory=_factory)
-        a._band_agent_id = "agent-id-X"
-        b._band_agent_id = "agent-id-Y"
+        a.platform = platform_connection_stub(agent_id="agent-id-X")
+        b.platform = platform_connection_stub(agent_id="agent-id-Y")
         await a.on_started("Router", "")
         await b.on_started("Router", "")
         assert a.metadata_namespace != b.metadata_namespace
@@ -487,14 +488,16 @@ class TestOnCleanup:
 
 class TestPublicImportPath:
     def test_lazy_import_from_band_adapters(self) -> None:
-        # The example imports `from band.adapters import CrewAIFlowAdapter`.
-        from band.adapters import CrewAIFlowAdapter as Imported
+        # The example imports `from band.adapters import CrewAIFlowAdapter`; this
+        # import must stay local, since it's the band.adapters lazy loader itself
+        # under test, not just a way to reach the class.
+        from band.adapters import CrewAIFlowAdapter as Imported  # noqa: PLC0415
 
         assert Imported is CrewAIFlowAdapter
 
     @pytest.mark.asyncio
     async def test_default_namespace_matches_documented_format(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
-        adapter._band_agent_id = "crewai-flow-router-id"
+        adapter.platform = platform_connection_stub(agent_id="crewai-flow-router-id")
         await adapter.on_started("crewai_flow_router", "")
         assert adapter.metadata_namespace == "crewai_flow:crewai-flow-router-id"

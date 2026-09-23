@@ -10,20 +10,33 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from band.core.protocols import AgentToolsProtocol
+from agno.media import Image
+from agno.tools.function import ToolResult
+from band_sdk_core import AgentFailure
+from typing_extensions import Unpack
+
+from band.converters.agno import AgnoHistoryConverter, AgnoMessages
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.agno import AgnoHistoryConverter, AgnoMessages
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category
+from band.runtime.tools import (
+    BandTool,
+    decode_image_block,
+    get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 try:
     from agno.models.message import Message
@@ -85,12 +98,29 @@ def _tool_name(execution: Any) -> str:
     return getattr(execution, "tool_name", None) or ""
 
 
-def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
-    async def _entrypoint(**kwargs: Any) -> str:
+def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolResult]]:
+    async def _entrypoint(**kwargs: Any) -> str | ToolResult:
         active = _current_tools.get()
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
         result = await active.execute_tool_call(tool_name, kwargs)
+        if is_image_passthrough_result(tool_name, result):
+            try:
+                images = [
+                    Image(content=data, mime_type=mime_type)
+                    for data, mime_type in (
+                        decode_image_block(block) for block in result["content"]
+                    )
+                ]
+            except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                # A malformed or future-extended image block (see
+                # is_mcp_content_result's docstring) must degrade to the
+                # adapter's usual error string, not raise uncaught out of
+                # the tool entrypoint Agno invokes directly.
+                return f"Error reading room file: {error}"
+            return ToolResult(
+                content=image_block_placeholder(len(images)), images=images
+            )
         return result if isinstance(result, str) else json.dumps(result, default=str)
 
     _entrypoint.__name__ = tool_name
@@ -126,10 +156,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -137,8 +167,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         agent: AgnoAgent,
         *,
         history_converter: AgnoHistoryConverter | None = None,
-        features: AdapterFeatures | None = None,
         session_id_factory: Callable[[str], str] = lambda room_id: room_id,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Bridge a user-built Agno agent to Band.
 
@@ -161,7 +191,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """
         super().__init__(
             history_converter=history_converter or AgnoHistoryConverter(),
-            features=features,
+            **features,
         )
 
         # The caller's agent is used directly. It becomes the runtime agent
@@ -180,11 +210,13 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # re-included on every run, and may be either a static list or a per-run
         # callable factory.
         self._user_tools: list[Any] | Callable[..., Any] = []
-        # Built Functions cached by their only dynamic input (include_contacts),
-        # so the schema build runs at most twice for the process lifetime rather
-        # than on every run. Entrypoints route through the _current_tools
-        # ContextVar, so the cached list is safe to reuse across rooms.
-        self._band_tools_cache: dict[bool, list[Function]] = {}
+        # Built Functions cached by their only dynamic input (the effective
+        # capability set, including the hub-room CONTACTS union), so the
+        # schema build runs at most once per distinct set for the process
+        # lifetime rather than on every run. Entrypoints route through the
+        # _current_tools ContextVar, so the cached list is safe to reuse
+        # across rooms.
+        self._band_tools_cache: dict[frozenset[Capability], list[Function]] = {}
 
         # Resolved against the runtime agent in on_started, once it exists.
         self._agno_manages_history = False
@@ -325,7 +357,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._persist_turn(room_id, response)
 
         if not any(
-            _tool_name(execution) == "band_send_message"
+            _tool_name(execution) == BandTool.SEND_MESSAGE
             for execution in _tool_executions(response)
         ):
             logger.debug(
@@ -429,25 +461,25 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     ) -> RunOutput | None:
         """Run the Agno agent with the room's tools bound for this call.
 
-        When ``Emit.EXECUTION`` is enabled the run is streamed so tool_call /
+        When ``Emit.TOOL_CALLS`` is enabled the run is streamed so tool_call /
         tool_result events are emitted *as each tool runs* (see
         :meth:`_run_streamed`), matching the other adapters' live reporting.
         Otherwise it runs non-streaming, exactly as before.
         """
-        agent = self._agent
-        if agent is None:
-            raise RuntimeError("AgnoAdapter was used before on_started()")
-        session_id = self._session_id_factory(room_id)
-        logger.debug(
-            "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
-            room_id,
-            msg_id,
-            len(messages),
-            session_id,
-        )
         try:
+            agent = self._agent
+            if agent is None:
+                raise RuntimeError("AgnoAdapter was used before on_started()")
+            session_id = self._session_id_factory(room_id)
+            logger.debug(
+                "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
+                room_id,
+                msg_id,
+                len(messages),
+                session_id,
+            )
             with _bind_room_tools(tools):
-                if Emit.EXECUTION in self.features.emit:
+                if Emit.TOOL_CALLS in self.features.emit:
                     response = await self._run_streamed(
                         agent,
                         messages,
@@ -463,22 +495,19 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             # the turn as failed rather than as a silent empty reply.
             if response is not None and response.status == RunStatus.error:
                 raise AgnoRunError(_error_summary(response.content))
-        except Exception:
+        except Exception as e:
             # Keep the user-facing payload generic; the full traceback is in the
             # agent log via logger.exception. Exception text can include DB
-            # strings, paths, and tokens that must not surface in chat.
+            # strings, paths, and tokens that must not surface in chat. Only
+            # the coarse RunStatus.error code -- never response.content -- is
+            # safe to attach.
             logger.exception(
                 "Room %s msg %s: error running Agno agent", room_id, msg_id
             )
-            try:
-                await tools.send_event(
-                    content="Internal error while processing message; see agent logs.",
-                    message_type="error",
-                )
-            except Exception:
-                logger.exception(
-                    "Room %s msg %s: failed to report error event", room_id, msg_id
-                )
+            code = RunStatus.error.value if isinstance(e, AgnoRunError) else None
+            await tools.send_failure(
+                AgentFailure("agno", GENERIC_PROVIDER_FAILURE_MESSAGE, code)
+            )
             raise
 
         if response is None:
@@ -577,13 +606,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             # own tools rather than guessing Band tool visibility.
             return user_tools
 
-        include_contacts = Capability.CONTACTS in self.features.capabilities or bool(
-            getattr(active, "is_hub_room", False)
+        effective_capabilities = with_hub_room_contacts(
+            self.features.capabilities,
+            is_hub_room=active.is_hub_room if active is not None else False,
         )
-        band = self._band_tools_cache.get(include_contacts)
+        band = self._band_tools_cache.get(effective_capabilities)
         if band is None:
-            band = self._build_band_tools(active, include_contacts=include_contacts)
-            self._band_tools_cache[include_contacts] = band
+            band = self._build_band_tools(active, capabilities=effective_capabilities)
+            self._band_tools_cache[effective_capabilities] = band
         return [*user_tools, *band]
 
     async def _resolve_user_tools(self, run_context: Any) -> list[Any]:
@@ -642,19 +672,16 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
 
     def _build_band_tools(
-        self, tools: AgentToolsProtocol, *, include_contacts: bool
+        self, tools: AgentToolsProtocol, *, capabilities: frozenset[Capability]
     ) -> list[Function]:
         """Convert Band tool schemas into Agno Functions.
 
         Honors the AdapterFeatures include/exclude/category filters via
-        :func:`filter_tool_schemas`. ``include_contacts`` is resolved by the
-        caller (CONTACTS capability or a contact-hub room, mirroring LangGraph)
-        so the built set can be cached on that flag.
+        :func:`filter_tool_schemas`. ``capabilities`` is resolved by the
+        caller (declared capabilities unioned with CONTACTS for a contact-hub
+        room, mirroring LangGraph) so the built set can be cached on it.
         """
-        schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=include_contacts,
-        )
+        schemas = tools.get_openai_tool_schemas(capabilities=capabilities)
         schemas = filter_tool_schemas(
             schemas,
             self.features,
@@ -703,7 +730,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
         try:
             await tools.send_event(content=text, message_type="thought")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s msg %s: failed to report thought: %s", room_id, msg_id, e
             )
@@ -732,7 +759,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 "tool_call",
                 {
                     ToolEventKey.NAME: ex.tool_name or "",
-                    ToolEventKey.ARGS: ex.tool_args or {},
+                    ToolEventKey.ARGS: redact_tool_call_args(
+                        ex.tool_name or "", ex.tool_args or {}
+                    ),
                     ToolEventKey.TOOL_CALL_ID: ex.tool_call_id or "",
                 },
                 room_id=room_id,
@@ -767,7 +796,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             await tools.send_event(
                 content=json.dumps(payload), message_type=message_type
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s msg %s: failed to report %s %s: %s",
                 room_id,

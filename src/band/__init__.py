@@ -41,25 +41,32 @@ Example (Framework-light pattern):
 """
 
 import logging
-from importlib.metadata import version as _get_version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _get_version
 
 # Composition layer (new pattern)
 from .agent import Agent
-
-# Core types (v0.3.0)
-from .core.types import AdapterFeatures, Capability, Emit
+from .config.logs import LogSettings, configure_logging_from_env
 from .core.exceptions import (
-    BandError,
     BandConfigError,
     BandConnectionError,
+    BandError,
     BandToolError,
 )
+
+# Core types (v0.3.0)
+from .core.types import AdapterFeatures, Capability, Emit, FeatureKwargs
 from .logging_config import (
-    LogLevel,
+    CHATTY_LOGGERS,
+    STANDARD_FORMAT,
+    FileStyle,
+    FormatStyle,
     LoggingConfig,
     LoggingStyle,
+    LogLevel,
     LogStream,
     build_logging_config,
+    chatty_logger_levels,
     configure_logging,
 )
 
@@ -68,89 +75,96 @@ from .platform import BandLink, PlatformEvent
 
 # Runtime layer
 from .runtime import (
-    AgentRuntime,
-    RoomPresence,
-    Execution,
-    ExecutionContext,
-    ExecutionHandler,
-    AgentTools,
-    PlatformMessage,
-    AgentConfig,
-    SessionConfig,
-    ConversationContext,
-    render_system_prompt,
-    TOOL_MODELS,
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     CONTACT_TOOL_NAMES,
-    MEMORY_TOOL_NAMES,
     MCP_TOOL_PREFIX,
-    mcp_tool_names,
-    # Formatters
-    format_message_for_llm,
-    format_history_for_llm,
-    build_participants_message,
-    # Trackers
-    ParticipantTracker,
-    MessageRetryTracker,
+    MEMORY_TOOL_NAMES,
+    TOOL_MODELS,
+    AgentConfig,
+    AgentRuntime,
+    AgentTools,
+    ConversationContext,
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
     # Shutdown
     GracefulShutdown,
+    MessageRetryTracker,
+    PlatformMessage,
+    RoomPresence,
+    SessionConfig,
+    build_participants_message,
+    format_history_for_llm,
+    # Formatters
+    format_message_for_llm,
+    mcp_tool_names,
+    render_system_prompt,
     run_with_graceful_shutdown,
 )
+from .workspaces import create_room_workspace_resolver
 
 __all__ = [
-    # Composition
-    "Agent",
+    "ALL_TOOL_NAMES",
+    "BASE_TOOL_NAMES",
+    "CHATTY_LOGGERS",
+    "CHAT_TOOL_NAMES",
+    "CONTACT_TOOL_NAMES",
+    "MCP_TOOL_PREFIX",
+    "MEMORY_TOOL_NAMES",
+    "STANDARD_FORMAT",
+    # Runtime - Tools
+    "TOOL_MODELS",
     # Core types (v0.3.0)
     "AdapterFeatures",
-    "Capability",
-    "Emit",
-    "BandError",
-    "BandConfigError",
-    "BandConnectionError",
-    "BandToolError",
-    "LogLevel",
-    "LoggingConfig",
-    "LoggingStyle",
-    "LogStream",
-    "build_logging_config",
-    "configure_logging",
-    # Platform
-    "BandLink",
-    "PlatformEvent",
+    # Composition
+    "Agent",
+    "AgentConfig",
     # Runtime - Core
     "AgentRuntime",
-    "RoomPresence",
+    "AgentTools",
+    "BandConfigError",
+    "BandConnectionError",
+    "BandError",
+    # Platform
+    "BandLink",
+    "BandToolError",
+    "Capability",
+    "ConversationContext",
+    "Emit",
     "Execution",
     "ExecutionContext",
     "ExecutionHandler",
-    "AgentTools",
-    # Runtime - Types
-    "PlatformMessage",
-    "AgentConfig",
-    "SessionConfig",
-    "ConversationContext",
-    # Runtime - Prompts
-    "render_system_prompt",
-    # Runtime - Tools
-    "TOOL_MODELS",
-    "ALL_TOOL_NAMES",
-    "BASE_TOOL_NAMES",
-    "CHAT_TOOL_NAMES",
-    "CONTACT_TOOL_NAMES",
-    "MEMORY_TOOL_NAMES",
-    "MCP_TOOL_PREFIX",
-    "mcp_tool_names",
-    # Runtime - Formatters
-    "format_message_for_llm",
-    "format_history_for_llm",
-    "build_participants_message",
-    # Runtime - Trackers
-    "ParticipantTracker",
-    "MessageRetryTracker",
+    "FeatureKwargs",
+    "FileStyle",
+    "FormatStyle",
     # Runtime - Shutdown
     "GracefulShutdown",
+    "LogLevel",
+    "LogSettings",
+    "LogStream",
+    "LoggingConfig",
+    "LoggingStyle",
+    # Runtime - Trackers
+    "MessageRetryTracker",
+    "PlatformEvent",
+    # Runtime - Types
+    "PlatformMessage",
+    "RoomPresence",
+    "SessionConfig",
+    "build_logging_config",
+    "build_participants_message",
+    "chatty_logger_levels",
+    "configure_logging",
+    "configure_logging_from_env",
+    "create_room_workspace_resolver",
+    "format_history_for_llm",
+    # Runtime - Formatters
+    "format_message_for_llm",
+    "mcp_tool_names",
+    # Runtime - Prompts
+    "render_system_prompt",
     "run_with_graceful_shutdown",
 ]
 

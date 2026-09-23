@@ -18,17 +18,23 @@ This is a complete, functional example with:
 - Query validation before execution
 """
 
+import logging
 import os
+import sqlite3
+import urllib.request
 from typing import Annotated, Literal
-from typing_extensions import TypedDict
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_openai import ChatOpenAI
-from langchain_community.utilities import SQLDatabase
+
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
+from langchain_community.utilities import SQLDatabase
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from typing_extensions import TypedDict
+
+from band import LogSettings
 
 
 class MessagesState(TypedDict):
@@ -101,10 +107,6 @@ def create_sql_agent(db_path: str = "Chinook.db"):
 
 def download_chinook_db():
     """Download the Chinook sample database if not present."""
-    import logging
-    import os
-    import urllib.request
-
     logger = logging.getLogger(__name__)
 
     db_path = "Chinook.db"
@@ -119,12 +121,9 @@ def download_chinook_db():
         urllib.request.urlretrieve(url, db_path)
         logger.info("Downloaded database to %s", db_path)
         return db_path
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
         logger.error("Error downloading database: %s", e)
         logger.info("Creating minimal test database instead...")
-
-        # Create minimal test database if download fails
-        import sqlite3
 
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -159,7 +158,7 @@ if __name__ == "__main__":
     import asyncio
     import logging
 
-    logging.basicConfig(level=logging.INFO)
+    LogSettings().for_application().configure()
     logger = logging.getLogger(__name__)
 
     async def test():

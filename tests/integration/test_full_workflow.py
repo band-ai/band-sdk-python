@@ -9,11 +9,12 @@ from __future__ import annotations
 import logging
 
 import pytest
-
 from band_rest import ChatEventRequest, ChatMessageRequest
 from band_rest.core.api_error import ApiError
 from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
+)
+from band_rest.types import (
     ParticipantRequest,
 )
 

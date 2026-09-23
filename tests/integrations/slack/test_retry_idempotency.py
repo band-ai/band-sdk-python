@@ -17,8 +17,9 @@ import hashlib
 import hmac
 import json
 import time
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -26,33 +27,35 @@ from httpx import ASGITransport
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from band.core.simple_adapter import SimpleAdapter
+from band.integrations.slack.adapter import SlackAdapter
 from band.integrations.slack.server import (
     DEFAULT_SEEN_EVENTS_CACHE_SIZE,
-    _SeenEvents,
+    SeenEvents,
     build_router,
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
+from band.testing.platform import platform_connection_stub
 
-
-# ── Unit tests on _SeenEvents ────────────────────────────────────────────────
+# ── Unit tests on SeenEvents ────────────────────────────────────────────────
 
 
 def test_seen_events_records_first_occurrence_as_new():
-    cache = _SeenEvents()
+    cache = SeenEvents()
     assert cache.is_dupe("Ev123") is False
     assert len(cache) == 1
 
 
 def test_seen_events_detects_repeat_as_dupe():
-    cache = _SeenEvents()
+    cache = SeenEvents()
     cache.is_dupe("Ev123")
     assert cache.is_dupe("Ev123") is True
     assert cache.is_dupe("Ev123") is True
 
 
 def test_seen_events_distinguishes_ids():
-    cache = _SeenEvents()
+    cache = SeenEvents()
     cache.is_dupe("A")
     cache.is_dupe("B")
     assert cache.is_dupe("A") is True
@@ -61,7 +64,7 @@ def test_seen_events_distinguishes_ids():
 
 
 def test_seen_events_evicts_lru_when_over_capacity():
-    cache = _SeenEvents(max_size=3)
+    cache = SeenEvents(max_size=3)
     cache.is_dupe("A")
     cache.is_dupe("B")
     cache.is_dupe("C")
@@ -76,7 +79,7 @@ def test_seen_events_evicts_lru_when_over_capacity():
 
 
 def test_seen_events_touching_resets_lru_position():
-    cache = _SeenEvents(max_size=3)
+    cache = SeenEvents(max_size=3)
     cache.is_dupe("A")
     cache.is_dupe("B")
     cache.is_dupe("C")
@@ -286,11 +289,6 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     """End-to-end via the full SlackAdapter wrapping shape: 3 retries
     must produce exactly one inner brain invocation and one Band
     room (not three)."""
-    from types import SimpleNamespace
-    from unittest.mock import MagicMock
-
-    from band.core.simple_adapter import SimpleAdapter
-    from band.integrations.slack.adapter import SlackAdapter
 
     class _Brain(SimpleAdapter[Any]):
         def __init__(self) -> None:
@@ -317,11 +315,10 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     adapter = SlackAdapter(
         inner=brain,
         apps=apps,
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(chat_postMessage=AsyncMock()),
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
     await adapter.on_started("bot", "")
 
     payload = _event_payload(event_id="EvE2E")

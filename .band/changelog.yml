@@ -1,0 +1,17 @@
+fern_repo: thenvoi/fern
+fern_changelog_path: fern/changelog/sdks
+product:
+  name: Band Python SDK
+  label: Python SDK
+  tag: python
+linear:
+  team_key: INT
+announce:
+  slack:
+    enabled: true
+    channel: integrations
+    mode: live
+  discord:
+    enabled: true
+    channel: announcements
+    mode: live

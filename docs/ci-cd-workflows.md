@@ -8,7 +8,7 @@ this repository.
 The repository uses **GitHub Flow** on a single long-lived trunk:
 
 ```
-feature branch ──(squash PR)──▶ main ──(merge release PR)──▶ release (PyPI + GHCR)
+feature branch ──(squash PR)──▶ main ──(merge release PR)──▶ release (PyPI + Hub/GHCR kit)
 ```
 
 - `main` — the single trunk. All feature work is squash-merged here, and it is
@@ -79,11 +79,14 @@ merges).
 
 1. Release Please opens/updates a release PR, or — when a release PR merges —
    tags the release and updates the changelog and version.
-2. On a created release, publishes the sandbox kit to GHCR via the reusable
-   `kit-publish.yml` pipeline (`publish-kit`): the multi-arch attested image
-   `ghcr.io/band-ai/band-python-kit/image` and the OCI kit artifact
-   `ghcr.io/band-ai/band-python-kit`, gated by the supply-chain quarantine
-   check.
+2. On a created release, dual-publishes the sandbox kit to Docker Hub and
+   GHCR via the reusable `kit-publish.yml` pipeline (`publish-kit`): the
+   multi-arch image (`docker.io/bandhq/band-python-kit-image` +
+   `ghcr.io/band-ai/band-python-kit/image`, with provenance + SBOM on GHCR)
+   and the OCI kit artifact (`docker.io/bandhq/band-python-kit` +
+   `ghcr.io/band-ai/band-python-kit`), gated by the supply-chain quarantine
+   check. Hub is the customer-facing ref; see
+   `docker/band_python_kit/RELEASING.md`.
 3. After a successful kit publish, opens an automated version-bump PR against
    `band-ai/add-band` (`bump-add-band`; merging it stays a human step).
 4. `summary` reports each artifact's outcome.
@@ -149,8 +152,8 @@ run executed server-side. Use this ladder, cheapest rung first:
 3. Get 1 approval, **squash** merge to `main`.
 4. Release Please updates the standing release PR to reflect the new commit.
 5. When ready to release, review and **merge the release PR**. That tags the
-   release, publishes the kit to GHCR (`release.yml`), and the published
-   release triggers the PyPI publish (`band-publish.yml`).
+   release, dual-publishes the kit to Docker Hub and GHCR (`release.yml`),
+   and the published release triggers the PyPI publish (`band-publish.yml`).
 
 > **No back-merge:** the release commit Release Please lands (version bump +
 > CHANGELOG) goes onto `main` — the same branch everyone works from — so there is

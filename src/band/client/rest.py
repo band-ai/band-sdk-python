@@ -14,16 +14,22 @@ Usage:
 """
 
 from band_rest import (
-    RestClient,
-    AsyncRestClient,
+    AddAgentContactResponseData,
     AgentContact,
     AgentMe,
     AgentMemory,
-    ChatMessageRequest,
-    ChatEventRequest,
-    ChatRoomRequest,
-    ParticipantRequest,
     AgentMemoryCreateRequest,
+    AsyncRestClient,
+    Attachment,
+    Board,
+    ChatEventRequest,
+    ChatMessage,
+    ChatMessageRequest,
+    ChatParticipant,
+    ChatRoomRequest,
+    EventCreatedResponse,
+    GetChatTaskHistoryResponse,
+    GetChatTaskHistoryResponseMetadata,
     ListAgentContactRequestsResponse,
     ListAgentContactRequestsResponseData,
     ListAgentContactRequestsResponseMetadata,
@@ -35,10 +41,24 @@ from band_rest import (
     ListAgentMemoriesResponseMeta,
     ListAgentPeersResponse,
     ListAgentPeersResponseMetadata,
+    ListChatTasksResponse,
+    ListChatTasksResponseMetadata,
+    MessageSentResponse,
+    MessageSentResponseRecipientsItem,
     NotFoundError,
+    ParticipantRequest,
     Peer,
+    ReceivedContactRequest,
+    RemoveAgentContactResponseData,
+    RespondToAgentContactRequestResponseData,
+    RestClient,
+    SentContactRequest,
+    Task,
+    TaskActor,
     UnauthorizedError,
+    UnprocessableEntityError,
 )
+from band_rest.core import ParsingError
 from band_rest.core.request_options import RequestOptions
 from band_rest.types import ChatMessageRequestMentionsItem
 
@@ -47,18 +67,37 @@ from band_rest.types import ChatMessageRequestMentionsItem
 # We set max_retries=3 to handle transient rate limit errors gracefully.
 DEFAULT_REQUEST_OPTIONS: RequestOptions = {"max_retries": 3}
 
+
+async def aclose_rest_client(client: AsyncRestClient) -> None:
+    """Close ``client``'s underlying httpx client.
+
+    Fern's generated wrapper buries the real httpx client three attributes
+    deep (``_client_wrapper.httpx_client.httpx_client``) -- one place to
+    reach through that chain so a future ``band_rest`` upgrade only needs
+    updating here.
+    """
+    await client._client_wrapper.httpx_client.httpx_client.aclose()
+
+
 __all__ = [
-    "RestClient",
-    "AsyncRestClient",
+    "DEFAULT_REQUEST_OPTIONS",
+    "AddAgentContactResponseData",
     "AgentContact",
     "AgentMe",
     "AgentMemory",
+    "AgentMemoryCreateRequest",
+    "AsyncRestClient",
+    "Attachment",
+    "Board",
+    "ChatEventRequest",
+    "ChatMessage",
     "ChatMessageRequest",
     "ChatMessageRequestMentionsItem",
-    "ChatEventRequest",
+    "ChatParticipant",
     "ChatRoomRequest",
-    "ParticipantRequest",
-    "AgentMemoryCreateRequest",
+    "EventCreatedResponse",
+    "GetChatTaskHistoryResponse",
+    "GetChatTaskHistoryResponseMetadata",
     "ListAgentContactRequestsResponse",
     "ListAgentContactRequestsResponseData",
     "ListAgentContactRequestsResponseMetadata",
@@ -70,9 +109,23 @@ __all__ = [
     "ListAgentMemoriesResponseMeta",
     "ListAgentPeersResponse",
     "ListAgentPeersResponseMetadata",
+    "ListChatTasksResponse",
+    "ListChatTasksResponseMetadata",
+    "MessageSentResponse",
+    "MessageSentResponseRecipientsItem",
     "NotFoundError",
+    "ParsingError",
+    "ParticipantRequest",
     "Peer",
-    "UnauthorizedError",
+    "ReceivedContactRequest",
+    "RemoveAgentContactResponseData",
     "RequestOptions",
-    "DEFAULT_REQUEST_OPTIONS",
+    "RespondToAgentContactRequestResponseData",
+    "RestClient",
+    "SentContactRequest",
+    "Task",
+    "TaskActor",
+    "UnauthorizedError",
+    "UnprocessableEntityError",
+    "aclose_rest_client",
 ]

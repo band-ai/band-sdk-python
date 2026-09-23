@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from typing import Any
 
 try:
-    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions  # type: ignore[import-not-found]
+    from claude_agent_sdk import (  # type: ignore[import-not-found]
+        ClaudeAgentOptions,
+        ClaudeSDKClient,
+    )
     from claude_agent_sdk.types import CanUseTool  # type: ignore[import-not-found]
 
     _CLAUDE_SDK_AVAILABLE = True
@@ -29,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _SessionCommand:
+class SessionCommand:
     """Command to be processed by the session manager task."""
 
     action: str  # "create", "cleanup", "cleanup_all", "invalidate", "stop"
@@ -90,7 +93,7 @@ class ClaudeSessionManager:
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._sessions: dict[str, ClaudeSDKClient] = {}
-        self._command_queue: asyncio.Queue[_SessionCommand] = asyncio.Queue()
+        self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._started = False
         logger.info("ClaudeSessionManager initialized")
@@ -112,7 +115,7 @@ class ClaudeSessionManager:
         # Send stop command
         stop_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(action="stop", result_future=stop_future)
+            SessionCommand(action="stop", result_future=stop_future)
         )
 
         # Wait for cleanup to complete
@@ -134,7 +137,7 @@ class ClaudeSessionManager:
         logger.debug("Session loop started")
 
         while True:
-            cmd: _SessionCommand | None = None
+            cmd: SessionCommand | None = None
             try:
                 cmd = await self._command_queue.get()
 
@@ -172,7 +175,7 @@ class ClaudeSessionManager:
                 logger.debug("Session loop cancelled")
                 break
             except Exception as e:
-                logger.error("Error in session loop: %s", e, exc_info=True)
+                logger.exception("Error in session loop")
                 if cmd and cmd.result_future and not cmd.result_future.done():
                     cmd.result_future.set_exception(e)
 
@@ -262,7 +265,7 @@ class ClaudeSessionManager:
         try:
             await self._sessions[room_id].disconnect()
             logger.debug("Disconnected client for room %s", room_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
             logger.warning("Error disconnecting session for room %s: %s", room_id, e)
 
         del self._sessions[room_id]
@@ -307,7 +310,7 @@ class ClaudeSessionManager:
             asyncio.get_running_loop().create_future()
         )
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="create",
                 room_id=room_id,
                 resume_session_id=resume_session_id,
@@ -333,7 +336,7 @@ class ClaudeSessionManager:
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="cleanup",
                 room_id=room_id,
                 result_future=result_future,
@@ -357,7 +360,7 @@ class ClaudeSessionManager:
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="invalidate",
                 room_id=room_id,
                 result_future=result_future,
@@ -377,7 +380,7 @@ class ClaudeSessionManager:
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="cleanup_all",
                 result_future=result_future,
             )

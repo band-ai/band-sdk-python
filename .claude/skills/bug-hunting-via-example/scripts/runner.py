@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Coroutine, Iterator
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, TypeVar
 
@@ -421,7 +421,7 @@ def reply_capture_context(
 ) -> AbstractAsyncContextManager[ReplyCapture]:
     """Open a baseline reply capture; imported late, after ``sys.path`` is set."""
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.toolkit.capture import reply_capture
+    from tests.e2e.baseline.toolkit.capture import reply_capture  # noqa: PLC0415
 
     return reply_capture(
         ws, room_id, user_ops=user_ops, settings=settings, deadline_s=deadline_s
@@ -493,18 +493,17 @@ def example_environment(
 
 @contextmanager
 def child_log(spec: ExampleSpec) -> Iterator[tuple[ChildLog, IO[bytes]]]:
-    log_file = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="ab", prefix=f"band-example-{spec.id}-", suffix=".log", delete=False
-    )
-    log_path = Path(log_file.name)
-    log_path.chmod(0o600)
-    artifact = ChildLog(log_path)
-    try:
-        yield artifact, log_file
-    finally:
-        log_file.close()
-        if not artifact.preserve:
-            log_path.unlink(missing_ok=True)
+    ) as log_file:
+        log_path = Path(log_file.name)
+        log_path.chmod(0o600)
+        artifact = ChildLog(log_path)
+        try:
+            yield artifact, log_file
+        finally:
+            if not artifact.preserve:
+                log_path.unlink(missing_ok=True)
 
 
 async def start_example(
@@ -662,12 +661,8 @@ def parse_server_timestamp(value: datetime | str | None) -> datetime:
     """Coerce a platform timestamp to an aware UTC stamp (the platform stores UTC)."""
     if value is None:
         raise TypeError("platform message timestamp is missing")
-    stamp = (
-        value
-        if isinstance(value, datetime)
-        else datetime.fromisoformat(value.replace("Z", "+00:00"))
-    )
-    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+    stamp = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
 async def message_server_timestamp(
@@ -784,7 +779,7 @@ async def exercise_steps_reported(
 ) -> None:
     try:
         await exercise_steps(running, resources, ws, settings, scenario, results)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_result(
             results,
             Result(scenario, running.spec.id, "fail", f"steps: {error}"),
@@ -859,7 +854,7 @@ async def start_group_examples(
         try:
             agent = await resources.provision_agent(f"group-{spec.id}")
             running[spec.id] = await start_example(spec, agent, repo, settings)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
             record_result(
                 results,
                 Result("together", spec.id, "fail", f"startup: {error}"),
@@ -914,7 +909,7 @@ async def exercise_shared_turn_reported(
     try:
         await exercise_shared_turn(running, resources, capture, room_id)
         result = Result("shared-room", running.spec.id, "pass")
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         result = Result("shared-room", running.spec.id, "fail", str(error))
     record_result(results, result)
 
@@ -943,7 +938,7 @@ async def exercise_shared_room(
             title="example-hunt-shared-room",
             participants=[item.agent.id for item in running.values()],
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_shared_setup_failure(running, results, error)
         return
 
@@ -959,7 +954,7 @@ async def exercise_shared_room(
                 await exercise_shared_turn_reported(
                     item, resources, capture, room_id, results
                 )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_result(
             results,
             Result("shared-room", "group", "fail", f"capture: {error}"),
@@ -991,7 +986,7 @@ async def exercise_collaborations(
             await exercise_collaboration(
                 collaboration, running, resources, ws, settings, results
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
             record_result(results, Result("collaboration", label, "fail", str(error)))
 
 
@@ -1042,13 +1037,13 @@ async def run_independent_example(
         agent = await resources.provision_agent(f"solo-{spec.id}")
         running = await start_example(spec, agent, repo, settings)
         await exercise_steps(running, resources, ws, settings, "independent", results)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_result(results, Result("independent", spec.id, "fail", str(error)))
     finally:
         if running is not None:
             try:
                 await stop_example(running)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
                 record_result(results, Result("cleanup", spec.id, "fail", str(error)))
 
 
@@ -1072,16 +1067,16 @@ async def run_live(plan: Plan, repo: Path, keep: bool, results: list[Result]) ->
     """
     sys.path.insert(0, str(repo))
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.settings import BaselineSettings
+    from tests.e2e.baseline.settings import BaselineSettings  # noqa: PLC0415
 
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.toolkit.provisioning import (
+    from tests.e2e.baseline.toolkit.provisioning import (  # noqa: PLC0415
         ResourceManager,
         user_rest_client,
     )
 
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.toolkit.ws import user_ws_observer
+    from tests.e2e.baseline.toolkit.ws import user_ws_observer  # noqa: PLC0415
 
     settings = BaselineSettings()
     if not settings.e2e_tests_enabled:
@@ -1101,7 +1096,7 @@ async def run_live(plan: Plan, repo: Path, keep: bool, results: list[Result]) ->
                 )
                 try:
                     await run_group(plan, resources, ws, settings, repo, results)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
                     record_result(
                         results, Result("together", "group", "fail", str(error))
                     )

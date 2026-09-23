@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from band.core.types import AdapterFeatures, Capability, Emit
-
 from tests.baseline.decisions import ModelDecision
 from tests.baseline.harness import BaselineScenario
 from tests.baseline.tools import BaselineTools
@@ -43,7 +42,7 @@ async def test_execution_events_follow_a_platform_tool_call() -> None:
             ),
             ModelDecision.text_reply("done"),
         ],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
     )
 
     observation = await scenario.run("Show your work")
@@ -90,7 +89,7 @@ async def test_malformed_tool_arguments_are_reported_without_platform_io() -> No
             ModelDecision.call("band_send_message", mentions=["@baseline-user"]),
             ModelDecision.text_reply("recovered"),
         ],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
     )
 
     observation = await scenario.run("Send a malformed call")
@@ -135,7 +134,16 @@ async def test_permanent_model_failure_surfaces_an_error_event() -> None:
 
 @pytest.mark.asyncio
 async def test_contact_tool_round_trip_is_local_and_observable() -> None:
-    tools = BaselineTools()
+    tools = BaselineTools(
+        received_contact_requests=[
+            {
+                "id": "request-1",
+                "from_handle": "requester",
+                "status": "pending",
+                "inserted_at": "2025-01-01T00:00:00Z",
+            }
+        ]
+    )
     scenario = BaselineScenario(
         [
             ModelDecision.call(
@@ -150,7 +158,7 @@ async def test_contact_tool_round_trip_is_local_and_observable() -> None:
     observation = await scenario.run("Approve the request")
 
     observation.assert_tool_called("band_respond_contact_request", action="approve")
-    assert tools.contact_requests[0]["result"]["status"] == "approved"
+    assert tools.contact_requests[0]["result"].status == "approved"
     scenario.assert_complete()
 
 

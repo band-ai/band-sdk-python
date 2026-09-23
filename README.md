@@ -50,8 +50,9 @@ Building an agent for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)?
 The `band-python-kit` kit runs your agent in an isolated microVM — the Band
 SDK in a read-only virtual environment, automatic sandbox proxy-CA trust
 wiring, a default-deny egress allowlist, arm64 and x86_64. It is distributed
-on GHCR (`ghcr.io/band-ai/band-python-kit`), so adopting it is one
-`sbx create --kit …` from a clean machine — no repo checkout or local build.
+on Docker Hub (`docker.io/bandhq/band-python-kit`; also mirrored on GHCR), so
+adopting it is one `sbx create --kit …` from a clean machine — no repo
+checkout or local build.
 
 Choose the guide that matches what you need:
 
@@ -64,7 +65,8 @@ Choose the guide that matches what you need:
 - [Release engineering](docker/band_python_kit/RELEASING.md) — how the kit is
   published, tag policy, CVE-rebuild cadence, supply-chain quarantine.
 
-The declarative kit and published GHCR image are separate release deliverables.
+The declarative kit and published sandbox image are separate release
+deliverables (dual-published to Docker Hub and GHCR).
 
 #### Proxy-managed credentials
 
@@ -211,13 +213,64 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 ### Logging
 
-The SDK uses standard Python loggers and does not configure process-wide handlers unless your application opts in. For readable Band logs while keeping noisy dependencies quiet:
+The SDK uses standard Python loggers and does not configure process-wide handlers unless you opt in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables.
+
+**Pick one setup:**
+
+| You are… | Call |
+|---|---|
+| Embedding Band inside a larger app (only want Band's own logs) | `LogSettings().configure()` |
+| Running a Band agent / runner / CLI as the main process | `LogSettings().for_application().configure()` |
+
+Why the split? Default settings raise the `band` logger to `BAND_LOG_LEVEL` (usually `INFO`) but leave the root logger at `WARNING`. That keeps embeds quiet. Your script's own logger (`logging.getLogger(__name__)`, often `__main__`) is *not* under `band`, so its `INFO` lines stay hidden unless you call `for_application()` — which raises root to match the Band level. Set `BAND_LOG_ROOT_LEVEL` yourself if you want a different root level; `for_application()` will not override it.
 
 ```python
-from band import configure_logging
+from band import LogSettings
 
-configure_logging()
+assert LogSettings is not None
+
+# Library / embed: Band INFO, other loggers quiet
+LogSettings().configure()
+
+# Application entrypoint: Band + your process loggers at the same level
+LogSettings().for_application().configure()
+
+# Optional CLI flag: None keeps BAND_LOG_LEVEL
+LogSettings.create(log_level=None).for_application().configure()
 ```
+
+The `examples/` scripts read `BAND_LOG_LEVEL` only; the old, informal `LOG_LEVEL`
+var some of them used to read is no longer honored there. `band-bridge` is a
+separate deployable with its own env surface (`BAND_AGENT_ID`, `AGENT_MAPPING`,
+...) — its `LOG_LEVEL` is unrelated and unaffected by this rename.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BAND_LOG_LEVEL` | `INFO` | Level for the `band` logger (and console when a file sink differs) |
+| `BAND_LOG_ROOT_LEVEL` | `WARNING` | Root logger level for non-Band loggers |
+| `BAND_LOG_FILE` | unset | Optional log file path |
+| `BAND_LOG_FILE_LEVEL` | follows `BAND_LOG_LEVEL` | File handler level (use `DEBUG` for quiet console / verbose file) |
+| `BAND_LOG_MAX_BYTES` | `0` | Rotate when positive; `0` uses a plain file handler |
+| `BAND_LOG_BACKUPS` | `1` | Rotated backups to keep; `0` alongside a size cap is rejected, since a handler with no backups never rotates |
+| `BAND_LOG_CONSOLE_STYLE` | `standard` | `standard`, `rich`, or `json` |
+| `BAND_LOG_FILE_STYLE` | `standard` | `standard` or `json` |
+| `BAND_LOG_STREAM` | `stderr` | `stderr` or `stdout` |
+| `BAND_LOG_OVERRIDES` | `{}` | JSON map of logger name → level |
+
+Band hardens only what it creates for `BAND_LOG_FILE`: directories it has to
+create are `0700`, and the log file — plus every file a rotation replaces it
+with — is created `0600`. A directory or file that already exists keeps the
+mode you gave it. This is worth knowing because Band logs message content at
+`DEBUG` (prompt text, tool payloads), so `BAND_LOG_LEVEL=DEBUG` with a file
+sink can persist room content to disk: if you point it at a path you manage
+yourself, the permissions on it are yours to set.
+
+`configure_logging()` does not demote dependency loggers by itself. When a
+process needs that, pass `extra_loggers=chatty_logger_levels()` (covers
+`httpx`, `httpcore`, and `phoenix_channels_python_client`) and add any
+framework-specific names on top.
+
+Precedence: an explicit constructor argument (for example a CLI `--log-level`) beats the environment; the environment beats class defaults. Empty env values fall back to the field default. Prefer `LogSettings.create(log_level=...)` for optional CLI flags so a missing flag does not override the environment.
 
 For production JSON logs or Rich console output, install the logging extra:
 
@@ -226,8 +279,10 @@ uv add "band-sdk[logging]"
 ```
 
 ```python notest
-configure_logging(style="json", stream="stdout")
-configure_logging(style="rich")
+from band import LoggingStyle, LogStream, configure_logging
+
+configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+configure_logging(style=LoggingStyle.RICH)
 ```
 
 The examples intentionally show different styles: `examples/langgraph` uses the standard formatter, `examples/parlant` uses Rich, and `examples/codex` emits JSON to stdout.
@@ -237,11 +292,85 @@ If you need to modify the logging setup before applying it, build a fresh `dictC
 ```python notest
 import logging.config
 
-from band import build_logging_config
+from band import LoggingStyle, build_logging_config
 
-config = build_logging_config(style="json", static_fields={"service": "agent"})
+config = build_logging_config(
+    style=LoggingStyle.JSON, static_fields={"service": "agent"}
+)
 logging.config.dictConfig(config)
 ```
+
+### OpenTelemetry
+
+**The host owns the telemetry pipeline.** Band creates no `TracerProvider`, no
+`LoggerProvider`, no processor, and no exporter, and depends on no OpenTelemetry
+package. What it does is stay out of the way and meet an instrumented host
+halfway:
+
+- **JSON logs are correlation-ready.** The default JSON schema carries the four
+  attributes `LoggingInstrumentor(inject_trace_context=True)` injects. Without
+  instrumentation they are `null`, so the schema does not change shape when you
+  turn tracing on later. Passing your own `json_fields` replaces that default —
+  splice `*OTEL_CORRELATION_FIELDS` in to keep them.
+- **Pydantic AI runs can be traced through Band.** `PydanticAIAdapter` passes
+  `instrument` straight to the pydantic-ai agent.
+
+```python
+from band.logging_config import OTEL_CORRELATION_FIELDS
+
+assert OTEL_CORRELATION_FIELDS == (
+    "otelTraceID",
+    "otelSpanID",
+    "otelTraceSampled",
+    "otelServiceName",
+)
+```
+
+```python
+from band.adapters import PydanticAIAdapter
+
+# None (default) inherits Agent.instrument_all(); False opts out of it;
+# True uses the global TracerProvider; InstrumentationSettings(...) customizes.
+adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini", instrument=True)
+
+assert adapter.instrument is True
+```
+
+Set it up in this order:
+
+```python notest
+with telemetry("my-service") as otel:  # 1. your providers + trace-context injection
+    LogSettings().for_application().configure()  # 2. Band's logging
+    otel.attach_log_handler()  # 3. your OTEL log handler
+```
+
+Step 3 comes last because Band applies its configuration with
+`logging.config.dictConfig`, which is non-incremental and *replaces* the root
+logger's handlers — a handler attached before step 2 is silently dropped. There
+is deliberately no "keep my handlers" option: by the time Band could restore
+one, `dictConfig` has already closed it. Step 1 can go either side of step 2,
+since trace-context injection is a log-record factory rather than a handler.
+
+A runnable host pipeline (shared `Resource`, both providers, console exporters,
+clean shutdown) lives in [examples/opentelemetry/](examples/opentelemetry/).
+
+**Where model-call spans come from, per adapter.** Support is not equivalent
+across these rows — Band only bridges the first one:
+
+| Adapter | How its model calls get traced |
+|---|---|
+| Pydantic AI | Natively, through Band: `PydanticAIAdapter(instrument=...)` — see [Pydantic AI instrumentation](https://ai.pydantic.dev/logfire/) |
+| Parlant | Parlant's own [built-in OpenTelemetry](https://www.parlant.io/docs/production/observability), configured with its `OTEL_EXPORTER_OTLP_*` variables |
+| Google ADK | ADK traces against the global `TracerProvider`, so setting one is enough — see [ADK observability](https://google.github.io/adk-docs/observability/) |
+| LangGraph, Agno, CrewAI Flow | You construct the graph / agent / flow and hand it to the adapter, so instrument it before you do — for LangChain, [tracing with OpenTelemetry](https://docs.smith.langchain.com/observability/how_to_guides/trace_with_opentelemetry) |
+| Anthropic, Gemini, CrewAI | Band builds the client from a model string, so instrument the provider SDK or framework process-wide with a third-party instrumentor ([OpenTelemetry registry](https://opentelemetry.io/ecosystem/registry/?language=python), [CrewAI observability](https://docs.crewai.com/en/observability/overview)) |
+| Claude SDK, Copilot SDK, Codex, OpenCode, ACP clients, A2A, Letta | The model call runs in another process or on a remote host, so this process has no model spans to emit. Band's own logs still correlate; the backend has to export its own traces. |
+
+**Containers and sandboxes.** The Docker and `sbx` examples deliberately stop at
+`BAND_LOG_*` plus host-side log tails. Running a collector inside the sandbox —
+or handing it OTLP credentials — needs an egress path, a decision about MITM
+trust, and somewhere to keep the secret; none of that is designed yet, so it is
+not offered as if it were.
 
 ### Slack (`examples/slack/`)
 
@@ -322,6 +451,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [docs](docs/adapters/langgraph.md) | [examples](examples/langgraph/)     |
 | Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
 | Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
+| Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
 | Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
 | GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
@@ -334,9 +464,9 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
-LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
+LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 
-> Install `crewai` in its own environment, apart from `parlant` and `pydantic-ai` — it carries the narrowest transitive pins of the three and the lockfile resolves it in a separate fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for the current pins.
+> `crewai`, `parlant`, and `pydantic-ai` each need their own environment, apart from one another — crewai carries the narrowest transitive pins of the three, and parlant/pydantic-ai separately collide on a shared import path. The lockfile resolves each in its own fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for details.
 
 ### Bridge Adapters
 
@@ -355,9 +485,9 @@ Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` s
 
 ## Platform Tools
 
-Agents using the Band SDK can receive built-in tools for interacting with Band. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities on adapters that support `AdapterFeatures`, and are disabled unless you explicitly enable them.
+Agents using the Band SDK can receive built-in tools for interacting with Band. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities, configured via `capabilities=` on the adapters that support them, and are disabled unless you explicitly enable them.
 
-The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; protocol bridge adapters (`A2AAdapter`, `A2AGatewayAdapter`, and ACP adapters) do not expose those optional capability tools through `AdapterFeatures`.
+The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; protocol bridge adapters (`A2AAdapter`, `A2AGatewayAdapter`, and ACP adapters) do not expose those optional capability tools via `capabilities=`.
 
 | Category     | Tool Names | What They Enable |
 | ------------ | ---------- | ---------------- |
@@ -365,17 +495,15 @@ The table below is the agent tool surface exposed to LLM adapters. Framework ada
 | **Contacts** | `band_list_contacts`, `band_add_contact`, `band_remove_contact`, `band_list_contact_requests`, `band_respond_contact_request` | Review and manage contact relationships |
 | **Memory**   | `band_list_memories`, `band_store_memory`, `band_get_memory`, `band_supersede_memory`, `band_archive_memory` | Store and retrieve agent memory. Requires an Enterprise workspace with memory enabled |
 
-Enable optional contact and memory tool categories by passing `features=` when you construct an adapter:
+Enable optional contact and memory tool categories by passing `capabilities=` when you construct an adapter:
 
 ```python
 from band.adapters import AnthropicAdapter
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import Capability
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5",
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
 )
 ```
 
@@ -383,19 +511,17 @@ adapter = AnthropicAdapter(
 
 ### Configuring Adapters
 
-Adapters support optional capabilities, emit telemetry, custom instructions, and custom tools. These are configured through `AdapterFeatures` and adapter constructor parameters.
+Adapters support optional capabilities, emit telemetry, custom instructions, and custom tools, all passed directly as adapter constructor keyword arguments.
 
 ```python
-from band import AdapterFeatures, Capability, Emit
+from band import Capability, Emit
 from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5",
     prompt="You are a concise technical reviewer.",
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS},
-        emit={Emit.EXECUTION},
-    ),
+    capabilities=Capability.CONTACTS,
+    emit=Emit.TOOL_CALLS,
 )
 ```
 
@@ -424,26 +550,27 @@ Emit controls adapter-level telemetry: events the adapter publishes when it obse
 
 Adapter emit support:
 
-| Adapter | `EXECUTION` | `THOUGHTS` | `TASK_EVENTS` |
-| ------- | ----------- | ---------- | ------------- |
-| Codex | Yes | Yes | Yes |
-| Claude SDK | Yes | Yes | - |
-| Agno | Yes | Yes | - |
-| OpenCode | Yes | - | Yes |
-| Letta | Yes | - | Yes |
-| Anthropic | Yes | - | - |
-| CrewAI | Yes | - | - |
-| CrewAI Flow | Yes | - | - |
-| Gemini | Yes | - | - |
-| Google ADK | Yes | - | - |
-| Pydantic AI | Yes | - | - |
-| LangGraph | Yes | - | - |
-| Strands Agents | Yes | - | - |
-| Parlant | - | - | - |
-| A2A / A2A Gateway | - | - | - |
-| ACP Client | - | - | - |
+| Adapter | `TOOL_CALLS` | `THOUGHTS` | `TASK_EVENTS` | `USAGE` |
+| ------- | ----------- | ---------- | ------------- | ------- |
+| Codex | Yes | Yes | Yes | Yes |
+| Claude SDK | Yes | Yes | - | Yes |
+| Copilot SDK | Yes | Yes | - | Yes |
+| Agno | Yes | Yes | - | Yes |
+| OpenCode | Yes | - | Yes | Yes |
+| Letta | Yes | - | Yes | Yes |
+| Anthropic | Yes | - | - | Yes |
+| CrewAI | Yes | - | - | - |
+| CrewAI Flow | Yes | - | - | - |
+| Gemini | Yes | - | - | Yes |
+| Google ADK | Yes | - | - | Yes |
+| Pydantic AI | Yes | - | - | Yes |
+| LangGraph | Yes | - | - | Yes |
+| Strands Agents | Yes | - | - | Yes |
+| Parlant | - | - | - | - |
+| A2A / A2A Gateway | - | - | - | - |
+| ACP Client | - | - | - | - |
 
-If you request an unsupported emit value, the adapter logs a warning at startup and the value has no effect.
+Requesting an unsupported `emit` or `capabilities` value raises `BandConfigError` immediately at construction.
 
 Adapter-specific configuration such as Codex streaming flags, Claude SDK approval modes, or LangGraph graph factories is documented in the per-adapter guides linked in the table above. See [docs/adapters/](docs/adapters/) for full reference.
 
@@ -581,7 +708,6 @@ async def main() -> None:
     gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
     adapter = A2AGatewayAdapter(
-        api_key=os.environ["GATEWAY_API_KEY"],
         gateway_url=gateway_url,
         port=gateway_port,
         # The default is 300 seconds. Use None for no response deadline.
@@ -708,6 +834,8 @@ Three extras are resolved separately, because crewai carries the narrowest trans
 
 Today's versions happen to overlap, but crewai's ceilings move with every release. So the lockfile declares these as `[tool.uv] conflicts` and `uv lock` resolves each in a separate fork — no upgrade on one side waits for crewai's ceiling to move. Consequence: install one per environment, because a single `uv sync` can only pick one fork.
 
+`parlant` + `pydantic-ai` are separately resolved too, for an unrelated reason: it's not a version pin, it's a namespace collision. `parlant` depends on the `griffe` distribution; `pydantic-ai-slim` depends on `griffelib` — two different PyPI distributions that both install files into the same `griffe` import path. Installing both in one environment corrupts that path (whichever wheel's files land last wins per file, nondeterministic by install order). Also declared via `[tool.uv] conflicts`, so install `band-sdk[parlant]` and `band-sdk[pydantic-ai]` in separate environments, never together.
+
 ---
 
 ## Documentation
@@ -771,7 +899,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | **Find peers** | `band_lookup_peers()` |
 | **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
-| **Emit telemetry** | `AdapterFeatures(emit={Emit.EXECUTION})` |
+| **Emit telemetry** | `AnthropicAdapter(model=..., emit=Emit.TOOL_CALLS)` |
 | **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
 | **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
 | **Editor ACP** | `band-acp --agent-id ID --api-key KEY` |

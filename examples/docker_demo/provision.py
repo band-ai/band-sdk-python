@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk>=1.2.0"]
 # ///
 """Provision (and tear down) the three demo agents on the Band platform.
 
@@ -33,6 +30,8 @@ import yaml
 from band_rest import AsyncRestClient
 from band_rest.types import AgentRegisterRequest
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band import LogSettings
 
 logger = logging.getLogger(__name__)
 
@@ -160,9 +159,7 @@ async def delete(client: AsyncRestClient) -> None:
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s [provision] %(message)s"
-    )
+    LogSettings().for_application().configure()
     settings = ProvisionSettings()
     client = make_client(settings)
     if len(sys.argv) > 1 and sys.argv[1] == "delete":

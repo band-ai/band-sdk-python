@@ -34,18 +34,23 @@ a collection of sandbox-created virtualenv files, caches, and logs.
 
 You need [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`),
 Docker, and a registered Band agent (its id and API key). The kit and its image
-are published to GHCR, so there is **no repo checkout and no local build** — the
-sandbox runtime pulls both.
+are published to Docker Hub (`bandhq/…`; GHCR mirror also exists), so there is
+**no repo checkout and no local build** — the sandbox runtime pulls both.
+
+Registering that agent yourself first (steps 3-4 below) is one path. If you'd
+rather skip pre-provisioning entirely, see
+[Self-registration](#self-registration-no-pre-provisioned-agent): one command
+registers the agent *and* creates the sandbox from just a user key.
 
 ```bash
 # 1. One-time host setup: install sbx and sign in.
 brew install docker/tap/sbx && sbx login
 
-# 2. Let the sandbox runtime pull kits from the band-ai GHCR namespace.
-#    kit.allowedSources REPLACES the whole list (default: ["docker.io/"]), so
-#    keep docker.io/ in it. If you have already customized the allowlist, MERGE
-#    instead of pasting — run `sbx settings get kit.allowedSources` first.
-sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
+# 2. Kit source allowlist — usually a no-op.
+#    Default kit.allowedSources is ["docker.io/"], which covers the Hub kit.
+#    Only needed if you pull the GHCR mirror instead — then MERGE
+#    ghcr.io/band-ai/ into your existing list (the setting replaces the list).
+# sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
 
 # 3. Create your workspace from the echo-agent starter, extracted from the
 #    matching release tarball (no repo checkout needed; same <X.Y.Z> as the
@@ -63,7 +68,7 @@ curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags
 
 # 4. Create the sandbox from the published kit — your agent starts immediately.
 sbx create --name my-band-agent \
-  --kit ghcr.io/band-ai/band-python-kit:<X.Y.Z> \
+  --kit docker.io/bandhq/band-python-kit:<X.Y.Z> \
   band-python-kit ~/my-band-agent
 ```
 
@@ -119,6 +124,73 @@ file puts plaintext keys in both your workspace and the sandbox VM
 (`credentials.acknowledgePlaintextInSandbox: true`); the launcher **warns at
 startup** when this tier is active. Treat the file as any local `.env`:
 git-ignored, `chmod 600`, rotated if leaked. Prefer the injection tier.
+
+### Self-registration (no pre-provisioned agent)
+
+`band-kit provision` (installed with `band-sdk`) skips the manual "register an
+agent, copy its id and key" step above: it registers the agent itself, on the
+host, with a **user** key, then wires the result into the injection tier —
+never the pre-provisioned-agent flow's env-var tier. The real agent key never
+enters the VM, the same custody guarantee as [Credential
+custody](#credential-custody)'s injection tier, because registration mints
+the key in an HTTP response body that only the host ever sees.
+
+```bash
+pip install band-sdk   # or: uv tool install band-sdk
+
+export BAND_API_KEY_USER=<your-user-key>   # prefer a register_only-scoped key
+band-kit provision \
+  --name my-band-agent \
+  --agent-name "My Agent" \
+  --description "A self-registered Band agent running in a Docker Sandbox." \
+  --workspace ~/my-band-agent \
+  --create --kit docker.io/bandhq/band-python-kit:<X.Y.Z>
+```
+
+This writes the new agent's id into `~/my-band-agent/band.yaml` (`agent.id`,
+non-secret), then runs the equivalent of the injection-tier command above —
+piped via stdin, never on argv or in shell history:
+
+```bash
+sbx secret set-custom my-band-agent --host '**.band.ai' \
+  --env BAND_API_KEY --placeholder proxy-managed   # value piped via stdin
+```
+
+— and then runs `sbx create`. Pass `--no-create` to only register and inject,
+and create the sandbox yourself later.
+
+Idempotent, checked independently for registration and creation: re-running
+`provision` skips registration when the sandbox already has both a
+non-placeholder `agent.id` and the injected secret (no plan-cap headroom
+consumed), and separately skips `sbx create` only when a sandbox by that name
+already exists — so if `sbx create` itself failed on a prior run, re-running
+`provision --create` still creates it without registering a second agent.
+`sbx stop` / restart never re-registers either, since the host secret and
+`band.yaml` both persist. `--name` reused across unrelated workspaces is
+refused outright rather than silently overwriting the earlier sandbox's key:
+`sbx secret set-custom` is create-or-update, so a secret already present under
+`--name` with no matching local `agent.id` means the name collides with
+somebody else's sandbox, not a resumed run of this one.
+
+If registration itself times out, `provision` looks the agent up by name
+before giving up, so the error tells you whether the platform actually
+committed the write (in which case the minted key — shown exactly once — is
+already unrecoverable) instead of leaving you to guess whether a retry is
+safe.
+
+Two things this does **not** do, by design:
+
+- **Re-registering under a name that already exists.** The platform rejects
+  it (422); `provision` surfaces that error rather than guessing whether you
+  meant to adopt the existing agent or need a new name. That decision belongs
+  to Platform's stale-agent lifecycle work, not this CLI.
+- **Cleaning up after `sbx rm`.** Removing a sandbox has no teardown hook, and
+  `sbx rm` does **not** remove the scoped secret it was injected with — a
+  removed sandbox's key is still there in `sbx secret ls`. Both are manual
+  until Platform ships cleanup: deregister the orphaned agent yourself if
+  that matters to your plan's agent cap, and remove the leaked key with
+  `sbx secret rm <name> --host <host> -f`, or it sits in the host's secret
+  store indefinitely.
 
 ## Your workspace
 
@@ -248,12 +320,13 @@ sbx create --name my-band-agent \
 ```
 
 The in-repo `spec.yaml` keeps `sandbox.image: band-python-kit:local` so this
-local flow works unchanged; the published kit's spec is stamped at release time
-to pin the GHCR image by digest (see [`RELEASING.md`](RELEASING.md)).
+local flow works unchanged; each published kit's spec is stamped at release
+time to pin **that registry's** image by digest (see
+[`RELEASING.md`](RELEASING.md)).
 
-Release engineering — how the GHCR image and kit artifact are published, the
-tag policy, the supply-chain quarantine gate, and the CVE-rebuild cadence — is
-documented in [`RELEASING.md`](RELEASING.md).
+Release engineering — how the image and kit artifact are dual-published to
+Docker Hub and GHCR, the tag policy, the supply-chain quarantine gate, and the
+CVE-rebuild cadence — is documented in [`RELEASING.md`](RELEASING.md).
 
 ## Image reference
 

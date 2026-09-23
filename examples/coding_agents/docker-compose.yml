@@ -9,7 +9,7 @@
 #
 # Usage:
 #   cp .env.example .env                            # Configure credentials
-#   cp agent_config.yaml.example agent_config.yaml  # Configure all agents
+#   BAND_API_KEY=band_u_... uv run create_agents.py  # Generate agent configuration
 #   docker compose build
 #   docker compose up -d
 #   docker compose logs -f

@@ -5,23 +5,21 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
+import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
 )
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools
-from tests.adapters.usage_events import recorded_usage_payloads
-
-
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     FakeOpencodeClient,
     TaskEventFailingTools,
-    run_single_turn,
     event_message_updated,
     event_message_updated_with_tokens,
     event_part_delta,
@@ -33,9 +31,11 @@ from tests.adapters.opencode.helpers import (
     event_tool_part,
     event_user_message_updated,
     make_platform_message,
+    run_single_turn,
     tools_protocol,
     wait_for,
 )
+from tests.adapters.usage_events import recorded_usage_payloads
 
 
 async def test_prompt_submission_failure_does_not_leave_room_stuck(
@@ -54,15 +54,16 @@ async def test_prompt_submission_failure_does_not_leave_room_stuck(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(content="first try"),
-        tools_protocol(tools),
-        OpencodeSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
+    with pytest.raises(httpx.HTTPStatusError):
+        await adapter.on_message(
+            make_platform_message(content="first try"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
 
     await adapter.on_message(
         make_platform_message(content="second try"),
@@ -83,6 +84,26 @@ async def test_prompt_submission_failure_does_not_leave_room_stuck(
         message["content"] == "Recovered after failure"
         for message in tools.messages_sent
     )
+
+
+async def test_http_error_reports_status_code_as_failure_code(
+    make_adapter, tools
+) -> None:
+    """An HTTP error talking to the OpenCode server preserves its status code
+    as the failure's ``code``, so a caller can branch on it without parsing
+    the message text."""
+    fake_client = FakeOpencodeClient(
+        prompt_exceptions=[AnyHTTPStatusError(503, "sess-1")]
+    )
+    adapter = make_adapter(fake_client)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await run_single_turn(adapter, tools)
+
+    failures = reported_failures(tools)
+    assert failures
+    assert failures[0]["provider"] == "opencode"
+    assert failures[0]["code"] == "503"
 
 
 async def test_reports_tool_events_when_enabled() -> None:
@@ -111,8 +132,8 @@ async def test_reports_tool_events_when_enabled() -> None:
         ]
     )
     adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(enable_execution_reporting=True),
         client_factory=lambda _config: fake_client,
+        emit=Emit.TOOL_CALLS,
     )
     tools = FakeAgentTools()
 
@@ -132,7 +153,66 @@ async def test_reports_tool_events_when_enabled() -> None:
     assert len(tool_calls) == 1
     assert len(tool_results) == 1
     assert json.loads(tool_calls[0]["content"])["name"] == "bash"
+    assert json.loads(tool_results[0]["content"])["name"] == "bash"
     assert json.loads(tool_results[0]["content"])["output"] == "ok"
+
+
+async def test_reports_tool_call_args_from_first_non_pending_frame(
+    make_adapter, tools
+) -> None:
+    """OpenCode's first frame for a tool part is always PENDING with an empty
+    ``input`` -- arguments only appear once the part moves past PENDING. The
+    single tool_call report (fired once per call_id) must land on that later
+    frame, not the empty first one.
+    """
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_tool_part(
+                    "sess-1",
+                    "msg-4",
+                    tool="band_create_task",
+                    call_id="call-1",
+                    status="pending",
+                    input_data={},
+                ),
+                event_tool_part(
+                    "sess-1",
+                    "msg-4",
+                    tool="band_create_task",
+                    call_id="call-1",
+                    status="running",
+                    input_data={"subject": "write tests"},
+                ),
+                event_tool_part(
+                    "sess-1",
+                    "msg-4",
+                    tool="band_create_task",
+                    call_id="call-1",
+                    status="completed",
+                    input_data={"subject": "write tests"},
+                    output="task-1",
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = make_adapter(fake_client, emit=Emit.TOOL_CALLS)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    tool_calls = [e for e in tools.events_sent if e["message_type"] == "tool_call"]
+    assert len(tool_calls) == 1
+    assert json.loads(tool_calls[0]["content"])["args"] == {"subject": "write tests"}
 
 
 async def test_preserves_falsy_tool_result_outputs_when_reporting(
@@ -155,8 +235,8 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting(
         ]
     )
     adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(enable_execution_reporting=True),
         client_factory=lambda _config: fake_client,
+        emit=Emit.TOOL_CALLS,
     )
     tools = FakeAgentTools()
 
@@ -174,6 +254,45 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting(
     tool_results = [e for e in tools.events_sent if e["message_type"] == "tool_result"]
     assert len(tool_results) == 1
     assert json.loads(tool_results[0]["content"])["output"] == 0
+
+
+async def test_reports_is_error_on_a_failed_tool_result(make_adapter, tools) -> None:
+    """A tool part that ends in ``error`` must set ``is_error`` on the reported
+    tool_result -- consumers gate on that flag, not on inspecting ``output``."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_tool_part(
+                    "sess-1",
+                    "msg-8",
+                    tool="bash",
+                    call_id="call-3",
+                    status="error",
+                    input_data={"command": "false"},
+                    error="command failed",
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = make_adapter(fake_client, emit=Emit.TOOL_CALLS)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    tool_results = [e for e in tools.events_sent if e["message_type"] == "tool_result"]
+    assert len(tool_results) == 1
+    content = json.loads(tool_results[0]["content"])
+    assert content["is_error"] is True
+    assert content["output"] == {"error": "command failed"}
 
 
 async def test_does_not_echo_user_text_parts_as_assistant_output(
@@ -272,9 +391,10 @@ async def test_session_error_emits_error_event(make_adapter, tools) -> None:
         room_id="room-1",
     )
 
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-    assert error_events
-    assert "boom" in error_events[0]["content"].lower()
+    failures = reported_failures(tools)
+    assert failures
+    assert failures[0]["provider"] == "opencode"
+    assert "boom" in failures[0]["message"].lower()
 
 
 async def test_turn_timeout_aborts_session_and_emits_error() -> None:
@@ -301,8 +421,12 @@ async def test_turn_timeout_aborts_session_and_emits_error() -> None:
     )
 
     assert fake_client.aborted_sessions == ["sess-1"]
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-    assert any("timed out" in e["content"].lower() for e in error_events)
+    failures = reported_failures(tools)
+    assert any(
+        f["provider"] == "opencode" and f["code"] == FAILURE_CODE_TIMEOUT
+        for f in failures
+    )
+    assert any("timed out" in f["message"].lower() for f in failures)
 
     await adapter.on_cleanup("room-1")
 
@@ -332,7 +456,7 @@ async def test_emits_turn_usage_folding_reasoning_into_output(
     )
     adapter = OpencodeAdapter(
         client_factory=lambda _config: fake_client,
-        features=AdapterFeatures(emit={Emit.USAGE}),
+        emit=Emit.USAGE,
     )
     tools = FakeAgentTools()
 
@@ -401,9 +525,8 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
     fake_client = FakeOpencodeClient()
     adapter = OpencodeAdapter(
         client_factory=lambda _config: fake_client,
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY}, emit={Emit.EXECUTION}
-        ),
+        capabilities=Capability.MEMORY,
+        emit=Emit.TOOL_CALLS,
     )
     await adapter.on_started("OpenCode Agent", "A coding agent")
     # OpenCode prefixes the band MCP tool with the agent-scoped server name
@@ -441,7 +564,13 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
         for e in tools.events_sent
         if e["message_type"] == "tool_call"
     ]
+    tool_results = [
+        json.loads(e["content"])
+        for e in tools.events_sent
+        if e["message_type"] == "tool_result"
+    ]
     assert [c["name"] for c in tool_calls] == ["band_store_memory"]
+    assert [r["name"] for r in tool_results] == ["band_store_memory"]
 
 
 async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
@@ -529,7 +658,7 @@ async def test_room_posting_tool_reply_suppresses_text_fallback(
 ) -> None:
     """When the model replies via band_send_message, the adapter must not also
     post the assistant's plain text (double-post). Detection holds without
-    execution reporting: Emit.EXECUTION governs only the tool_call/tool_result
+    execution reporting: Emit.TOOL_CALLS governs only the tool_call/tool_result
     narration, not the text-fallback suppression."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
@@ -612,7 +741,8 @@ async def test_task_event_post_failure_does_not_drop_the_turn(make_adapter) -> N
         "Handled despite the event failure."
     ]
     assert not any(
-        "failed while processing" in e["content"].lower() for e in tools.events_sent
+        "failed while processing" in f["message"].lower()
+        for f in reported_failures(tools)
     )
 
 

@@ -27,6 +27,7 @@ _AGENT_ME = {
     "owner_uuid": "owner-1",
     "inserted_at": "2026-01-01T00:00:00Z",
     "updated_at": "2026-01-01T00:00:00Z",
+    "feature_flags": {},
 }
 
 

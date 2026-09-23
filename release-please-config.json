@@ -5,14 +5,11 @@
     ".": {
       "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
-      "extra-files": [
-        "src/band/__init__.py",
-        {
-          "type": "generic",
-          "path": "pyproject.toml",
-          "glob": false
-        }
-      ]
+      "exclude-paths": ["packages"]
+    },
+    "packages/band-mcp": {
+      "package-name": "band-mcp",
+      "changelog-path": "CHANGELOG.md"
     }
   },
   "changelog-sections": [

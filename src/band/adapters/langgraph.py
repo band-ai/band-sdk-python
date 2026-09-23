@@ -5,25 +5,33 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import warnings
 from collections import OrderedDict
-from typing import ClassVar, TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from band_sdk_core import AgentFailure
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
+from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from band.integrations.langgraph import langchain_tools
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    BandTool,
+    image_block_placeholder,
+    redact_tool_call_args,
+)
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -33,6 +41,35 @@ logger = logging.getLogger(__name__)
 
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
+
+
+def _redacted_tool_end_output(tool_name: str, data: dict[str, Any]) -> Any:
+    """The value a tool_result event reports for one on_tool_end/on_tool_error.
+
+    ``data["output"]`` may be a langchain ``ToolMessage`` whose ``.content``
+    is the ``list[ImageContentBlock]`` that ``langchain_tools.py``'s
+    ``execute_definition`` builds for ``band_read_room_file``'s image branch
+    (a *different* shape than the platform's own MCP content blocks --
+    ``mime_type``/``base64`` keys, not ``mimeType``/``data``). That object
+    isn't JSON-serializable, so ``json.dumps``'s ``default=str`` would
+    otherwise fall back to ``str(ToolMessage(...))``, embedding the full
+    base64 payload.
+    """
+    if data.get("error"):
+        return data["error"]
+    output = data.get("output", "")
+    if tool_name == BandTool.READ_ROOM_FILE:
+        content = getattr(output, "content", output)
+        if (
+            isinstance(content, list)
+            and content
+            and all(
+                isinstance(block, dict) and block.get("type") == "image"
+                for block in content
+            )
+        ):
+            return image_block_placeholder(len(content))
+    return output
 
 
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
@@ -79,16 +116,16 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
         self,
         # Simple pattern: just provide llm and checkpointer
-        llm: "BaseChatModel | None" = None,
-        checkpointer: "BaseCheckpointSaver | None" = None,
+        llm: BaseChatModel | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
         # Advanced pattern: provide a graph factory or static graph
         graph_factory: Callable[[list[Any]], Pregel] | None = None,
         graph: Pregel | None = None,
@@ -96,41 +133,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         prompt_template: str = "default",
         custom_section: str = "",
         additional_tools: list[Any] | None = None,
-        enable_memory_tools: bool = False,
-        enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
-        features: AdapterFeatures | None = None,
         inject_system_prompt: bool | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
-        # --- Deprecation shim: boolean → features migration ---
-        if (enable_memory_tools or enable_execution_reporting) and features is not None:
-            raise BandConfigError(
-                "Cannot pass both 'features' and legacy boolean params "
-                "(enable_memory_tools, enable_execution_reporting)."
-            )
-
-        if enable_memory_tools or enable_execution_reporting:
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated. "
-                "Use features=AdapterFeatures(...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capabilities = (
-                frozenset({Capability.MEMORY}) if enable_memory_tools else frozenset()
-            )
-            emit = (
-                frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset()
-            )
-            features = AdapterFeatures(capabilities=capabilities, emit=emit)
-
         # Use default LangChain converter if not provided
         super().__init__(
             history_converter=history_converter or LangChainHistoryConverter(),
-            features=features,
+            **features,
         )
 
         # Accept the SDK's portable custom-tool form: convert any CustomToolDef
@@ -140,16 +151,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # patterns get a uniform tool list, and a tool written once works across
         # adapters (LangChain would otherwise reject a bare tuple).
         if additional_tools:
-            from band.integrations.langgraph.langchain_tools import (
-                custom_tool_defs_to_langchain,
-            )
-
             normalized: list[Any] = []
             for item in additional_tools:
                 if isinstance(
                     item, tuple
                 ):  # a band CustomToolDef (InputModel, handler)
-                    normalized.extend(custom_tool_defs_to_langchain([item]))
+                    normalized.extend(
+                        langchain_tools.custom_tool_defs_to_langchain([item])
+                    )
                 else:  # already a LangChain tool / callable
                     normalized.append(item)
             additional_tools = normalized
@@ -163,8 +172,12 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # ("system", ...) message on bootstrap and the checkpointer carries it
         # forward, matching the pattern used by every other Band adapter.
         if uses_simple_pattern:
-            from langchain.agents import create_agent
-            from langgraph.checkpoint.memory import InMemorySaver
+            # `langchain` (distinct from `langgraph`) is only needed for this
+            # pattern -- a caller who supplies graph_factory=/graph= directly
+            # never touches create_agent and shouldn't have to install it.
+            from langchain.agents import (  # noqa: PLC0415 -- only needed by the simple llm= pattern below
+                create_agent,
+            )
 
             if checkpointer is None:
                 checkpointer = InMemorySaver()
@@ -273,67 +286,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         room_id: str,
     ) -> None:
         """Handle message with LangGraph."""
-        from band.integrations.langgraph.langchain_tools import (
-            agent_tools_to_langchain,
-        )
-
         logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
-
-        # Get LangChain tools
-        langchain_tools = (
-            agent_tools_to_langchain(
-                tools,
-                features=self.features,
-            )
-            + self.additional_tools
-        )
-
-        # Build or get graph
-        if self.graph_factory:
-            graph = self.graph_factory(langchain_tools)
-        else:
-            graph = self._static_graph
-
-        if not graph:
-            raise RuntimeError("No graph available")
-
-        checkpointer = getattr(graph, "checkpointer", None) or self._simple_checkpointer
-        if checkpointer is not None:
-            self._room_checkpointers[room_id] = checkpointer
-
-        # Build messages
-        messages: list[Any] = []
-
-        # Session bootstrap: prepend the rendered system prompt and hydrate
-        # platform history exactly once per room. After that, the LangGraph
-        # checkpointer carries the system message and prior turns forward and
-        # we just append the new user turn.
-        should_mark_bootstrapped = False
-        if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
-            checkpointer_already_has_messages = (
-                checkpointer is not None
-                and await self._checkpointer_has_messages(checkpointer, room_id)
-            )
-            if not checkpointer_already_has_messages:
-                if self._inject_system_prompt and self._system_prompt:
-                    messages.append(("system", self._system_prompt))
-                if history:
-                    messages.extend(history)  # Already converted by history_converter
-            should_mark_bootstrapped = True
-
-        # Inject metadata updates as user messages with [System]: prefix.
-        # Many LLM providers (including Anthropic) require a single system
-        # message at the start; additional system messages scattered through
-        # the conversation cause errors and kill provider cache savings.
-        if participants_msg:
-            messages.append(("user", f"[System]: {participants_msg}"))
-
-        if contacts_msg:
-            messages.append(("user", f"[System]: {contacts_msg}"))
-
-        messages.append(("user", msg.format_for_llm()))
-
-        graph_input = {"messages": messages}
 
         # Usage is reported per model call on the stream; a turn may make several
         # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
@@ -343,6 +296,66 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
         try:
+            # Get LangChain tools
+            lc_tools = (
+                langchain_tools.agent_tools_to_langchain(
+                    tools,
+                    features=self.features,
+                )
+                + self.additional_tools
+            )
+
+            # Build or get graph
+            if self.graph_factory:
+                graph = self.graph_factory(lc_tools)
+            else:
+                graph = self._static_graph
+
+            if not graph:
+                raise RuntimeError("No graph available")
+
+            checkpointer = (
+                getattr(graph, "checkpointer", None) or self._simple_checkpointer
+            )
+            if checkpointer is not None:
+                self._room_checkpointers[room_id] = checkpointer
+
+            # Build messages
+            messages: list[Any] = []
+
+            # Session bootstrap: prepend the rendered system prompt and hydrate
+            # platform history exactly once per room. After that, the LangGraph
+            # checkpointer carries the system message and prior turns forward and
+            # we just append the new user turn.
+            should_mark_bootstrapped = False
+            if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
+                checkpointer_already_has_messages = (
+                    checkpointer is not None
+                    and await self._checkpointer_has_messages(checkpointer, room_id)
+                )
+                if not checkpointer_already_has_messages:
+                    if self._inject_system_prompt and self._system_prompt:
+                        messages.append(("system", self._system_prompt))
+                    if history:
+                        messages.extend(
+                            history
+                        )  # Already converted by history_converter
+                should_mark_bootstrapped = True
+
+            # Inject metadata updates as user messages with [System]: prefix.
+            # Many LLM providers (including Anthropic) require a single system
+            # message at the start; additional system messages scattered through
+            # the conversation cause errors and kill provider cache savings.
+            if participants_msg:
+                messages.append(("user", f"[System]: {participants_msg}"))
+
+            if contacts_msg:
+                messages.append(("user", f"[System]: {contacts_msg}"))
+
+            messages.append(("user", msg.format_for_llm()))
+
+            graph_input = {"messages": messages}
+
             async for event in graph.astream_events(
                 graph_input,
                 config={
@@ -371,17 +384,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         except Exception:
             logger.exception("Error processing message %s", msg.id)
-            try:
-                # Keep the user-facing payload generic; the full traceback is
-                # in the agent log via logger.exception above. Tool/error
-                # internals can include DB strings, paths, and tokens that
-                # should not surface in chat.
-                await tools.send_event(
-                    content="Internal error while processing message; see agent logs.",
-                    message_type="error",
-                )
-            except Exception:
-                logger.exception("Failed to report error event for message %s", msg.id)
+            # Keep the user-facing payload generic; the full traceback is in
+            # the agent log via logger.exception above. Tool/error internals
+            # can include DB strings, paths, and tokens that should not
+            # surface in chat -- code/detail stay unset, never populated from
+            # the caught exception.
+            await tools.send_failure(
+                AgentFailure("langgraph", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
@@ -401,14 +411,16 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             payload = {
                 ToolEventKey.NAME: tool_name,
-                ToolEventKey.ARGS: data.get("input", {}),
+                ToolEventKey.ARGS: redact_tool_call_args(
+                    tool_name, data.get("input", {})
+                ),
                 ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
             }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
@@ -417,11 +429,11 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     content=json.dumps(payload, default=str),
                     message_type="tool_call",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type in {"on_tool_end", "on_tool_error"}:
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
@@ -429,7 +441,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             is_error = event_type == "on_tool_error" or bool(data.get("error"))
             payload = {
                 ToolEventKey.NAME: tool_name,
-                ToolEventKey.OUTPUT: data.get("error") or data.get("output", ""),
+                ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),
                 ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
                 ToolEventKey.IS_ERROR: is_error,
             }
@@ -439,7 +451,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     content=json.dumps(payload, default=str),
                     message_type="tool_result",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_result event: %s", e)
 
     @staticmethod

@@ -17,14 +17,14 @@ try:
     from band.adapters import PydanticAIAdapter as _PydanticAICheck  # noqa: F401
 
     _has_pydantic_ai = True
-except (ImportError, Exception):
+except (ImportError, Exception):  # noqa: BLE001 -- a broken optional install may raise more than ImportError; used only to set a skip marker
     _has_pydantic_ai = False
 
 try:
     import claude_code_sdk  # noqa: F401
 
     _has_claude_sdk = True
-except (ImportError, Exception):
+except (ImportError, Exception):  # noqa: BLE001 -- a broken optional install may raise more than ImportError; used only to set a skip marker
     _has_claude_sdk = False
 
 skip_no_pydantic_ai = pytest.mark.skipif(
@@ -44,34 +44,47 @@ class TestTopLevelImports:
     """README shows `from band import Agent` and similar."""
 
     def test_agent_import(self) -> None:
-        from band import Agent, build_logging_config, configure_logging
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Agent,
+            build_logging_config,
+            configure_logging,
+        )
 
         assert Agent is not None
         assert build_logging_config is not None
         assert configure_logging is not None
 
     def test_adapter_features_and_capability_import(self) -> None:
-        from band.core.types import AdapterFeatures, Capability
+        from band.core.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AdapterFeatures,
+            Capability,
+        )
 
         assert AdapterFeatures is not None
         assert Capability is not None
 
     def test_adapter_features_shorthand_import(self) -> None:
         """README uses `from band import AdapterFeatures, Emit`."""
-        from band import AdapterFeatures, Emit
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AdapterFeatures,
+            Emit,
+        )
 
         assert AdapterFeatures is not None
         assert Emit is not None
 
     def test_capability_shorthand_import(self) -> None:
         """README uses `from band import Capability, Emit`."""
-        from band import Capability, Emit
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Capability,
+            Emit,
+        )
 
         assert Capability is not None
         assert Emit is not None
 
     def test_exception_imports(self) -> None:
-        from band import (
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             BandConfigError,
             BandConnectionError,
             BandError,
@@ -92,7 +105,9 @@ class TestQuickstartLangGraph:
     """README quickstart shows LangGraphAdapter(llm=..., checkpointer=...)."""
 
     def test_adapter_import(self) -> None:
-        from band.adapters import LangGraphAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            LangGraphAdapter,
+        )
 
         assert LangGraphAdapter is not None
 
@@ -104,8 +119,12 @@ class TestQuickstartLangGraph:
         },
     )
     def test_quickstart_instantiation(self) -> None:
-        from band import Agent
-        from band.adapters import LangGraphAdapter
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Agent,
+        )
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            LangGraphAdapter,
+        )
 
         llm = MagicMock()
         checkpointer = MagicMock()
@@ -130,20 +149,26 @@ class TestAdapterSwapSnippets:
     """README shows short adapter-swap snippets for Anthropic, PydanticAI, Gemini."""
 
     def test_anthropic_adapter_import_and_init(self) -> None:
-        from band.adapters import AnthropicAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(model="claude-sonnet-4-5")
         assert adapter is not None
 
     @skip_no_pydantic_ai
     def test_pydantic_ai_adapter_import_and_init(self) -> None:
-        from band.adapters import PydanticAIAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            PydanticAIAdapter,
+        )
 
         adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
         assert adapter is not None
 
     def test_gemini_adapter_import_and_init(self) -> None:
-        from band.adapters import GeminiAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            GeminiAdapter,
+        )
 
         adapter = GeminiAdapter(model="gemini-2.5-flash")
         assert adapter is not None
@@ -158,80 +183,111 @@ class TestSupportedAdaptersTable:
     """README table lists every adapter with its import path."""
 
     def test_langgraph_adapter(self) -> None:
-        from band.adapters import LangGraphAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            LangGraphAdapter,
+        )
 
         assert LangGraphAdapter is not None
 
     @skip_no_pydantic_ai
     def test_pydantic_ai_adapter(self) -> None:
-        from band.adapters import PydanticAIAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            PydanticAIAdapter,
+        )
 
         assert PydanticAIAdapter is not None
 
     def test_anthropic_adapter(self) -> None:
-        from band.adapters import AnthropicAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AnthropicAdapter,
+        )
 
         assert AnthropicAdapter is not None
 
     @skip_no_claude_sdk
     def test_claude_sdk_adapter(self) -> None:
-        from band.adapters import ClaudeSDKAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ClaudeSDKAdapter,
+        )
 
         assert ClaudeSDKAdapter is not None
 
     def test_crewai_adapter(self) -> None:
-        from band.adapters import CrewAIAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            CrewAIAdapter,
+        )
 
         assert CrewAIAdapter is not None
 
     def test_crewai_flow_adapter(self) -> None:
-        from band.adapters import CrewAIFlowAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            CrewAIFlowAdapter,
+        )
 
         assert CrewAIFlowAdapter is not None
 
     def test_gemini_adapter(self) -> None:
-        from band.adapters import GeminiAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            GeminiAdapter,
+        )
 
         assert GeminiAdapter is not None
 
     def test_google_adk_adapter(self) -> None:
-        from band.adapters import GoogleADKAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            GoogleADKAdapter,
+        )
 
         assert GoogleADKAdapter is not None
 
     def test_parlant_adapter(self) -> None:
-        from band.adapters import ParlantAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ParlantAdapter,
+        )
 
         assert ParlantAdapter is not None
 
     def test_letta_adapter(self) -> None:
-        from band.adapters import LettaAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            LettaAdapter,
+        )
 
         assert LettaAdapter is not None
 
     def test_codex_adapter(self) -> None:
-        from band.adapters import CodexAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            CodexAdapter,
+        )
 
         assert CodexAdapter is not None
 
     def test_opencode_adapter(self) -> None:
-        from band.adapters import OpencodeAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            OpencodeAdapter,
+        )
 
         assert OpencodeAdapter is not None
 
     def test_a2a_adapter(self) -> None:
-        from band.adapters.a2a import A2AAdapter, A2AAuth
+        from band.adapters.a2a import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            A2AAdapter,
+            A2AAuth,
+        )
 
         assert A2AAdapter is not None
         assert A2AAuth is not None
 
     def test_a2a_gateway_adapter(self) -> None:
-        from band.adapters.a2a_gateway import A2AGatewayAdapter
+        from band.adapters.a2a_gateway import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            A2AGatewayAdapter,
+        )
 
         assert A2AGatewayAdapter is not None
 
     def test_acp_client_adapter(self) -> None:
-        from band.adapters.acp import ACPClientAdapter
+        from band.adapters.acp import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ACPClientAdapter,
+        )
 
         assert ACPClientAdapter is not None
 
@@ -245,7 +301,10 @@ class TestPlatformToolsSnippets:
     """README shows AdapterFeatures with Capability and Emit."""
 
     def test_capability_set_creation(self) -> None:
-        from band.core.types import AdapterFeatures, Capability
+        from band.core.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AdapterFeatures,
+            Capability,
+        )
 
         features = AdapterFeatures(
             capabilities={Capability.CONTACTS, Capability.MEMORY},
@@ -256,14 +315,16 @@ class TestPlatformToolsSnippets:
 
     def test_adapter_with_features(self) -> None:
         """README snippet: AnthropicAdapter with capabilities."""
-        from band.adapters import AnthropicAdapter
-        from band.core.types import AdapterFeatures, Capability
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AnthropicAdapter,
+        )
+        from band.core.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Capability,
+        )
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
-            features=AdapterFeatures(
-                capabilities={Capability.CONTACTS, Capability.MEMORY},
-            ),
+            capabilities={Capability.CONTACTS, Capability.MEMORY},
         )
 
         assert Capability.CONTACTS in adapter.features.capabilities
@@ -279,56 +340,65 @@ class TestEmitOptionsSnippets:
     """README shows emit configuration on adapters."""
 
     def test_emit_enum_values(self) -> None:
-        from band import Emit
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Emit,
+        )
 
-        assert hasattr(Emit, "EXECUTION")
+        assert hasattr(Emit, "TOOL_CALLS")
         assert hasattr(Emit, "THOUGHTS")
         assert hasattr(Emit, "TASK_EVENTS")
 
     def test_anthropic_with_emit(self) -> None:
-        """README snippet: AdapterFeatures(emit={Emit.EXECUTION})."""
-        from band import AdapterFeatures, Emit
-        from band.adapters import AnthropicAdapter
+        """README snippet: emit=Emit.TOOL_CALLS."""
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Emit,
+        )
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
-            features=AdapterFeatures(
-                emit={Emit.EXECUTION},
-            ),
+            emit=Emit.TOOL_CALLS,
         )
 
-        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TOOL_CALLS in adapter.features.emit
 
     @skip_no_claude_sdk
     def test_claude_sdk_with_emit_and_capability(self) -> None:
         """README snippet: capabilities + emit combined."""
-        from band import AdapterFeatures, Capability, Emit
-        from band.adapters import ClaudeSDKAdapter
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Capability,
+            Emit,
+        )
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ClaudeSDKAdapter,
+        )
 
         adapter = ClaudeSDKAdapter(
             model="sonnet",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY},
-                emit={Emit.EXECUTION, Emit.THOUGHTS},
-            ),
+            capabilities={Capability.MEMORY},
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )
 
         assert Capability.MEMORY in adapter.features.capabilities
-        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TOOL_CALLS in adapter.features.emit
         assert Emit.THOUGHTS in adapter.features.emit
 
     def test_codex_all_emits(self) -> None:
         """README snippet: all three emit options on CodexAdapter."""
-        from band import AdapterFeatures, Emit
-        from band.adapters import CodexAdapter
-
-        adapter = CodexAdapter(
-            features=AdapterFeatures(
-                emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
-            ),
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Emit,
+        )
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            CodexAdapter,
         )
 
-        assert Emit.EXECUTION in adapter.features.emit
+        adapter = CodexAdapter(
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
+        )
+
+        assert Emit.TOOL_CALLS in adapter.features.emit
         assert Emit.THOUGHTS in adapter.features.emit
         assert Emit.TASK_EVENTS in adapter.features.emit
 
@@ -342,7 +412,9 @@ class TestCustomInstructionsSnippets:
     """README shows custom_section and prompt params."""
 
     def test_langgraph_custom_section(self) -> None:
-        from band.adapters import LangGraphAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            LangGraphAdapter,
+        )
 
         llm = MagicMock()
         checkpointer = MagicMock()
@@ -359,7 +431,9 @@ class TestCustomInstructionsSnippets:
         assert "support triage" in adapter.custom_section
 
     def test_anthropic_prompt(self) -> None:
-        from band.adapters import AnthropicAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
@@ -378,7 +452,9 @@ class TestCustomToolsSnippets:
     """README shows Pydantic model + callable for custom tools."""
 
     def test_anthropic_custom_tools(self) -> None:
-        from band.adapters import AnthropicAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AnthropicAdapter,
+        )
 
         class WeatherInput(BaseModel):
             """Get current weather for a city."""
@@ -405,7 +481,9 @@ class TestBYOASnippet:
     """README shows graph_factory pattern for LangGraph."""
 
     def test_graph_factory_pattern(self) -> None:
-        from band.adapters import LangGraphAdapter
+        from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            LangGraphAdapter,
+        )
 
         _llm = MagicMock()
         _checkpointer = MagicMock()
@@ -429,7 +507,9 @@ class TestContactManagementSnippets:
     """README shows ContactEventConfig with HUB_ROOM and CALLBACK strategies."""
 
     def test_contact_event_imports(self) -> None:
-        from band.runtime.types import ContactEventStrategy
+        from band.runtime.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ContactEventStrategy,
+        )
 
         assert ContactEventStrategy.DISABLED is not None
         assert ContactEventStrategy.HUB_ROOM is not None
@@ -444,8 +524,13 @@ class TestContactManagementSnippets:
     )
     def test_hub_room_config(self) -> None:
         """README snippet: Agent.create with HUB_ROOM strategy."""
-        from band import Agent
-        from band.runtime.types import ContactEventConfig, ContactEventStrategy
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Agent,
+        )
+        from band.runtime.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ContactEventConfig,
+            ContactEventStrategy,
+        )
 
         adapter = MagicMock()
 
@@ -469,9 +554,16 @@ class TestContactManagementSnippets:
     )
     def test_callback_config(self) -> None:
         """README snippet: Agent.create with CALLBACK strategy + handler."""
-        from band import Agent
-        from band.platform.event import ContactRequestReceivedEvent
-        from band.runtime.types import ContactEventConfig, ContactEventStrategy
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Agent,
+        )
+        from band.platform.event import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ContactRequestReceivedEvent,
+        )
+        from band.runtime.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ContactEventConfig,
+            ContactEventStrategy,
+        )
 
         TRUSTED_HANDLES = {"@teammate"}
 
@@ -499,7 +591,9 @@ class TestContactManagementSnippets:
 
     def test_contact_request_payload_fields(self) -> None:
         """Verify payload has from_handle and id fields."""
-        from band.client.streaming import ContactRequestReceivedPayload
+        from band.client.streaming import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            ContactRequestReceivedPayload,
+        )
 
         payload = ContactRequestReceivedPayload(
             id="req-1",
@@ -522,7 +616,10 @@ class TestA2ABridgeSnippet:
     """README snippet: A2AAdapter(remote_url=..., auth=...)."""
 
     def test_a2a_adapter_instantiation(self) -> None:
-        from band.adapters.a2a import A2AAdapter, A2AAuth
+        from band.adapters.a2a import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            A2AAdapter,
+            A2AAuth,
+        )
 
         adapter = A2AAdapter(
             remote_url="http://localhost:10000",
@@ -538,7 +635,7 @@ class TestA2ABridgeSnippet:
 
 
 class TestA2AGatewaySnippet:
-    """README snippet: A2AGatewayAdapter(api_key=..., gateway_url=..., port=...)."""
+    """README snippet: A2AGatewayAdapter(gateway_url=..., port=...)."""
 
     @patch.dict(
         os.environ,
@@ -548,14 +645,17 @@ class TestA2AGatewaySnippet:
         },
     )
     def test_gateway_full_snippet(self) -> None:
-        from band import Agent
-        from band.adapters.a2a_gateway import A2AGatewayAdapter
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Agent,
+        )
+        from band.adapters.a2a_gateway import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            A2AGatewayAdapter,
+        )
 
         gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
         gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
         adapter = A2AGatewayAdapter(
-            api_key=os.environ["GATEWAY_API_KEY"],
             gateway_url=gateway_url,
             port=gateway_port,
         )
@@ -578,7 +678,7 @@ class TestExceptionHierarchy:
     """README states BandError is the base for the other three."""
 
     def test_hierarchy(self) -> None:
-        from band import (
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             BandConfigError,
             BandConnectionError,
             BandError,
@@ -590,7 +690,11 @@ class TestExceptionHierarchy:
         assert issubclass(BandToolError, BandError)
 
     def test_exceptions_are_raiseable(self) -> None:
-        from band import BandConfigError, BandConnectionError, BandToolError
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            BandConfigError,
+            BandConnectionError,
+            BandToolError,
+        )
 
         with pytest.raises(BandConfigError):
             raise BandConfigError("bad config")
@@ -618,7 +722,9 @@ class TestQuickReferenceSnippets:
         },
     )
     def test_agent_create_and_run_signature(self) -> None:
-        from band import Agent
+        from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            Agent,
+        )
 
         adapter = MagicMock()
 

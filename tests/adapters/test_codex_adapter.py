@@ -6,20 +6,39 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict, deque
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 import pytest
-
 from pydantic import BaseModel
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.adapters.codex import (
+    _MAX_DIFF_METADATA_BYTES,
+    _THOUGHT_ITEM_TYPES,
+    _TOOL_ITEM_TYPES,
+    CodexAdapter,
+    CodexAdapterConfig,
+    PendingApproval,
+)
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
+from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
-from band.integrations.codex.types import CodexSessionState
+from band.integrations.codex.types import (
+    _MAX_ERROR_DETAIL_CHARS,
+    CodexItemType,
+    CodexSessionState,
+    CodexTokenUsage,
+    build_agent_failure,
+    parse_plan_steps,
+)
 from band.runtime.custom_tools import CustomToolDef
-from band.testing import FakeAgentTools
+from band.runtime.tools import ToolCallOutcome
+from band.testing import FakeAgentTools, events_of_type, reported_failures
 
 
 def make_platform_message(
@@ -34,7 +53,7 @@ def make_platform_message(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -162,7 +181,7 @@ class FakeCodexClient:
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         if not self._events:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         return self._events.popleft()
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
@@ -180,7 +199,37 @@ class FakeCodexClient:
 
     async def close(self) -> None:
         self.closed = True
-        return None
+
+
+def patch_codex_client(adapter: CodexAdapter, client: FakeCodexClient) -> None:
+    def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+        return client
+
+    adapter._build_client = _build  # type: ignore[method-assign]
+
+
+def make_codex_adapter(
+    client: FakeCodexClient,
+    config: CodexAdapterConfig | None = None,
+    **kwargs: Any,
+) -> CodexAdapter:
+    adapter = CodexAdapter(config=config or CodexAdapterConfig(), **kwargs)
+    patch_codex_client(adapter, client)
+    return adapter
+
+
+def wire_codex_room(
+    adapter: CodexAdapter,
+    client: FakeCodexClient,
+    room_id: str = "room-1",
+    *,
+    initialized: bool = True,
+) -> None:
+    adapter._room_client(room_id)
+    adapter._active_room.set(room_id)
+    adapter._client = client  # type: ignore[assignment]
+    if initialized:
+        adapter._initialized = True
 
 
 def _event_notification(method: str, params: dict[str, Any]) -> RpcEvent:
@@ -201,6 +250,72 @@ def _event_request(request_id: int, method: str, params: dict[str, Any]) -> RpcE
         id=request_id,
         raw={"id": request_id, "method": method, "params": params},
     )
+
+
+def _turn_completed(turn_id: str = "turn-1") -> RpcEvent:
+    """The notification that ends a scripted turn."""
+    return _event_notification(
+        "turn/completed",
+        {"turn": {"id": turn_id, "status": "completed", "items": [], "error": None}},
+    )
+
+
+def _tool_call_request(
+    request_id: int, tool: str, arguments: dict[str, Any] | None = None
+) -> RpcEvent:
+    """The server request Codex sends to invoke one Band tool."""
+    return _event_request(
+        request_id, "item/tool/call", {"tool": tool, "arguments": arguments or {}}
+    )
+
+
+@dataclass(frozen=True)
+class CodexTurn:
+    """What one driven turn left behind, as the projections tests assert on."""
+
+    adapter: CodexAdapter
+    client: FakeCodexClient
+    tools: FakeAgentTools
+
+    @property
+    def tool_response(self) -> tuple[int | str, dict[str, Any]]:
+        """``(request_id, payload)`` of the first tool-call response sent back."""
+        return self.client.responses[0]
+
+    @property
+    def content_items(self) -> list[dict[str, Any]]:
+        """Content items the adapter returned for the first tool call."""
+        return self.tool_response[1]["contentItems"]
+
+
+async def run_codex_turn(
+    *,
+    events: list[RpcEvent],
+    tools: FakeAgentTools | None = None,
+    config: CodexAdapterConfig | None = None,
+    **adapter_kwargs: Any,
+) -> CodexTurn:
+    """Drive one full Codex turn against ``events`` and return what it produced.
+
+    Wraps the scaffolding a turn test otherwise repeats -- fake transport,
+    adapter wired to it, ``on_started``, one bootstrap ``on_message`` -- so a
+    test states only the events it scripts and the outcome it asserts.
+    """
+    client = FakeCodexClient(events=events)
+    adapter = make_codex_adapter(client, config=config, **adapter_kwargs)
+    room_tools = tools if tools is not None else ToolSchemaFakeTools()
+
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        room_tools,
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+    return CodexTurn(adapter=adapter, client=client, tools=room_tools)
 
 
 async def _wait_for_pending_approval(
@@ -225,10 +340,11 @@ async def _wait_for_pending_approval(
 
 
 class TestCodexAdapter:
-    def test_config_defaults_are_low_noise_and_manual_approval(self) -> None:
+    def test_config_defaults_are_low_noise_and_manual_approval(
+        self, assert_no_leaked_adapter_config_env: None
+    ) -> None:
         config = CodexAdapterConfig()
         assert config.emit_turn_task_markers is False
-        assert config.emit_thought_events is False
         assert config.approval_mode == "manual"
 
     @pytest.mark.asyncio
@@ -238,23 +354,10 @@ class TestCodexAdapter:
                 "item/agentMessage/delta",
                 {"itemId": "msg-1", "delta": "harness-ok"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -287,17 +390,7 @@ class TestCodexAdapter:
     async def test_system_prompt_retry_after_turn_start_failure(self) -> None:
         """System instructions stay pending until turn/start succeeds."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(
             events=events,
@@ -307,9 +400,8 @@ class TestCodexAdapter:
             ),
             turn_start_error_once=True,
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", model="gpt-5.5"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-5.5")
         )
         tools = ToolSchemaFakeTools()
 
@@ -353,31 +445,11 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_tool_call_request_is_dispatched_and_responded(self) -> None:
         events = [
-            _event_request(
-                42,
-                "item/tool/call",
-                {
-                    "tool": "band_lookup_peers",
-                    "arguments": {"page": 1, "page_size": 10},
-                },
-            ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _tool_call_request(42, "band_lookup_peers", {"page": 1, "page_size": 10}),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -407,7 +479,6 @@ class TestCodexAdapter:
         The failure is a non-raising ok=False (bad args / API error) — the case the
         plain execute_tool_call would misread as success and wrongly suppress.
         """
-        from band.runtime.tools import ToolCallOutcome
 
         class SendMessageFailureTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(
@@ -442,23 +513,10 @@ class TestCodexAdapter:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = SendMessageFailureTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -480,27 +538,12 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_resume_failure_falls_back_to_thread_start(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -526,25 +569,11 @@ class TestCodexAdapter:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="auto_decline")
         )
         tools = ToolSchemaFakeTools()
 
@@ -581,26 +610,14 @@ class TestCodexAdapter:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-                approval_text_notifications=True,
+                approval_mode="auto_decline", approval_text_notifications=True
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = FailingNotifyTools()
 
@@ -636,25 +653,11 @@ class TestCodexAdapter:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = FailingNotifyTools()
 
@@ -675,27 +678,28 @@ class TestCodexAdapter:
         assert payload["decision"] == "decline"
         assert "room-1" not in adapter._pending_approvals
 
+        # The Band-delivery hiccup that caused this auto-decline must itself
+        # be reported -- otherwise it's indistinguishable from a genuine
+        # human decision, with no signal at all that anything went wrong.
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+
+        # The human sender was never actually notified, so the audit trail
+        # must not credit/blame them for this decision -- it was forced by
+        # the delivery failure, same as every other forced-decline path.
+        audit_events = [
+            e
+            for e in tools.events_sent
+            if e["metadata"].get("codex_event_type") == "approval_resolution"
+        ]
+        assert len(audit_events) == 1
+        assert audit_events[0]["metadata"]["codex_decided_by"] == "system_fallback"
+
     @pytest.mark.asyncio
     async def test_cleanup_closes_client_when_last_room_removed(self) -> None:
-        fake_client = FakeCodexClient(
-            events=[
-                _event_notification(
-                    "turn/completed",
-                    {
-                        "turn": {
-                            "id": "turn-1",
-                            "status": "completed",
-                            "items": [],
-                            "error": None,
-                        }
-                    },
-                )
-            ]
-        )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        fake_client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -716,25 +720,8 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_cleanup_idempotent(self) -> None:
         """Calling on_cleanup twice for the same room should not raise."""
-        fake_client = FakeCodexClient(
-            events=[
-                _event_notification(
-                    "turn/completed",
-                    {
-                        "turn": {
-                            "id": "turn-1",
-                            "status": "completed",
-                            "items": [],
-                            "error": None,
-                        }
-                    },
-                )
-            ]
-        )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        fake_client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -754,68 +741,43 @@ class TestCodexAdapter:
         await adapter.on_cleanup("room-1")
 
     @pytest.mark.asyncio
-    async def test_cleanup_multi_room_keeps_client_until_last(self) -> None:
-        """Client stays open until the last room is cleaned up."""
-        events_room1 = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-        events_room2 = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-2",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-        fake_client = FakeCodexClient(events=events_room1 + events_room2)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+    async def test_cleanup_multi_room_closes_each_room_client(self) -> None:
+        """Each room owns its Codex client; cleanup closes only that room's client."""
+        clients = {
+            "room-1": FakeCodexClient(events=[_turn_completed()]),
+            # Each room owns a separate FakeCodexClient with its own turn
+            # counter, so room-2's first turn is also "turn-1" -- matching
+            # this room's client, not a global counter.
+            "room-2": FakeCodexClient(events=[_turn_completed()]),
+        }
+        adapter = CodexAdapter(config=CodexAdapterConfig())
+
+        def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+            room_id = adapter._active_room.get()
+            assert room_id is not None
+            return clients[room_id]
+
+        adapter._build_client = _build  # type: ignore[method-assign]
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(room_id="room-1"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await adapter.on_message(
-            make_platform_message(room_id="room-2"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-2",
-        )
+        for room_id in ("room-1", "room-2"):
+            await adapter.on_message(
+                make_platform_message(room_id=room_id),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id=room_id,
+            )
 
-        # Cleaning up room-1 should NOT close the client (room-2 still active)
         await adapter.on_cleanup("room-1")
-        assert fake_client.closed is False
+        assert clients["room-1"].closed is True
+        assert clients["room-2"].closed is False
 
-        # Cleaning up room-2 should close the client (last room)
         await adapter.on_cleanup("room-2")
-        assert fake_client.closed is True
+        assert clients["room-2"].closed is True
 
     @pytest.mark.asyncio
     async def test_forwards_raw_codex_task_events(self) -> None:
@@ -828,23 +790,10 @@ class TestCodexAdapter:
                 "codex/event/task_complete",
                 {"taskId": "task-1", "summary": "Inspection finished"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -885,25 +834,11 @@ class TestCodexAdapter:
                 "codex/event/task_started",
                 {"taskId": "task-1", "task": {"title": "Inspect repository"}},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_task_markers=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -938,25 +873,11 @@ class TestCodexAdapter:
                 "codex/event/task_started",
                 {"id": "turn-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_task_markers=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -985,10 +906,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_status_command_returns_state_without_starting_turn(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1012,10 +930,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_model_command_sets_override_without_starting_turn(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1032,7 +947,7 @@ class TestCodexAdapter:
         methods = [method for method, _ in fake_client.requests]
         assert "turn/start" not in methods
         assert "thread/start" not in methods
-        assert adapter.config.model == "gpt-5.5-codex"
+        assert adapter._selected_model == "gpt-5.5-codex"
         assert len(tools.messages_sent) == 1
         assert (
             "Model override set to `gpt-5.5-codex`" in tools.messages_sent[0]["content"]
@@ -1041,10 +956,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_models_alias_lists_models_without_starting_turn(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1067,27 +979,12 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_reasoning_effort_passed_in_turn_overrides(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        fake_client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                reasoning_effort="high",
-                reasoning_summary="concise",
+                reasoning_effort="high", reasoning_summary="concise"
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1108,24 +1005,8 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_reasoning_effort_omitted_when_none(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        fake_client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -1146,10 +1027,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_reasoning_command_sets_effort(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -1161,17 +1039,15 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.reasoning_effort == "high"
+        room = adapter._room_clients["room-1"]
+        assert room.reasoning_effort == "high"
         assert len(tools.messages_sent) == 1
         assert "Reasoning effort set to `high`" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
     async def test_reasoning_command_rejects_invalid_effort(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -1189,23 +1065,10 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_self_config_tools_registered_when_enabled(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        fake_client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(enable_self_config_tools=True),
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1230,23 +1093,10 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_self_config_tools_not_registered_when_disabled(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=False),
-            client_factory=lambda _config: fake_client,
+        fake_client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(enable_self_config_tools=False),
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1280,22 +1130,11 @@ class TestCodexAdapter:
                     "arguments": {"model": "o3"},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    },
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1308,7 +1147,6 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.model == "o3"
         assert adapter._selected_model == "o3"
         # Verify the tool response was sent back
         tool_responses = [
@@ -1332,22 +1170,11 @@ class TestCodexAdapter:
                     "arguments": {"effort": "xhigh", "summary": "detailed"},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    },
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1360,8 +1187,9 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.reasoning_effort == "xhigh"
-        assert adapter.config.reasoning_summary == "detailed"
+        room = adapter._room_clients["room-1"]
+        assert room.reasoning_effort == "xhigh"
+        assert room.reasoning_summary == "detailed"
 
     @pytest.mark.asyncio
     async def test_setreasoning_tool_rejects_invalid_effort(self) -> None:
@@ -1375,22 +1203,11 @@ class TestCodexAdapter:
                     "arguments": {"effort": "ultra"},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    },
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1417,26 +1234,10 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_sandbox_alias_is_normalized_for_thread_and_turn(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                sandbox="dangerFullAccess",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(sandbox="dangerFullAccess")
         )
         tools = ToolSchemaFakeTools()
 
@@ -1466,26 +1267,10 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_external_sandbox_alias_uses_sandbox_policy(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                sandbox="external-sandbox",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(sandbox="external-sandbox")
         )
         tools = ToolSchemaFakeTools()
 
@@ -1525,27 +1310,24 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        # Adapter should send a failure message mentioning the disconnect.
-        assert any(
-            "transport closed" in msg["content"].lower() for msg in tools.messages_sent
-        )
+        # Adapter should report a failure mentioning the disconnect.
+        failures = reported_failures(tools)
+        assert any("transport closed" in f["message"].lower() for f in failures)
 
     @pytest.mark.asyncio
     async def test_transport_closed_resets_client_state(self) -> None:
@@ -1558,22 +1340,20 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         # After transport/closed, client state should be reset
         assert adapter._client is None
@@ -1592,10 +1372,7 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Codex Agent", "A coding agent")
 
@@ -1603,15 +1380,16 @@ class TestCodexAdapter:
         adapter._room_threads["room-1"] = "old-thread-id"
         adapter._raw_history_by_room["room-1"] = [{"role": "user", "content": "hi"}]
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         # Per-room state should be cleared so next turn starts fresh.
         assert "room-1" not in adapter._room_threads
@@ -1625,7 +1403,6 @@ class TestCodexAdapter:
         transport/closed; otherwise they leak past on_cleanup because the
         thread id is no longer reachable through ``_room_threads``.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         events = [
             _event_notification(
@@ -1634,10 +1411,7 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Codex Agent", "A coding agent")
 
@@ -1648,41 +1422,77 @@ class TestCodexAdapter:
             input_tokens=100, total_tokens=150
         )
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         # Dead thread's usage entry must be gone even without a matching
         # on_cleanup (the room id can no longer look up the thread id).
         assert "old-thread-id" not in adapter._token_usage
 
     @pytest.mark.asyncio
+    async def test_transport_closed_after_error_does_not_double_report(self) -> None:
+        """An "error" notification immediately followed by transport/closed for
+        the same incident must report the failure once, not twice -- matching
+        the turn/completed branch's existing failure_reported guard."""
+        events = [
+            _event_notification(
+                "error",
+                {"error": {"message": "Something went wrong"}, "willRetry": False},
+            ),
+            _event_notification(
+                "transport/closed",
+                {"reason": "Codex process exited unexpectedly"},
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert len(reported_failures(tools)) == 1
+
+    @pytest.mark.asyncio
     async def test_turn_timeout_sends_interrupt_and_clean_error(self) -> None:
-        """When recv_event times out, the adapter sends turn/interrupt and reports cleanly."""
+        """When recv_event times out, the adapter sends turn/interrupt, reports
+        the failure, and fails the turn so the platform retries -- same as
+        every sibling adapter's own turn-timeout handling."""
         # No events means FakeCodexClient raises asyncio.TimeoutError immediately.
         fake_client = FakeCodexClient(events=[])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", turn_timeout_s=0.01),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(turn_timeout_s=0.01)
         )
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         # Adapter should have sent turn/interrupt with both identifiers.
         interrupt_requests = [
@@ -1692,8 +1502,52 @@ class TestCodexAdapter:
             ("turn/interrupt", {"threadId": "thr-1", "turnId": "turn-1"})
         ]
 
-        # Adapter should send a user-facing message about stopping.
-        assert any("stopped" in msg["content"].lower() for msg in tools.messages_sent)
+        # The turn fails the platform's turn, so no separate "I stopped..."
+        # chat reply goes out alongside the structured failure event.
+        assert not tools.messages_sent
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["code"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_turn_timeout_emits_failed_lifecycle_event(self) -> None:
+        """A timed-out turn still gets a failed-status lifecycle event, same
+        as the transport/closed and turn/completed(status=failed) paths --
+        the timeout branch's TurnResultAlreadyReported raise happens from
+        inside its own except clause, so it can't rely on the sibling
+        `except TurnResultAlreadyReported` handler to emit it."""
+        fake_client = FakeCodexClient(events=[])
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(
+                turn_timeout_s=0.01,
+                emit_turn_lifecycle_events=True,
+            ),
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        lifecycle_events = [
+            e
+            for e in tools.events_sent
+            if e["metadata"].get("codex_event_type") == "turn_lifecycle"
+        ]
+        assert len(lifecycle_events) == 2
+        assert lifecycle_events[0]["metadata"]["codex_turn_status"] == "started"
+        assert lifecycle_events[1]["metadata"]["codex_turn_status"] == "failed"
 
     @pytest.mark.asyncio
     async def test_item_completed_text_overrides_accumulated_deltas(self) -> None:
@@ -1717,23 +1571,10 @@ class TestCodexAdapter:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1766,7 +1607,7 @@ class TestCodexAdapter:
 
         custom_tools: list[CustomToolDef] = [(WeatherInput, get_weather)]
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
+            config=CodexAdapterConfig(),
             additional_tools=custom_tools,
         )
 
@@ -1807,23 +1648,11 @@ class TestCodexAdapter:
                     "callId": "call-99",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            additional_tools=custom_tools,
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), additional_tools=custom_tools
         )
         tools = ToolSchemaFakeTools()
 
@@ -1850,7 +1679,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_execution_reporting_emits_tool_call_and_result_events(self) -> None:
-        """With enable_execution_reporting, tool_call and tool_result events are emitted."""
+        """With emit=Emit.TOOL_CALLS, tool_call and tool_result events are emitted."""
         events = [
             _event_request(
                 50,
@@ -1861,22 +1690,11 @@ class TestCodexAdapter:
                     "callId": "call-50",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -1891,12 +1709,8 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -1909,8 +1723,43 @@ class TestCodexAdapter:
         assert result_data["tool_call_id"] == "call-50"
 
     @pytest.mark.asyncio
-    async def test_execution_reporting_disabled_by_default(self) -> None:
-        """Without enable_execution_reporting, no tool_call/tool_result events are emitted."""
+    async def test_send_room_file_tool_call_event_redacts_content(self) -> None:
+        """band_send_room_file's raw content must never reach a tool_call
+        event -- report has no idea content can carry real file bytes."""
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        events = [
+            _tool_call_request(
+                50, "band_send_room_file", {"content": raw_content, "filename": "f.txt"}
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
+        assert (
+            call_data["args"]["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in json.dumps(call_data)
+
+    @pytest.mark.asyncio
+    async def test_execution_reporting_silenced_with_explicit_empty_emit(self) -> None:
+        """emit=() silences tool_call/tool_result events (emit otherwise defaults on)."""
         events = [
             _event_request(
                 50,
@@ -1921,23 +1770,10 @@ class TestCodexAdapter:
                     "callId": "call-50",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(), emit=())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1981,23 +1817,14 @@ class TestCodexAdapter:
                     "callId": "call-60",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(),
             additional_tools=custom_tools,
-            client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2012,9 +1839,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_result_events) == 1
         result_data = json.loads(tool_result_events[0]["content"])
         assert result_data["name"] == "fail"
@@ -2044,22 +1869,11 @@ class TestCodexAdapter:
                     "callId": "call-70",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2094,6 +1908,57 @@ class TestItemCompletedForwarding:
     """Tests for forwarding internal Codex operations as platform events."""
 
     @pytest.mark.asyncio
+    async def test_item_completed_mcpToolCall_send_room_file_redacts_content(
+        self,
+    ) -> None:
+        """band_send_room_file routed through Codex's own mcpToolCall item
+        (a separate reporting path from item/tool/call, keyed by the bare
+        "tool" field before it's wrapped in the "mcp:{server}/{tool}"
+        display name) must also redact raw file content before it reaches a
+        tool_call event."""
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "mcp-1",
+                        "server": "band",
+                        "tool": "band_send_room_file",
+                        "arguments": {"content": raw_content, "filename": "f.txt"},
+                        "result": {"status": "success"},
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
+        assert call_data["name"] == "mcp:band/band_send_room_file"
+        assert (
+            call_data["args"]["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in json.dumps(call_data)
+
+    @pytest.mark.asyncio
     async def test_item_completed_commandExecution_emits_tool_events(self) -> None:
         """commandExecution item emits tool_call + tool_result with command/output."""
         events = [
@@ -2111,22 +1976,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2141,12 +1995,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2180,22 +2030,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2210,12 +2049,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2241,22 +2076,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2271,9 +2095,7 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         call_data = json.loads(tool_call_events[0]["content"])
         assert call_data["name"] == "file_edit"
@@ -2294,22 +2116,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2324,12 +2135,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2354,22 +2161,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2384,12 +2180,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2400,6 +2192,45 @@ class TestItemCompletedForwarding:
 
         result_data = json.loads(tool_result_events[0]["content"])
         assert result_data["output"] == "{}"
+
+    @pytest.mark.asyncio
+    async def test_item_completed_collabAgentToolCall_non_text_list_result_preserves_data(
+        self,
+    ) -> None:
+        """A non-text list result is dumped as JSON, not collapsed to "completed"."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "collabAgentToolCall",
+                        "id": "collab-2",
+                        "tool": "delegate",
+                        "result": [1, 2, 3],
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == "[1, 2, 3]"
 
     @pytest.mark.asyncio
     async def test_item_completed_mcpToolCall_emits_tool_events(self) -> None:
@@ -2418,22 +2249,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2448,12 +2268,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2463,6 +2279,56 @@ class TestItemCompletedForwarding:
 
         result_data = json.loads(tool_result_events[0]["content"])
         assert "127.0.0.1 localhost" in result_data["output"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_mcpToolCall_non_text_list_result_preserves_data(
+        self,
+    ) -> None:
+        """A non-text list result (e.g. an MCP image content block) is dumped as
+        JSON, not collapsed to the generic "completed" status.
+
+        Unlike thought extraction and ``dynamicToolCall``, a tool-call result is
+        real data even when it isn't textual — ``_stringify_tool_output`` must
+        use its ``raw_fallback`` mode here so nothing is silently discarded.
+        """
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "mcp-2",
+                        "server": "filesystem",
+                        "tool": "read_image",
+                        "arguments": {},
+                        "result": [
+                            {"type": "image", "data": "abc123", "mimeType": "image/png"}
+                        ],
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] != "completed"
+        assert "image/png" in result_data["output"]
 
     @pytest.mark.asyncio
     async def test_item_completed_dynamicToolCall_emits_tool_events(self) -> None:
@@ -2481,22 +2347,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2511,12 +2366,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2530,8 +2381,55 @@ class TestItemCompletedForwarding:
         assert result_data["tool_call_id"] == "dyn-1"
 
     @pytest.mark.asyncio
+    async def test_item_completed_dynamicToolCall_non_text_list_result_falls_back_to_status(
+        self,
+    ) -> None:
+        """A result list with no extractable text falls through to the status default.
+
+        ``_stringify_tool_output`` skips a list that yields no text parts and
+        tries the next candidate field rather than dumping the uninformative
+        list as JSON (the same skip-and-continue behavior thought extraction
+        relies on to avoid placeholders).
+        """
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "callId": "dyn-2",
+                        "tool": "count_files",
+                        "arguments": {},
+                        "result": [1, 2, 3],
+                        "status": "completed",
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
-        """reasoning item emits thought event when emit_thought_events=True."""
+        """reasoning item emits thought event when emit=Emit.THOUGHTS."""
         events = [
             _event_notification(
                 "item/completed",
@@ -2546,22 +2444,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_thought_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.THOUGHTS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2576,16 +2463,145 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        thought_events = [
-            e for e in tools.events_sent if e["message_type"] == "thought"
-        ]
+        thought_events = events_of_type(tools, "thought")
         assert len(thought_events) == 1
         assert "Analyzing the codebase structure" in thought_events[0]["content"]
         assert "Identified key files to modify" in thought_events[0]["content"]
 
     @pytest.mark.asyncio
+    async def test_item_completed_dict_summary_text_emits_thought(self) -> None:
+        """Reasoning summary entries shaped as {text: ...} use stringify SSOT."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-dict",
+                        "summary": [
+                            {"type": "summary_text", "text": "Weighing the tradeoffs"},
+                            {"type": "summary_text", "text": "Choosing the safer joke"},
+                        ],
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit={Emit.THOUGHTS}
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = events_of_type(tools, "thought")
+        assert len(thought_events) == 1
+        assert "Weighing the tradeoffs" in thought_events[0]["content"]
+        assert "Choosing the safer joke" in thought_events[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_empty_reasoning_summary_skips_thought(self) -> None:
+        """Empty reasoning summaries must not post a '(reasoning)' placeholder."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-empty",
+                        "summary": [],
+                    }
+                },
+            ),
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-blank",
+                        "summary": ["", "  "],
+                    }
+                },
+            ),
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-none",
+                        "summary": None,
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit={Emit.THOUGHTS}
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = events_of_type(tools, "thought")
+        assert thought_events == []
+
+    @pytest.mark.asyncio
+    async def test_item_completed_empty_plan_text_skips_thought(self) -> None:
+        """Empty plan text must not post a '(plan)' placeholder."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {"item": {"type": "plan", "id": "plan-empty", "text": ""}},
+            ),
+            _event_notification(
+                "item/completed",
+                {"item": {"type": "plan", "id": "plan-blank", "text": "   "}},
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit={Emit.THOUGHTS}
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = events_of_type(tools, "thought")
+        assert thought_events == []
+
+    @pytest.mark.asyncio
     async def test_item_completed_skipped_when_reporting_disabled(self) -> None:
-        """No tool events when enable_execution_reporting=False."""
+        """No tool events when emit narrows to Emit.TASK_EVENTS only."""
         events = [
             _event_notification(
                 "item/completed",
@@ -2608,26 +2624,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                enable_execution_reporting=False,
-                emit_thought_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TASK_EVENTS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2675,22 +2676,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2708,9 +2698,7 @@ class TestItemCompletedForwarding:
         # agentMessage text should still be sent as the final message
         assert any(msg["content"] == "All tests pass!" for msg in tools.messages_sent)
         # commandExecution should also be forwarded as tool events
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
 
     @pytest.mark.asyncio
@@ -2728,22 +2716,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2758,13 +2735,50 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         call_data = json.loads(tool_call_events[0]["content"])
         assert call_data["name"] == "web_search"
         assert call_data["args"]["query"] == "python asyncio tutorial"
+
+    @pytest.mark.asyncio
+    async def test_item_completed_webSearch_non_text_list_action_preserves_data(
+        self,
+    ) -> None:
+        """A non-text list action is dumped as JSON, not collapsed to "completed"."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "webSearch",
+                        "id": "ws-2",
+                        "query": "python asyncio tutorial",
+                        "action": [{"url": "https://example.com"}],
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == '[{"url": "https://example.com"}]'
 
     @pytest.mark.asyncio
     async def test_item_completed_metadata_includes_codex_ids(self) -> None:
@@ -2781,22 +2795,11 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2811,9 +2814,7 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         meta = tool_call_events[0]["metadata"]
         assert meta["codex_room_id"] == "room-1"
@@ -2825,27 +2826,12 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_injected_on_resume_failure(self) -> None:
         """Resume fails, fresh thread created, first turn input contains history block."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -2900,24 +2886,9 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_not_injected_on_successful_resume(self) -> None:
         """Resume succeeds, no history injection."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -2958,29 +2929,14 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_not_injected_when_disabled(self) -> None:
         """inject_history_on_resume_failure=False, no injection even on failure."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                inject_history_on_resume_failure=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(inject_history_on_resume_failure=False),
         )
         tools = ToolSchemaFakeTools()
 
@@ -3014,27 +2970,12 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_filters_non_text_messages(self) -> None:
         """Only canonical text messages appear in injected context."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -3106,26 +3047,13 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_respects_max_messages(self) -> None:
         """Only last max_history_messages are injected."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_history_messages=3),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(max_history_messages=3)
         )
         tools = ToolSchemaFakeTools()
 
@@ -3177,27 +3105,12 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_cleared_after_injection(self) -> None:
         """Raw history removed from memory after first turn."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -3241,10 +3154,7 @@ class TestHistoryInjection:
                 ]
             },
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
@@ -3275,11 +3185,11 @@ class TestHistoryInjection:
                 ]
             },
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
+        adapter._room_client("room-1")
+        adapter._active_room.set("room-1")
+        await adapter._ensure_client_ready()
 
         assert adapter._selected_model == "gpt-5.4-mini"
 
@@ -3299,9 +3209,8 @@ class TestHistoryInjection:
                 ]
             },
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model="unavailable-test-model"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="unavailable-test-model")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
@@ -3321,15 +3230,20 @@ class TestHistoryInjection:
         model_list_calls = [m for m, _ in fake_client.requests if m == "model/list"]
         assert len(model_list_calls) == 0
 
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert "not available" in failures[0]["message"]
+
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_empty(self) -> None:
         """Auto-selection uses the adapter default when Codex returns no visible models."""
         fake_client = FakeCodexClient(model_list_result={"data": []})
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
+        adapter._room_client("room-1")
+        adapter._active_room.set("room-1")
+        await adapter._ensure_client_ready()
 
         assert adapter._selected_model == "gpt-5.5"
 
@@ -3352,11 +3266,11 @@ class TestHistoryInjection:
                 )
 
         fake_client = ModelListFailsClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
+        adapter._room_client("room-1")
+        adapter._active_room.set("room-1")
+        await adapter._ensure_client_ready()
 
         assert adapter._selected_model == "gpt-5.5"
 
@@ -3369,10 +3283,7 @@ class TestHistoryInjection:
             ),
             turn_start_error_once=False,
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
@@ -3394,14 +3305,11 @@ class TestHistoryInjection:
     ) -> None:
         """Startup emits a redacted config summary log line."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="stdio",
-                model="gpt-5.5",
-                sandbox="workspace-write",
-                approval_mode="manual",
+                model="gpt-5.5", sandbox="workspace-write", approval_mode="manual"
             ),
-            client_factory=lambda _config: fake_client,
         )
 
         with caplog.at_level("INFO", logger="band.adapters.codex"):
@@ -3433,36 +3341,32 @@ class TestHistoryInjection:
                 ),
             ],
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                emit_thought_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
         msg = make_platform_message(room_id="room-1", content="do something")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg,
+                tools,
+                CodexSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         assert "Something went wrong" in error_events[0]["content"]
 
     @pytest.mark.asyncio
     async def test_cleanup_before_start(self) -> None:
         """Calling on_cleanup on a freshly constructed adapter should not raise."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="stdio"),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(),
         )
         # No on_started called — cleanup should be safe (idempotent)
         await adapter.on_cleanup("room-x")
@@ -3471,10 +3375,7 @@ class TestHistoryInjection:
     async def test_cleanup_clears_pending_approvals(self) -> None:
         """on_cleanup should evict all pending approvals for the given room."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="stdio"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         await adapter.on_started("Bot", "desc")
 
         # Manually inject a pending approval for room-1
@@ -3488,14 +3389,13 @@ class TestHistoryInjection:
                     "request_id": 1,
                     "method": "item/tool/call",
                     "summary": "test",
-                    "created_at": datetime.now(),
+                    "created_at": datetime.now(UTC),
                     "future": fut,
                 },
             )(),
         }
-        # Also register a room thread so the client isn't closed
+        wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
-        adapter._room_threads["room-2"] = "thr-2"
 
         await adapter.on_cleanup("room-1")
 
@@ -3511,7 +3411,6 @@ class TestHistoryInjection:
         returns ok=False with a friendly message (it does not raise), so the adapter
         surfaces it via the ok=False path.
         """
-        from band.runtime.tools import ToolCallOutcome
 
         class ValidationErrorTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(
@@ -3525,31 +3424,11 @@ class TestHistoryInjection:
                 )
 
         events = [
-            _event_request(
-                99,
-                "item/tool/call",
-                {
-                    "tool": "band_send_message",
-                    "arguments": {},
-                },
-            ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _tool_call_request(99, "band_send_message"),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ValidationErrorTools()
 
         await adapter.on_started("Bot", "desc")
@@ -3598,23 +3477,10 @@ class TestStructuredErrors:
                     "willRetry": False,
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=True),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -3628,13 +3494,12 @@ class TestStructuredErrors:
             room_id="room-1",
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        meta = error_events[0]["metadata"]
-        assert meta["codex_error_type"] == "ContextWindowExceeded"
-        assert meta["codex_suggested_action"] == "compact_context"
-        assert meta["codex_is_retryable"] is False
-        assert "context window" in error_events[0]["content"].lower()
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["code"] == "ContextWindowExceeded"
+        assert failures[0]["detail"]["codex_is_retryable"] is False
+        assert "context window" in failures[0]["message"].lower()
 
     @pytest.mark.asyncio
     async def test_structured_error_from_failed_turn(self) -> None:
@@ -3659,78 +3524,85 @@ class TestStructuredErrors:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=True),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert error_events[0]["metadata"]["codex_error_type"] == "UsageLimitExceeded"
-        assert (
-            error_events[0]["metadata"]["codex_suggested_action"] == "wait_or_upgrade"
-        )
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == "UsageLimitExceeded"
 
     @pytest.mark.asyncio
-    async def test_structured_errors_disabled_falls_back_to_plain_text(self) -> None:
-        """When structured_errors=False, errors use plain text format."""
+    async def test_structured_error_from_failed_turn_with_no_error_key(self) -> None:
+        """turn/completed with status=failed but no "error" key at all must
+        still report a failure before raising, not just claim it did."""
         events = [
             _event_notification(
-                "error",
-                {
-                    "error": {
-                        "message": "Something failed",
-                        "codexErrorInfo": {"type": "ContextWindowExceeded"},
-                    },
-                    "willRetry": False,
-                },
-            ),
-            _event_notification(
                 "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
+                {"turn": {"id": "turn-1", "status": "failed", "items": []}},
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=False),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert error_events[0]["content"] == "Codex error: Something failed"
-        assert "codex_error_type" not in error_events[0]["metadata"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_reports_and_propagates(self) -> None:
+        """A bare exception outside Codex's structured-error paths (not a
+        CodexJsonRpcError, not a delivery/already-reported failure) must
+        still surface via the generic fallback and propagate."""
+        fake_client = FakeCodexClient(
+            events=[],
+            turn_start_error=RuntimeError("transport hiccup"),
+            turn_start_error_once=False,
+        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        with pytest.raises(RuntimeError, match="transport hiccup"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "transport hiccup" not in failures[0]["message"]
 
 
 # ===========================================================================
@@ -3749,22 +3621,11 @@ class TestEnrichedApprovals:
                 "item/commandExecution/requestApproval",
                 {"command": "npm test"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=first_events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -3813,25 +3674,11 @@ class TestEnrichedApprovals:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="auto_decline")
         )
         tools = ToolSchemaFakeTools()
 
@@ -3859,10 +3706,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_command_changes_mode(self) -> None:
         """The /sandbox command sets a per-room override, not mutating global config."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -3884,10 +3728,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_command_is_per_room(self) -> None:
         """Sandbox override in one room does not affect other rooms."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         await adapter.on_started("Agent", "A coding agent")
 
         adapter._sandbox_overrides["room-1"] = "read-only"
@@ -3899,10 +3740,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_danger_full_access_requires_confirm_flag(self) -> None:
         """Escalating to danger-full-access without --confirm shows a prompt."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -3926,10 +3764,7 @@ class TestEnrichedApprovals:
     ) -> None:
         """Escalating to danger-full-access with --confirm logs a warning."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
@@ -3953,10 +3788,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_command_rejects_invalid_mode(self) -> None:
         """The /sandbox command rejects invalid modes."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -3977,10 +3809,7 @@ class TestEnrichedApprovals:
     async def test_permissions_command_shows_state(self) -> None:
         """/permissions shows current effective permissions."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -4019,22 +3848,11 @@ class TestPlanAndLifecycle:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4075,22 +3893,11 @@ class TestPlanAndLifecycle:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4116,25 +3923,11 @@ class TestPlanAndLifecycle:
     async def test_turn_lifecycle_events_emitted(self) -> None:
         """Enriched turn lifecycle events include duration and status."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4166,23 +3959,10 @@ class TestPlanAndLifecycle:
     async def test_threads_command_lists_mappings(self) -> None:
         """/threads command shows room→thread mappings."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -4220,23 +4000,10 @@ class TestPlanAndLifecycle:
     async def test_thread_archive_clears_mapping(self) -> None:
         """/thread archive removes the thread mapping."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -4278,22 +4045,11 @@ class TestRealtimeStreaming:
                 "item/reasoning/summaryTextDelta",
                 {"delta": "Analyzing the code...", "itemId": "item-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_reasoning_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_reasoning_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4325,22 +4081,11 @@ class TestRealtimeStreaming:
                 "item/reasoning/summaryTextDelta",
                 {"delta": "Thinking...", "itemId": "item-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_reasoning_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_reasoning_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4368,22 +4113,11 @@ class TestRealtimeStreaming:
                 "item/plan/delta",
                 {"delta": "Step 1: Read the test", "itemId": "plan-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4426,22 +4160,11 @@ class TestRealtimeStreaming:
                     "phase": "final_answer",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_commentary_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_commentary_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4487,22 +4210,11 @@ class TestRealtimeStreaming:
                     "phase": "final_answer",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_commentary_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_commentary_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4543,22 +4255,11 @@ class TestRealtimeStreaming:
                     "phase": "final_answer",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_commentary_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_commentary_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4595,25 +4296,11 @@ class TestDiffsAndTokenUsage:
                     "files": ["src/app.py"],
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_diff_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_diff_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4642,33 +4329,16 @@ class TestDiffsAndTokenUsage:
     @pytest.mark.asyncio
     async def test_diff_event_requires_task_events_emit(self) -> None:
         """Diffs are not forwarded when TASK_EVENTS is not in features.emit."""
-        from band.core.types import AdapterFeatures
-
         events = [
             _event_notification(
                 "turn/diff/updated",
                 {"diff": "some diff", "files": ["f.py"]},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_diff_events=True,
-            ),
-            features=AdapterFeatures(emit=frozenset()),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_diff_events=True), emit=()
         )
         tools = ToolSchemaFakeTools()
 
@@ -4705,22 +4375,11 @@ class TestDiffsAndTokenUsage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_token_usage_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_token_usage_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4759,22 +4418,11 @@ class TestDiffsAndTokenUsage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_token_usage_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_token_usage_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4818,23 +4466,10 @@ class TestDiffsAndTokenUsage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -4872,8 +4507,7 @@ class TestDiffsAndTokenUsage:
 
 
 class TestCodexTypes:
-    def test_build_structured_error_metadata_known_type(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
+    def test_build_agent_failure_known_type(self) -> None:
 
         error_obj = {
             "message": "Context overflow",
@@ -4883,29 +4517,24 @@ class TestCodexTypes:
                 "retryable": False,
             },
         }
-        content, meta = build_structured_error_metadata(
-            error_obj, thread_id="t1", turn_id="turn-1"
-        )
-        assert "context window" in content.lower()
-        assert meta["codex_error_type"] == "ContextWindowExceeded"
-        assert meta["codex_suggested_action"] == "compact_context"
-        assert meta["codex_thread_id"] == "t1"
-        assert meta["codex_turn_id"] == "turn-1"
+        failure = build_agent_failure(error_obj, thread_id="t1", turn_id="turn-1")
+        assert failure.provider == "codex"
+        assert "context overflow" in failure.message.lower()
+        assert failure.code == "ContextWindowExceeded"
+        assert failure.detail["codex_thread_id"] == "t1"
+        assert failure.detail["codex_turn_id"] == "turn-1"
 
-    def test_build_structured_error_metadata_unknown_type(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
+    def test_build_agent_failure_unknown_type(self) -> None:
 
         error_obj = {
             "message": "Something weird happened",
             "codexErrorInfo": {"type": "UnknownError"},
         }
-        content, meta = build_structured_error_metadata(error_obj)
-        assert content == "Something weird happened"
-        assert meta["codex_error_type"] == "UnknownError"
-        assert meta["codex_suggested_action"] is None
+        failure = build_agent_failure(error_obj)
+        assert failure.message == "Something weird happened"
+        assert failure.code == "UnknownError"
 
     def test_parse_plan_steps(self) -> None:
-        from band.integrations.codex.types import parse_plan_steps
 
         params = {
             "plan": {
@@ -4923,7 +4552,6 @@ class TestCodexTypes:
         assert steps[2].status == "pending"
 
     def test_parse_plan_steps_string_entries(self) -> None:
-        from band.integrations.codex.types import parse_plan_steps
 
         params = {"plan": {"steps": ["Read code", "Fix bug"]}}
         steps = parse_plan_steps(params)
@@ -4932,7 +4560,6 @@ class TestCodexTypes:
         assert steps[0].status == "pending"
 
     def test_codex_token_usage_update(self) -> None:
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -4956,7 +4583,6 @@ class TestCodexTypes:
     def test_codex_token_usage_update_current_schema(self) -> None:
         """The current app-server schema nests cumulative counters under
         ``tokenUsage.total`` and names reasoning ``reasoningOutputTokens``."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -4987,9 +4613,8 @@ class TestCodexTypes:
         assert usage.total_tokens == 14822
 
     def test_config_new_flags_default_false(self) -> None:
-        """All new config flags default to False (except structured_errors=True)."""
+        """All new config flags default to False."""
         config = CodexAdapterConfig()
-        assert config.structured_errors is True
         assert config.stream_reasoning_events is False
         assert config.stream_plan_events is False
         assert config.stream_commentary_events is False
@@ -5034,6 +4659,22 @@ class TestCodexTypes:
         )
         assert key == ""
 
+    def test_codex_item_type_fully_classified(self) -> None:
+        """Every ``CodexItemType`` lands in exactly one of the adapter's three
+        buckets: tool-like, thought-like, or the skipped user/agent messages.
+
+        A new item type added to the enum without also updating one of these
+        sets currently falls through to a silent ``logger.debug`` — no room
+        event, no test failure. This test is the guard: it fails loudly the
+        moment the partition stops being exhaustive.
+        """
+
+        message_types = {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
+        classified = _TOOL_ITEM_TYPES | _THOUGHT_ITEM_TYPES | message_types
+
+        assert classified == set(CodexItemType)
+        assert not (_TOOL_ITEM_TYPES & _THOUGHT_ITEM_TYPES)
+
 
 class TestSessionAutoApproval:
     @pytest.mark.asyncio
@@ -5047,25 +4688,11 @@ class TestSessionAutoApproval:
                 "item/commandExecution/requestApproval",
                 {"command": "npm install"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5101,25 +4728,11 @@ class TestSessionAutoApproval:
                 "item/commandExecution/requestApproval",
                 {"command": "npm publish"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="auto_decline")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5152,26 +4765,14 @@ class TestSessionAutoApproval:
                 "item/commandExecution/requestApproval",
                 {"command": "npm install"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-                session_approval_granularity="binary",
+                approval_mode="manual", session_approval_granularity="binary"
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5214,23 +4815,10 @@ class TestCleanup:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -5259,9 +4847,9 @@ class TestCleanup:
 class TestAuditCap:
     def test_audit_trail_capped_at_limit(self) -> None:
         """Approval audit trail is capped at max_approval_audit_per_room."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_approval_audit_per_room=5),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(max_approval_audit_per_room=5),
         )
         for i in range(10):
             adapter._record_approval_audit(
@@ -5279,9 +4867,9 @@ class TestAuditCap:
 
     def test_session_approved_capped_at_limit(self) -> None:
         """Session approvals evict LRU when max_session_approved_per_room is hit."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_session_approved_per_room=3),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(max_session_approved_per_room=3),
         )
         for i in range(5):
             adapter._record_session_approval("room-1", f"commandExecution:cmd{i}")
@@ -5294,9 +4882,9 @@ class TestAuditCap:
 
     def test_session_approval_reinsert_moves_to_end(self) -> None:
         """Re-approving an existing key moves it to the most-recent slot."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_session_approved_per_room=3),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(max_session_approved_per_room=3),
         )
         adapter._record_session_approval("room-1", "commandExecution:a")
         adapter._record_session_approval("room-1", "commandExecution:b")
@@ -5321,12 +4909,8 @@ class TestReviewFixes:
     async def test_sandbox_command_blocked_when_sandbox_policy_set(self) -> None:
         """/sandbox is rejected when sandbox_policy is configured."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                sandbox_policy={"type": "readOnly"},
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(sandbox_policy={"type": "readOnly"})
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5347,23 +4931,10 @@ class TestReviewFixes:
     async def test_thread_archive_clears_raw_history(self) -> None:
         """/thread archive also clears raw history and injection state."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -5396,7 +4967,6 @@ class TestReviewFixes:
 
     def test_token_usage_update_handles_zero_values(self) -> None:
         """CodexTokenUsage.update() correctly handles explicit zero values."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5423,34 +4993,103 @@ class TestReviewFixes:
         assert not (key and key in {"commandExecution:npm"})
 
     @pytest.mark.asyncio
-    async def test_unexpected_recv_error_still_emits_turn_outcome(self) -> None:
-        """When recv_event raises a non-timeout exception, _emit_turn_outcome is still called."""
+    async def test_unexpected_recv_error_reports_and_fails_turn(self) -> None:
+        """When recv_event raises a non-timeout exception, the adapter reports
+        an AgentFailure and fails the turn instead of silently degrading to a
+        plain chat reply with no structured signal at all."""
 
         class BrokenClient(FakeCodexClient):
             async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
                 raise ConnectionError("transport died")
 
         fake_client = BrokenClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                fallback_send_agent_text=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(fallback_send_agent_text=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_rpc_error_from_event_loop_keeps_curated_failure(self) -> None:
+        """RPC errors raised while receiving events keep their provider message."""
+        rpc_error = CodexJsonRpcError(code=-32000, message="model unavailable")
+
+        class RpcErrorClient(FakeCodexClient):
+            async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+                raise rpc_error
+
+        rpc_error_client = RpcErrorClient()
+        adapter = make_codex_adapter(rpc_error_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(CodexJsonRpcError, match="model unavailable"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == str(rpc_error)
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_emits_terminal_lifecycle_event(self) -> None:
+        """A reported failed turn still closes the lifecycle event pair."""
+        events = [
+            _event_notification(
+                "turn/completed",
+                {"turn": {"id": "turn-1", "status": "failed", "items": []}},
+            )
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(
+                emit_turn_lifecycle_events=True,
+            ),
         )
-        # Should have sent an error message to the user instead of crashing
-        assert any("couldn't complete" in m["content"] for m in tools.messages_sent)
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        lifecycle_events = [
+            event
+            for event in events_of_type(tools, "task")
+            if event["metadata"].get("codex_event_type") == "turn_lifecycle"
+        ]
+        assert [
+            event["metadata"]["codex_turn_status"] for event in lifecycle_events
+        ] == ["started", "failed"]
 
 
 # ===========================================================================
@@ -5469,22 +5108,11 @@ class TestAcceptForSession:
                 "item/commandExecution/requestApproval",
                 {"command": "npm test"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5531,22 +5159,11 @@ class TestAcceptForSession:
                 "item/commandExecution/requestApproval",
                 {"command": "npm install"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5586,22 +5203,11 @@ class TestNetworkContext:
                     "networkContext": {"domains": ["registry.npmjs.org"]},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5648,25 +5254,11 @@ class TestTurnStartedLifecycle:
     async def test_turn_started_lifecycle_event_emitted(self) -> None:
         """Turn started lifecycle event includes input summary."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5701,25 +5293,11 @@ class TestContextCompaction:
                 "context/compacted",
                 {"threadId": "thr-1", "turnId": "turn-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5749,25 +5327,11 @@ class TestContextCompaction:
                 "context/compacted",
                 {"threadId": "thr-1", "turnId": "turn-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=False)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5792,7 +5356,6 @@ class TestContextCompaction:
 class TestPerTurnTokenUsage:
     def test_token_usage_computes_per_turn_deltas(self) -> None:
         """Per-turn deltas are computed from consecutive cumulative updates."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
 
@@ -5830,7 +5393,6 @@ class TestPerTurnTokenUsage:
 
     def test_token_usage_metadata_includes_turn_deltas(self) -> None:
         """to_metadata() includes per-turn deltas when available."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5848,7 +5410,6 @@ class TestPerTurnTokenUsage:
 
     def test_token_usage_format_summary_includes_turn(self) -> None:
         """format_summary() shows per-turn breakdown when deltas > 0."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5866,7 +5427,6 @@ class TestPerTurnTokenUsage:
 
     def test_reset_turn_deltas(self) -> None:
         """reset_turn_deltas() zeroes out per-turn counters."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5889,7 +5449,6 @@ class TestPerTurnTokenUsage:
         turn reporting ``turn_input_tokens=30``.  With the anchor, the
         final value is ``180 - 100 = 80`` — the whole-turn rise.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         # End of previous turn: cumulative = 100.
@@ -5920,7 +5479,6 @@ class TestPlanStepsRobustness:
 
     def test_parse_plan_steps_handles_non_dict_plan(self) -> None:
         """parse_plan_steps must not crash when `plan` is not a dict."""
-        from band.integrations.codex.types import parse_plan_steps
 
         assert parse_plan_steps({"plan": "not-a-dict"}) == []
         assert parse_plan_steps({"plan": ["also", "not", "a", "dict"]}) == []
@@ -5928,7 +5486,6 @@ class TestPlanStepsRobustness:
 
     def test_parse_plan_steps_reads_top_level_when_plan_absent(self) -> None:
         """When there's no 'plan' key, parse_plan_steps looks at top-level steps."""
-        from band.integrations.codex.types import parse_plan_steps
 
         steps = parse_plan_steps({"steps": [{"text": "A", "status": "pending"}]})
         assert len(steps) == 1
@@ -5953,22 +5510,11 @@ class TestSessionApprovalValidation:
                 "item/fileChange/requestApproval",
                 {},  # No command field -> session_approval_key returns ""
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6036,13 +5582,9 @@ class TestTokenUsageEmission:
         instances are truthy) so an empty token_usage event could be emitted
         even before Codex sent any thread/tokenUsage/updated notification.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6062,7 +5604,7 @@ class TestTokenUsageEmission:
 
 
 class TestStructuredErrorNormalization:
-    """build_structured_error_metadata handling of non-standard inputs."""
+    """build_agent_failure handling of non-standard inputs."""
 
     def test_structured_error_with_string_error_obj(self) -> None:
         """_handle_error_event normalizes string error_obj before structuring.
@@ -6071,15 +5613,14 @@ class TestStructuredErrorNormalization:
         was dead code; this test asserts the normalization still works when
         the original error_obj is a string rather than a dict.
         """
-        from band.integrations.codex.types import build_structured_error_metadata
 
         # Simulate the normalization the adapter performs: convert string to
-        # {"message": <str>} before passing to build_structured_error_metadata.
+        # {"message": <str>} before passing to build_agent_failure.
         error_obj: dict[str, Any] = {"message": "raw string error"}
-        content, meta = build_structured_error_metadata(error_obj)
-        assert "raw string error" in content
+        failure = build_agent_failure(error_obj)
+        assert "raw string error" in failure.message
         # No codexErrorInfo -> no known error type.
-        assert meta["codex_error_type"] is None
+        assert failure.code is None
 
 
 class TestSessionApprovalKeying:
@@ -6087,7 +5628,7 @@ class TestSessionApprovalKeying:
 
     def test_file_change_session_key_requires_paths(self) -> None:
         """/approve-session must refuse fileChange requests with no paths."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         key = adapter._session_approval_key(
             "item/fileChange/requestApproval",
             {"reason": "something vague"},
@@ -6096,7 +5637,7 @@ class TestSessionApprovalKeying:
 
     def test_file_change_session_key_uses_paths_when_present(self) -> None:
         """fileChange session key includes sorted path list for stable matching."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         key1 = adapter._session_approval_key(
             "item/fileChange/requestApproval",
             {"changes": [{"path": "b.py"}, {"path": "a.py"}]},
@@ -6110,7 +5651,7 @@ class TestSessionApprovalKeying:
 
     def test_file_change_session_key_handles_top_level_paths(self) -> None:
         """fileChange session key also picks up top-level path/paths fields."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         key = adapter._session_approval_key(
             "item/fileChange/requestApproval",
             {"paths": ["src/foo.py", "src/bar.py"]},
@@ -6120,7 +5661,7 @@ class TestSessionApprovalKeying:
 
     def test_unknown_approval_method_returns_empty_key(self) -> None:
         """Session-level approval refuses unknown methods rather than bucketing them."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         assert adapter._session_approval_key("item/unknown/requestApproval", {}) == ""
 
     @pytest.mark.asyncio
@@ -6132,16 +5673,16 @@ class TestSessionApprovalKeying:
                 "item/fileChange/requestApproval",
                 {"reason": "write something"},
             ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
                 approval_mode="manual",
                 approval_wait_timeout_s=0.05,
                 approval_timeout_decision="decline",
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6185,7 +5726,6 @@ class TestTokenUsageCounterMonotonicity:
         late event from the previous turn with a smaller cumulative must
         leave the turn deltas clamped to 0 rather than going negative.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update({"usage": {"inputTokens": 100, "outputTokens": 100}})
@@ -6209,7 +5749,7 @@ class TestApprovalAuditRecording:
 
     def test_record_approval_audit_returns_entry(self) -> None:
         """_record_approval_audit returns the entry it appended."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         entry = adapter._record_approval_audit(
             room_id="room-1",
             request_id="req-1",
@@ -6229,62 +5769,50 @@ class TestApprovalAuditRecording:
 
 
 class TestStructuredErrorMappings:
-    """Cover every entry in CODEX_ERROR_REMEDIATION plus the fallback path."""
+    """build_agent_failure passes codexErrorInfo through verbatim -- no
+    remediation/suggested-action policy; that belongs to a consumer, not
+    this shared shape."""
 
     @pytest.mark.parametrize(
-        ("error_type", "expected_action", "expected_phrase"),
+        "error_type",
         [
-            ("HttpConnectionFailed", "check_connectivity", "http connection"),
-            ("SandboxError", "review_sandbox_policy", "sandbox"),
-            ("Unauthorized", "re_authenticate", "unauthorized"),
-            ("BadRequest", "check_input_format", "bad request"),
-            (
-                "ResponseTooManyFailedAttempts",
-                "retry_different_approach",
-                "failed attempts",
-            ),
+            "HttpConnectionFailed",
+            "SandboxError",
+            "Unauthorized",
+            "BadRequest",
+            "ResponseTooManyFailedAttempts",
         ],
     )
-    def test_known_error_type_maps_to_remediation(
-        self, error_type: str, expected_action: str, expected_phrase: str
-    ) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
-
-        content, meta = build_structured_error_metadata(
+    def test_error_type_becomes_the_failure_code(self, error_type: str) -> None:
+        failure = build_agent_failure(
             {"codexErrorInfo": {"type": error_type, "retryable": True}}
         )
-        assert meta["codex_error_type"] == error_type
-        assert meta["codex_suggested_action"] == expected_action
-        assert meta["codex_is_retryable"] is True
-        assert expected_phrase in content.lower()
+        assert failure.code == error_type
+        assert failure.detail["codex_is_retryable"] is True
 
     def test_non_dict_codex_error_info_is_tolerated(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
-        content, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {"message": "boom", "codexErrorInfo": "not-a-dict"}
         )
-        assert meta["codex_error_type"] is None
-        assert content == "boom"
+        assert failure.code is None
+        assert failure.message == "boom"
 
     def test_missing_codex_error_info_falls_back_to_message(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
-        content, meta = build_structured_error_metadata({"message": "network down"})
-        assert meta["codex_error_type"] is None
-        assert meta["codex_suggested_action"] is None
-        assert content == "network down"
+        failure = build_agent_failure({"message": "network down"})
+        assert failure.code is None
+        assert failure.message == "network down"
 
-    def test_additional_details_preserved_in_metadata(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
+    def test_additional_details_preserved_in_detail(self) -> None:
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": {"hint": "refresh token"},
             }
         )
-        assert meta["codex_additional_details"] == {"hint": "refresh token"}
+        assert failure.detail["codex_additional_details"] == {"hint": "refresh token"}
 
 
 class TestSlashCommandCoverage:
@@ -6292,10 +5820,7 @@ class TestSlashCommandCoverage:
     async def test_thread_info_with_no_mapping(self) -> None:
         """/thread info reports gracefully when the room has no thread yet."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -6325,25 +5850,11 @@ class TestSlashCommandCoverage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_token_usage_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_token_usage_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6377,10 +5888,7 @@ class TestSlashCommandCoverage:
     async def test_permissions_reflects_sandbox_override(self) -> None:
         """/permissions reports the per-room sandbox override once set."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -6408,6 +5916,86 @@ class TestSlashCommandCoverage:
         assert len(perm_msgs) == 1
         assert "read-only" in perm_msgs[0]["content"]
 
+    @pytest.mark.asyncio
+    async def test_local_command_reply_delivery_failure_is_not_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """/help's answer failing to post is Band-side delivery, not a Codex
+        provider failure -- deliver_reply's DeliveryFailedError must be
+        recognized and left unreported here. The original cause still
+        propagates (the message still fails/retries at the platform level),
+        just never misreported as a Codex AgentFailure."""
+
+        class FailingSendMessageTools(ToolSchemaFakeTools):
+            async def send_message(
+                self, content: str, mentions: list[dict[str, str]] | None = None
+            ) -> Any:
+                raise RuntimeError("platform rejected the message")
+
+        fake_client = FakeCodexClient()
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = FailingSendMessageTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        with (
+            caplog.at_level(logging.ERROR, logger="band.core.delivery"),
+            pytest.raises(RuntimeError, match="platform rejected the message"),
+        ):
+            await adapter.on_message(
+                make_platform_message(content="/help"),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert not tools.messages_sent
+        assert not reported_failures(tools)
+        assert any(
+            "Reply delivery failed" in record.message for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_approval_command_reply_delivery_failure_is_not_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Same delivery-vs-provider-failure split as slash commands, but for
+        the approval-command path, which runs outside on_message's main
+        try/except and needs its own DeliveryFailedError handling."""
+
+        class FailingSendMessageTools(ToolSchemaFakeTools):
+            async def send_message(
+                self, content: str, mentions: list[dict[str, str]] | None = None
+            ) -> Any:
+                raise RuntimeError("platform rejected the message")
+
+        fake_client = FakeCodexClient()
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = FailingSendMessageTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        with (
+            caplog.at_level(logging.ERROR, logger="band.core.delivery"),
+            pytest.raises(RuntimeError, match="platform rejected the message"),
+        ):
+            await adapter.on_message(
+                make_platform_message(content="/approvals"),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert not tools.messages_sent
+        assert not reported_failures(tools)
+        assert any(
+            "Reply delivery failed" in record.message for record in caplog.records
+        )
+
 
 class TestMalformedPayloadTolerance:
     """Adapter must survive notifications that are missing or misshapen."""
@@ -6417,23 +6005,10 @@ class TestMalformedPayloadTolerance:
         """`error` notification where `error` is a string must not crash the turn."""
         events = [
             _event_notification("error", {"error": "oops"}),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=True),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6447,6 +6022,85 @@ class TestMalformedPayloadTolerance:
             room_id="room-1",
         )
 
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == "oops"
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_after_error_notification_reports_once(self) -> None:
+        """An `error` notification followed by a `turn/completed` with
+        status=failed for the same incident must report only one failure."""
+        events = [
+            _event_notification("error", {"error": {"message": "boom"}}),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "failed",
+                        "items": [],
+                        "error": {"message": "boom"},
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert len(reported_failures(tools)) == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_with_falsy_scalar_error_uses_clean_fallback(
+        self,
+    ) -> None:
+        """A falsy, non-dict `error` (e.g. ``False``) must not become the
+        literal string "False" in the reported failure message."""
+        events = [
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "failed",
+                        "items": [],
+                        "error": False,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == "Codex error: unknown"
+
     @pytest.mark.asyncio
     async def test_turn_completed_without_items_key(self) -> None:
         """turn/completed missing `items` is treated as an empty turn, not a crash."""
@@ -6457,10 +6111,7 @@ class TestMalformedPayloadTolerance:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6482,22 +6133,11 @@ class TestMalformedPayloadTolerance:
                 "turn/plan/updated",
                 {"plan": {"steps": "not-a-list"}},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6524,28 +6164,26 @@ class TestCleanupOnCancel:
         not that the natural approval timeout fired first.
         """
         fake_client = FakeCodexClient(events=[])
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-                approval_wait_timeout_s=30.0,
+                approval_mode="manual", approval_wait_timeout_s=30.0
             ),
-            client_factory=lambda _config: fake_client,
         )
         await adapter.on_started("Agent", "A coding agent")
 
         # Simulate an active room with a pending approval.
         loop = asyncio.get_running_loop()
         approval_future: asyncio.Future[str] = loop.create_future()
-        from band.adapters.codex import _PendingApproval
 
+        wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
         adapter._pending_approvals["room-1"] = {
-            "token-1": _PendingApproval(
+            "token-1": PendingApproval(
                 request_id=42,
                 method="item/commandExecution/requestApproval",
                 summary="rm -rf /",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 future=approval_future,
                 session_key="cmd:rm -rf /",
             ),
@@ -6566,25 +6204,11 @@ class TestTurnLifecycleEventsDisabled:
         """With emit_turn_lifecycle_events=False, neither started nor completed
         lifecycle task events are emitted."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=False)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6617,7 +6241,6 @@ class TestTokenUsageCumulativeMonotonicity:
     """
 
     def test_late_smaller_event_does_not_corrupt_next_delta(self) -> None:
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         # End of previous turn: cumulative = 100.
@@ -6644,47 +6267,41 @@ class TestStructuredErrorDetailCap:
     """``additionalDetails`` is attacker-influenceable and must be capped."""
 
     def test_long_additional_details_string_is_truncated(self) -> None:
-        from band.integrations.codex.types import (
-            _MAX_ERROR_DETAIL_CHARS,
-            build_structured_error_metadata,
-        )
 
         long_detail = "x" * (_MAX_ERROR_DETAIL_CHARS + 500)
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": long_detail,
             }
         )
-        detail = meta["codex_additional_details"]
+        detail = failure.detail["codex_additional_details"]
         assert isinstance(detail, str)
         assert len(detail) < len(long_detail)
         assert "truncated" in detail
 
     def test_structured_dict_additional_details_are_preserved(self) -> None:
         """Only string details are capped; dict/list payloads pass through."""
-        from band.integrations.codex.types import build_structured_error_metadata
 
         payload = {"hint": "refresh token", "code": 401}
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": payload,
             }
         )
-        assert meta["codex_additional_details"] == payload
+        assert failure.detail["codex_additional_details"] == payload
 
     def test_empty_additional_details_is_dropped(self) -> None:
-        """Empty strings are not echoed into metadata."""
-        from band.integrations.codex.types import build_structured_error_metadata
+        """Empty strings are not echoed into detail."""
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": "",
             }
         )
-        assert "codex_additional_details" not in meta
+        assert failure.detail is None
 
     def test_oversized_dict_additional_details_is_replaced_with_marker(
         self,
@@ -6696,22 +6313,18 @@ class TestStructuredErrorDetailCap:
         WebSocket frame.  When the serialized form exceeds the cap we
         replace the whole payload with a truncated marker string.
         """
-        from band.integrations.codex.types import (
-            _MAX_ERROR_DETAIL_CHARS,
-            build_structured_error_metadata,
-        )
 
         # Build a dict whose JSON serialization comfortably exceeds the cap.
         oversized_value = "x" * (_MAX_ERROR_DETAIL_CHARS + 500)
         payload = {"nested": {"blob": oversized_value}}
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": payload,
             }
         )
-        detail = meta["codex_additional_details"]
+        detail = failure.detail["codex_additional_details"]
         assert isinstance(detail, str)
         assert "truncated" in detail
         assert len(detail) < len(oversized_value)
@@ -6721,18 +6334,17 @@ class TestStructuredErrorDetailCap:
         round-trip through ``default=str``; pathological unserializable
         objects (e.g. a circular reference) must be dropped rather than
         raising into the event-emission path."""
-        from band.integrations.codex.types import build_structured_error_metadata
 
         circular: dict[str, Any] = {}
         circular["self"] = circular
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": circular,
             }
         )
-        assert "codex_additional_details" not in meta
+        assert failure.detail is None
 
 
 class TestDiffByteCap:
@@ -6742,7 +6354,6 @@ class TestDiffByteCap:
     async def test_multibyte_diff_respects_byte_budget(self) -> None:
         """A diff built from 4-byte codepoints is capped to the byte budget,
         not the character budget (which would be ~4× larger on the wire)."""
-        from band.adapters.codex import _MAX_DIFF_METADATA_BYTES
 
         # Each emoji is 4 UTF-8 bytes; use ~1.5× the byte budget worth.
         emoji = "\U0001f600"
@@ -6755,22 +6366,11 @@ class TestDiffByteCap:
                 "turn/diff/updated",
                 {"diff": big_diff, "files": ["src/app.py"]},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_diff_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_diff_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -6856,13 +6456,11 @@ class TestDoubleEmitStartupWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=True,
-                emit_turn_lifecycle_events=True,
+                emit_turn_task_markers=True, emit_turn_lifecycle_events=True
             ),
-            client_factory=lambda _config: fake_client,
         )
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_started("Agent", "A coding agent")
@@ -6875,16 +6473,119 @@ class TestDoubleEmitStartupWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=True,
-                emit_turn_lifecycle_events=False,
+                emit_turn_task_markers=True, emit_turn_lifecycle_events=False
             ),
-            client_factory=lambda _config: fake_client,
         )
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_started("Agent", "A coding agent")
         assert not any(
             "two task events per turn" in record.message for record in caplog.records
         )
+
+
+class TestConfigEnvSourcing:
+    """Aliased fields source from CODEX_* env names only, never bare vars."""
+
+    @pytest.fixture(autouse=True)
+    def clean_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in (
+            "EMIT_TURN_TASK_MARKERS",
+            "CODEX_TURN_TASK_MARKERS",
+            "CODEX_EMIT_TURN_TASK_MARKERS",
+            "CODEX_COMMAND",
+            "CODEX_CODEX_COMMAND",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_bare_env_var_never_populates_turn_task_markers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EMIT_TURN_TASK_MARKERS", "true")
+
+        assert CodexAdapterConfig().emit_turn_task_markers is False
+
+    def test_legacy_env_name_populates_turn_task_markers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_TURN_TASK_MARKERS", "true")
+
+        assert CodexAdapterConfig().emit_turn_task_markers is True
+
+    def test_prefixed_field_name_env_populates_turn_task_markers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_EMIT_TURN_TASK_MARKERS", "true")
+
+        assert CodexAdapterConfig().emit_turn_task_markers is True
+
+    def test_codex_ws_url_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CODEX_WS_URL", "ws://elsewhere:9999")
+
+        assert CodexAdapterConfig().codex_ws_url == "ws://elsewhere:9999"
+
+    def test_codex_command_env_splits_shell_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CODEX_COMMAND (the established name), not the doubly-prefixed default."""
+        monkeypatch.setenv("CODEX_COMMAND", "custom-codex --args")
+
+        assert CodexAdapterConfig().codex_command == ("custom-codex", "--args")
+
+    def test_codex_command_kwarg_wins_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_COMMAND", "ignored --value")
+
+        config = CodexAdapterConfig(codex_command=("explicit", "--kwarg"))
+
+        assert config.codex_command == ("explicit", "--kwarg")
+
+
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_becomes_input_image_content_item(self) -> None:
+        class _ImageTools(ToolSchemaFakeTools):
+            async def execute_tool_call_structured(
+                self, tool_name: str, arguments: dict[str, Any]
+            ) -> ToolCallOutcome:
+                return ToolCallOutcome(
+                    value={
+                        "content": [
+                            {
+                                "type": "image",
+                                "data": "ZmFrZQ==",
+                                "mimeType": "image/png",
+                            }
+                        ]
+                    },
+                    ok=True,
+                )
+
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(42, "band_read_room_file", {"file_id": "f1"}),
+                _turn_completed(),
+            ],
+            tools=_ImageTools(),
+        )
+
+        response_id, response_payload = turn.tool_response
+        assert response_id == 42
+        assert response_payload["success"] is True
+        assert turn.content_items == [
+            {"type": "inputImage", "imageUrl": "data:image/png;base64,ZmFrZQ=="}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_input_text(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(42, "band_read_room_file", {"file_id": "f1"}),
+                _turn_completed(),
+            ]
+        )
+
+        assert turn.content_items[0]["type"] == "inputText"

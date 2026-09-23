@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import logging
+from typing import Self
 
-from band.core.protocols import AgentToolsProtocol
-from band.integrations.acp.types import ChunkType, CollectedChunk, ToolStatus
+from band.core.delivery import deliver_reply
+from band.core.protocols import AgentToolsProtocol, send_event_safe
+from band.integrations.acp.types import (
+    ACPToolCall,
+    ACPToolResult,
+    ChunkType,
+    CollectedChunk,
+    ToolStatus,
+)
 from band.runtime.tools import is_room_posting_tool
 
 logger = logging.getLogger(__name__)
@@ -26,9 +34,8 @@ def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
     posting_call_ids: set[str] = set()
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        call_id = str(metadata.get("tool_call_id", ""))
-        if chunk.chunk_type == ChunkType.TOOL_CALL and is_room_posting_tool(
-            chunk.content
+        if isinstance(chunk.tool, ACPToolCall) and is_room_posting_tool(
+            chunk.tool.name
         ):
             if metadata.get("status") == ToolStatus.COMPLETED:
                 return True
@@ -36,11 +43,11 @@ def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
             # missing tool_call_id) would match any other id-less result — e.g. a
             # non-posting tool's — and falsely suppress the text fallback,
             # silencing the turn.
-            if call_id:
-                posting_call_ids.add(call_id)
+            if chunk.tool.tool_call_id:
+                posting_call_ids.add(chunk.tool.tool_call_id)
         elif (
-            chunk.chunk_type == ChunkType.TOOL_RESULT
-            and call_id in posting_call_ids
+            isinstance(chunk.tool, ACPToolResult)
+            and chunk.tool.call.tool_call_id in posting_call_ids
             and metadata.get("status") == ToolStatus.COMPLETED
         ):
             return True
@@ -96,7 +103,7 @@ class RoomTurnEmitter:
                 )
             case ChunkType.TOOL_CALL | ChunkType.TOOL_RESULT:
                 await self._tools.send_event(
-                    content=chunk.content,
+                    content=self._tool_event_content(chunk),
                     message_type=chunk.chunk_type,
                     metadata=chunk.metadata,
                 )
@@ -112,11 +119,16 @@ class RoomTurnEmitter:
                     chunk.chunk_type,
                 )
 
+    def _tool_event_content(self, chunk: CollectedChunk) -> str:
+        """Serialize normalized tool activity for room persistence."""
+        if isinstance(chunk.tool, (ACPToolCall, ACPToolResult)):
+            return chunk.tool.room_event().model_dump_json()
+        raise RuntimeError("ACP tool chunk is missing normalized tool activity")
+
     async def open_permission(
         self,
         *,
-        tool_name: str,
-        tool_call_id: str,
+        call: ACPToolCall,
         session_id: str,
         outcome: str,
     ) -> None:
@@ -129,23 +141,28 @@ class RoomTurnEmitter:
         """
         metadata: dict[str, object] = {
             "permission_request": True,
-            "tool_name": tool_name,
-            "tool_call_id": tool_call_id,
+            "tool_name": call.name,
+            "tool_call_id": call.tool_call_id,
             "acp_session_id": session_id,
             "auto_allowed": False,
         }
         await self._tools.send_event(
-            content=f"Permission requested: {tool_name}",
+            content=call.room_event().model_dump_json(),
             message_type="tool_call",
             metadata=metadata,
         )
+        result = ACPToolResult(
+            call=call,
+            output=f"Permission {outcome}",
+            status=ToolStatus.FAILED,
+        )
         await self._tools.send_event(
-            content=f"Permission {outcome}",
+            content=result.room_event().model_dump_json(),
             message_type="tool_result",
             metadata={**metadata, "permission_outcome": outcome},
         )
 
-    async def __aenter__(self) -> RoomTurnEmitter:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
@@ -158,13 +175,15 @@ class RoomTurnEmitter:
         # reply (and leak the agent's narration of the call).
         if not turn_replied_in_room(self._chunks):
             for text in self._pending_text:
-                await self._tools.send_message(content=text, mentions=self._mentions)
-        await self._tools.send_event(
+                await deliver_reply(self._tools, text, mentions=self._mentions)
+        await send_event_safe(
+            self._tools,
             content="ACP client session",
             message_type="task",
             metadata={
                 "acp_client_session_id": self._session_id,
                 "acp_client_room_id": self._room_id,
             },
+            log_label="ACP client session",
         )
         return False

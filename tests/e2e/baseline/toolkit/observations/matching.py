@@ -14,7 +14,23 @@ assert on tokens we injected and exact enum values, so we want a deterministic
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, Protocol, TypeVar
+
+
+class _Named(Protocol):
+    name: str
+
+
+NamedT = TypeVar("NamedT", bound=_Named)
+
+
+def named_subset(items: Iterable[NamedT], names: tuple[str, ...]) -> list[NamedT]:
+    """Case-insensitive ``name`` membership filter, shared by every observation
+    collection's own ``named(*names)`` (``ToolCalls``, ``ToolResults``) so the
+    two don't silently drift on what "named" means."""
+    wanted = {name.lower() for name in names}
+    return [item for item in items if item.name.lower() in wanted]
 
 
 def tolerant_match(expected: Any, actual: Any) -> bool:

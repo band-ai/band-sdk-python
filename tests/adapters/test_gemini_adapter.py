@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from google.genai import types
 from google.genai.errors import ServerError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from band.adapters.gemini import GeminiAdapter
-from band.core.types import PlatformMessage
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.types import Emit, PlatformMessage, ToolEventKey
 
 
 @pytest.fixture
@@ -27,7 +29,7 @@ def sample_message() -> PlatformMessage:
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -38,6 +40,7 @@ def mock_tools() -> MagicMock:
     tools.get_openai_tool_schemas = MagicMock(return_value=[])
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
     return tools
 
@@ -111,7 +114,7 @@ class TestOnMessage:
     @pytest.mark.asyncio
     async def test_executes_tool_loop(self, sample_message, mock_tools):
         adapter = GeminiAdapter(
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
             provider_key="test-key",
         )
         await adapter.on_started("TestBot", "Test bot")
@@ -149,7 +152,7 @@ class TestOnMessage:
         self, sample_message, mock_tools
     ):
         adapter = GeminiAdapter(
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
             provider_key="test-key",
         )
         await adapter.on_started("TestBot", "Test bot")
@@ -197,6 +200,99 @@ class TestOnMessage:
         assert function_call.id == "c1"
         assert function_call.name == "band_lookup_peers"
         assert function_call.args == {"page": "1"}
+
+
+class TestErrorReporting:
+    @pytest.mark.asyncio
+    async def test_reports_generic_failure(self, sample_message, mock_tools):
+        adapter = GeminiAdapter(provider_key="test-key")
+        await adapter.on_started("TestBot", "Test bot")
+
+        with (
+            patch.object(
+                adapter, "_call_gemini", AsyncMock(side_effect=Exception("boom"))
+            ),
+            pytest.raises(Exception, match="boom"),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "gemini"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert failure.code is None
+        assert failure.detail is None
+
+    @pytest.mark.asyncio
+    async def test_preserves_server_error_status_and_message(
+        self, sample_message, mock_tools
+    ):
+        """ServerError's status/message are real provider data -- preserve
+        them as code/detail rather than falling back to the generic shape."""
+        adapter = GeminiAdapter(provider_key="test-key")
+        await adapter.on_started("TestBot", "Test bot")
+        error = ServerError(
+            503, {"error": {"status": "UNAVAILABLE", "message": "overloaded"}}, None
+        )
+
+        with (
+            patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)),
+            pytest.raises(ServerError),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "gemini"
+        assert failure.code == "UNAVAILABLE"
+        assert failure.detail == "overloaded"
+
+    @pytest.mark.asyncio
+    async def test_non_string_server_error_status_is_stringified(
+        self, sample_message, mock_tools
+    ):
+        """A malformed error body's non-string ``status`` field must not
+        crash failure reporting -- band_sdk_core's AgentFailure requires
+        code: str | None, but ServerError.status is an unconstrained
+        Optional[str] at runtime (parsed straight off the response JSON)."""
+        adapter = GeminiAdapter(provider_key="test-key")
+        await adapter.on_started("TestBot", "Test bot")
+        error = ServerError(503, {"status": 503, "message": "backend overloaded"}, None)
+
+        with (
+            patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)),
+            pytest.raises(ServerError),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "gemini"
+        assert failure.code == "503"
+        assert failure.detail == "backend overloaded"
 
 
 class TestRetries:
@@ -297,6 +393,117 @@ class TestCustomTools:
         assert function_response is not None
         assert function_response.response == {"output": "hello"}
         mock_tools.execute_tool_call.assert_not_called()
+
+
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_passes_through_as_inline_data(self, mock_tools):
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        adapter = GeminiAdapter(provider_key="test-key")
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.parts is not None
+        assert len(function_response.parts) == 1
+        inline_data = function_response.parts[0].inline_data
+        assert inline_data is not None
+        assert inline_data.mime_type == "image/png"
+        assert inline_data.data == b"fake"
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_text(self, mock_tools):
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={"name": "notes.txt", "content_type": "text/plain"}
+        )
+        adapter = GeminiAdapter(provider_key="test-key")
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.parts is None
+        assert function_response.response == {
+            "output": '{"name": "notes.txt", "content_type": "text/plain"}'
+        }
+
+
+class TestToolEventRedaction:
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_result_reports_placeholder_not_raw_base64(
+        self, mock_tools
+    ):
+        """The tool_result event for an image band_read_room_file call must
+        report a bounded placeholder, not the raw base64 payload -- the LLM-
+        facing inline_data content block (asserted in
+        TestReadRoomFileImagePassthrough above) is a separate path from what
+        gets reported to the platform-visible event."""
+
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        adapter = GeminiAdapter(provider_key="test-key", emit=Emit.TOOL_CALLS)
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        await adapter._process_function_calls(function_calls, mock_tools)
+
+        result_event = mock_tools.send_event.call_args_list[-1]
+        reported = json.loads(result_event.kwargs["content"])
+        assert reported[ToolEventKey.OUTPUT] == "<1 image content block(s)>"
+        assert "ZmFrZQ==" not in result_event.kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self, mock_tools
+    ):
+        """The tool_call event for band_send_room_file must report a bounded
+        placeholder for `args`, not the raw file text -- real file bytes
+        (up to ~1MB) have no business in a platform-visible log event."""
+
+        mock_tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
+        adapter = GeminiAdapter(provider_key="test-key", emit=Emit.TOOL_CALLS)
+        raw_content = "the quick brown fox" * 100
+        function_calls = [
+            types.FunctionCall(
+                name="band_send_room_file",
+                args={"content": raw_content, "filename": "notes.txt"},
+                id="c1",
+            )
+        ]
+
+        await adapter._process_function_calls(function_calls, mock_tools)
+
+        call_event = mock_tools.send_event.call_args_list[0]
+        reported = json.loads(call_event.kwargs["content"])
+        assert reported[ToolEventKey.ARGS]["content"] == (
+            f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in call_event.kwargs["content"]
 
 
 class TestOnCleanup:
@@ -410,8 +617,6 @@ class TestOnCleanup:
 class TestValidationErrorHandling:
     @pytest.mark.asyncio
     async def test_validation_error_returns_friendly_message(self, mock_tools):
-        from pydantic import ValidationError
-
         adapter = GeminiAdapter(provider_key="test-key")
 
         mock_tools.execute_tool_call = AsyncMock(
@@ -452,25 +657,33 @@ class TestMaxToolRounds:
         await adapter.on_started("TestBot", "Test bot")
 
         # Always return a function call so the loop never terminates naturally
-        with patch.object(
-            adapter,
-            "_call_gemini",
-            AsyncMock(
-                return_value=_response_with_function_call(
-                    "band_lookup_peers", {"page": "1"}, "call_1"
-                )
+        with (
+            patch.object(
+                adapter,
+                "_call_gemini",
+                AsyncMock(
+                    return_value=_response_with_function_call(
+                        "band_lookup_peers", {"page": "1"}, "call_1"
+                    )
+                ),
             ),
+            pytest.raises(RuntimeError, match="Exceeded max tool rounds"),
         ):
-            with pytest.raises(RuntimeError, match="Exceeded max tool rounds"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        # Exceeding max tool rounds is a reportable provider failure.
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "gemini"
+        assert "Exceeded max tool rounds" in failure.message
 
 
 class TestHttpxRetries:
@@ -549,20 +762,20 @@ class TestHttpxRetries:
             side_effect=httpx.TimeoutException("timeout")
         )
 
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
+        with (
+            patch.object(
+                adapter.client.aio.models,  # type: ignore[union-attr]
+                "generate_content",
+                adapter.client.aio.models.generate_content,
+            ),
+            pytest.raises(httpx.TimeoutException),
         ):
-            with pytest.raises(httpx.TimeoutException):
-                await adapter._call_gemini(
-                    contents=[
-                        types.Content(
-                            role="user", parts=[types.Part.from_text(text="x")]
-                        )
-                    ],
-                    tools=[],
-                )
+            await adapter._call_gemini(
+                contents=[
+                    types.Content(role="user", parts=[types.Part.from_text(text="x")])
+                ],
+                tools=[],
+            )
 
 
 class TestParticipantsContactsInjection:

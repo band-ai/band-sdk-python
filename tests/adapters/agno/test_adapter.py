@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 import warnings
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,6 +21,7 @@ from agno.agent import Agent as AgnoAgent
 from agno.models.message import Message
 from agno.run import RunStatus
 from agno.run.agent import RunErrorEvent, RunOutput
+from agno.tools.function import ToolResult
 
 from band.adapters.agno import (
     AgnoAdapter,
@@ -28,9 +29,9 @@ from band.adapters.agno import (
     _bind_room_tools,
     _make_band_entrypoint,
 )
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
-from band.testing import FakeAgentTools
-
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.types import Capability, Emit, PlatformMessage
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.agno.helpers import (
     CapturingModel,
     ContactAwareTools,
@@ -59,7 +60,7 @@ def _msg(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -83,7 +84,7 @@ class TestOnStarted:
         # The adapter delivers nothing on its own; plain agent text is not sent
         # (only a ``band_send_message`` tool call reaches the room).
         agent = make_agno_agent(response=RunOutput(content="hi there"))
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent, emit=())
         await adapter.on_started("TestBot", "desc")
 
         await adapter.on_message(
@@ -107,9 +108,7 @@ class TestMemoryCollisionWarning:
         self, make_agno_agent
     ):
         agent = make_agno_agent(update_memory_on_run=True)
-        adapter = AgnoAdapter(
-            agent, features=AdapterFeatures(capabilities={Capability.MEMORY})
-        )
+        adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
 
         with pytest.warns(UserWarning, match="update_memory_on_run"):
             await adapter.on_started("TestBot", "desc")
@@ -118,9 +117,7 @@ class TestMemoryCollisionWarning:
         self, make_agno_agent
     ):
         agent = make_agno_agent(enable_agentic_memory=True)
-        adapter = AgnoAdapter(
-            agent, features=AdapterFeatures(capabilities={Capability.MEMORY})
-        )
+        adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
 
         with pytest.warns(UserWarning, match="enable_agentic_memory"):
             await adapter.on_started("TestBot", "desc")
@@ -170,9 +167,7 @@ class TestRoomToolResolution:
     async def test_capability_flags_drive_schema_request(self, make_started_adapter):
         tools = SchemaTools([])
         adapter, _ = await make_started_adapter(
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY, Capability.CONTACTS}
-            )
+            capabilities={Capability.MEMORY, Capability.CONTACTS}
         )
 
         with _bind_room_tools(tools):
@@ -239,7 +234,7 @@ class TestBandInstructionInjection:
     ):
         model = await run_real_agent(
             sample_platform_message,
-            features=AdapterFeatures(capabilities=capabilities),
+            capabilities=capabilities,
         )
         prompt = model.captured_system_prompt
 
@@ -265,7 +260,7 @@ class TestBandInstructionInjection:
         self, make_started_adapter
     ):
         # Band guidance is injected in on_started, not lazily on first message.
-        adapter, agent = await make_started_adapter()
+        _adapter, agent = await make_started_adapter()
 
         # The Band operating contract frames the agent via ``description`` (ahead of
         # the developer's own ``instructions``), not via ``additional_context``.
@@ -306,6 +301,54 @@ class TestBandEntrypointBinding:
 
         assert "no active Band context" in result
         assert tools.tool_calls == []
+
+    async def test_read_room_file_image_result_passes_through_as_agno_image(self):
+        class _ImageTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {
+                    "content": [
+                        {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                    ]
+                }
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_ImageTools()):
+            result = await entry(file_id="f1")
+
+        assert isinstance(result, ToolResult)
+        assert result.images is not None
+        assert len(result.images) == 1
+        assert result.images[0].content == b"fake"
+        assert result.images[0].mime_type == "image/png"
+
+    async def test_read_room_file_non_image_result_stays_json(self):
+        class _TextTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {"name": "notes.txt", "content_type": "text/plain"}
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_TextTools()):
+            result = await entry(file_id="f1")
+
+        assert result == '{"name": "notes.txt", "content_type": "text/plain"}'
+
+    async def test_read_room_file_malformed_image_data_returns_error_string(self):
+        """A decode_image_block failure (invalid base64) must degrade to the
+        adapter's usual error string, not raise uncaught out of the tool
+        entrypoint Agno invokes directly."""
+
+        class _MalformedImageTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {
+                    "content": [{"type": "image", "data": "A", "mimeType": "image/png"}]
+                }
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_MalformedImageTools()):
+            result = await entry(file_id="f1")
+
+        assert isinstance(result, str)
+        assert result.startswith("Error reading room file:")
 
 
 class TestReply:
@@ -378,9 +421,7 @@ class TestEmitExecution:
         events = tool_events(
             tool_execution("band_lookup_peers", args={"page": "1"}, result="ok")
         )
-        adapter, _ = await make_started_adapter(
-            features=AdapterFeatures(emit={Emit.EXECUTION}), events=events
-        )
+        adapter, _ = await make_started_adapter(emit=Emit.TOOL_CALLS, events=events)
 
         await adapter.on_message(
             sample_platform_message,
@@ -409,9 +450,7 @@ class TestEmitExecution:
     ):
         """band_send_message is reported like any other tool call — no suppression."""
         events = tool_events(tool_execution("band_send_message"))
-        adapter, _ = await make_started_adapter(
-            features=AdapterFeatures(emit={Emit.EXECUTION}), events=events
-        )
+        adapter, _ = await make_started_adapter(emit=Emit.TOOL_CALLS, events=events)
 
         await adapter.on_message(
             sample_platform_message,
@@ -426,13 +465,43 @@ class TestEmitExecution:
         types = [e["message_type"] for e in tools.events_sent]
         assert types == ["tool_call", "tool_result"]
 
+    async def test_send_room_file_tool_call_event_redacts_content(
+        self, make_started_adapter, sample_platform_message, tools
+    ):
+        """band_send_room_file's tool_call event must report a bounded
+        placeholder for content, not the raw file bytes -- generic ARGS
+        reporting has no idea this one tool's content argument can carry up
+        to MAX_SEND_CONTENT_BYTES of real file data."""
+        events = tool_events(
+            tool_execution(
+                "band_send_room_file",
+                args={"content": "raw file bytes", "filename": "notes.txt"},
+                result="ok",
+            )
+        )
+        adapter, _ = await make_started_adapter(emit=Emit.TOOL_CALLS, events=events)
+
+        await adapter.on_message(
+            sample_platform_message,
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_payload = json.loads(tools.events_sent[0]["content"])
+        assert call_payload["args"]["content"] == "<14 byte file content>"
+        assert call_payload["args"]["filename"] == "notes.txt"
+
     async def test_no_events_without_execution_emit(
         self, make_started_adapter, sample_platform_message, tools
     ):
-        # No Emit.EXECUTION -> non-streaming run, no live reporting. The final
+        # emit=() -> non-streaming run, no live reporting. The final
         # RunOutput still carries executions, but nothing is emitted.
         response = RunOutput(tools=[tool_execution("band_lookup_peers")])
-        adapter, agent = await make_started_adapter(response)  # no emit configured
+        adapter, agent = await make_started_adapter(response, emit=())
 
         await adapter.on_message(
             sample_platform_message,
@@ -454,9 +523,7 @@ class TestEmitThoughts:
         self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(reasoning_content="thinking hard")
-        adapter, _ = await make_started_adapter(
-            response, features=AdapterFeatures(emit={Emit.THOUGHTS})
-        )
+        adapter, _ = await make_started_adapter(response, emit=Emit.THOUGHTS)
 
         await adapter.on_message(
             sample_platform_message,
@@ -475,7 +542,7 @@ class TestEmitThoughts:
         self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(reasoning_content="thinking hard")
-        adapter, _ = await make_started_adapter(response)  # no emit configured
+        adapter, _ = await make_started_adapter(response, emit=())
 
         await adapter.on_message(
             sample_platform_message,
@@ -494,7 +561,7 @@ class TestEmitThoughts:
     ):
         adapter, _ = await make_started_adapter(
             RunOutput(reasoning_content="  "),
-            features=AdapterFeatures(emit={Emit.THOUGHTS}),
+            emit=Emit.THOUGHTS,
         )
 
         await adapter.on_message(
@@ -586,7 +653,7 @@ class TestFailedRunDoesNotContaminateNextTurn:
         agent.arun = AsyncMock(
             side_effect=[RuntimeError("boom"), RunOutput(content="ok")]
         )
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent, emit=())
         await adapter.on_started("TestBot", "desc")
 
         first = _msg("room-1", "first question", msg_id="m1")
@@ -668,7 +735,9 @@ class TestSessionIsolation:
 
     async def test_custom_session_id_factory_is_used(self, make_agno_agent):
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent, session_id_factory=lambda room: f"sess::{room}")
+        adapter = AgnoAdapter(
+            agent, session_id_factory=lambda room: f"sess::{room}", emit=()
+        )
         await adapter.on_started("TestBot", "desc")
 
         await adapter.on_message(
@@ -765,10 +834,10 @@ class TestHubContactExposure:
 
 
 class TestFeatureFilters:
-    """AdapterFeatures include/exclude/category filters gate which Band tools
+    """include_tools/exclude_tools/include_categories gate which Band tools
     are wired (parity with LangGraph)."""
 
-    ALL_SCHEMAS = [
+    ALL_SCHEMAS: ClassVar[list[dict[str, Any]]] = [
         openai_tool_schema("band_send_message"),  # chat
         openai_tool_schema("band_lookup_peers"),  # chat
         openai_tool_schema("band_store_memory"),  # memory
@@ -782,25 +851,19 @@ class TestFeatureFilters:
         return [fn.name for fn in resolved]
 
     async def test_include_tools_keeps_only_named(self, make_started_adapter):
-        adapter, _ = await make_started_adapter(
-            features=AdapterFeatures(include_tools=["band_send_message"])
-        )
+        adapter, _ = await make_started_adapter(include_tools=["band_send_message"])
 
         assert await self._resolved_names(adapter) == ["band_send_message"]
 
     async def test_exclude_tools_drops_named(self, make_started_adapter):
-        adapter, _ = await make_started_adapter(
-            features=AdapterFeatures(exclude_tools=["band_send_message"])
-        )
+        adapter, _ = await make_started_adapter(exclude_tools=["band_send_message"])
 
         names = await self._resolved_names(adapter)
         assert "band_send_message" not in names
         assert "band_lookup_peers" in names
 
     async def test_include_categories_keeps_only_category(self, make_started_adapter):
-        adapter, _ = await make_started_adapter(
-            features=AdapterFeatures(include_categories=["chat"])
-        )
+        adapter, _ = await make_started_adapter(include_categories=["chat"])
 
         assert sorted(await self._resolved_names(adapter)) == [
             "band_lookup_peers",
@@ -826,14 +889,14 @@ class TestRunFailureReporting:
                 room_id="room-A",
             )
 
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        assert (
-            errors[0]["content"]
-            == "Internal error while processing message; see agent logs."
-        )
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         # The exception text (which can carry secrets) must not leak to the room.
-        assert "secret-token" not in errors[0]["content"]
+        assert "secret-token" not in failures[0]["message"]
+        assert failures[0]["provider"] == "agno"
+        # A plain RuntimeError isn't a swallowed Agno run status -- no code.
+        assert failures[0]["code"] is None
 
     async def test_error_status_run_is_raised_and_reported(
         self, make_started_adapter, tools
@@ -842,7 +905,7 @@ class TestRunFailureReporting:
         # returns a normal-looking RunOutput with status=error. The adapter
         # must surface it as a failure — otherwise the runtime marks the
         # message processed and the turn dies silently with no reply.
-        adapter, agent = await make_started_adapter(
+        adapter, _agent = await make_started_adapter(
             response=RunOutput(
                 content="api dsn leaked: secret-token", status=RunStatus.error
             )
@@ -859,9 +922,10 @@ class TestRunFailureReporting:
                 room_id="room-A",
             )
 
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        assert "secret-token" not in errors[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert "secret-token" not in failures[0]["message"]
+        assert failures[0]["code"] == RunStatus.error.value
         # A failed turn must not be committed to the room transcript.
         assert not adapter._message_history.get("room-A")
 
@@ -872,8 +936,8 @@ class TestRunFailureReporting:
         # RunErrorEvent — the stream never yields a final RunOutput. The
         # adapter must raise on it instead of returning None (a "successful"
         # empty turn).
-        adapter, agent = await make_started_adapter(
-            features=AdapterFeatures(emit={Emit.EXECUTION}),
+        adapter, _agent = await make_started_adapter(
+            emit=Emit.TOOL_CALLS,
             events=[RunErrorEvent(content="api dsn leaked: secret-token")],
         )
 
@@ -888,9 +952,10 @@ class TestRunFailureReporting:
                 room_id="room-A",
             )
 
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        assert "secret-token" not in errors[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert "secret-token" not in failures[0]["message"]
+        assert failures[0]["code"] == RunStatus.error.value
         assert not adapter._message_history.get("room-A")
 
     async def test_error_event_failure_does_not_mask_original(
@@ -924,7 +989,7 @@ class TestPerRunToolExposureEndToEnd:
     async def test_model_receives_only_active_room_tools(self):
         model = CapturingModel()
         agno = AgnoAgent(model=model, instructions="You are Dev.")
-        adapter = AgnoAdapter(agno)
+        adapter = AgnoAdapter(agno, emit=())
         await adapter.on_started("Bot", "desc")
 
         # Hub room: contact tools are offered to the model.

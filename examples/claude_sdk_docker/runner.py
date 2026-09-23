@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]", "pyyaml"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[claude_sdk]>=1.2.0", "pyyaml"]
 # ///
 """
 YAML-based agent runner for Band Claude SDK.
@@ -21,14 +18,27 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
-import os
 import signal
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band.core.types import AdapterFeatures, Emit
+from band import Agent, LogSettings
+from band.adapters import ClaudeSDKAdapter
+from band.core.types import Emit
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    agent_config: str
+    workspace: str = ""
+    agent_role: str = ""
+
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -45,11 +55,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0  # seconds
 MAX_RETRY_DELAY = 60.0  # seconds
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -134,7 +139,7 @@ def load_custom_tools(tools_dir: Path, config_dir: Path, tool_names: list[str]) 
         tool_registry = getattr(tools_module, "TOOL_REGISTRY", {})
         # Filter to only requested tools, return as list
         return [tool_registry[name] for name in tool_names if name in tool_registry]
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.warning("Could not load custom tools: %s", e)
         return []
 
@@ -148,6 +153,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the agent from YAML configuration."""
+    LogSettings().for_application().configure()
     global _shutdown_event
     _shutdown_event = asyncio.Event()
 
@@ -156,18 +162,8 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _handle_signal, sig)
 
-    # Get config path from environment
-    config_path = os.environ.get("AGENT_CONFIG")
-    if not config_path:
-        raise ValueError("AGENT_CONFIG environment variable not set")
-
-    # Validate Band platform URLs
-    ws_url = os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
+    settings = Settings()
+    config_path = settings.agent_config
 
     # Validate required mount points (NFR-007a)
     validate_mounts()
@@ -176,8 +172,6 @@ async def main() -> None:
     config = load_config(config_path)
 
     # Import here to allow early config validation
-    from band import Agent
-    from band.adapters import ClaudeSDKAdapter
 
     # Extract config values
     agent_id = config["agent_id"]
@@ -188,10 +182,10 @@ async def main() -> None:
     tool_names = config.get("tools", [])
 
     # Working directory for Claude Code (env overrides config)
-    workspace = os.environ.get("WORKSPACE") or config.get("workspace")
+    workspace = settings.workspace or config.get("workspace")
 
     # Get role from config or environment (env overrides config)
-    role = os.environ.get("AGENT_ROLE") or config.get("role")
+    role = settings.agent_role or config.get("role")
 
     # Build final prompt combining role and custom prompt
     config_dir = Path(config_path).parent
@@ -232,7 +226,7 @@ async def main() -> None:
         fallback_model=fallback_model,
         custom_section=final_prompt,
         max_thinking_tokens=thinking_tokens,
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         additional_tools=custom_tools if custom_tools else None,
         cwd=workspace,
     )
@@ -242,8 +236,6 @@ async def main() -> None:
         "agent",
         config_path=config_path,
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting agent: %s", agent_id)
@@ -317,7 +309,7 @@ async def main() -> None:
     try:
         if hasattr(agent, "close"):
             await agent.close()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.warning("Error during agent cleanup: %s", e)
     logger.info("Agent stopped")
 

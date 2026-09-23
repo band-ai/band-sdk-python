@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_sdk_core import AgentFailure
 
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_MAX_ENTRIES,
@@ -20,6 +21,7 @@ def _make_inner() -> MagicMock:
     inner = MagicMock()
     inner.send_message = AsyncMock(return_value={"id": "msg-1"})
     inner.send_event = AsyncMock(return_value={"id": "evt-1"})
+    inner.send_failure = AsyncMock(return_value={"id": "evt-2"})
     inner.add_participant = AsyncMock(return_value={"id": "u"})
     inner.participants = ["p1", "p2"]
     return inner
@@ -291,6 +293,18 @@ class TestTransparentPassthrough:
             content="ping", message_type="thought"
         )
         inner.add_participant.assert_awaited_once_with("@svc/bot")
+
+    @pytest.mark.asyncio
+    async def test_send_failure_forwards_unchanged(self):
+        """No dedup special-casing for send_failure -- __getattr__ forwards
+        it straight through, same as every other AgentToolsProtocol method."""
+        inner = _make_inner()
+        wrapper = DedupingAgentTools(inner)
+        failure = AgentFailure("codex", "boom")
+
+        await wrapper.send_failure(failure)
+
+        inner.send_failure.assert_awaited_once_with(failure)
 
     def test_attributes_forward_unchanged(self):
         inner = _make_inner()

@@ -1,20 +1,26 @@
 """Soak test: 100 sequential on_message calls across 3 mocked rooms.
 
 Asserts:
-- No exceptions across the run
 - nest_asyncio.apply is invoked at most once (lazy patch idempotency)
 - Per-room state in `_message_history` does not leak between rooms
+
+The mocked ``crewai_agent`` never drives a real ``band_send_message`` tool
+call, so every turn is a genuine "missing reply" turn and raises
+``TurnResultAlreadyReported`` (expected, not a soak failure) — history
+bookkeeping still runs before that raise, which is what this test checks.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import PlatformMessage
 
 
@@ -61,7 +67,7 @@ def _make_msg(idx: int, room_id: str) -> PlatformMessage:
         sender_name="Pat",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -69,8 +75,6 @@ def _make_msg(idx: int, room_id: str) -> PlatformMessage:
 @pytest.mark.asyncio
 async def test_soak_100_turns_3_rooms(crewai_mocks):
     """Drive 100 on_message calls across 3 rooms; assert no leaks."""
-    import importlib
-
     module = importlib.import_module("band.adapters.crewai")
     CrewAIAdapter = module.CrewAIAdapter
 
@@ -87,15 +91,16 @@ async def test_soak_100_turns_3_rooms(crewai_mocks):
     for i in range(100):
         room_id = rooms[i % 3]
         msg = _make_msg(i, room_id)
-        await adapter.on_message(
-            msg=msg,
-            tools=tools_per_room[room_id],
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=(i < 3),
-            room_id=room_id,
-        )
+        with contextlib.suppress(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg=msg,
+                tools=tools_per_room[room_id],
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=(i < 3),
+                room_id=room_id,
+            )
 
     # Per-room state present, no cross-room leakage: each room has only its own
     # message ids in its history.

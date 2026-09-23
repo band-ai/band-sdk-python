@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import SystemMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 from band.adapters.langgraph import LangGraphAdapter
 
@@ -95,8 +97,6 @@ class TestSystemPromptCrossTurn:
         checkpointer (not the adapter) is what keeps the system prompt
         present across turns.
         """
-        from langgraph.checkpoint.memory import InMemorySaver
-        from langgraph.graph import END, START, MessagesState, StateGraph
 
         checkpointer = InMemorySaver()
         seen_system_prompts: list[list[str]] = []

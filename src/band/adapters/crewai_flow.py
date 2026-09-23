@@ -20,16 +20,19 @@ import inspect
 import logging
 import re
 from collections import OrderedDict
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Literal, Protocol, Union, runtime_checkable
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from typing_extensions import Unpack
 
 from band.converters.crewai_flow import (
     CrewAIFlowAmbiguousIdentityError,
+    CrewAIFlowBufferedSynthesis,
     CrewAIFlowDelegationState,
     CrewAIFlowDelegationStatus,
     CrewAIFlowError,
@@ -51,6 +54,7 @@ from band.core.types import (
     AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
 )
 from band.runtime.custom_tools import (
@@ -99,7 +103,22 @@ class CrewAIFlowStateSource(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class _RoomCacheEntry:
+def _metadata_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """An item's ``metadata`` as a plain dict, regardless of source.
+
+    ``AgentTools.fetch_room_context`` items carry it as the Fern-typed
+    ``ChatMessageMetadata`` model (``extra="allow"``); events from
+    ``AgentInput.history`` already carry a plain dict.
+    """
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, BaseModel):
+        return metadata.model_dump(exclude_none=True)
+    return {}
+
+
+class RoomCacheEntry:
     __slots__ = ("events", "latest_inserted_at", "seen_event_ids")
 
     def __init__(self) -> None:
@@ -139,7 +158,7 @@ class RestCrewAIFlowStateSource:
         self._page_size = page_size
         self._cache_size = cache_size
         self._retry_attempts = max(0, retry_attempts)
-        self._cache: OrderedDict[tuple[str, str], _RoomCacheEntry] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str], RoomCacheEntry] = OrderedDict()
 
     async def load_task_events(
         self,
@@ -152,7 +171,7 @@ class RestCrewAIFlowStateSource:
         cache_key = (room_id, metadata_namespace)
         entry = self._cache.get(cache_key)
         if entry is None:
-            entry = _RoomCacheEntry()
+            entry = RoomCacheEntry()
             self._cache[cache_key] = entry
             self._evict_if_needed()
             return await self._full_fetch(
@@ -187,7 +206,7 @@ class RestCrewAIFlowStateSource:
                 return await tools.fetch_room_context(
                     room_id=room_id, page=page, page_size=self._page_size
                 )
-            except Exception as exc:  # pragma: no cover - reraise after retries
+            except Exception as exc:  # pragma: no cover - reraise after retries  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 last_exc = exc
                 attempt += 1
                 if attempt > self._retry_attempts:
@@ -201,23 +220,20 @@ class RestCrewAIFlowStateSource:
     def _is_task_event(item: dict[str, Any], namespace: str) -> bool:
         if item.get("message_type") != "task":
             return False
-        metadata = item.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            return False
-        return namespace in metadata
+        return namespace in _metadata_dict(item)
 
     @staticmethod
     def _coerce_inserted_at(value: Any) -> datetime | None:
         if value is None:
             return None
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         if isinstance(value, str):
             try:
-                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(value)
             except ValueError:
                 return None
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         return None
 
     async def _full_fetch(
@@ -226,7 +242,7 @@ class RestCrewAIFlowStateSource:
         room_id: str,
         metadata_namespace: str,
         tools: AgentToolsProtocol,
-        entry: _RoomCacheEntry,
+        entry: RoomCacheEntry,
     ) -> list[dict[str, Any]]:
         page = 1
         collected: list[dict[str, Any]] = []
@@ -245,7 +261,7 @@ class RestCrewAIFlowStateSource:
         collected.sort(
             key=lambda e: (
                 self._coerce_inserted_at(e.get("inserted_at"))
-                or datetime.fromtimestamp(0, tz=timezone.utc),
+                or datetime.fromtimestamp(0, tz=UTC),
                 str(e.get("id") or ""),
             )
         )
@@ -262,7 +278,7 @@ class RestCrewAIFlowStateSource:
         room_id: str,
         metadata_namespace: str,
         tools: AgentToolsProtocol,
-        entry: _RoomCacheEntry,
+        entry: RoomCacheEntry,
     ) -> list[dict[str, Any]]:
         new_events: list[dict[str, Any]] = []
         page = 1
@@ -276,9 +292,12 @@ class RestCrewAIFlowStateSource:
                 event_key = self._event_cache_key(item)
                 if event_key in entry.seen_event_ids:
                     continue
-                if entry.latest_inserted_at is not None and inserted is not None:
-                    if inserted < entry.latest_inserted_at:
-                        continue
+                if (
+                    entry.latest_inserted_at is not None
+                    and inserted is not None
+                    and inserted < entry.latest_inserted_at
+                ):
+                    continue
                 if self._is_task_event(item, metadata_namespace):
                     new_events.append(item)
             if len(data) < self._page_size:
@@ -290,7 +309,7 @@ class RestCrewAIFlowStateSource:
             entry.events.sort(
                 key=lambda e: (
                     self._coerce_inserted_at(e.get("inserted_at"))
-                    or datetime.fromtimestamp(0, tz=timezone.utc),
+                    or datetime.fromtimestamp(0, tz=UTC),
                     str(e.get("id") or e.get("message_id") or ""),
                 )
             )
@@ -361,7 +380,7 @@ class HistoryCrewAIFlowStateSource:
                 {
                     "id": f"history:{run_id}",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {
                         metadata_namespace: run.model_dump(
                             mode="json", exclude_none=True
@@ -385,8 +404,7 @@ class HistoryCrewAIFlowStateSource:
                 continue
             if item.get("message_type") != "task":
                 continue
-            metadata = item.get("metadata") or {}
-            if isinstance(metadata, dict) and metadata_namespace in metadata:
+            if metadata_namespace in _metadata_dict(item):
                 events.append(item)
         return events
 
@@ -435,7 +453,7 @@ class DelegateDecision(BaseModel):
     delegations: list[DelegateItem] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_unique_delegation_ids(self) -> "DelegateDecision":
+    def validate_unique_delegation_ids(self) -> DelegateDecision:
         seen: set[str] = set()
         duplicates: set[str] = set()
         for item in self.delegations:
@@ -470,13 +488,13 @@ class FailedDecision(BaseModel):
     error: CrewAIFlowError
 
 
-FlowDecision = Union[
-    DirectResponseDecision,
-    DelegateDecision,
-    WaitingDecision,
-    SynthesizeDecision,
-    FailedDecision,
-]
+FlowDecision = (
+    DirectResponseDecision
+    | DelegateDecision
+    | WaitingDecision
+    | SynthesizeDecision
+    | FailedDecision
+)
 
 
 def _validate_decision(raw: Any) -> FlowDecision:
@@ -503,17 +521,17 @@ def _validate_decision(raw: Any) -> FlowDecision:
 # ---------------------------------------------------------------------------
 
 
-_current_flow_runtime: ContextVar["CrewAIFlowRuntimeTools | None"] = ContextVar(
+_current_flow_runtime: ContextVar[CrewAIFlowRuntimeTools | None] = ContextVar(
     "band_crewai_flow_runtime", default=None
 )
 
 
-def get_current_flow_runtime() -> "CrewAIFlowRuntimeTools | None":
+def get_current_flow_runtime() -> CrewAIFlowRuntimeTools | None:
     """Return the active Flow runtime, or None outside a kickoff_async call."""
     return _current_flow_runtime.get()
 
 
-class _RoomLockEntry:
+class RoomLockEntry:
     __slots__ = ("active", "cleanup_requested", "lock")
 
     def __init__(self) -> None:
@@ -532,11 +550,13 @@ class CrewAIFlowCustomTools:
         tools: AgentToolsProtocol,
         features: AdapterFeatures,
     ) -> None:
-        from band.integrations.crewai import EmitExecutionReporter
+        from band.integrations.crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            EmitToolCallsReporter,
+        )
 
         self._custom_tools = custom_tools
         self._tools = tools
-        self._reporter = EmitExecutionReporter(features)
+        self._reporter = EmitToolCallsReporter(features)
 
     def __dir__(self) -> list[str]:
         return sorted({*super().__dir__(), *self._custom_tools})
@@ -619,7 +639,7 @@ class CrewAIFlowRuntimeTools:
         agent_description: str,
         participants: list[CrewAIFlowParticipantSnapshot],
         tools: AgentToolsProtocol,
-        executor: "SideEffectExecutor",
+        executor: SideEffectExecutor,
         run_id: str,
         state: CrewAIFlowSessionState,
         features: AdapterFeatures,
@@ -756,7 +776,7 @@ class CrewAIFlowRuntimeTools:
         to call platform tools. The returned tools enforce the adapter's
         reserve-send-confirm sequence for visible writes.
         """
-        from band.integrations.crewai.tools import (
+        from band.integrations.crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
             CrewAIToolContext,
             build_band_crewai_tools,
         )
@@ -934,15 +954,17 @@ class SideEffectExecutor:
         )
 
     async def record_failed(self, error: CrewAIFlowError) -> None:
-        # Best-effort error event for visibility, then the task event.
-        try:
-            await self._tools.send_event(
-                content=f"flow error: {error.code}: {error.message}"[:500],
-                message_type="error",
-                metadata={"error": error.model_dump()},
-            )
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to emit error event", exc_info=True)
+        # Best-effort failure event for visibility, then the task event. The
+        # room-visible message is capped like every other room post in this
+        # file (e.g. record_waiting) -- error.message can embed an unbounded
+        # value (e.g. a full participant-id list from an ambiguous-identity
+        # error) -- so the untruncated text is preserved in detail for
+        # structured consumers reading the "error"-typed event.
+        message = error.message[:500]
+        detail = error.message if message != error.message else None
+        await self._tools.send_failure(
+            AgentFailure("crewai_flow", message, error.code, detail)
+        )
         await self._send_event(
             content=f"failed:{error.code}",
             message_type="task",
@@ -992,7 +1014,7 @@ class SideEffectExecutor:
                 content=content,
                 mentions=mentions or None,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning(
                 "send_message failed for final side effect %s",
                 side_effect_key,
@@ -1044,10 +1066,9 @@ class SideEffectExecutor:
                 retry_attempts=1,
             )
         except BandToolError:
-            logger.error(
+            logger.exception(
                 "Could not persist indeterminate state for %s after retries",
                 side_effect_key,
-                exc_info=True,
             )
 
     # ------------------------------------------------------------------
@@ -1057,7 +1078,7 @@ class SideEffectExecutor:
     async def execute_delegations(
         self,
         *,
-        items: list["DelegateItem"],
+        items: list[DelegateItem],
         state: CrewAIFlowSessionState,
         participants: list[CrewAIFlowParticipantSnapshot],
     ) -> None:
@@ -1177,7 +1198,7 @@ class SideEffectExecutor:
                     content=content,
                     mentions=item.mentions or None,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.warning(
                     "send_message failed for delegation %s",
                     item.delegation_id,
@@ -1308,8 +1329,6 @@ class SideEffectExecutor:
         ``buffered_syntheses`` entry. The converter merges entries by
         ``source_message_id``, so multiple turns accumulate into one list.
         """
-        from band.converters.crewai_flow import CrewAIFlowBufferedSynthesis
-
         envelope = self._envelope(
             status=CrewAIFlowRunStatus.WAITING,
             stage=CrewAIFlowStage.WAITING_FOR_REPLIES,
@@ -1375,7 +1394,7 @@ class CrewAIFlowSubCrewReporter:
                 content=content,
                 mentions=mentions or None,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning(
                 "send_message failed for sub-Crew side effect %s",
                 key,
@@ -1481,7 +1500,7 @@ _VALID_TEXT_ONLY = {"error_event", "fallback_send"}
 _VALID_TAGGED_PEER = {"require_delegation_before_final", "off"}
 
 
-class _AmbiguousReply:
+class AmbiguousReply:
     def __init__(
         self,
         *,
@@ -1502,8 +1521,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     visible writes use reserve-send-confirm task events for idempotency.
     """
 
-    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
-    SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY, Capability.CONTACTS})
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
+    SUPPORTED_CAPABILITIES = frozenset(
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
+    )
 
     def __init__(
         self,
@@ -1522,7 +1543,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         accept_agent_initiated: bool = False,
         history_converter: CrewAIFlowStateConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         # ---- flow_factory -------------------------------------------------
         if not callable(flow_factory):
@@ -1565,11 +1586,12 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             )
 
         # ---- metadata_namespace -------------------------------------------
-        if metadata_namespace is not None:
-            if not isinstance(metadata_namespace, str) or not metadata_namespace:
-                raise BandConfigError(
-                    "metadata_namespace must be a non-empty string or None"
-                )
+        if metadata_namespace is not None and (
+            not isinstance(metadata_namespace, str) or not metadata_namespace
+        ):
+            raise BandConfigError(
+                "metadata_namespace must be a non-empty string or None"
+            )
 
         # ---- max_delegation_rounds ----------------------------------------
         if not isinstance(max_delegation_rounds, int) or isinstance(
@@ -1639,7 +1661,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             max_run_age=max_run_age
         )
 
-        super().__init__(history_converter=converter, features=features)
+        super().__init__(history_converter=converter, **features)
 
         self._flow_factory = flow_factory
         self._state_source = state_source
@@ -1659,7 +1681,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         self._tool_loop: asyncio.AbstractEventLoop | None = None
 
         # Per-room async locks and transient caches. Cleared on on_cleanup.
-        self._room_locks: dict[str, _RoomLockEntry] = {}
+        self._room_locks: dict[str, RoomLockEntry] = {}
         self._room_locks_guard = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -1670,7 +1692,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
         if self._configured_metadata_namespace is None:
-            agent_id = getattr(self, "_band_agent_id", None) or agent_name
+            agent_id = self.platform.agent_id if self.platform else agent_name
             self.metadata_namespace = f"crewai_flow:{agent_id}"
         else:
             self.metadata_namespace = self._configured_metadata_namespace
@@ -1697,11 +1719,11 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         room_id: str,
         *,
         cleanup_requested: bool = False,
-    ) -> _RoomLockEntry:
+    ) -> RoomLockEntry:
         async with self._room_locks_guard:
             entry = self._room_locks.get(room_id)
             if entry is None:
-                entry = _RoomLockEntry()
+                entry = RoomLockEntry()
                 self._room_locks[room_id] = entry
             entry.active += 1
             entry.cleanup_requested = entry.cleanup_requested or cleanup_requested
@@ -1710,7 +1732,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     async def _release_room_lock_entry(
         self,
         room_id: str,
-        entry: _RoomLockEntry,
+        entry: RoomLockEntry,
     ) -> None:
         async with self._room_locks_guard:
             if entry.active > 0:
@@ -1799,7 +1821,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             return
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("State source raised unexpectedly")
             await self._safe_record_failed(
                 executor,
@@ -1850,7 +1872,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             state=state,
             participants=participants,
         )
-        if isinstance(matched, _AmbiguousReply):
+        if isinstance(matched, AmbiguousReply):
             ambiguous_executor = SideEffectExecutor(
                 tools=tools,
                 room_id=room_id,
@@ -1931,7 +1953,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         # Construct Flow.
         try:
             flow = self._flow_factory()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("flow_factory raised")
             await self._safe_record_failed(
                 executor,
@@ -1981,7 +2003,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         try:
             try:
                 result = await flow.kickoff_async(inputs)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception("kickoff_async raised")
                 await self._safe_record_failed(
                     executor,
@@ -2083,7 +2105,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         *,
         executor: SideEffectExecutor,
         state: CrewAIFlowSessionState,
-        decision: "SynthesizeDecision",
+        decision: SynthesizeDecision,
         msg: PlatformMessage,
         participants: list[CrewAIFlowParticipantSnapshot],
     ) -> None:
@@ -2263,7 +2285,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     ) -> None:
         try:
             await executor.record_failed(error)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception(
                 "Failed to record failed task event for run %s", executor.run_id
             )
@@ -2274,7 +2296,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         msg: PlatformMessage,
         state: CrewAIFlowSessionState,
         participants: list[CrewAIFlowParticipantSnapshot],
-    ) -> tuple[str, str, "CrewAIFlowMetadata"] | _AmbiguousReply | None:
+    ) -> tuple[str, str, CrewAIFlowMetadata] | AmbiguousReply | None:
         """Try to match an inbound message to a pending delegation.
 
         Returns ``(run_id, delegation_id, run_metadata)`` on a unique match.
@@ -2282,11 +2304,6 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         candidate set, ambiguous matches (which also record a
         ``reply_ambiguous`` event side-effect).
         """
-        from band.converters.crewai_flow import (
-            CrewAIFlowAmbiguousIdentityError,
-            normalize_participant_key,
-        )
-
         # Compute sender's normalized key against the participant snapshot.
         try:
             sender_key = normalize_participant_key(
@@ -2312,7 +2329,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                         CrewAIFlowDelegationStatus.PENDING,
                         CrewAIFlowDelegationStatus.RESERVED,
                     ):
-                        return _AmbiguousReply(
+                        return AmbiguousReply(
                             run_id=run_id,
                             parent_message_id=run.parent_message_id,
                             reason="ambiguous_sender_identity",
@@ -2320,7 +2337,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             return None
 
         # Build candidate set: pending delegations across active runs.
-        candidates: list[tuple[str, str, "CrewAIFlowMetadata"]] = []
+        candidates: list[tuple[str, str, CrewAIFlowMetadata]] = []
         for run_id, run in state.runs.items():
             if run.status in (
                 CrewAIFlowRunStatus.FINALIZED,
@@ -2352,7 +2369,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             if len(token_hits) == 1:
                 return token_hits[0]
             run_id, _delegation_id, run = candidates[0]
-            return _AmbiguousReply(
+            return AmbiguousReply(
                 run_id=run_id,
                 parent_message_id=run.parent_message_id,
                 reason="correlation_token_mismatch",
@@ -2368,7 +2385,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             len(candidates),
         )
         run_id, _delegation_id, run = candidates[0]
-        return _AmbiguousReply(
+        return AmbiguousReply(
             run_id=run_id,
             parent_message_id=run.parent_message_id,
             reason="multiple_pending_delegations",
@@ -2377,15 +2394,15 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     @staticmethod
     def _candidates_matching_token(
         content: str,
-        candidates: list[tuple[str, str, "CrewAIFlowMetadata"]],
-    ) -> list[tuple[str, str, "CrewAIFlowMetadata"]] | None:
+        candidates: list[tuple[str, str, CrewAIFlowMetadata]],
+    ) -> list[tuple[str, str, CrewAIFlowMetadata]] | None:
         if not content:
             return None
         match = re.search(r"\[ref:([0-9a-f]{8})\]", content)
         if not match:
             return None
         token = match.group(1)
-        hits: list[tuple[str, str, "CrewAIFlowMetadata"]] = []
+        hits: list[tuple[str, str, CrewAIFlowMetadata]] = []
         for run_id, delegation_id, run in candidates:
             for d in run.delegations:
                 if d.delegation_id != delegation_id:
@@ -2403,7 +2420,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         run_id: str,
     ) -> None:
         """Keep reply handling explicit; synthesis only runs from Flow output."""
-        return None
+        return
 
     def _snapshot_participants(
         self, tools: AgentToolsProtocol

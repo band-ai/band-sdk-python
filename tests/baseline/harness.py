@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from anthropic.types import TextBlock, ToolUseBlock
 
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, PlatformMessage
-
+from band.testing import feature_kwargs
 from tests.baseline.decisions import ModelDecision
 from tests.baseline.tools import BaselineTools
 
@@ -116,7 +117,7 @@ class BaselineScenario:
     ) -> None:
         self.script = DecisionScript(decisions)
         self.tools = tools or BaselineTools()
-        self.adapter = AnthropicAdapter(features=features)
+        self.adapter = AnthropicAdapter(**feature_kwargs(features))
         self._rooms_started: set[str] = set()
 
     async def run(
@@ -141,7 +142,7 @@ class BaselineScenario:
             sender_name="Baseline User",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self.adapter.on_message(
             message,
@@ -184,8 +185,6 @@ class BaselineScenario:
         decision = self.script.next(**request)
         if isinstance(decision, Exception):
             raise decision
-
-        from anthropic.types import TextBlock, ToolUseBlock
 
         content: list[Any] = []
         for index, call in enumerate(decision.tool_calls, start=1):

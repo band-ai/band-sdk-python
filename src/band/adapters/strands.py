@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, cast
 
-import httpx
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel
 
 try:
@@ -15,10 +15,13 @@ try:
     from strands.hooks import HookProvider, HookRegistry
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
+    from strands.models.openai import OpenAIModel
+    from strands.types.media import ImageFormat
     from strands.types.tools import (
         AgentTool,
         ToolGenerator,
         ToolResult,
+        ToolResultContent,
         ToolSpec,
         ToolUse,
     )
@@ -28,21 +31,25 @@ except ImportError as error:
         "Install with: uv add band-sdk[strands]"
     ) from error
 
-from band_rest.core.api_error import ApiError
+from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.converters.strands import StrandsHistoryConverter, StrandsMessages
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     MessageType,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.strands import StrandsHistoryConverter, StrandsMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -52,18 +59,24 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
-    ToolDefinition,
     ToolCallOutcome,
+    ToolDefinition,
     band_tool_errored,
+    decode_image_block,
     get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
     is_terminal_success,
     iter_tool_definitions,
     missing_reply_error,
+    redact_tool_call_args,
     serialize_tool_result,
     validate_tool_arguments,
 )
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "strands"
 
 
 def _format_tool_output(value: object) -> str:
@@ -78,23 +91,78 @@ def _format_tool_output(value: object) -> str:
 
 def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
     """Build the framework's typed result envelope at the Strands boundary."""
+    content: list[ToolResultContent]
+    status = "success" if ok else "error"
+    if ok and is_image_passthrough_result(tool_use["name"], value):
+        try:
+            content = []
+            for block in cast(dict[str, Any], value)["content"]:
+                data, mime_type = decode_image_block(block)
+                content.append(
+                    {
+                        "image": {
+                            "format": cast(
+                                ImageFormat, mime_type.removeprefix("image/")
+                            ),
+                            "source": {"bytes": data},
+                        }
+                    }
+                )
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+            # A malformed or future-extended image block (see
+            # is_mcp_content_result's docstring) must degrade to the
+            # adapter's normal failure result, not raise uncaught out of
+            # stream()'s async generator -- this runs after _execute's own
+            # try/except already succeeded, so it needs its own boundary.
+            logger.error(
+                "Failed to decode image content for %s: %s",
+                tool_use["name"],
+                error,
+            )
+            status = "error"
+            content = [{"text": f"Error: {error}"}]
+    else:
+        content = [{"text": _format_tool_output(value)}]
     return {
         "toolUseId": tool_use["toolUseId"],
-        "status": "success" if ok else "error",
-        "content": [{"text": _format_tool_output(value)}],
+        "status": status,
+        "content": content,
     }
 
 
 def _result_text(result: ToolResult) -> str:
     """Flatten a tool result for execution events and terminal-state policy."""
     parts: list[str] = []
+    image_count = 0
+    image_index: int | None = None
     for block in result.get("content", []):
         match block:
             case {"text": str() as text}:
                 parts.append(text)
             case {"json": value}:
                 parts.append(_format_tool_output(value))
+            case {"image": _}:
+                if image_index is None:
+                    image_index = len(parts)
+                    parts.append("")
+                image_count += 1
+    if image_index is not None:
+        parts[image_index] = image_block_placeholder(image_count)
     return "\n".join(parts)
+
+
+def _openai_history(messages: StrandsMessages) -> StrandsMessages:
+    """Keep tool results ahead of text in Strands' OpenAI serialization."""
+    normalized: StrandsMessages = []
+    for message in messages:
+        tool_results = [block for block in message["content"] if "toolResult" in block]
+        other = [block for block in message["content"] if "toolResult" not in block]
+        if tool_results and other:
+            normalized.append({"role": message["role"], "content": tool_results})
+            normalized.append({"role": message["role"], "content": other})
+        else:
+            normalized.append(message)
+    return normalized
 
 
 def _input_schema(input_model: type[BaseModel]) -> dict[str, Any]:
@@ -196,7 +264,7 @@ class CustomToolBridge(StrandsToolBridge):
             result = await execute_custom_tool(
                 self._tool_def, dict(tool_use["input"] or {})
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             yield _tool_result(
                 tool_use,
                 value=f"Error executing tool '{self.tool_name}': {error}",
@@ -283,7 +351,9 @@ class BandTurnHooks(HookProvider):
             MessageType.TOOL_CALL,
             {
                 ToolEventKey.NAME: event.tool_use["name"],
-                ToolEventKey.ARGS: event.tool_use["input"],
+                ToolEventKey.ARGS: redact_tool_call_args(
+                    event.tool_use["name"], event.tool_use["input"]
+                ),
                 ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
             },
         )
@@ -324,16 +394,16 @@ class BandTurnHooks(HookProvider):
                 content=json.dumps(payload, default=str),
                 message_type=message_type,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, error)
 
 
 class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     """Run a Strands model in a Band room."""
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -343,12 +413,12 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         custom_section: str | None = None,
         history_converter: StrandsHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Create an adapter around a Strands model or Bedrock model identifier."""
         super().__init__(
             history_converter=history_converter or StrandsHistoryConverter(),
-            features=features,
+            **features,
         )
         self.model = model
         self.system_prompt = system_prompt
@@ -406,8 +476,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         definitions = filter_tool_schemas(
             list(
                 iter_tool_definitions(
-                    include_memory=Capability.MEMORY in self.features.capabilities,
-                    include_contacts=Capability.CONTACTS in self.features.capabilities,
+                    capabilities=self.features.capabilities,
                 )
             ),
             self.features,
@@ -425,6 +494,8 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> StrandsMessages:
         """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
+            if isinstance(self.model, OpenAIModel):
+                history = _openai_history(history)
             self._message_history[room_id] = list(history)
             if history:
                 logger.debug("Room %s: rehydrated %s message(s)", room_id, len(history))
@@ -459,12 +530,20 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         hooks: BandTurnHooks,
     ) -> None:
         """Run the framework loop while preserving transcript and usage on failure."""
-        agent = self._build_agent(history, tools, hooks)
+        agent: Agent | None = None
         try:
+            agent = self._build_agent(history, tools, hooks)
             await agent.invoke_async(message)
+        except Exception:
+            logger.exception("Room %s: Strands turn failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
         finally:
-            self._message_history[room_id] = agent.messages
-            await self.emit_usage(tools, self._usage_from_agent(agent))
+            if agent is not None:
+                self._message_history[room_id] = agent.messages
+                await self.emit_usage(tools, self._usage_from_agent(agent))
 
     async def on_message(
         self,
@@ -493,7 +572,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
         hooks = BandTurnHooks(
             tools,
-            emit_execution=Emit.EXECUTION in self.features.emit,
+            emit_execution=Emit.TOOL_CALLS in self.features.emit,
             custom_terminal_names=self._custom_terminal_names,
         )
         await self._run_turn(
@@ -504,7 +583,12 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             hooks=hooks,
         )
         if not hooks.terminal_fired:
-            await self._report_error(tools, missing_reply_error("Strands"))
+            logger.warning(
+                "Room %s: Strands turn produced nothing for the room", room_id
+            )
+            detail = missing_reply_error("Strands")
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
+            raise TurnResultAlreadyReported(detail)
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,
@@ -516,7 +600,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         """Map Strands' accumulated turn usage into the SDK value object."""
         try:
             usage = dict(agent.event_loop_metrics.accumulated_usage)
-        except Exception:  # pragma: no cover - usage reporting is best-effort
+        except Exception:  # pragma: no cover - usage reporting is best-effort  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return TurnUsage()
         return TurnUsage.from_mapping(
             usage,
@@ -525,16 +609,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             cache_read="cacheReadInputTokens",
             cache_write="cacheWriteInputTokens",
         )
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Post a best-effort room-visible adapter error."""
-        try:
-            await tools.send_event(
-                content=f"Error: {error}",
-                message_type=MessageType.ERROR,
-            )
-        except (ApiError, httpx.HTTPError) as report_error:
-            logger.warning("Failed to send error event: %s", report_error)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Discard the transcript when Band removes the adapter from a room."""

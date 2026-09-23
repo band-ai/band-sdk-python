@@ -12,19 +12,34 @@ from a2a.client import Client, ClientConfig, ClientFactory
 from a2a.helpers import get_message_text, new_text_message
 from a2a.types import (
     Message as A2AMessage,
+)
+from a2a.types import (
     Role,
     SendMessageRequest,
-    SubscribeToTaskRequest,
     StreamResponse,
+    SubscribeToTaskRequest,
     Task,
     TaskState,
 )
+from band_sdk_core import AgentFailure
+from typing_extensions import Unpack
 
 from band.converters.a2a import A2AHistoryConverter
-from band.core.protocols import AgentToolsProtocol
+from band.core.delivery import (
+    DeliveryFailedError,
+    deliver_reply,
+    reraise_delivery_cause,
+)
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+    send_event_safe,
+)
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
+    RETRYABLE_TASK_FAILURE_STATES,
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
     apply_task_stream_event,
@@ -35,6 +50,15 @@ from band.integrations.a2a.protocol import (
 from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "a2a"
+
+# httpx's read timeout resets on every chunk received, so this bounds the gap
+# between SSE events, not the turn as a whole. Generous enough for the
+# multi-second silences of a live LLM call or tool loop; still finite, so a
+# peer that accepts the connection and then hangs eventually fails the turn
+# instead of blocking the room forever.
+_SSE_READ_TIMEOUT_S = 300.0
 
 
 class A2AAdapter(SimpleAdapter[A2ASessionState]):
@@ -76,7 +100,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         remote_url: str,
         auth: A2AAuth | None = None,
         streaming: bool = True,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize A2A adapter.
 
@@ -87,7 +111,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """
         super().__init__(
             history_converter=A2AHistoryConverter(),
-            features=features,
+            **features,
         )
         self.remote_url = remote_url
         self.auth = auth
@@ -106,7 +130,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         headers = self.auth.to_headers() if self.auth else {}
 
-        self._http_client = httpx.AsyncClient(headers=headers)
+        # httpx's default 5s read timeout fires on the normal, multi-second
+        # gap between SSE events during a real remote turn (a live LLM call,
+        # a tool loop) -- not a hang. Use a generous bound instead of the
+        # default so a genuinely dead peer still fails promptly.
+        self._http_client = httpx.AsyncClient(
+            headers=headers,
+            timeout=httpx.Timeout(10.0, read=_SSE_READ_TIMEOUT_S),
+        )
         factory = ClientFactory(
             ClientConfig(streaming=self.streaming, httpx_client=self._http_client)
         )
@@ -157,13 +188,16 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                     event, tools, room_id, msg.sender_id, msg.sender_name
                 )
 
-        except Exception as e:
-            logger.exception("A2A agent error: %s", e)
-            await tools.send_event(
-                content=f"A2A agent error: {e}",
-                message_type="error",
-                metadata={"a2a_error": str(e)},
+        except DeliveryFailedError as e:
+            reraise_delivery_cause(e)
+        except TurnResultAlreadyReported:
+            raise
+        except Exception:
+            logger.exception("A2A agent error")
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
+            raise
 
     async def _handle_event(
         self,
@@ -193,8 +227,19 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         finally:
             # A terminal task must be persisted and released even when Band
             # delivery fails, or the room keeps addressing a finished task.
+            # Best-effort: a failure here must never replace an exception
+            # already propagating from the try block above, or a Band
+            # delivery outage gets misreported as a fabricated provider
+            # failure once it reaches on_message's except clauses.
             if state in TERMINAL_TASK_STATES:
-                await self._emit_task_event(tools, task, state)
+                try:
+                    await self._emit_task_event(tools, task, state)
+                except Exception:
+                    logger.exception(
+                        "Failed to emit terminal task event (room=%s, task=%s)",
+                        room_id,
+                        task.id,
+                    )
                 self._finalize_task(room_id, task.id)
 
     async def _deliver_message(
@@ -207,8 +252,9 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """Forward a direct A2A message to its Band sender."""
         text = get_message_text(message)
         if text:
-            await tools.send_message(
-                content=text,
+            await deliver_reply(
+                tools,
+                text,
                 mentions=[{"id": sender_id, "name": sender_name or ""}],
             )
 
@@ -239,27 +285,29 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         if state == TaskState.TASK_STATE_WORKING:
             status_text = self._get_status_text(task)
             if status_text:
-                await tools.send_event(content=status_text, message_type="thought")
+                await send_event_safe(tools, status_text, "thought")
             return
 
         if state == TaskState.TASK_STATE_INPUT_REQUIRED:
             text = self._get_status_text(task) or "Please provide more information."
-            await tools.send_message(content=text, mentions=[sender])
+            await deliver_reply(tools, text, mentions=[sender])
             return
 
         if state == TaskState.TASK_STATE_COMPLETED:
             response = self._extract_response(task)
             if response:
-                await tools.send_message(content=response, mentions=[sender])
+                await deliver_reply(tools, response, mentions=[sender])
             return
 
         if state in TERMINAL_TASK_STATES:
-            error_text = self._get_status_text(task) or f"Task {state_name(state)}"
-            await tools.send_event(
-                content=error_text,
-                message_type="error",
-                metadata={"a2a_state": state_name(state)},
+            state_str = state_name(state)
+            error_text = self._get_status_text(task) or f"Task {state_str}"
+            logger.warning(
+                "Task %s: peer A2A task ended in state %s", task.id, state_str
             )
+            await tools.send_failure(AgentFailure(_PROVIDER, error_text, state_str))
+            if state in RETRYABLE_TASK_FAILURE_STATES:
+                raise TurnResultAlreadyReported(error_text)
 
     def _finalize_task(self, room_id: str, task_id: str) -> None:
         """Release a terminal task after its Band output and state are persisted."""
@@ -318,12 +366,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def cleanup_all(self) -> None:
         """Close the owned A2A client and its HTTP transport."""
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        client, self._client = self._client, None
+        http_client, self._http_client = self._http_client, None
+        try:
+            if client is not None:
+                await client.close()
+        finally:
+            if http_client is not None:
+                await http_client.aclose()
 
     async def _emit_task_event(
         self, tools: AgentToolsProtocol, task: Task, state: TaskState
@@ -413,5 +463,5 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                             state_name(current_state),
                         )
                     break  # Only need first event to get current state
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- A2A JSON-RPC handler must return an error response, not crash on an unexpected exception
             logger.warning("Could not resubscribe to A2A task %s: %s", task_id, e)

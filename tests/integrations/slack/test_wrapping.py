@@ -8,7 +8,7 @@ Architecture under test:
   - ``slack_send_message`` — posts to the bound Slack thread, Slack-only
 - A Slack event → adapter creates/finds a Band room → synthesizes a
   ``PlatformMessage`` → invokes ``inner.on_message`` with the new
-  ``_SlackTeeingTools`` and a Slack-context note via ``participants_msg``.
+  ``SlackTeeingTools`` and a Slack-context note via ``participants_msg``.
 - No event mirroring of inbound Slack messages or brain replies. The
   Band room stays empty unless the brain decides to delegate to a peer
   via ``band_send_message``.
@@ -22,15 +22,16 @@ import hmac
 import json
 import time
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from httpx import ASGITransport
 
+from band.core.exceptions import BandToolError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -44,12 +45,12 @@ from band.integrations.slack.adapter import (
     SLACK_CONTEXT_NOTE,
     SLACK_SEND_MESSAGE_TOOL_NAME,
     SlackAdapter,
-    _SlackTeeingTools,
+    SlackTeeingTools,
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
-from band.runtime.tools import AgentTools
-
+from band.runtime.tools import AgentTools, ToolCallOutcome
+from band.testing.platform import platform_connection_stub
 
 # ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -197,12 +198,11 @@ def _make_adapter(
     adapter = SlackAdapter(
         inner=inner,
         apps=apps,
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
         **adapter_kwargs,
     )
-    adapter._band_agent_id = bridge_agent_id  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id=bridge_agent_id)
     return adapter, inner, web_mocks, rest
 
 
@@ -262,21 +262,22 @@ async def test_on_started_propagates_to_inner_and_sets_agent_id():
     await adapter.on_started("MyBot", "describes me")
 
     assert inner.started == ("MyBot", "describes me")
-    assert getattr(inner, "_band_agent_id", None) == "bridge-uuid"
+    assert inner.platform is not None
+    assert inner.platform.agent_id == "bridge-uuid"
 
 
 @pytest.mark.asyncio
-async def test_on_started_requires_api_key_when_no_rest_client_injected():
+async def test_on_started_requires_platform_when_no_rest_client_injected():
     inner = _SlackReplyBrain()
     adapter = SlackAdapter(inner=inner, apps=[_slack_app()])
-    with pytest.raises(ValueError, match="requires api_key"):
+    with pytest.raises(RuntimeError, match="platform connection"):
         await adapter.on_started("MyBot", "")
 
 
 class _EmitBrain(_SlackReplyBrain):
     """Inner brain that declares (and is configured to use) execution emit."""
 
-    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
     SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY})
 
 
@@ -290,25 +291,78 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
     """
     inner = _EmitBrain(reply=None)
     inner.features = AdapterFeatures(
-        emit=frozenset({Emit.EXECUTION}),
+        emit=frozenset({Emit.TOOL_CALLS}),
         capabilities=frozenset({Capability.MEMORY}),
     )
     adapter, _, _, _ = _make_adapter(inner=inner)
 
-    with caplog.at_level("WARNING"):
-        with warnings.catch_warnings():
-            # A spurious UserWarning here would mean the wrapper failed to
-            # mirror the inner's support before the base check ran.
-            warnings.simplefilter("error", UserWarning)
-            await adapter.on_started("MyBot", "")
+    with caplog.at_level("WARNING"), warnings.catch_warnings():
+        # A spurious UserWarning here would mean the wrapper failed to
+        # mirror the inner's support before the base check ran.
+        warnings.simplefilter("error", UserWarning)
+        await adapter.on_started("MyBot", "")
 
     # Wrapper now reflects the inner's declared support.
-    assert adapter.SUPPORTED_EMIT == frozenset({Emit.EXECUTION})
+    assert adapter.SUPPORTED_EMIT == frozenset({Emit.TOOL_CALLS})
     assert adapter.SUPPORTED_CAPABILITIES == frozenset({Capability.MEMORY})
     # No misleading "does not support" warning for values the brain handles.
     assert not any("does not support" in r.getMessage() for r in caplog.records), [
         r.getMessage() for r in caplog.records
     ]
+
+
+def test_explicit_feature_override_reaches_inner():
+    """An explicit emit=/capabilities= kwarg must govern the actual turn.
+
+    A turn dispatches straight to ``inner.on_message(...)``, whose body reads
+    the inner instance's own ``self.features`` — not the wrapper's. Without
+    propagating the override onto ``inner.features``, passing
+    ``capabilities=`` to ``SlackAdapter`` would silently do nothing.
+    """
+    inner = _EmitBrain(reply=None)
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    assert adapter.features.capabilities == frozenset({Capability.MEMORY})
+    assert inner.features.capabilities == frozenset({Capability.MEMORY})
+
+
+def test_partial_feature_override_merges_over_inner_features():
+    """A partial override must not reset the inner's unrelated narrowing.
+
+    Adding only ``capabilities=`` must keep the inner's explicit ``emit=()``
+    silence and its tool filters — merging over ``inner.features``, not
+    re-deriving unsupplied fields from defaults (which would resurrect every
+    supported emission).
+    """
+    inner = _EmitBrain(reply=None)
+    inner.features = AdapterFeatures(
+        emit=(),
+        include_tools=("band_send_message",),
+    )
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    assert inner.features.capabilities == frozenset({Capability.MEMORY})
+    assert inner.features.emit == frozenset()
+    assert inner.features.include_tools == ("band_send_message",)
+    assert adapter.features == inner.features
+
+
+def test_apply_effective_features_reaches_inner():
+    """Post-construction pruning (Agent.start()'s capability negotiation) must
+    reach the inner adapter too, not just the wrapper's own attribute.
+
+    ``_resolve_features`` only mirrors into ``inner.features`` once, at
+    construction -- a Slack-wrapped adapter is exactly the shape a real
+    capability-negotiation prune runs against, so this has to keep working
+    after construction, not just at it.
+    """
+    inner = _EmitBrain(reply=None)
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    adapter.apply_effective_features(AdapterFeatures())
+
+    assert adapter.features.capabilities == frozenset()
+    assert inner.features.capabilities == frozenset()
 
 
 # ── Slack ingress (HTTP webhook → brain invocation) ─────────────────────────
@@ -376,7 +430,7 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
     assert inv["participants_msg"] == SLACK_CONTEXT_NOTE
     assert inv["is_session_bootstrap"] is True
     # Tools are the teeing subclass.
-    assert isinstance(inv["tools"], _SlackTeeingTools)
+    assert isinstance(inv["tools"], SlackTeeingTools)
 
     # Brain's reply went to Slack only.
     web_mocks[app.slug].chat_postMessage.assert_awaited_once_with(
@@ -418,7 +472,7 @@ async def test_same_thread_tuple_across_apps_maps_to_distinct_rooms():
     replies into the wrong app/workspace.
     """
     apps = [_slack_app("alpha"), _slack_app("beta")]
-    adapter, inner, _, rest = _make_adapter(
+    adapter, _inner, _, rest = _make_adapter(
         apps=apps, room_ids=["room-alpha", "room-beta"]
     )
     await adapter.on_started("MyBot", "")
@@ -451,7 +505,7 @@ async def test_concurrent_events_same_thread_create_one_room():
     serialisation both could miss ``_thread_to_room`` and create a room.
     A gated ``create_agent_chat`` forces the overlap deterministically.
     """
-    adapter, inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
+    adapter, _inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
     await adapter.on_started("MyBot", "")
     app = adapter.apps[0]
 
@@ -596,7 +650,7 @@ async def test_on_message_delegates_to_inner_for_unbound_room():
         sender_name="Peer",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -611,7 +665,7 @@ async def test_on_message_delegates_to_inner_for_unbound_room():
     assert isinstance(inner, _SlackReplyBrain)
     assert len(inner.invocations) == 1
     # Unbound: raw tools, no Slack context note.
-    assert not isinstance(inner.invocations[0]["tools"], _SlackTeeingTools)
+    assert not isinstance(inner.invocations[0]["tools"], SlackTeeingTools)
     assert inner.invocations[0]["participants_msg"] is None
 
 
@@ -642,7 +696,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
         sender_name="Peer X",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -656,7 +710,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
 
     assert len(inner.invocations) == 2
     inv = inner.invocations[1]
-    assert isinstance(inv["tools"], _SlackTeeingTools)
+    assert isinstance(inv["tools"], SlackTeeingTools)
     assert inv["participants_msg"] == SLACK_CONTEXT_NOTE
     # Brain's reply ('Here is the answer.') went to Slack.
     web_mocks[app.slug].chat_postMessage.assert_awaited_once_with(
@@ -688,7 +742,7 @@ async def test_on_message_merges_existing_participants_msg_with_context_note():
         sender_name="Peer Y",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -801,12 +855,12 @@ async def test_brain_exception_does_not_break_subsequent_events():
     assert calls == ["first", "second"]
 
 
-# ── _SlackTeeingTools — new behavior ─────────────────────────────────────────
+# ── SlackTeeingTools — new behavior ─────────────────────────────────────────
 
 
 def _make_tee_tools(
     slack: AsyncMock | None = None,
-) -> tuple[_SlackTeeingTools, MagicMock, AsyncMock]:
+) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
     rest = MagicMock()
     rest.agent_api_events.create_agent_chat_event = AsyncMock()
     rest.agent_api_messages.create_agent_chat_message = AsyncMock(
@@ -818,7 +872,7 @@ def _make_tee_tools(
         # ``slack`` may have custom side_effects we mustn't overwrite.
         slack = AsyncMock()
         slack.chat_postMessage = AsyncMock(return_value={"ok": True})
-    tools = _SlackTeeingTools(
+    tools = SlackTeeingTools(
         wrap=base,
         slack=slack,
         binding=SlackRoomBinding(app_slug="dev", channel="C", thread_ts="1.0"),
@@ -906,9 +960,6 @@ async def test_execute_tool_call_delegates_non_slack_tools_to_super():
     it delegates via ``execute_tool_call_structured`` and returns its
     ``value``.
     """
-    from unittest.mock import patch
-
-    from band.runtime.tools import ToolCallOutcome
 
     tools, _, _ = _make_tee_tools()
     super_mock = AsyncMock(return_value=ToolCallOutcome(value="ok", ok=True))
@@ -922,7 +973,6 @@ async def test_execute_tool_call_delegates_non_slack_tools_to_super():
 @pytest.mark.asyncio
 async def test_send_message_no_longer_overridden_uses_real_band_path():
     """The base AgentTools.send_message behavior is restored (mention required)."""
-    from band.core.exceptions import BandToolError
 
     tools, _, slack = _make_tee_tools()
     # Mentionless message hits the platform's "≥1 mention required" guard.
@@ -1329,7 +1379,7 @@ def _agent_input_with_history(
         sender_name="Peer X",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     return AgentInput(
         msg=msg,

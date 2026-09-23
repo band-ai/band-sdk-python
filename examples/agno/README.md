@@ -120,7 +120,7 @@ the same instance elsewhere.
 | File | Description |
 |------|-------------|
 | `01_basic_agent.py` | **Minimal setup** - A Claude-backed Agno agent bridged to Band via `AgnoAdapter`. |
-| `02_tool_reporting.py` | **Tool-execution reporting** - An Agno agent with its own tools; `AdapterFeatures(emit={Emit.EXECUTION})` posts tool_call/tool_result events to the room. |
+| `02_tool_reporting.py` | **Tool-execution reporting** - An Agno agent with its own tools; the adapter's default emit posts tool_call/tool_result events to the room. |
 | `03_tom_agent.py` | **Character agent (Tom)** - An Agno-backed cat agent. Run alongside Jerry — each is its own Band agent process, so they converse through the room even when backed by different adapters. |
 | `04_jerry_agent.py` | **Character agent (Jerry)** - The mouse counterpart to Tom; run the two in separate terminals and add both to a room. |
 | `05_memory_secretary.py` | **Band memory tools** - Enables `Capability.MEMORY` so an Agno agent can store and recall durable Band memories. |

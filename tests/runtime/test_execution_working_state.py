@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -69,7 +69,7 @@ def _backlog_message(
         sender_name="User One",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -211,9 +211,22 @@ class TestSessionConfigGuards:
         with pytest.raises(ValueError):
             SessionConfig(max_working_state_seconds=0)
 
+    def test_max_cycle_seconds_if_set_must_be_positive(self):
+        with pytest.raises(ValueError, match="max_cycle_seconds"):
+            SessionConfig(max_cycle_seconds=0)
+        with pytest.raises(ValueError, match="max_cycle_seconds"):
+            SessionConfig(max_cycle_seconds=-1.0)
+
     def test_disabled_skips_guards(self):
         # When disabled, odd values must not raise.
         cfg = SessionConfig(
             enable_working_state=False, working_keep_alive_seconds=100.0
         )
         assert cfg.enable_working_state is False
+
+    def test_max_cycle_seconds_guard_is_independent_of_working_state(self):
+        # max_cycle_seconds is a hang-killer unrelated to working-state
+        # reporting, so its guard must still fire even when working-state
+        # reporting itself is disabled.
+        with pytest.raises(ValueError, match="max_cycle_seconds"):
+            SessionConfig(enable_working_state=False, max_cycle_seconds=0)

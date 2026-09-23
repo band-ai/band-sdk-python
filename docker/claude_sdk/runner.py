@@ -26,8 +26,12 @@ from typing import Any
 
 import yaml
 
-from band.docker.repo_init import initialize_repo
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
 from band.config.loader import load_agent_config
+from band.config.logs import LogSettings
+from band.core.types import Emit
+from band.docker.repo_init import initialize_repo
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -45,10 +49,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -138,7 +138,8 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the agent from YAML configuration."""
-    global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
+    LogSettings().for_application().configure()
+    global _shutdown_event
     _shutdown_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -151,18 +152,6 @@ async def main() -> None:
 
     agent_key = os.environ.get("AGENT_KEY", "agent")
 
-    ws_url = os.environ.get(
-        "BAND_WS_URL",
-        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
-    )
-    rest_url = os.environ.get(
-        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    )
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
-
     validate_mounts()
 
     logger.info("Loading config from: %s (key: %s)", config_path, agent_key)
@@ -173,9 +162,6 @@ async def main() -> None:
         agent_key=agent_key,
         lock_timeout_s=lock_timeout_s,
     )
-
-    from band import Agent
-    from band.adapters import ClaudeSDKAdapter
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]
@@ -229,17 +215,15 @@ async def main() -> None:
         fallback_model=fallback_model,
         custom_section=final_prompt,
         max_thinking_tokens=thinking_tokens,
-        enable_execution_reporting=True,
         additional_tools=custom_tools if custom_tools else None,
         cwd=workspace,
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting agent: %s", agent_id)

@@ -29,11 +29,14 @@ from typing import Any
 
 import pytest
 
-from band.adapters.copilot_sdk import ASK_USER_ROOM, _COPILOT_SDK_AVAILABLE
-
-from tests.e2e.baseline.flaky import flaky_infra
-
+from band.adapters.copilot_sdk import (
+    _COPILOT_SDK_AVAILABLE,
+    ASK_USER_ROOM,
+    CopilotSDKAdapter,
+    CopilotSDKAdapterConfig,
+)
 from tests.e2e.baseline.agents import Lane, lane
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -57,9 +60,9 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
     bespoke tests don't re-derive it; ``overrides`` layers the one knob each
     test actually cares about (``ask_user=``, ``base_directory=``).
     """
-    from copilot import ProviderConfig
-
-    from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
+    from copilot import (  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
+        ProviderConfig,
+    )
 
     return CopilotSDKAdapterConfig(
         model=settings.llm_models.anthropic_model,
@@ -99,7 +102,6 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     forwarding (without either, the model cannot ask and the handler never
     fires).
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
     operator_channel = f"channel-{uuid.uuid4().hex[:6]}"
     asked: list[dict[str, Any]] = []
@@ -167,7 +169,6 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
     reply containing it proves the answer flowed through the room round trip —
     not model invention.
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
     secret_channel = f"channel-{uuid.uuid4().hex[:6]}"
     adapter = CopilotSDKAdapter(
@@ -248,7 +249,6 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     replies are its only possible source (the regression case for one-sided
     injected history).
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
     tracking_marker = f"MARKER_{uuid.uuid4().hex[:6]}"
     agent_fact = "blue"
@@ -266,44 +266,48 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     )
 
     # Phase 1: seed a user fact and make the agent produce its own fact.
-    async with running_agent(identity, make_adapter("phase1"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "Create a short project log note for later reference. The "
-                f"tracking marker is {tracking_marker}. Also answer this "
-                "calibration question inside your reply: what color is a "
-                "clear daytime sky? Reply in one short sentence that includes "
-                "the tracking marker and the color answer.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # The user never uttered this answer; it must come from the
-            # agent's phase-1 reply when phase 2 reconstructs history.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase1"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "Create a short project log note for later reference. The "
+            f"tracking marker is {tracking_marker}. Also answer this "
+            "calibration question inside your reply: what color is a "
+            "clear daytime sky? Reply in one short sentence that includes "
+            "the tracking marker and the color answer.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # The user never uttered this answer; it must come from the
+        # agent's phase-1 reply when phase 2 reconstructs history.
+        replies.assert_contains_any([agent_fact])
 
     # Phase 2: fresh process state AND fresh Copilot state directory — recall
     # can only come from the platform history the adapter injects.
-    async with running_agent(identity, make_adapter("phase2"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "From the earlier project log, what was the tracking marker "
-                "and what color answer did you give? Reply with both.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # The user never uttered this answer — only the agent's own
-            # injected phase-1 reply can supply it.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase2"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "From the earlier project log, what was the tracking marker "
+            "and what color answer did you give? Reply with both.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # The user never uttered this answer — only the agent's own
+        # injected phase-1 reply can supply it.
+        replies.assert_contains_any([agent_fact])
 
 
 @lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
@@ -331,9 +335,9 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
        still-running client — the borrowed client must survive an adapter's
        full cleanup (``owns_client=False`` contract).
     """
-    from copilot import CopilotClient
-
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from copilot import (  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
+        CopilotClient,
+    )
 
     identity = await resource_manager.provision_agent("copilot-shared-client")
     room_a = await resource_manager.provision_room(

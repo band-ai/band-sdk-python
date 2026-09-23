@@ -14,14 +14,14 @@ _bridge_dir = str(REPO_ROOT / "band-bridge")
 if _bridge_dir not in sys.path:
     sys.path.insert(0, _bridge_dir)
 
-from bridge_core.bridge import BandBridge  # noqa: E402
-from bridge_core.config import (  # noqa: E402
+from bridge_core.bridge import BandBridge
+from bridge_core.config import (
     AgentConfig,
     AgentCoreTarget,
     BridgeConfig,
     HTTPTarget,
 )
-from bridge_core.forwarder import Forwarder  # noqa: E402
+from bridge_core.forwarder import Forwarder
 
 
 class FakeForwarder:

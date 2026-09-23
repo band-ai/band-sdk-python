@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[a2a_gateway]>=1.2.0"]
 # ///
 """
 Remote A2A fact checker for the mixed example.
@@ -28,15 +25,14 @@ from a2a.helpers import new_task_from_user_message, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes.agent_card_routes import create_agent_card_routes
+from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
+from a2a.server.routes.rest_routes import create_rest_routes
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,
     InMemoryTaskStore,
     TaskUpdater,
 )
-from a2a.server.routes.agent_card_routes import create_agent_card_routes
-from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
-from a2a.server.routes.rest_routes import create_rest_routes
-from starlette.applications import Starlette
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -46,8 +42,9 @@ from a2a.types import (
     UnsupportedOperationError,
 )
 from dotenv import load_dotenv
+from starlette.applications import Starlette
 
-from setup_logging import setup_logging
+from band import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +105,7 @@ class FactCheckerExecutor(AgentExecutor):
 
 def main() -> None:
     """Run the fact checker A2A server."""
-    setup_logging()
+    configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
     host = os.getenv("MIXED_FACT_HOST", "127.0.0.1")

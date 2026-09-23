@@ -10,15 +10,14 @@ The architect stays silent until the PM @mentions it for a decision.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters.crewai import CrewAIAdapter
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
 
@@ -30,8 +29,6 @@ class Identity(BaseSettings):
 
     agent_id: str
     api_key: str
-    ws_url: str
-    rest_url: str
 
 
 class ArchitectConfig(BaseSettings):
@@ -61,29 +58,23 @@ def expose_llm_key() -> None:
 async def main() -> None:
     # INFO so the Band lifecycle trace (messages, tool calls, replies) shows in the
     # sandbox log the demo pane tails — without this, only WARNING+ would surface.
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    LogSettings().configure()
     expose_llm_key()
     identity = Identity()
     config = ArchitectConfig()
     adapter = CrewAIAdapter(
         model=config.model,
         custom_section=build_persona(),
-        # Surface tool_call/tool_result in the room, and expose the memory tools so
-        # the architect can record its verdict rationale. CrewAI has no native
-        # reasoning stream, so THOUGHTS is unsupported and intentionally omitted.
-        features=AdapterFeatures(
-            emit={Emit.EXECUTION},
-            capabilities={Capability.MEMORY},
-        ),
+        # Default emit already surfaces tool_call/tool_result in the room
+        # (CrewAI has no native reasoning stream, so THOUGHTS is unsupported).
+        # Memory tools are opt-in so the architect can record its verdict
+        # rationale.
+        capabilities=Capability.MEMORY,
     )
     agent = Agent.create(
         adapter=adapter,
         agent_id=identity.agent_id,
         api_key=identity.api_key,
-        ws_url=identity.ws_url,
-        rest_url=identity.rest_url,
     )
     await run_with_graceful_shutdown(agent)
 

@@ -15,8 +15,17 @@ import logging
 import os
 
 import yaml
+from band_rest import AsyncRestClient
+from band_rest.types import AgentRegisterRequest
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+from band import LoggingStyle, LogSettings
+
+# The bare message format only exists for the standard style, so the style is
+# pinned rather than read from BAND_LOG_CONSOLE_STYLE.
+LogSettings(log_console_style=LoggingStyle.STANDARD).for_application().configure(
+    fmt="%(message)s"
+)
 logger = logging.getLogger(__name__)
 
 AGENTS = [
@@ -25,17 +34,21 @@ AGENTS = [
 ]
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_api_key: str
+    band_rest_url: str = "https://app.band.ai"
+
+
 async def main() -> None:
-    api_key = os.environ.get("BAND_API_KEY")
-    if not api_key:
-        raise ValueError("BAND_API_KEY environment variable is required")
+    settings = Settings()
 
-    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
-
-    from band_rest import AsyncRestClient
-    from band_rest.types import AgentRegisterRequest
-
-    client = AsyncRestClient(api_key=api_key, base_url=base_url)
+    client = AsyncRestClient(
+        api_key=settings.band_api_key, base_url=settings.band_rest_url
+    )
 
     created = []
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -64,7 +77,7 @@ async def main() -> None:
         }
 
         config_path = os.path.join(script_dir, agent_def["file"])
-        with open(config_path, "w") as f:
+        with open(config_path, "w") as f:  # noqa: ASYNC230 -- one-shot sequential provisioning script, nothing else shares this loop
             yaml.dump(config, f, default_flow_style=False)
         logger.info("  Config written to: %s", agent_def["file"])
 
@@ -86,7 +99,7 @@ async def main() -> None:
 
     # Write agent IDs to a cleanup file for later deletion
     cleanup_path = os.path.join(script_dir, ".agent_ids.txt")
-    with open(cleanup_path, "w") as f:
+    with open(cleanup_path, "w") as f:  # noqa: ASYNC230 -- one-shot sequential provisioning script, nothing else shares this loop
         for a in created:
             f.write(f"{a['id']}\n")
     logger.info("\nAgent IDs saved to .agent_ids.txt for cleanup")

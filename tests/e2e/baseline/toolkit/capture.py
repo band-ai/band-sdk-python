@@ -40,7 +40,7 @@ import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from band_rest import AsyncRestClient
@@ -52,7 +52,6 @@ from band.client.streaming import (
     WebSocketClient,
 )
 from band.core.types import MessageType
-
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.observations import (
     Errors,
@@ -62,8 +61,10 @@ from tests.e2e.baseline.toolkit.observations import (
     MemoryToolCalls,
     Replies,
     Tasks,
+    TaskToolCalls,
     Thoughts,
     ToolCalls,
+    ToolResults,
     Usage,
 )
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -189,7 +190,7 @@ class ReplyCapture:
         # Normalize a trailing Z before parsing, matching the src/band convention.
         raw = self.messages[-1].inserted_at.replace("Z", "+00:00")
         stamp = datetime.fromisoformat(raw)
-        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
     def _delivery_error(self, message_id: str, recipient_id: str) -> str:
         """Best-effort last-attempt error string, for failure diagnostics."""
@@ -387,6 +388,47 @@ class ReplyCapture:
             include_memory=include_memory,
         )
 
+    async def tool_results(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+        include_memory: bool = False,
+    ) -> ToolResults:
+        """Read this room's tool results (call after the turn settles). Same
+        read contract as ``tool_calls`` (including the memory-tool exclusion
+        default)."""
+        return await ToolResults.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+            include_memory=include_memory,
+        )
+
+    async def task_calls(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> TaskToolCalls:
+        """Read this room's task-board tool calls (call after the turn settles).
+
+        Same read contract as ``tool_calls``, restricted to the task-board tools
+        (``TaskTool``). Not to be confused with ``tasks()``, which reads ``task``
+        *events* (``band_send_event``) -- an unrelated, pre-existing mechanism.
+        """
+        return await TaskToolCalls.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
     async def usage(
         self,
         *,
@@ -439,7 +481,7 @@ class ReplyCapture:
         The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
         filters narrow the store read. ``limit`` caps both layers (call events and
         stored records). Needs ``user_ops`` and ``settings`` (both bound by the
-        ``reply_capture`` fixture); the agent must run with ``Emit.EXECUTION`` for
+        ``reply_capture`` fixture); the agent must run with ``Emit.TOOL_CALLS`` for
         the call layer to be populated.
         """
         user_ops = self._require_user_ops()

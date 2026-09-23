@@ -108,3 +108,16 @@ class CursorACPClientProfile:
                 ]
 
         return []
+
+
+CURSOR_PROFILE_NAME = "cursor"
+
+
+def resolve_acp_client_profile(profile_name: str) -> ACPClientProfile | None:
+    """Map a configured profile name to a runtime-specific ACP client profile."""
+    normalized = profile_name.strip().lower()
+    if not normalized:
+        return None
+    if normalized == CURSOR_PROFILE_NAME:
+        return CursorACPClientProfile()
+    return None

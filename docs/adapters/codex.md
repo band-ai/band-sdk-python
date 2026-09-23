@@ -1,6 +1,6 @@
 # Codex Adapter
 
-[OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Band Codex adapter connects a Codex process to Band rooms over stdio or WebSocket so it can take part in conversations as a coding collaborator.
+[OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Band Codex adapter connects one room-owned Codex process to each Band room over stdio.
 
 Use this adapter when you want an OpenAI-powered coding agent with configurable sandboxing, approval commands, command/file-change telemetry, reasoning visibility, and task lifecycle events. Use the [Claude SDK adapter](claude_sdk.md) for Claude Code based coding agents, the [Anthropic adapter](anthropic.md) for direct Claude API chat/tool agents, or the [LangGraph adapter](langgraph.md) for custom graph workflows.
 
@@ -26,47 +26,31 @@ You need two credentials or auth contexts:
 - A Band platform API key for `Agent.create(api_key=...)`.
 - Codex authentication for the Codex process. Use `codex login`, or set `OPENAI_API_KEY` if that is how your Codex environment is configured.
 
-For `transport="ws"`, start the Codex app server separately:
-
-```bash
-codex app-server --listen ws://127.0.0.1:8765
-```
-
 Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
 
 ## Quick Start
 
 ```python
-import asyncio
-import os
-
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(
-        cwd=os.getcwd(),
-        model="gpt-5.5",
-    ),
+    config=CodexAdapterConfig(model="gpt-5.5"),
 )
-
 agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-uuid",
     api_key="your-band-api-key",
-    ws_url="wss://app.band.ai/api/v1/socket/websocket",
-    rest_url="https://app.band.ai",
 )
-
-asyncio.run(agent.run())
+assert adapter.config.model == "gpt-5.5"
 ```
 
 ## Where Parameters Go
 
 Codex has three setup layers:
 
-- `CodexAdapterConfig(...)` configures the Codex runtime: transport, model, working directory, sandbox, approval behavior, prompts, context injection, and streaming/telemetry detail.
-- `CodexAdapter(...)` wraps that runtime config for Band and adds adapter-level settings: feature flags, custom tools, history conversion, and advanced client injection.
+- `CodexAdapterConfig(...)` configures the Codex runtime: a room workspace resolver, model, sandbox, approval behavior, prompts, context injection, and streaming/telemetry detail.
+- `CodexAdapter(...)` wraps that runtime config for Band and adds adapter-level settings: feature flags, custom tools, and history conversion.
 - `Agent.create(...)` connects the configured adapter to Band. Use it for the Band agent identity, Band API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
 
 Codex authentication is handled by `codex login`, `OPENAI_API_KEY`, or the Codex process environment. `Agent.create(api_key=...)` is only the Band platform key.
@@ -97,15 +81,18 @@ The adapter handles Codex approval requests in the room, persists thread metadat
 This section covers Codex adapter parameters, not `Agent.create(...)` parameters. `CodexAdapter(...)` has two layers:
 
 - Put runtime settings in `CodexAdapterConfig(...)`.
-- Pass adapter-level settings such as `features=` and `additional_tools=` directly to `CodexAdapter(...)`.
+- Pass adapter-level settings such as `emit=`, `capabilities=`, and `additional_tools=` directly to `CodexAdapter(...)`.
 
 ```python
-from band import AdapterFeatures, Emit
+from band.core.types import Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(cwd="/repo", sandbox="workspace-write"),
-    features=AdapterFeatures(emit={Emit.EXECUTION, Emit.TASK_EVENTS}),
+    config=CodexAdapterConfig(
+        workspace_for_room=lambda room_id: f"/workspaces/{room_id}",
+        sandbox="workspace-write",
+    ),
+    emit=Emit.TOOL_CALLS | Emit.TASK_EVENTS,
 )
 ```
 
@@ -115,12 +102,11 @@ Pass these to `CodexAdapterConfig(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `transport` | `"stdio" \| "ws"` | `"stdio"` | How the adapter connects to Codex. Use `"stdio"` to spawn a process, or `"ws"` to connect to `codex app-server`. |
+| `workspace_for_room` | `Callable[[str], str] | None` | `None` | Optional override for a room workspace. By default, the adapter creates `./.band-workspaces/<room-id>`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
 | `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
-| `cwd` | `str \| None` | `None` | Working directory for Codex sessions. |
 | `turn_timeout_s` | `float` | `180.0` | Maximum seconds to wait for one Codex turn. |
 
 ### Safety, Sandbox, and Approvals
@@ -170,7 +156,6 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `codex_command` | `tuple[str, ...] \| None` | `None` | Custom command used to launch Codex for stdio transport. |
 | `codex_env` | `dict[str, str] \| None` | `None` | Extra environment variables for the Codex process. |
-| `codex_ws_url` | `str` | `"ws://127.0.0.1:8765"` | WebSocket URL for `transport="ws"`. |
 | `experimental_api` | `bool` | `True` | Use experimental Codex API features. |
 | `enable_self_config_tools` | `bool` | `False` | Expose tools that let Codex change its own model and reasoning settings. Use only in trusted rooms. |
 | `additional_dynamic_tools` | `list[dict]` | `[]` | Extra dynamic tool schemas registered with the Codex client. |
@@ -183,50 +168,52 @@ Pass these directly to `CodexAdapter(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `emit` | `Emit \| Iterable[Emit] \| None` | everything supported | Telemetry events the adapter sends back to Band. Opt-out: omitted, defaults to everything `SUPPORTED_EMIT` declares; pass `emit=()` for silence, or narrow with `\|`. |
+| `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
 | `history_converter` | `CodexHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default history/thread-metadata converter. |
-| `client_factory` | callable | `None` | Test/advanced injection point for a custom Codex client. |
 
-## AdapterFeatures: Capabilities and Emit
+## Feature flags: Capabilities and Emit
 
-`AdapterFeatures` is passed to `CodexAdapter(...)`, not to `CodexAdapterConfig(...)`. It has two jobs:
+`emit=`/`capabilities=` are passed directly to `CodexAdapter(...)`, never wrapped in an `AdapterFeatures(...)` object, and are independent of `CodexAdapterConfig(...)`'s own runtime settings:
 
-- `capabilities` exposes optional Band tool categories to the model.
-- `emit` controls telemetry events the adapter sends back to Band.
+- `capabilities` exposes optional Band tool categories to the model. **Opt-in** — omitted, it defaults to empty.
+- `emit` controls telemetry events the adapter sends back to Band. **Opt-out** — omitted, it defaults to everything this adapter supports, including `Emit.TASK_EVENTS`.
 
-If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` because task events are used for lifecycle data and thread resume metadata. Optional capabilities are still off by default. If you pass `features=...`, your value is authoritative; include `Emit.TASK_EVENTS` if you want thread resume across reconnects.
+Requesting a value this adapter doesn't support raises `BandConfigError` immediately at construction.
+
+`Emit.TASK_EVENTS` is load-bearing, not just narration: it persists the session/thread-resume mapping in task-event metadata. Narrowing `emit` to exclude it also stops thread resumption across restarts.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Codex. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
-| `Emit.EXECUTION` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
+| `Capability.TASKS` | Yes | Exposes the room task-board tools (list/create/get/update tasks, task history, get/set the room goal). |
+| `Emit.TOOL_CALLS` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
 | `Emit.THOUGHTS` | Yes | Sends completed reasoning, plan, and review-mode events as `thought` events. |
 | `Emit.TASK_EVENTS` | Yes | Sends lifecycle, thread-resume, approval, diff-summary, token-usage, and error task events. Required for persisted Codex thread mapping. |
+| `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 
 Example:
 
 ```python
-from band import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(model="gpt-5.5"),
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-        emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
+    emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
 )
 ```
 
 ## Telemetry Options
 
-Use `AdapterFeatures.emit` for the broad telemetry categories:
+Use `emit=` for the broad telemetry categories:
 
 | Emit | Best for | Event output |
 |------|----------|--------------|
-| `Emit.EXECUTION` | Auditing commands, tools, and file activity. | `tool_call` and `tool_result` pairs. |
+| `Emit.TOOL_CALLS` | Auditing commands, tools, and file activity. | `tool_call` and `tool_result` pairs. |
 | `Emit.THOUGHTS` | Debugging reasoning and planning UX. | Completed `thought` events. |
 | `Emit.TASK_EVENTS` | Lifecycle, resume, approvals, and usage tracking. | Task events with metadata. |
 
@@ -242,12 +229,10 @@ These `CodexAdapterConfig(...)` flags add more telemetry detail:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `enable_task_events` | `bool` | `True` | When `features` is omitted, include `Emit.TASK_EVENTS` by default. Ignored when you pass explicit `features=` to `CodexAdapter(...)`. |
 | `emit_turn_task_markers` | `bool` | `False` | Emit simple "Codex turn" task markers on turn completion. |
 | `emit_turn_lifecycle_events` | `bool` | `False` | Emit enriched turn lifecycle events at turn start and completion. |
 | `emit_diff_events` | `bool` | `False` | Include file diffs in event metadata, capped at 64 KB. |
 | `emit_token_usage_events` | `bool` | `False` | Track and emit token usage per session. |
-| `structured_errors` | `bool` | `True` | Emit structured error events instead of plain text errors. |
 
 Enabling both `emit_turn_task_markers` and `emit_turn_lifecycle_events` produces two task events per completed turn. Pick one; lifecycle events contain richer metadata.
 

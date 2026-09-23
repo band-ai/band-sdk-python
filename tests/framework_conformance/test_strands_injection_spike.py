@@ -57,7 +57,7 @@ FRAMEWORK FACTS (verified against strands-agents 1.50.1)
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import cast
 
 import pytest
@@ -65,14 +65,18 @@ from pydantic import BaseModel
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
-from band.adapters.strands import StrandsAdapter  # noqa: E402
-from band.core.protocols import AgentToolsProtocol  # noqa: E402
-from band.core.types import AdapterFeatures, Emit, PlatformMessage  # noqa: E402
-from band.testing import (  # noqa: E402
+from band.adapters.strands import StrandsAdapter
+from band.core.protocols import (
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
+from band.core.types import Emit, PlatformMessage
+from band.testing import (
     FakeAgentTools,
     ScriptedStrandsModel,
     TextTurn,
     ToolTurn,
+    reported_failures,
 )
 
 _SEND_CONTENT = "Injected reply: PINEAPPLE"
@@ -92,7 +96,7 @@ def _make_msg(room_id: str) -> PlatformMessage:
         sender_name="Tester",
         message_type="text",
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -171,12 +175,12 @@ async def test_custom_tool_decision_dispatches_to_handler() -> None:
 
 @pytest.mark.asyncio
 async def test_l6_execution_events_ordered_paired_and_correlated() -> None:
-    """Emit.EXECUTION produces tool_call before tool_result, correlated by id (L6)."""
+    """Emit.TOOL_CALLS produces tool_call before tool_result, correlated by id (L6)."""
     room_id = "strands-spike-l6"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
         model=ScriptedStrandsModel([_SEND_TURN]),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
     await _run(adapter, tools, room_id)
 
@@ -205,13 +209,17 @@ async def test_negative_control_text_only_sends_no_message() -> None:
     adapter = StrandsAdapter(
         model=ScriptedStrandsModel([TextTurn("just a reply, no tools")])
     )
-    await _run(adapter, tools, room_id)
+    with pytest.raises(TurnResultAlreadyReported):
+        await _run(adapter, tools, room_id)
 
     assert tools.messages_sent == [], (
         f"expected no send for a text-only decision, got: {tools.messages_sent}"
     )
     assert tools.tool_calls == []
     # The plain-text answer was silently dropped — the adapter must surface it.
-    errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-    assert len(errors) == 1, f"expected one error event, got: {tools.events_sent}"
-    assert "band_send_message" in errors[0]["content"]
+    failures = reported_failures(tools)
+    assert len(failures) == 1, (
+        f"expected one reported failure, got: {tools.events_sent}"
+    )
+    assert failures[0]["provider"] == "strands"
+    assert "band_send_message" in failures[0]["message"]

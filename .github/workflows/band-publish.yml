@@ -42,8 +42,12 @@ permissions:
 
 jobs:
   build:
-    # Guard the event path: never auto-publish a prerelease to PyPI.
-    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    # Guard the event path: never auto-publish a prerelease, and never run
+    # (not even to fail) on a release event for another component's tag —
+    # band-mcp-publish.yml owns band-mcp-v* releases. workflow_dispatch is
+    # unfiltered here since its explicit `tag` input already gets the same
+    # band-sdk-v* validation below.
+    if: github.event_name == 'workflow_dispatch' || (github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'band-sdk-v'))
     runs-on: ubuntu-latest
     env:
       TAG: ${{ inputs.tag || github.event.release.tag_name }}
@@ -70,7 +74,7 @@ jobs:
           fi
 
       - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Build band-sdk package
         run: uv build
@@ -98,7 +102,7 @@ jobs:
           path: dist/
 
       - name: Publish band-sdk to PyPI
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           # Idempotent recovery: a re-run after a partial upload must not
           # fail on the files that already made it to PyPI.

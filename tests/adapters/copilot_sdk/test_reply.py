@@ -5,6 +5,9 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.runtime.tools import CHAT_ID_FIELD_NAME, ToolCallOutcome
+from band.testing import reported_failures
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     FakeCopilotSession,
@@ -36,6 +39,21 @@ class TestReply:
         assert sent["mentions"] == [{"id": "user-1", "name": "Alice"}]
 
     @pytest.mark.asyncio
+    async def test_send_message_failure_is_not_reported_as_provider_failure(self):
+        """Copilot answered fine; the room POST is what failed. That must not
+        surface as a copilot_sdk AgentFailure -- deliver_reply's
+        DeliveryFailedError must be recognized and left unreported here."""
+        client = FakeCopilotClient(reply_content="Hi Alice!")
+        adapter = await make_started_adapter(client)
+        tools = ToolSchemaFakeTools()
+        tools.send_message_error = RuntimeError("platform rejected the message")
+
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await run_message(adapter, tools)
+
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_prompt_contains_room_context_and_message(self):
         client = FakeCopilotClient()
         adapter = await make_started_adapter(client)
@@ -44,7 +62,7 @@ class TestReply:
         await run_message(adapter, tools, content="What's up?")
 
         prompt = client.sessions[0].prompts[0]
-        assert "[room_id: room-1]" in prompt
+        assert f"[{CHAT_ID_FIELD_NAME}: room-1]" in prompt
         assert "[Alice]: What's up?" in prompt
 
     @pytest.mark.asyncio
@@ -76,8 +94,9 @@ class TestReply:
 
         session = client.sessions[0]
         assert session.aborted and session.disconnected
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert error_events and "boom" in error_events[0]["content"]
+        failures = reported_failures(tools)
+        assert failures and failures[0]["provider"] == "copilot_sdk"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_fallback_send_suppressed_when_band_send_message_fired(self):
@@ -113,7 +132,6 @@ class TestReply:
         """A failed band_send_message (ok=False, no exception) must NOT mark the turn
         replied — the final-text fallback must still fire, else the user gets a silent
         turn."""
-        from band.runtime.tools import ToolCallOutcome
 
         class SendFailsTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(self, tool_name, arguments):

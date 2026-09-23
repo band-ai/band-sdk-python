@@ -21,8 +21,6 @@ Example:
                 bot_token="xoxb-...",
             ),
         ],
-        rest_url="https://app.band.ai",
-        api_key="...",
     )
 
     agent = Agent.create(adapter=slack, agent_id="slack-bridge", api_key="...")
@@ -32,7 +30,23 @@ Example:
     await agent.run()
 """
 
-from band.integrations.slack.adapter import SlackAdapter
-from band.integrations.slack.types import SlackApp, SlackSessionState
+from __future__ import annotations
 
-__all__ = ["SlackAdapter", "SlackApp", "SlackSessionState"]
+from typing import TYPE_CHECKING
+
+from band.exports import lazy_exports
+
+if TYPE_CHECKING:
+    from band.integrations.slack.adapter import SlackAdapter as SlackAdapter
+    from band.integrations.slack.types import (
+        SlackApp as SlackApp,
+    )
+    from band.integrations.slack.types import (
+        SlackSessionState as SlackSessionState,
+    )
+
+__all__, __getattr__ = lazy_exports(
+    __name__,
+    adapter=["SlackAdapter"],
+    types=["SlackApp", "SlackSessionState"],
+)

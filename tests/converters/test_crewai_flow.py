@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -21,7 +21,6 @@ from band.converters.crewai_flow import (
     CrewAIFlowStateConverter,
     normalize_participant_key,
 )
-
 
 NS = "crewai_flow"
 
@@ -118,7 +117,7 @@ class TestEmptyAndUnrelated:
         events = [
             _ev(
                 id="e1",
-                inserted_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                inserted_at=datetime(2026, 1, 1, tzinfo=UTC),
                 payload=_base_payload(),
                 namespace="crewai_flow:other_agent",
             )
@@ -134,7 +133,7 @@ class TestEmptyAndUnrelated:
 
 class TestReservationAndDelegation:
     def test_reservation_then_pending_merge(self) -> None:
-        t1 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        t1 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
         t2 = t1 + timedelta(seconds=1)
         events = [
             _ev(
@@ -168,7 +167,7 @@ class TestReservationAndDelegation:
         assert run.delegations[0].status == CrewAIFlowDelegationStatus.PENDING
 
     def test_message_id_breaks_inserted_at_ties(self) -> None:
-        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, tzinfo=UTC)
         # Out-of-order insertion: REST returns e2 (later id) before e1.
         events = [
             _ev(
@@ -210,7 +209,7 @@ class TestTerminalAbsorption:
     def test_terminal_states_absorb_later_events(
         self, terminal: CrewAIFlowRunStatus
     ) -> None:
-        t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = datetime(2026, 1, 1, tzinfo=UTC)
         t2 = t1 + timedelta(seconds=1)
         events = [
             _ev(
@@ -233,7 +232,7 @@ class TestTerminalAbsorption:
     def test_terminal_short_circuit_perf(self) -> None:
         # 1,000-event log with 100 terminal runs converts under reasonable time.
         events = []
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         for i in range(100):
             run_id = f"run-{i}"
             events.append(
@@ -277,7 +276,7 @@ class TestMalformedMetadata:
             {
                 "id": "e1",
                 "message_type": "task",
-                "inserted_at": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                "inserted_at": datetime(2026, 1, 1, tzinfo=UTC).isoformat(),
                 "metadata": {
                     NS: {
                         "schema_version": 1,
@@ -298,7 +297,7 @@ class TestMalformedMetadata:
         assert run.error.code == "malformed_metadata"
 
     def test_malformed_payload_after_terminal_run_is_ignored(self) -> None:
-        t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = datetime(2026, 1, 1, tzinfo=UTC)
         t2 = t1 + timedelta(seconds=1)
         events = [
             _ev(
@@ -339,7 +338,7 @@ class TestMalformedMetadata:
 
 class TestBufferedAndChains:
     def test_buffered_syntheses_merge_by_source_id(self) -> None:
-        t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = datetime(2026, 1, 1, tzinfo=UTC)
         t2 = t1 + timedelta(seconds=1)
         events = [
             _ev(
@@ -374,7 +373,7 @@ class TestBufferedAndChains:
         assert [b.source_message_id for b in run.buffered_syntheses] == ["m1", "m2"]
 
     def test_side_effects_merge_by_key(self) -> None:
-        t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = datetime(2026, 1, 1, tzinfo=UTC)
         t2 = t1 + timedelta(seconds=1)
         events = [
             _ev(
@@ -409,7 +408,7 @@ class TestBufferedAndChains:
         assert state.runs["msg-1"].side_effects[0].message_id == "msg-subcrew"
 
     def test_side_effects_merge_preserves_confirmed_fields_on_ties(self) -> None:
-        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, tzinfo=UTC)
         events = [
             _ev(
                 id="e2",
@@ -450,7 +449,7 @@ class TestBufferedAndChains:
 
 class TestMaxRunAge:
     def test_run_aged_out(self) -> None:
-        old = datetime.now(timezone.utc) - timedelta(days=30)
+        old = datetime.now(UTC) - timedelta(days=30)
         events = [
             _ev(
                 id="e1",
@@ -469,7 +468,7 @@ class TestMaxRunAge:
         assert run.error.code == "run_aged_out"
 
     def test_terminal_run_not_aged_out(self) -> None:
-        old = datetime.now(timezone.utc) - timedelta(days=30)
+        old = datetime.now(UTC) - timedelta(days=30)
         events = [
             _ev(
                 id="e1",
@@ -491,7 +490,7 @@ class TestMaxRunAge:
 
 class TestRestart:
     def test_restart_from_raw_events(self) -> None:
-        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, tzinfo=UTC)
         events = [
             _ev(
                 id="e1",

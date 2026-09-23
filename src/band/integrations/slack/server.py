@@ -26,7 +26,7 @@ from starlette.routing import Route, Router
 # starlette-free module so Socket Mode can share it.
 from band.integrations.slack.dedup import (
     DEFAULT_SEEN_EVENTS_CACHE_SIZE,
-    _SeenEvents,
+    SeenEvents,
 )
 from band.integrations.slack.signature import verify_signature
 
@@ -40,7 +40,7 @@ EventDispatcher = Callable[["SlackApp", dict], Awaitable[None]]
 
 __all__ = [
     "DEFAULT_SEEN_EVENTS_CACHE_SIZE",
-    "_SeenEvents",
+    "SeenEvents",
     "build_router",
 ]
 
@@ -49,7 +49,7 @@ def build_router(
     apps: list[SlackApp],
     *,
     dispatcher: EventDispatcher | None = None,
-    seen_events: _SeenEvents | None = None,
+    seen_events: SeenEvents | None = None,
 ) -> Router:
     """Construct a Starlette router serving all configured Slack apps.
 
@@ -59,7 +59,7 @@ def build_router(
         dispatcher: Optional async callback invoked with
             ``(app, payload)`` for non-``url_verification`` events.
         seen_events: Optional shared dedup cache for testing. Defaults
-            to a fresh ``_SeenEvents`` shared across all apps in the
+            to a fresh ``SeenEvents`` shared across all apps in the
             router.
 
     Returns:
@@ -71,7 +71,7 @@ def build_router(
     if not apps:
         raise ValueError("build_router requires at least one SlackApp")
 
-    seen_events = seen_events or _SeenEvents()
+    seen_events = seen_events or SeenEvents()
 
     seen_slugs: set[str] = set()
     routes: list[Route] = []
@@ -92,7 +92,7 @@ def build_router(
 def _build_handler(
     app: SlackApp,
     dispatcher: EventDispatcher | None,
-    seen_events: _SeenEvents,
+    seen_events: SeenEvents,
 ) -> Callable[[Request], Awaitable[Response]]:
     """Build a request handler bound to one ``SlackApp``."""
 

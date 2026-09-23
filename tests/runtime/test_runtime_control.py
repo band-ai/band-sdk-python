@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.client.streaming import AgentControlPayload
+from band.platform.event import ReconnectedEvent
+from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
+from band.runtime.types import PlatformMessage
 
 
 def _control(mode: str, scope: str = "agent", **kw) -> AgentControlPayload:
@@ -136,9 +139,6 @@ class TestStopSurvivesReconnect:
         Asserts the adapter is NOT invoked (covers both the no-persistence claim
         and the recovery-sweep guard), per architect's Step-4 should-fix.
         """
-        from band.platform.event import ReconnectedEvent
-        from band.runtime.execution import ExecutionContext
-
         link = MagicMock()
         link.agent_id = "agent-123"
         link.rest = MagicMock()
@@ -157,8 +157,6 @@ class TestStopSurvivesReconnect:
         # is platform-authoritative. The LOCAL risk is the recovery sweep, which
         # fetches 'processing' messages DIRECTLY (bypassing /next): the stop path
         # leaves the interrupted message there. The _stopped guard must skip it.
-        from band.runtime.types import PlatformMessage
-
         stuck = PlatformMessage(
             id="stuck",
             room_id="room-123",

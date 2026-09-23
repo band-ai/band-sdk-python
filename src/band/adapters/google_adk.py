@@ -13,24 +13,24 @@ import json
 import logging
 import re
 import uuid
-import warnings
-from typing import ClassVar, TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+from band_sdk_core import AgentFailure
 from pydantic import ValidationError
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
+from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -38,6 +38,12 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    BandTool,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
@@ -56,6 +62,32 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
     "_get_declaration",  # google-adk 1.x (current internal API)
     "get_declaration",  # likely public rename candidate
 )
+
+
+def _redacted_function_response_output(tool_name: str, response: Any) -> str:
+    """The text a tool_result event reports for one ADK function response.
+
+    ``run_async`` always ``json.dumps`` a non-str tool result before
+    returning it (ADK requires a plain string or dict return); ADK's own
+    ``__build_response_event`` then wraps a non-dict result as
+    ``{"result": <that json string>}`` since its spec requires a dict.
+    ``str()``ing that wrapper for ``band_read_room_file``'s image branch
+    would embed the full base64 payload, so unwrap and check it first.
+    """
+    if not response:
+        return ""
+    if tool_name == BandTool.READ_ROOM_FILE and isinstance(response, dict):
+        wrapped = response.get("result")
+        if isinstance(wrapped, str):
+            try:
+                parsed = json.loads(wrapped)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict) and is_image_passthrough_result(
+                tool_name, parsed
+            ):
+                return image_block_placeholder(len(parsed["content"]))
+    return str(response)
 
 
 def _sanitize_adk_agent_name(agent_name: str) -> str:
@@ -87,10 +119,18 @@ def _require_adk() -> tuple[type, type, type, Any]:
         ImportError: If google-adk is not installed.
     """
     try:
-        from google.adk import Agent as ADKAgent
-        from google.adk.runners import InMemoryRunner
-        from google.adk.tools import BaseTool
-        from google.genai import types
+        from google.adk import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            Agent as ADKAgent,
+        )
+        from google.adk.runners import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            InMemoryRunner,
+        )
+        from google.adk.tools import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            BaseTool,
+        )
+        from google.genai import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            types,
+        )
     except ImportError as exc:
         raise ImportError(
             "google-adk is required for GoogleADKAdapter. "
@@ -287,9 +327,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -297,46 +337,18 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         model: str = "gemini-2.5-flash",
         system_prompt: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: GoogleADKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         max_history_messages: int = _DEFAULT_MAX_HISTORY_MESSAGES,
         max_transcript_chars: int = _DEFAULT_MAX_TRANSCRIPT_CHARS,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         # Validate google-adk is installed early (cached, so cheap on repeat).
         _require_adk()
 
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or GoogleADKHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -387,8 +399,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         """Build ADK tool bridges from Band tool schemas."""
         ToolBridge = _get_tool_bridge_class()
         openai_schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
 
         adk_tools: list[Any] = []
@@ -472,14 +483,18 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # Safety: ensure history exists even if not first message
             self._room_history[room_id] = []
 
-        # A fresh runner is created per message because InMemoryRunner
-        # accumulates session history internally and tool schemas may change
-        # between calls.  History is injected as a text transcript instead.
-        runner = self._create_runner(tools)
         # Per-turn usage, summed across the event stream below. Initialized
         # outside the try so the finally can emit whatever accumulated.
         turn_usage = TurnUsage()
+        # None until the try's construction succeeds, so the finally's close()
+        # has nothing to do if runner construction itself is what failed.
+        runner: InMemoryRunner | None = None
         try:
+            # A fresh runner is created per message because InMemoryRunner
+            # accumulates session history internally and tool schemas may change
+            # between calls.  History is injected as a text transcript instead.
+            runner = self._create_runner(tools)
+
             # Always create a new session ID — each runner is fresh, so there
             # is no in-memory state to resume.  The ID is stored for cleanup
             # tracking.  The session must be pre-created in the runner's
@@ -561,10 +576,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     turn_usage = turn_usage + self._usage_from_event(event)
 
                 # Report tool calls/results if enabled
-                if Emit.EXECUTION in self.features.emit:
+                if Emit.TOOL_CALLS in self.features.emit:
                     try:
                         await self._report_event(event, tools)
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                         logger.warning("Failed to report event: %s", e)
 
                 if event.is_final_response():
@@ -574,9 +589,11 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         "Room %s: ADK agent completed with final response",
                         room_id,
                     )
-        except Exception as e:
+        except Exception:
             logger.exception("Error running ADK agent in room %s", room_id)
-            await self._report_error(tools, str(e))
+            await tools.send_failure(
+                AgentFailure("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
         finally:
             # Emit before close so a close() failure can't drop the usage, but
@@ -585,7 +602,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 # No-op unless Emit.USAGE is on; best-effort, never raises.
                 await self.emit_usage(tools, turn_usage)
             finally:
-                await runner.close()
+                if runner is not None:
+                    await runner.close()
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(
@@ -683,6 +701,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         if function_calls:
             for fc in function_calls:
                 try:
+                    tool_name = getattr(fc, "name", "unknown")
                     try:
                         args = dict(fc.args) if fc.args else {}
                     except (TypeError, ValueError):
@@ -690,38 +709,34 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                ToolEventKey.NAME: getattr(fc, "name", "unknown"),
-                                ToolEventKey.ARGS: args,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, args
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: getattr(fc, "id", ""),
                             }
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_call event: %s", e)
 
         function_responses = event.get_function_responses()
         if function_responses:
             for fr in function_responses:
                 try:
+                    tool_name = getattr(fr, "name", "unknown")
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                ToolEventKey.NAME: getattr(fr, "name", "unknown"),
-                                ToolEventKey.OUTPUT: str(fr.response)
-                                if getattr(fr, "response", None)
-                                else "",
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: _redacted_function_response_output(
+                                    tool_name, getattr(fr, "response", None)
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: getattr(fr, "id", ""),
                             }
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_result event: %s", e)
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
-            logger.warning("Failed to send error event: %s", e)

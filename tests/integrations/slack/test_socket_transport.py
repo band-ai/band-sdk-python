@@ -15,25 +15,25 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from types import SimpleNamespace
 
 import pytest
 
 from band.integrations.slack.adapter import SlackAdapter
-from band.integrations.slack.dedup import _SeenEvents
+from band.integrations.slack.dedup import SeenEvents
 from band.integrations.slack.socket import (
     SlackSocketListener,
+    _make_request_handler,
     start_socket_listeners,
 )
 from band.integrations.slack.types import SlackApp
-
+from band.testing.platform import platform_connection_stub
 from tests.integrations.slack.test_wrapping import (
-    _SlackReplyBrain,
     _make_rest_mock,
+    _SlackReplyBrain,
 )
-
 
 # ── Fixtures / helpers ──────────────────────────────────────────────────────
 
@@ -95,12 +95,11 @@ def _build_adapter_with_socket(
     adapter = SlackAdapter(
         inner=inner,
         apps=apps,
-        api_key="k",
         transport="socket",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
 
     socket_clients: dict[str, _FakeSocketModeClient] = {
         a.slug: _FakeSocketModeClient() for a in apps
@@ -143,7 +142,6 @@ def test_http_transport_requires_signing_secret():
         SlackAdapter(
             inner=_SlackReplyBrain(),
             apps=[bad],
-            api_key="k",
             rest_client=MagicMock(),
         )
 
@@ -154,7 +152,6 @@ def test_socket_transport_requires_app_token():
         SlackAdapter(
             inner=_SlackReplyBrain(),
             apps=[bad],
-            api_key="k",
             transport="socket",
             rest_client=MagicMock(),
         )
@@ -165,7 +162,6 @@ def test_socket_transport_accepts_apps_without_signing_secret():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
         apps=[_socket_app()],
-        api_key="k",
         transport="socket",
         rest_client=MagicMock(),
         web_client_factory=lambda a: AsyncMock(),
@@ -178,7 +174,6 @@ def test_unknown_transport_rejected():
         SlackAdapter(
             inner=_SlackReplyBrain(),
             apps=[_http_app()],
-            api_key="k",
             transport="banana",  # type: ignore[arg-type]
             rest_client=MagicMock(),
         )
@@ -188,7 +183,6 @@ def test_router_unavailable_in_socket_mode():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
         apps=[_socket_app()],
-        api_key="k",
         transport="socket",
         rest_client=MagicMock(),
         web_client_factory=lambda a: AsyncMock(),
@@ -219,7 +213,7 @@ async def test_start_socket_listeners_connects_one_per_app():
     )
 
     assert len(listeners) == 2
-    for slug, fake in fakes.items():
+    for fake in fakes.values():
         assert fake.connect.await_count == 1
         assert len(fake.socket_mode_request_listeners) == 1
     assert {listener.app.slug for listener in listeners} == {"dev", "prod"}
@@ -362,7 +356,6 @@ async def test_close_is_safe_when_no_listeners():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
         apps=[_http_app()],
-        api_key="k",
         rest_client=MagicMock(),
     )
     await adapter.close()  # Must not raise.
@@ -375,7 +368,7 @@ async def test_close_is_safe_when_no_listeners():
 async def test_events_api_envelope_routes_through_dispatch_event(monkeypatch):
     """A Socket Mode envelope reaches ``SlackAdapter._dispatch_event`` with
     the same ``(app, payload)`` shape the HTTP webhook produces."""
-    adapter, inner, socket_clients, web_mocks, _ = _build_adapter_with_socket()
+    adapter, inner, socket_clients, _web_mocks, _ = _build_adapter_with_socket()
     fake = next(iter(socket_clients.values()))
 
     async def fake_start_socket_listeners(
@@ -385,11 +378,10 @@ async def test_events_api_envelope_routes_through_dispatch_event(monkeypatch):
         for app in apps:
             client = socket_clients[app.slug]
             # Build the real per-app handler.
-            from band.integrations.slack.socket import _make_request_handler
 
             client.socket_mode_request_listeners.append(
                 _make_request_handler(
-                    app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+                    app=app, dispatcher=dispatcher, seen_events=SeenEvents()
                 )
             )
             await client.connect()
@@ -422,12 +414,11 @@ async def test_socket_listener_drops_bot_events(monkeypatch):
     async def fake_start_socket_listeners(
         *, apps, web_client_factory, dispatcher, client_factory=None
     ):
-        from band.integrations.slack.socket import _make_request_handler
 
         for app in apps:
             fake.socket_mode_request_listeners.append(
                 _make_request_handler(
-                    app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+                    app=app, dispatcher=dispatcher, seen_events=SeenEvents()
                 )
             )
             await fake.connect()
@@ -465,15 +456,12 @@ async def test_socket_listener_drops_duplicate_event_id():
     Socket Mode can replay events across reconnects; like the HTTP route,
     the listener dedups on ``event_id`` so the brain isn't invoked twice.
     """
-    from unittest.mock import AsyncMock
-
-    from band.integrations.slack.socket import _make_request_handler
 
     dispatcher = AsyncMock()
     client = SimpleNamespace(send_socket_mode_response=AsyncMock())
     app = SlackApp(slug="dev", bot_token="xoxb-x", app_token="xapp-x")
     handler = _make_request_handler(
-        app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+        app=app, dispatcher=dispatcher, seen_events=SeenEvents()
     )
 
     await handler(client, _events_api_request(envelope_id="e1", event_id="Ev123"))

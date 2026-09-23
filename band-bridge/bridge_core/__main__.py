@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import asyncio
 
+from .bridge import main
+
 
 def _main() -> None:
-    from .bridge import main
-
     asyncio.run(main())
 
 

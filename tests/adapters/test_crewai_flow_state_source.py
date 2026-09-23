@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -26,6 +26,9 @@ def _task_event(
     return {
         "id": id,
         "message_type": "task",
+        "sender_id": "agent-1",
+        "sender_type": "Agent",
+        "content": "task event",
         "inserted_at": inserted_at.isoformat(),
         "metadata": {namespace: payload or {"run_id": id}},
     }
@@ -39,13 +42,16 @@ def _task_event(
 class TestRestStateSourceFullFetch:
     @pytest.mark.asyncio
     async def test_filters_by_namespace_and_message_type(self) -> None:
-        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, tzinfo=UTC)
         tools = FakeAgentTools(
             room_context=[
                 _task_event(id="e1", inserted_at=t),
                 {
                     "id": "e2",
                     "message_type": "text",
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "not a task event",
                     "inserted_at": t.isoformat(),
                     "metadata": {NS: {"x": 1}},
                 },
@@ -68,7 +74,7 @@ class TestRestStateSourceFullFetch:
 
     @pytest.mark.asyncio
     async def test_paginates_until_short_page(self) -> None:
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         tools = FakeAgentTools(
             room_context=[
                 _task_event(id=f"e{i}", inserted_at=base + timedelta(seconds=i))
@@ -90,7 +96,7 @@ class TestRestStateSourceFullFetch:
 class TestRestStateSourceCache:
     @pytest.mark.asyncio
     async def test_cache_early_termination_on_second_turn(self) -> None:
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         tools = FakeAgentTools(
             room_context=[
                 _task_event(id=f"e{i}", inserted_at=base + timedelta(seconds=i))
@@ -124,7 +130,7 @@ class TestRestStateSourceCache:
 
     @pytest.mark.asyncio
     async def test_cache_refresh_scans_past_first_full_page(self) -> None:
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         tools = FakeAgentTools(
             room_context=[
                 _task_event(id=f"e{i}", inserted_at=base + timedelta(seconds=i))
@@ -156,7 +162,7 @@ class TestRestStateSourceCache:
 
     @pytest.mark.asyncio
     async def test_cache_refresh_keeps_same_timestamp_lower_id_event(self) -> None:
-        inserted_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        inserted_at = datetime(2026, 1, 1, tzinfo=UTC)
         tools = FakeAgentTools(
             room_context=[_task_event(id="z-reserve", inserted_at=inserted_at)]
         )
@@ -183,16 +189,22 @@ class TestRestStateSourceCache:
 
     @pytest.mark.asyncio
     async def test_cache_refresh_keeps_distinct_events_without_ids(self) -> None:
-        inserted_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        tools = FakeAgentTools(
-            room_context=[
-                {
-                    "message_type": "task",
-                    "inserted_at": inserted_at.isoformat(),
-                    "metadata": {NS: {"run_id": "run-1"}},
-                }
-            ]
-        )
+        """``_event_cache_key``'s id-less fallback guards against a room-context
+        item with neither ``id`` nor ``message_id`` -- a shape the real Fern
+        ``ChatMessage`` (and so ``FakeAgentTools``'s validated seed API) no
+        longer allows, since ``id`` is required there. Exercise the fallback
+        by writing straight to the fake's internal store, bypassing seed
+        validation on purpose, rather than fabricating an id that would
+        defeat the point of this test."""
+        inserted_at = datetime(2026, 1, 1, tzinfo=UTC)
+        tools = FakeAgentTools()
+        tools._room_context = [
+            {
+                "message_type": "task",
+                "inserted_at": inserted_at.isoformat(),
+                "metadata": {NS: {"run_id": "run-1"}},
+            }
+        ]
         source = RestCrewAIFlowStateSource(page_size=10)
         first = await source.load_task_events(
             room_id="room-1",
@@ -202,7 +214,7 @@ class TestRestStateSourceCache:
         )
         assert [e["metadata"][NS]["run_id"] for e in first] == ["run-1"]
 
-        tools.append_room_context(
+        tools._room_context.append(
             {
                 "message_type": "task",
                 "inserted_at": inserted_at.isoformat(),
@@ -227,7 +239,7 @@ class TestRestStateSourceCache:
 
     @pytest.mark.asyncio
     async def test_clear_room_invalidates_cached_high_water_mark(self) -> None:
-        t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = datetime(2026, 1, 1, tzinfo=UTC)
         t2 = t1 + timedelta(seconds=1)
         tools = FakeAgentTools(room_context=[_task_event(id="e2", inserted_at=t2)])
         source = RestCrewAIFlowStateSource(page_size=10)
@@ -278,7 +290,7 @@ class TestRestStateSourceNonBootstrapReplay:
 
     @pytest.mark.asyncio
     async def test_reconstructs_pending_state_with_empty_history(self) -> None:
-        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, tzinfo=UTC)
         tools = FakeAgentTools(
             room_context=[
                 _task_event(

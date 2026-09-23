@@ -4,47 +4,97 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any, ClassVar
 from uuid import uuid4
 
 from acp import spawn_agent_process
+from acp.exceptions import RequestError
 from acp.schema import HttpMcpServer, SseMcpServer
+from band_sdk_core import AgentFailure
+from typing_extensions import Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.protocols import AgentToolsProtocol
+from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+)
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    FeatureKwargs,
+    PlatformMessage,
+)
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
+    MCPTransportKind,
     PermissionHandler,
     allow_permission,
     cancel_permission,
     select_allow_option_id,
-    tcp_spawn_process,
 )
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
+from band.integrations.acp.room_emitter import RoomTurnEmitter
+from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPBackendKind,
     create_band_mcp_backend,
 )
-from band.integrations.acp.room_emitter import RoomTurnEmitter
-from band.runtime.custom_tools import CustomToolDef
+from band.integrations.mcp.local_server import LocalMCPServer
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
-from band.runtime.mcp_server import LocalMCPServer
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    BAND_MCP_SERVER_NAME,
+    CHAT_ID_FIELD_NAME,
+    ROOM_POSTING_TOOL_NAMES,
+    ToolDefinition,
+    canonicalize_mcp_tool_name,
+    iter_tool_definitions,
+)
+from band.workspaces import (
+    WorkspaceResolver,
+    claim_room_workspace,
+    release_room_workspace,
+    resolve_room_workspace,
+)
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER = "acp"
+
+
+class ACPTurnTimeoutError(TimeoutError):
+    """The adapter deadline expired before the ACP prompt completed."""
+
+
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+DEFAULT_BAND_MCP_BACKEND_KIND: BandMCPBackendKind = "http"
+
+# Prefixes the change-triggered roster/contacts updates injected into a
+# prompt, so the model reads them as platform state, not as the requester
+# speaking. Shared with tests as the single spelling of that convention.
+#
+# Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
+# (12+ adapters each hardcode their own copy); it has already drifted once
+# (parlant.py uses "[System Update]: " for the identical concept). Extracting
+# one real cross-adapter constant is out of scope here — it would touch every
+# other adapter's own file for no ACP-specific reason — but is worth a
+# follow-up so the convention has one source instead of N private copies.
+SYSTEM_UPDATE_PREFIX = "[System]: "
 
 # Marks where the replayed transcript ends and the live message begins, so
 # the boundary is mechanical rather than inferred (transcript lines and the
@@ -77,8 +127,8 @@ HISTORY_REPLAY_HEADER = (
 
 # The transport seam: a callable matching ACPRuntime's spawn_process contract —
 # ``(client, *command, env=..., transport_kwargs=...) -> async CM yielding (conn, _)``.
-# stdio and TCP are the built-in transports; injecting one (e.g. docker exec / ssh,
-# or a fake in tests) is the supported extension point.
+# The adapter validates the transport boundary, while ACPRuntime retains this seam
+# for lower-level runtime tests and direct runtime consumers.
 SpawnProcess = Callable[..., object]
 
 
@@ -97,6 +147,18 @@ def _resolve_launcher(command: list[str]) -> list[str]:
     return [resolved, *command[1:]] if resolved else list(command)
 
 
+def _to_agent_failure(exc: Exception) -> AgentFailure:
+    """Parse a turn-ending exception into the shared provider-failure shape.
+
+    ``RequestError`` is raised for a JSON-RPC error the remote agent
+    returned; its numeric ``code``/``data`` carry more than the generic
+    message alone.
+    """
+    if isinstance(exc, RequestError):
+        return AgentFailure(_PROVIDER, str(exc), str(exc.code), exc.data)
+    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+
+
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     """Adapter that forwards Band messages to a remote ACP agent.
 
@@ -107,20 +169,21 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
-    SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+    SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
+    )
 
     def __init__(
         self,
         command: str | list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        rest_url: str | None = None,
         inject_band_tools: bool = True,
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
-        features: AdapterFeatures | None = None,
         # Transport + advanced knobs are keyword-only: this preserves the original
         # positional order (command, env, cwd, …) for existing callers, and TCP /
         # custom-transport wiring reads clearly at the call site.
@@ -129,63 +192,135 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         port: int | None = None,
         custom_section: str = "",
         spawn_process: SpawnProcess | None = None,
+        turn_timeout_s: float = 300.0,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
-            features=features,
+            **features,
         )
-        self._host, self._port = self._resolve_transport(command, host, port)
-        # stdio spawns a subprocess from ``command``; TCP dials an already-running
-        # ACP server at host/port and passes an empty command to the runtime.
-        self._command: list[str]
-        if self._host is not None:
-            self._command = []
-        else:
-            # _resolve_transport guarantees command is set when host is None.
-            assert command is not None
-            self._command = [command] if isinstance(command, str) else list(command)
+        if cwd is not None:
+            raise ValueError(
+                "cwd is not supported; use workspace_for_room or the default"
+            )
+        if host is not None or port is not None:
+            raise ValueError(
+                "TCP ACP transport cannot guarantee room process isolation"
+            )
+        if spawn_process is not None:
+            raise ValueError(
+                "custom ACP transports cannot guarantee room process isolation"
+            )
+        if not command:
+            raise ValueError("ACP stdio transport requires a command")
+        self._command = [command] if isinstance(command, str) else list(command)
         self._env = env
-        self._cwd = os.path.abspath(cwd or ".")
+        self._workspace_for_room = workspace_for_room
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._rest_url = rest_url or "https://app.band.ai"
-        self._validate_rest_url(self._rest_url)
+        self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
         self._custom_section = custom_section
-
-        # Transport: an explicit spawn_process wins (advanced/custom transports and
-        # tests); otherwise default to acp's subprocess spawner (stdio) or a
-        # connect-only seam closed over host/port (TCP; see tcp_spawn_process).
-        if spawn_process is not None:
-            transport: SpawnProcess = spawn_process
-        elif self._host is not None and self._port is not None:
-            transport = tcp_spawn_process(self._host, self._port)
-        else:
-            transport = spawn_agent_process
-
-        self._runtime = ACPRuntime(
-            command=_resolve_launcher(self._command),
-            env=self._env,
-            auth_method=self._auth_method,
-            client_factory=lambda: BandACPClient(profile=self._profile),
-            spawn_process=transport,
-        )
+        self._runtimes: dict[str, ACPRuntime] = {}
+        self._room_workspaces: dict[str, str] = {}
+        self._workspace_rooms: dict[str, str] = {}
+        self._turn_timeout_s = turn_timeout_s
 
         self._room_to_session: dict[str, str] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._band_mcp_backend: BandMCPBackend | None = None
-        self._band_mcp_server: LocalMCPServer | None = None
         self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
+        # Guards the shared MCP backend singleton on its own lock: one creation
+        # path already runs under _session_lock and another outside it, and
+        # asyncio.Lock is not re-entrant, so the backend cannot reuse it.
+        self._mcp_backend_lock = asyncio.Lock()
+        # Set under _mcp_backend_lock by cleanup_all. Without it, a turn parked
+        # on _mcp_backend_lock while cleanup_all tears down would wake to find
+        # _band_mcp_backend None and start a fresh one that outlives shutdown
+        # and is never stopped -- a real leaked server, not just a failed turn.
+        self._stopped = False
+
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Rebuild the lazy MCP registration after capability negotiation."""
+        super().apply_effective_features(features)
+        self._tool_definitions, self._own_tool_names = self._registered_tools()
+
+    def _registered_tools(self) -> tuple[list[ToolDefinition], frozenset[str]]:
+        """The tools this adapter registers on the loopback MCP server.
+
+        Band platform tools plus custom tools, computed once at construction
+        so MCP registration and tool-name canonicalization share one
+        vocabulary.
+        """
+        definitions = list(
+            iter_tool_definitions(
+                # Memory is an opt-in enterprise capability; contacts are not
+                # gated on Capability.CONTACTS despite the same flag shape —
+                # every existing caller (the ACP examples) builds this adapter
+                # with no features= and expects contacts to just work, so
+                # gating them would silently drop band_list_contacts et al.
+                # with no warning (SUPPORTED_CAPABILITIES already covers
+                # CONTACTS, so the base class's unsupported-capability warning
+                # never fires either way).
+                capabilities=self.features.capabilities | {Capability.CONTACTS},
+            )
+        )
+        # Resembles OpenCodeAdapter's equivalent vocabulary block but isn't
+        # extracted into a shared helper: the two sets serve different
+        # consumers (opencode's gates auto-approve/permission matching; this
+        # one gates narration canonicalization and includes the legacy alias
+        # below) and no longer share the same gating rule either.
+        names = frozenset(
+            {definition.name for definition in definitions}
+            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
+            # The legacy band-mcp <=1.3.1 message-send spelling (band_send_message
+            # is already covered via iter_tool_definitions). Without it, an
+            # external band-mcp's MCP-prefixed legacy call
+            # (band-create_agent_chat_message) would canonicalize to nothing and
+            # narrate under the raw prefixed name — the one case reply-suppression
+            # (is_room_posting_tool, same source set) already tolerates.
+            | ROOM_POSTING_TOOL_NAMES
+        )
+        return definitions, names
+
+    def _build_runtime(self, workspace: str | None = None) -> ACPRuntime:
+        return ACPRuntime(
+            command=_resolve_launcher(self._command),
+            env=self._env,
+            cwd=workspace,
+            auth_method=self._auth_method,
+            client_factory=lambda: BandACPClient(
+                profile=self._profile,
+                canonicalize_tool_name=self._canonical_tool_name,
+            ),
+            spawn_process=spawn_agent_process,
+        )
+
+    def _workspace(self, room_id: str) -> str:
+        return resolve_room_workspace(room_id, self._workspace_for_room)
+
+    async def _runtime_for(self, room_id: str) -> ACPRuntime:
+        async with self._session_lock:
+            runtime = self._runtimes.get(room_id)
+            if runtime is None:
+                workspace = self._workspace(room_id)
+                claim_room_workspace(room_id, workspace, self._workspace_rooms)
+                runtime = self._build_runtime(workspace)
+                self._runtimes[room_id] = runtime
+                self._room_workspaces[room_id] = workspace
+            return runtime
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
-        await self._spawn_process()
-
-    async def _spawn_process(self) -> None:
-        await self._runtime.start(respawn=False)
+        # The other end of cleanup_all(final=True)'s _stopped: Agent.start()
+        # reuses this instance across a restart or a retry after a failed
+        # start, and the ACP connection below self-heals unconditionally, so
+        # the backend must be startable again too.
+        async with self._mcp_backend_lock:
+            self._stopped = False
 
     async def on_message(
         self,
@@ -198,8 +333,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        del participants_msg, contacts_msg
-        await self._ensure_connection()
+        runtime = await self._runtime_for(room_id)
+        await self._ensure_connection(runtime)
 
         if self._inject_band_tools:
             async with self._session_lock:
@@ -209,7 +344,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await self._load_persisted_session(room_id, history)
 
         session_id, created = await self._get_or_create_session(room_id)
-        self._runtime.reset_session(session_id)
+        runtime.reset_session(session_id)
 
         # A just-created session holds no remote context (a restored one does),
         # so seed it with the Band room's transcript. On bootstrap the converter
@@ -223,8 +358,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 else await self._fetch_replay(tools, msg)
             )
 
-        prompt_text = await self._build_prompt_text(
-            room_id, session_id, msg, replay=replay
+        prompt_text = self._build_prompt_text(
+            room_id=room_id,
+            session_id=session_id,
+            msg=msg,
+            replay=replay,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
         )
         sender_name = msg.sender_name or msg.sender_id or "Unknown"
         mentions = [{"id": msg.sender_id, "name": sender_name}]
@@ -242,23 +382,70 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id=session_id,
                 room_id=room_id,
             ) as emitter:
-                self._runtime.set_permission_handler(
+                runtime.set_permission_handler(
                     session_id,
                     self._make_permission_handler(emitter, room_id),
                 )
-                await self._runtime.prompt(
-                    session_id=session_id,
-                    prompt_text=prompt_text,
-                    on_chunk=emitter.emit,
+                prompt_task = asyncio.create_task(
+                    runtime.prompt(
+                        session_id=session_id,
+                        prompt_text=prompt_text,
+                        on_chunk=emitter.emit,
+                    )
                 )
+                done, _ = await asyncio.wait(
+                    {prompt_task}, timeout=self._turn_timeout_s
+                )
+                if not done:
+                    prompt_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await prompt_task
+                    await self._handle_turn_timeout(
+                        runtime, room_id=room_id, session_id=session_id, tools=tools
+                    )
+                    raise ACPTurnTimeoutError(
+                        f"ACP turn timed out after {self._turn_timeout_s}s"
+                    ) from None
+                await prompt_task
+        except DeliveryFailedError as e:
+            # The turn's reply is what failed to post -- Band-side delivery,
+            # never an ACP provider failure, so the connection stays up.
+            reraise_delivery_cause(e)
+        except ACPTurnTimeoutError:
+            raise
         except Exception as e:
-            logger.exception("ACP agent error: %s", e)
-            await self.stop()
-            await tools.send_event(
-                content=f"ACP agent error: {e}",
-                message_type="error",
-                metadata={"acp_error": str(e)},
+            logger.exception("ACP agent error")
+            await self.on_cleanup(room_id)
+            await tools.send_failure(_to_agent_failure(e))
+            raise
+
+    async def _handle_turn_timeout(
+        self,
+        runtime: ACPRuntime,
+        *,
+        room_id: str,
+        session_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Cancel and report a prompt that exceeded the adapter timeout."""
+        logger.error(
+            "ACP turn timed out after %ss (room=%s, session=%s)",
+            self._turn_timeout_s,
+            room_id,
+            session_id,
+        )
+        try:
+            await runtime.cancel_turn(session_id)
+        except Exception:
+            logger.exception("ACP turn cancellation failed (room=%s)", room_id)
+        await self.on_cleanup(room_id)
+        await tools.send_failure(
+            AgentFailure(
+                _PROVIDER,
+                f"ACP agent response timed out after {self._turn_timeout_s}s",
+                FAILURE_CODE_TIMEOUT,
             )
+        )
 
     def _make_permission_handler(
         self,
@@ -272,12 +459,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             **kwargs: object,
         ) -> dict[str, object]:
             del kwargs
-            tool_name = getattr(tool_call, "title", None) or getattr(
-                tool_call,
-                "name",
-                "unknown",
+            call = ACPToolCall.from_acp(
+                tool_call, canonicalize=self._canonical_tool_name
             )
-            tool_call_id = getattr(tool_call, "tool_call_id", "")
 
             # Auto-approve by selecting one of the agent's offered allow options;
             # an ACP grant must reference an offered optionId (not a bare
@@ -286,7 +470,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
             logger.info(
                 "Permission request: tool=%s, session=%s, room=%s, option=%s",
-                tool_name,
+                call.name,
                 session_id,
                 room_id,
                 option_id,
@@ -301,8 +485,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # the tool then executes, its own real tool_call/tool_result narrate
             # it like any other tool (no pair needed).
             await emitter.open_permission(
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
+                call=call,
                 session_id=session_id,
                 outcome="cancelled",
             )
@@ -310,41 +493,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         return handler
 
-    @staticmethod
-    def _resolve_transport(
-        command: str | list[str] | None,
-        host: str | None,
-        port: int | None,
-    ) -> tuple[str | None, int | None]:
-        """Validate exactly one transport is configured; return (host, port) for TCP.
-
-        stdio spawns a subprocess from ``command``; TCP connects to an
-        already-running ACP server at ``host``/``port``. The two are mutually
-        exclusive and one is required.
-        """
-        # An empty command ("" or []) is not a usable stdio transport — treat it as
-        # absent so it fails the "one is required" check below with a clear error,
-        # rather than slipping through to crash at spawn time.
-        has_command = bool(command)
-        has_tcp = host is not None or port is not None
-        if has_command and has_tcp:
-            raise ValueError(
-                "Provide either command (stdio) or host+port (TCP), not both"
-            )
-        if not has_command and not has_tcp:
-            raise ValueError("Provide either command (stdio) or host+port (TCP)")
-        if has_tcp and (host is None or port is None):
-            raise ValueError("TCP transport requires both host and port")
-        return (host, port) if has_tcp else (None, None)
-
-    @staticmethod
-    def _validate_rest_url(rest_url: str) -> None:
-        if not rest_url.startswith(("http://", "https://")):
-            raise ValueError("rest_url must be a valid HTTP(S) URL")
-
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
-        from band.runtime.prompts import render_system_prompt
-
         agent_name = self.agent_name or "Agent"
         agent_desc = self.agent_description or "An AI assistant"
         requester_name = msg.sender_name or msg.sender_id or "Unknown"
@@ -367,52 +516,96 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             f"room on your behalf. Never both — reply exactly once, and do "
             f"not narrate the tool calls you are about to make.\n"
             f"\n"
-            f"Current room_id: {room_id}\n"
+            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             f"\n"
             f"Use each MCP tool's schema for its argument names. When a tool needs "
-            f"the current room, use the Current room_id value above.\n"
+            f"the current room, use the Current {CHAT_ID_FIELD_NAME} value above.\n"
         )
 
         return f"[System Context]\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
-        self,
-        local_server: LocalMCPServer,
+        self, local_server: LocalMCPServer, transport: MCPTransportKind
     ) -> LocalMcpServerConfig:
-        if self._runtime._agent_mcp_transport == "sse":
+        if transport == "sse":
             return SseMcpServer(
                 type="sse",
-                name="band",
+                name=BAND_MCP_SERVER_NAME,
                 url=local_server.sse_url,
                 headers=[],
             )
 
         return HttpMcpServer(
             type="http",
-            name="band",
+            name=BAND_MCP_SERVER_NAME,
             url=local_server.http_url,
             headers=[],
         )
 
-    async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
-        backend = self._band_mcp_backend
-        if backend is None:
-            backend = await create_band_mcp_backend(
-                kind=self._runtime._agent_mcp_transport,
-                tool_definitions=list(iter_tool_definitions(include_memory=False)),
-                get_tools=self._room_tools.get,
-                additional_tools=self._custom_tools,
-            )
-            self._band_mcp_backend = backend
-            self._band_mcp_server = backend.local_server
+    def _canonical_tool_name(self, name: str) -> str:
+        """Strip an MCP server prefix off one of our own tools.
 
+        Mirrors the opencode adapter: only a name that reveals a tool this
+        adapter registered is rewritten; anything else passes through.
+        """
+        return canonicalize_mcp_tool_name(name, self._own_tool_names)
+
+    async def _ensure_band_mcp_backend(self) -> BandMCPBackend:
+        """The shared backend singleton (one ``LocalMCPServer`` per adapter),
+        starting it on first use.
+
+        Always through the lock, no unlocked fast-path read: a fast path
+        reading ``self._band_mcp_backend`` before acquiring the lock could
+        observe it non-``None`` while ``cleanup_all`` is mid-teardown (already
+        nulled it out but still awaiting ``backend.stop()`` under the same
+        lock). An uncontended ``asyncio.Lock.acquire()`` doesn't suspend, so
+        the lock costs nothing on the hot path it guards.
+
+        Raises once ``cleanup_all`` has run: a turn that was parked on this
+        lock while shutdown completed must fail loudly rather than silently
+        start a fresh backend that outlives shutdown and is never stopped.
+
+        Also re-checks liveness on every call: the serve task backing a
+        cached backend can crash on its own, independent of any adapter call,
+        and nothing else would ever notice -- every later room would keep
+        getting handed the same dead host/port until a tool call times out.
+        """
+        async with self._mcp_backend_lock:
+            if self._stopped:
+                raise RuntimeError(
+                    "ACP client adapter is stopped; cannot start the Band MCP backend"
+                )
+            if (
+                self._band_mcp_backend is not None
+                and not self._band_mcp_backend.is_running
+            ):
+                logger.warning(
+                    "Band MCP backend crashed; restarting for %s", self.agent_name
+                )
+                await self._band_mcp_backend.stop()
+                self._band_mcp_backend = None
+            if self._band_mcp_backend is None:
+                backend = await create_band_mcp_backend(
+                    kind=DEFAULT_BAND_MCP_BACKEND_KIND,
+                    tool_definitions=self._tool_definitions,
+                    get_tools=self._room_tools.get,
+                    additional_tools=self._custom_tools,
+                )
+                self._band_mcp_backend = backend
+            return self._band_mcp_backend
+
+    async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
+        backend = await self._ensure_band_mcp_backend()
         local_server = backend.local_server
         if local_server is None:
             raise RuntimeError("ACP MCP backend did not create a local server")
 
-        return self._build_local_mcp_server_config(local_server)
+        runtime = await self._runtime_for(room_id)
+        return self._build_local_mcp_server_config(
+            local_server, runtime.agent_mcp_transport
+        )
 
     async def _get_or_create_session(self, room_id: str) -> tuple[str, bool]:
         """This room's ACP session id, plus whether it was created just now.
@@ -423,14 +616,14 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if room_id in self._room_to_session:
             return self._room_to_session[room_id], False
 
+        runtime = await self._runtime_for(room_id)
+        mcp_servers = await self._session_mcp_servers(room_id)
         async with self._session_lock:
             if room_id in self._room_to_session:
                 return self._room_to_session[room_id], False
 
-            mcp_servers = await self._session_mcp_servers()
-
-            session_id = await self._runtime.create_session(
-                cwd=self._cwd,
+            session_id = await runtime.create_session(
+                cwd=self._room_workspaces[room_id],
                 mcp_servers=mcp_servers,
             )
             self._room_to_session[room_id] = session_id
@@ -442,46 +635,77 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             return session_id, True
 
-    async def _session_mcp_servers(self) -> list[object]:
+    async def _session_mcp_servers(self, room_id: str) -> list[object]:
         """The MCP configuration supplied when creating or loading a session."""
         mcp_servers: list[object] = list(self._mcp_servers)
         if self._inject_band_tools:
-            mcp_servers.append(await self._get_or_start_band_mcp_server())
+            mcp_servers.append(await self._get_or_start_band_mcp_server(room_id))
         return mcp_servers
 
-    async def _build_prompt_text(
+    def _claim_session_bootstrap(self, session_id: str) -> bool:
+        """True exactly once per session — the caller owns the bootstrap prompt.
+
+        Lock-free: the check-and-add runs without an ``await``, so the event
+        loop's run-to-completion makes it atomic. ``on_cleanup``/``cleanup_all``
+        mutate this same set under ``_session_lock`` instead — also safe today
+        for the same no-``await``-in-between reason, not because of the lock.
+        Adding an ``await`` to any of these three mutation sites would need a
+        real lock added back everywhere ``_bootstrapped_sessions`` is touched.
+        """
+        if session_id in self._bootstrapped_sessions:
+            return False
+        self._bootstrapped_sessions.add(session_id)
+        return True
+
+    def _system_update_sections(
+        self, participants_msg: str | None, contacts_msg: str | None
+    ) -> list[str]:
+        """Roster/contacts updates as ``[System]`` blocks.
+
+        They arrive only on change (the runtime marks them sent), so inject
+        them on whichever turn carries them — mirrors codex and opencode.
+        """
+        return [
+            f"{SYSTEM_UPDATE_PREFIX}{update}"
+            for update in (participants_msg, contacts_msg)
+            if update
+        ]
+
+    @staticmethod
+    def _framed_replay(replay: list[str], live_message: str) -> list[str]:
+        """The replay block plus the live message under the nonce'd boundary
+        marker the header names (on ordinary turns it needs none)."""
+        marker = new_message_marker()
+        return [
+            HISTORY_REPLAY_HEADER.format(marker=marker) + "\n" + "\n".join(replay),
+            f"{marker}\n{live_message}",
+        ]
+
+    def _build_prompt_text(
         self,
+        *,
         room_id: str,
         session_id: str,
         msg: PlatformMessage,
-        *,
         replay: list[str] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> str:
         """Add room context, and the transcript replay if one is due, on the
         first prompt sent to an ACP session. The current message always comes
         last, so the model answers it rather than the replayed history."""
-        async with self._session_lock:
-            needs_bootstrap = session_id not in self._bootstrapped_sessions
-            if needs_bootstrap:
-                self._bootstrapped_sessions.add(session_id)
-
         # Attributed like history lines ([sender]: content), so in a multi-party
         # room the model always knows who is speaking now and, on replay turns,
         # where the transcript ends and the live message begins.
         live_message = msg.format_for_llm()
+        system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        if not needs_bootstrap:
-            return live_message
+        if not self._claim_session_bootstrap(session_id):
+            return "\n\n".join([*system_updates, live_message])
 
-        sections = [self._build_system_context(room_id, msg)]
+        sections = [self._build_system_context(room_id, msg), *system_updates]
         if replay:
-            # The live message sits under the nonce'd boundary marker the
-            # header names; on ordinary turns it needs none.
-            marker = new_message_marker()
-            sections.append(
-                HISTORY_REPLAY_HEADER.format(marker=marker) + "\n" + "\n".join(replay)
-            )
-            sections.append(f"{marker}\n{live_message}")
+            sections.extend(self._framed_replay(replay, live_message))
             logger.info(
                 "Replaying %d room history lines into new ACP session %s for room %s",
                 len(replay),
@@ -498,34 +722,64 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._room_tools.pop(room_id, None)
             if session_id:
                 self._bootstrapped_sessions.discard(session_id)
+            runtime = self._runtimes.pop(room_id, None)
+            workspace = self._room_workspaces.pop(room_id, None)
+            if workspace is not None:
+                release_room_workspace(room_id, workspace, self._workspace_rooms)
+
+        if runtime is not None:
+            await runtime.stop()
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
-    async def cleanup_all(self) -> None:
+    @staticmethod
+    async def _stop_runtimes(runtimes: list[ACPRuntime]) -> None:
+        await asyncio.gather(*(runtime.stop() for runtime in runtimes))
+
+    async def cleanup_all(self, *, final: bool = True) -> None:
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
-        The ACP subprocess / TCP connection and the local Band MCP server are started
-        adapter-wide in ``on_started`` (not per room), so releasing them belongs here,
-        not in per-room ``on_cleanup``. Idempotent — safe to call again from ``stop()``.
+        Room-owned ACP subprocesses are released by ``on_cleanup``; this method
+        releases every remaining runtime and the shared local Band MCP server.
+        Idempotent — safe to call again from ``stop()``.
+
+        ``final`` distinguishes real process shutdown (the default: no future turn
+        can arrive, so a still-parked one must fail rather than start resources
+        nothing will ever stop) from the ``on_message`` error path's use of this
+        same teardown to recover a wedged connection — there, a *later* turn on
+        any room is expected to self-heal by lazily respawning both the ACP
+        connection (``_ensure_connection``'s ``can_respawn``) and the MCP backend,
+        so ``final=False`` must leave that path open.
         """
         async with self._session_lock:
             self._room_to_session.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
+            runtimes = list(self._runtimes.values())
+            self._runtimes.clear()
+            self._room_workspaces.clear()
+            self._workspace_rooms.clear()
+        async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
-            local_mcp_server = self._band_mcp_server
             self._band_mcp_backend = None
-            self._band_mcp_server = None
-        if backend is not None:
-            await backend.stop()
-        elif local_mcp_server is not None:
-            await local_mcp_server.stop()
-        await self._runtime.stop()
+            if final:
+                # Set before releasing the lock: a room's first turn parked on
+                # _mcp_backend_lock (e.g. via _load_persisted_session, which awaits
+                # _session_mcp_servers() outside _session_lock) wakes to find
+                # _stopped True and raises instead of starting a backend that
+                # would outlive this teardown and never be stopped again.
+                self._stopped = True
+            # Stop while still holding the lock: closes the window where a
+            # concurrent _ensure_band_mcp_backend's locked slow path could see
+            # None and start a fresh backend while this one is mid-teardown.
+            if backend is not None:
+                await backend.stop()
+        await self._stop_runtimes(runtimes)
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:
         """Tear down now (used by the ``on_message`` error path); see ``cleanup_all``."""
-        await self.cleanup_all()
+        await self.cleanup_all(final=False)
 
     async def _load_persisted_session(
         self,
@@ -547,10 +801,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if session_id is None:
             return
 
-        loaded = await self._runtime.load_session(
-            cwd=self._cwd,
+        runtime = await self._runtime_for(room_id)
+        loaded = await runtime.load_session(
+            cwd=self._room_workspaces[room_id],
             session_id=session_id,
-            mcp_servers=await self._session_mcp_servers(),
+            mcp_servers=await self._session_mcp_servers(room_id),
         )
         if not loaded:
             logger.info(
@@ -595,7 +850,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         raw = messages_before(context.get("data") or [], msg.id)
         return build_replay_messages([m for m in raw if m.get("id") != msg.id])
 
-    async def _ensure_connection(self) -> ACPConnectionProtocol:
-        return await self._runtime.ensure_connection(
-            can_respawn=bool(self.agent_name),
+    async def _ensure_connection(self, runtime: ACPRuntime) -> ACPConnectionProtocol:
+        return await runtime.ensure_connection(
+            can_respawn=True,
         )

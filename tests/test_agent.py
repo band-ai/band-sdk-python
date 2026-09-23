@@ -1,14 +1,24 @@
 """Tests for Agent compositor."""
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from band.agent import Agent, DEFAULT_SHUTDOWN_TIMEOUT
+from band.agent import DEFAULT_SHUTDOWN_TIMEOUT, Agent
+from band.client.streaming import (
+    MessageCreatedPayload,
+    MessageMetadata,
+    ParticipantAddedPayload,
+    RoomAddedPayload,
+)
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AgentInput
-from band.runtime.types import AgentConfig, SessionConfig
+from band.core.types import AdapterFeatures, AgentInput, Capability
+from band.platform.event import MessageEvent, ParticipantAddedEvent, RoomAddedEvent
 from band.preprocessing.default import DefaultPreprocessor
+from band.runtime.capabilities import FeatureFlag
+from band.runtime.types import AgentConfig, ConversationContext, SessionConfig
+from band.testing.platform import platform_connection_stub
 
 
 @pytest.fixture
@@ -28,6 +38,7 @@ def mock_runtime():
     runtime.agent_name = "TestBot"
     runtime.agent_description = "A test bot"
     runtime.agent_id = "agent-123"
+    runtime.feature_flags = None
     runtime.initialize = AsyncMock()
     runtime.start = AsyncMock()
     runtime.stop = AsyncMock()
@@ -71,8 +82,11 @@ class TestInitialization:
 class TestCreateFactory:
     """Tests for Agent.create() factory method."""
 
-    def test_creates_with_default_urls(self, mock_adapter):
+    def test_creates_with_default_urls(self, mock_adapter, monkeypatch):
         """Should create agent with default URLs."""
+        # Hermetic: a developer's shell may export the env overrides.
+        monkeypatch.delenv("BAND_WS_URL", raising=False)
+        monkeypatch.delenv("BAND_REST_URL", raising=False)
         with patch("band.agent.PlatformRuntime") as mock_runtime_class:
             mock_runtime = MagicMock()
             mock_runtime_class.return_value = mock_runtime
@@ -112,6 +126,39 @@ class TestCreateFactory:
             call_kwargs = mock_runtime_class.call_args.kwargs
             assert call_kwargs["ws_url"] == "wss://custom.example.com/ws"
             assert call_kwargs["rest_url"] == "https://custom.example.com"
+
+    def test_urls_resolve_from_environment(self, mock_adapter, monkeypatch):
+        """Omitted URLs resolve from BAND_WS_URL / BAND_REST_URL env vars."""
+        monkeypatch.setenv("BAND_WS_URL", "wss://env.example.com/ws")
+        monkeypatch.setenv("BAND_REST_URL", "https://env.example.com")
+        with patch("band.agent.PlatformRuntime") as mock_runtime_class:
+            mock_runtime_class.return_value = MagicMock()
+
+            Agent.create(
+                adapter=mock_adapter,
+                agent_id="agent-123",
+                api_key="test-key",
+            )
+
+            call_kwargs = mock_runtime_class.call_args.kwargs
+            assert call_kwargs["ws_url"] == "wss://env.example.com/ws"
+            assert call_kwargs["rest_url"] == "https://env.example.com"
+
+    def test_explicit_urls_beat_environment(self, mock_adapter, monkeypatch):
+        """An explicit argument wins over the environment variable."""
+        monkeypatch.setenv("BAND_REST_URL", "https://env.example.com")
+        with patch("band.agent.PlatformRuntime") as mock_runtime_class:
+            mock_runtime_class.return_value = MagicMock()
+
+            Agent.create(
+                adapter=mock_adapter,
+                agent_id="agent-123",
+                api_key="test-key",
+                rest_url="https://explicit.example.com",
+            )
+
+            call_kwargs = mock_runtime_class.call_args.kwargs
+            assert call_kwargs["rest_url"] == "https://explicit.example.com"
 
     def test_creates_with_configs(self, mock_adapter):
         """Should accept custom configs."""
@@ -382,12 +429,49 @@ class TestSimpleAdapterIntegration:
         adapter.on_started = AsyncMock()
         adapter.on_cleanup = AsyncMock()
         adapter.on_event = AsyncMock()
+        adapter.features = AdapterFeatures()
 
         agent = Agent(runtime=mock_runtime, adapter=adapter)
 
         await agent.start()
 
         adapter.on_started.assert_awaited_once()
+
+
+class FilesAdapter(SimpleAdapter):
+    """Bare SimpleAdapter declaring only Capability.FILES support."""
+
+    SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
+
+    async def on_started(self, agent_name, agent_description) -> None:
+        pass
+
+    async def on_message(self, *args, **kwargs) -> None:
+        pass
+
+
+class TestCapabilityNegotiationOnStart:
+    """Agent.start() prunes capabilities the connected deployment doesn't serve."""
+
+    @pytest.mark.asyncio
+    async def test_files_capability_pruned_when_flag_off(self, mock_runtime):
+        mock_runtime.feature_flags = {FeatureFlag.FILE_TRANSFER: False}
+        adapter = FilesAdapter(capabilities=Capability.FILES)
+        agent = Agent(runtime=mock_runtime, adapter=adapter)
+
+        await agent.start()
+
+        assert Capability.FILES not in adapter.features.capabilities
+
+    @pytest.mark.asyncio
+    async def test_files_capability_kept_when_flag_on(self, mock_runtime):
+        mock_runtime.feature_flags = {FeatureFlag.FILE_TRANSFER: True}
+        adapter = FilesAdapter(capabilities=Capability.FILES)
+        agent = Agent(runtime=mock_runtime, adapter=adapter)
+
+        await agent.start()
+
+        assert Capability.FILES in adapter.features.capabilities
 
 
 class TestDefaultPreprocessorIntegration:
@@ -401,8 +485,6 @@ class TestDefaultPreprocessorIntegration:
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
 
         # Create a non-MessageEvent (e.g., RoomAddedEvent)
-        from band.platform.event import RoomAddedEvent
-        from band.client.streaming import RoomAddedPayload
 
         mock_ctx = MagicMock()
         mock_event = RoomAddedEvent(
@@ -426,9 +508,6 @@ class TestDefaultPreprocessorIntegration:
     ):
         """Participant events should not become adapter execution turns."""
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
-
-        from band.client.streaming import ParticipantAddedPayload
-        from band.platform.event import ParticipantAddedEvent
 
         mock_ctx = MagicMock()
         mock_event = ParticipantAddedEvent(
@@ -455,10 +534,6 @@ class TestStartupRaceCondition:
     @pytest.mark.asyncio
     async def test_adapter_on_started_before_first_message(self):
         """System prompt must be set before any message processing."""
-        from band.client.streaming import MessageCreatedPayload, MessageMetadata
-        from band.platform.event import MessageEvent
-        from band.runtime.types import ConversationContext
-        from datetime import datetime, timezone
 
         # Track the order of calls
         call_order = []
@@ -500,11 +575,12 @@ class TestStartupRaceCondition:
             agent_name = "TestBot"
             agent_description = "A test bot"
             agent_id = "agent-123"
+            connection = platform_connection_stub(agent_id="agent-123")
+            feature_flags = None
             _on_execute = None
 
             async def initialize(self) -> None:
                 """Initialize without starting message processing."""
-                pass
 
             def claim_single_instance(self) -> None:
                 pass
@@ -524,7 +600,7 @@ class TestStartupRaceCondition:
                         room_id="room-123",
                         messages=[],
                         participants=[],
-                        hydrated_at=datetime.now(timezone.utc),
+                        hydrated_at=datetime.now(UTC),
                     )
                 )
                 mock_ctx.participants = []
@@ -542,8 +618,8 @@ class TestStartupRaceCondition:
                         message_type="text",
                         metadata=MessageMetadata(mentions=[], status="sent"),
                         chat_room_id="room-123",
-                        inserted_at=datetime.now(timezone.utc).isoformat(),
-                        updated_at=datetime.now(timezone.utc).isoformat(),
+                        inserted_at=datetime.now(UTC).isoformat(),
+                        updated_at=datetime.now(UTC).isoformat(),
                     ),
                 )
 

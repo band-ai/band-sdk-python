@@ -20,7 +20,6 @@ from agno.run.agent import RunOutput
 
 from band.adapters.agno import AgnoAdapter
 from band.runtime.formatters import format_history_for_llm
-
 from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_input
 
 

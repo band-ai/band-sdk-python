@@ -1,16 +1,17 @@
 """Unit tests for contact event types and pattern matching."""
 
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
+    WireEvent,
 )
 from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
     ContactAddedEvent,
     ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
     PlatformEvent,
 )
 
@@ -118,14 +119,21 @@ class TestContactAddedEvent:
         assert event.payload.is_external is True
 
     def test_legacy_contact_alias_still_populates_primary_field(self):
-        """Legacy contact payloads should hydrate is_remote for consumers."""
-        payload = ContactAddedPayload(
-            id="contact-legacy",
-            handle="weather-bot",
-            name="Weather Bot",
-            type="Agent",
-            is_external=True,
-            inserted_at="2026-02-09T10:35:00Z",
+        """Legacy contact payloads should hydrate is_remote for consumers.
+
+        Alias sync (``normalize_remote_alias``) is band-sdk-core's normalization,
+        applied on the wire path only -- the plain constructor never syncs it.
+        """
+        payload = ContactAddedPayload.from_wire(
+            WireEvent.CONTACT_ADDED,
+            {
+                "id": "contact-legacy",
+                "handle": "weather-bot",
+                "name": "Weather Bot",
+                "type": "Agent",
+                "is_external": True,
+                "inserted_at": "2026-02-09T10:35:00Z",
+            },
         )
         event = ContactAddedEvent(payload=payload)
         assert event.payload.is_remote is True

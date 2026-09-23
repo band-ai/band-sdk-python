@@ -6,10 +6,11 @@ Extracted from core/types.py - data structures used across the runtime layer.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 # --- Constants for synthetic messages (injected by SDK, not from platform) ---
 #
@@ -86,6 +87,13 @@ class AgentConfig:
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
 
+def _require_positive_when_set(name: str, value: float | None) -> None:
+    """Shared guard for the optional-timeout fields below: unset (None) means
+    unbounded and is always valid; a set value must be strictly positive."""
+    if value is not None and value <= 0:
+        raise ValueError(f"{name} must be > 0 when set (got {value})")
+
+
 @dataclass
 class SessionConfig:
     """Configuration for execution context."""
@@ -93,7 +101,9 @@ class SessionConfig:
     enable_context_cache: bool = True
     context_cache_ttl_seconds: int = 300
     max_context_messages: int = 100
-    max_message_retries: int = 1  # Max attempts per message before permanently failing
+    # Max attempts per message before permanently failing. band_sdk_core.RetryTracker's
+    # constructor validates this range itself -- no second Python-side check.
+    max_message_retries: int = 1
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
     # Phase 2 idle timeout (seconds) before re-polling /next as a safety net.
     # Lower values recover faster from missed WS pushes but generate more REST traffic.
@@ -117,10 +127,21 @@ class SessionConfig:
     # cancel the reasoning. None = unbounded. NOT a hang-killer.
     max_working_state_seconds: float | None = None
 
+    # Upper bound on one reasoning cycle (the handler invoked by _run_cycle).
+    # Unlike max_working_state_seconds, exceeding this DOES cancel the cycle.
+    # This covers the handler cycle, not context hydration or message claim/ack
+    # calls. A handler stuck awaiting an external call (e.g. a wedged adapter
+    # subprocess) would otherwise leave its message in 'processing' forever.
+    # On expiry the cycle is cancelled and TimeoutError propagates through the
+    # normal handler-exception path (mark_failed + retry), the same as any
+    # other handler error. None = unbounded (default — matches prior behavior
+    # for callers that never opt in).
+    max_cycle_seconds: float | None = None
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
-                "idle_resync_seconds must be > 0 (got %s)" % self.idle_resync_seconds
+                f"idle_resync_seconds must be > 0 (got {self.idle_resync_seconds})"
             )
 
         # Working-state invariants only matter when reporting is enabled.
@@ -128,36 +149,27 @@ class SessionConfig:
             ttl_half = PLATFORM_WORKING_STATE_TTL_SECONDS / 2
             if self.working_keep_alive_seconds <= 0:
                 raise ValueError(
-                    "working_keep_alive_seconds must be > 0 (got %s)"
-                    % self.working_keep_alive_seconds
+                    f"working_keep_alive_seconds must be > 0 (got {self.working_keep_alive_seconds})"
                 )
             if self.working_keep_alive_seconds >= ttl_half:
                 raise ValueError(
-                    "working_keep_alive_seconds must be < TTL/2 (%s) to keep TTL "
-                    "headroom (got %s)" % (ttl_half, self.working_keep_alive_seconds)
+                    f"working_keep_alive_seconds must be < TTL/2 ({ttl_half}) to keep TTL "
+                    f"headroom (got {self.working_keep_alive_seconds})"
                 )
             if self.working_request_timeout_seconds <= 0:
                 raise ValueError(
-                    "working_request_timeout_seconds must be > 0 (got %s)"
-                    % self.working_request_timeout_seconds
+                    f"working_request_timeout_seconds must be > 0 (got {self.working_request_timeout_seconds})"
                 )
             if self.working_request_timeout_seconds >= self.working_keep_alive_seconds:
                 raise ValueError(
-                    "working_request_timeout_seconds (%s) must be < "
-                    "working_keep_alive_seconds (%s) so a slow POST can't stack"
-                    % (
-                        self.working_request_timeout_seconds,
-                        self.working_keep_alive_seconds,
-                    )
+                    f"working_request_timeout_seconds ({self.working_request_timeout_seconds}) must be < "
+                    f"working_keep_alive_seconds ({self.working_keep_alive_seconds}) so a slow POST can't stack"
                 )
-            if (
-                self.max_working_state_seconds is not None
-                and self.max_working_state_seconds <= 0
-            ):
-                raise ValueError(
-                    "max_working_state_seconds must be > 0 when set (got %s)"
-                    % self.max_working_state_seconds
-                )
+            _require_positive_when_set(
+                "max_working_state_seconds", self.max_working_state_seconds
+            )
+
+        _require_positive_when_set("max_cycle_seconds", self.max_cycle_seconds)
 
 
 @dataclass

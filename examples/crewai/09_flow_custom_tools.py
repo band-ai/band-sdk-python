@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[crewai]>=1.2.0"]
 # ///
 """CrewAI Flow custom tools example.
 
@@ -18,23 +15,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from band import (
+    Agent,
+    configure_logging,
+)
+from band.adapters import CrewAIFlowAdapter
+from band.adapters.crewai_flow import get_current_flow_runtime
 
-from setup_logging import setup_logging  # noqa: E402
-
-from band import Agent  # noqa: E402
-from band.adapters import CrewAIFlowAdapter  # noqa: E402
-from band.adapters.crewai_flow import get_current_flow_runtime  # noqa: E402
-from band.core.types import AdapterFeatures, Emit  # noqa: E402
-
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 USER_INBOX_TEXT = """Recent emails:
@@ -92,26 +85,17 @@ def flow_factory() -> InboxAwareFlow:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         additional_tools=[(EmailsInput, emails)],
-        features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
     )
 
-    agent = Agent.from_config(
+    logger.info("CrewAI Flow custom tools agent starting")
+    async with Agent.from_config(
         "crewai_flow_custom_tools",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-    logger.info("CrewAI Flow custom tools agent starting")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

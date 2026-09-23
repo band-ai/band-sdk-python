@@ -42,7 +42,11 @@ printf '%s\n' "$OPENCODE_CONFIG_JSON" > "$workdir/opencode.json"
     >/tmp/opencode-serve.log 2>&1 & )
 ready=false
 for _ in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:4096/global/health; then ready=true; break; fi
+  # --max-time bounds each attempt: without it, a server that accepts the
+  # connection but never finishes the response wedges this loop (and the
+  # whole job, up to its 240-minute timeout) on a single curl call instead
+  # of retrying and failing loudly within the intended ~60s budget.
+  if curl -fsS --max-time 5 http://127.0.0.1:4096/global/health; then ready=true; break; fi
   sleep 2
 done
 # Fail loudly if the server never came up (covers a server that died on launch —

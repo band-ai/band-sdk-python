@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.client.streaming import AgentControlPayload
-
 from tests.bridge.conftest import FakeForwarder
 from tests.bridge.test_bridge import (
     _build_runner,

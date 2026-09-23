@@ -15,12 +15,12 @@ from band.integrations.letta.prompts import (
 )
 
 __all__ = [
-    "LettaAdapterConfig",
-    "LettaMCPConfig",
-    "LettaMCPBridge",
-    "MCPTransport",
     "SEND_EVENT_TOOL_NAMES",
     "SEND_MESSAGE_TOOL_NAMES",
+    "LettaAdapterConfig",
+    "LettaMCPBridge",
+    "LettaMCPConfig",
+    "MCPTransport",
     "bounded_teardown",
     "render_tool_enforcement",
 ]

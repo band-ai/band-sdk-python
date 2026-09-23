@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+
+from band_rest.core.api_error import ApiError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.platform.link import BandLink
+from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
+from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
+from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
-from band.runtime.runtime import AgentRuntime
 from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import (
     AgentConfig,
@@ -21,7 +25,6 @@ from band.runtime.types import (
     ParticipantRemovedCallback,
     SessionConfig,
 )
-from band_rest.core.api_error import ApiError
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +50,8 @@ class PlatformRuntime:
         self,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
-        rest_url: str = "https://app.band.ai",
+        ws_url: str = DEFAULT_WS_URL,
+        rest_url: str = DEFAULT_REST_URL,
         config: AgentConfig | None = None,
         session_config: SessionConfig | None = None,
         contact_config: ContactEventConfig | None = None,
@@ -70,6 +73,7 @@ class PlatformRuntime:
         self._instance_guard: SingleInstanceGuard | None = None
         self._agent_name: str = ""
         self._agent_description: str = ""
+        self._feature_flags: dict[str, bool] | None = None
         self._contact_handler: ContactEventHandler | None = None
         self._pending_broadcasts: list[str] = []
         self._contacts_subscribed: bool = False
@@ -82,12 +86,33 @@ class PlatformRuntime:
         return self._agent_id
 
     @property
+    def connection(self) -> PlatformConnection:
+        """Platform coordinates for injection into the adapter (see Agent.start).
+
+        Builds from this instance's own fields rather than delegating to
+        ``self._link.to_platform_connection()``: unlike those fields, ``_link``
+        is only set once ``initialize()`` has run, so delegating would need a
+        None-guard for any caller reading this before startup completes.
+        """
+        return PlatformConnection(
+            agent_id=self._agent_id,
+            api_key=self._api_key,
+            rest_url=self._rest_url,
+            ws_url=self._ws_url,
+        )
+
+    @property
     def agent_name(self) -> str:
         return self._agent_name
 
     @property
     def agent_description(self) -> str:
         return self._agent_description
+
+    @property
+    def feature_flags(self) -> dict[str, bool] | None:
+        """The deployment's ``/me`` feature flags, or ``None`` before fetch."""
+        return self._feature_flags
 
     @property
     def link(self) -> BandLink:
@@ -288,6 +313,7 @@ class PlatformRuntime:
 
         self._agent_name = agent.name
         self._agent_description = agent.description
+        self._feature_flags = agent.feature_flags
         logger.debug("Fetched metadata for agent: %s", self._agent_name)
 
     @staticmethod
@@ -296,11 +322,13 @@ class PlatformRuntime:
 
     async def _setup_contact_handling(self) -> None:
         """Set up contact event handling based on config."""
-        if self._contact_config.strategy == ContactEventStrategy.DISABLED:
-            if not self._contact_config.broadcast_changes:
-                logger.debug("Contact handling disabled")
-                return
-            # Even if DISABLED, we may want broadcasts
+        if (
+            self._contact_config.strategy == ContactEventStrategy.DISABLED
+            and not self._contact_config.broadcast_changes
+        ):
+            logger.debug("Contact handling disabled")
+            return
+        # Even if DISABLED, we may want broadcasts
 
         assert self._link is not None
         assert self._runtime is not None
@@ -379,7 +407,7 @@ class PlatformRuntime:
                 try:
                     execution.inject_system_message(f"[Contacts]: {msg}")
                     logger.debug("Broadcast injected into room %s: %s", room_id, msg)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                     logger.warning(
                         "Failed to inject broadcast into room %s: %s", room_id, e
                     )

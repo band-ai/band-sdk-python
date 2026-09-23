@@ -14,8 +14,15 @@ from collections.abc import Iterable
 from typing import ClassVar
 
 from band.core.types import MessageType
-
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
+
+
+def assert_nonempty(count: int, *, label: str) -> None:
+    """Shared body for every observation collection's own ``assert_present``
+    (``Events``, ``ToolResults``) -- keeps the failure wording from drifting
+    between them; each caller supplies its own default ``label``."""
+    if count == 0:
+        raise AssertionError(f"expected {label}, but none were emitted")
 
 
 class ContentAssertions:

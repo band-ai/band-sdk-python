@@ -13,15 +13,22 @@ import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest_httpx import HTTPXMock
 
 from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
     LettaMCPConfig,
-    _RoomContext,
+    RoomContext,
 )
 from band.converters.letta import LettaSessionState
-from band.testing import FakeAgentTools
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.integrations.letta.prompts import (
+    SEND_EVENT_TOOL_NAMES,
+    SEND_MESSAGE_TOOL_NAMES,
+)
+from band.runtime.tools import BandTool
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_fake_mcp_backend,
@@ -31,6 +38,7 @@ from tests.adapters.lettakit import (
     make_mock_mcp_tool,
     make_mock_tool_page,
     make_platform_message,
+    mock_org_user_provisioned,
 )
 
 
@@ -40,6 +48,14 @@ def _stale_tool_error(message: str) -> Exception:
     err = Exception(message)
     err.status_code = 404  # type: ignore[attr-defined]
     return err
+
+
+def test_send_tool_names_use_band_tool_enum_member():
+    """SEND_MESSAGE_TOOL_NAMES/SEND_EVENT_TOOL_NAMES's canonical entry must be
+    a BandTool member, not a hardcoded literal duplicate that could silently
+    drift from BandTool if its value ever changed."""
+    assert isinstance(SEND_MESSAGE_TOOL_NAMES[0], BandTool)
+    assert isinstance(SEND_EVENT_TOOL_NAMES[0], BandTool)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -174,17 +190,133 @@ class TestLettaAdapterOnStarted:
         mock_letta_module = MagicMock()
         mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
 
+        with (
+            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
+            pytest.raises(RuntimeError, match="MCP server registration failed"),
+        ):
+            await adapter.on_started("TestBot", "A test bot")
+
+    @pytest.mark.asyncio
+    async def test_on_started_self_hosted_org_scoped_by_default(
+        self, httpx_mock: HTTPXMock
+    ) -> None:
+        """A self-hosted base_url auto-enables org scoping: a dedicated
+        org+user is provisioned and its user_id becomes the client's default
+        header — this is what isolates MCP tool storage between instances."""
+        base_url = "http://localhost:8283"
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url=base_url, mcp=LettaMCPConfig(mode="external")
+            )
+        )
+
+        mock_org_user_provisioned(
+            httpx_mock,
+            base_url=base_url,
+            org_id="org-1",
+            user_id="user-1",
+            name="band-TestBot",
+        )
+
+        mock_client = AsyncMock()
+        mock_server = make_mock_mcp_server()
+        mock_client.mcp_servers.create.return_value = mock_server
+        mock_client.mcp_servers.tools.list.return_value = []
+
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
         with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            with pytest.raises(RuntimeError, match="MCP server registration failed"):
-                await adapter.on_started("TestBot", "A test bot")
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_letta_module.AsyncLetta.assert_called_once_with(
+            base_url=base_url,
+            default_headers={"user_id": "user-1"},
+        )
+        # Base tools must be force-seeded for the fresh org before any room
+        # can reach agents.create(include_base_tools=True).
+        mock_client.tools.list.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.letta.com",
+            "https://API.LETTA.COM/",
+            "  https://api.letta.com  ",
+        ],
+    )
+    async def test_on_started_cloud_stays_unscoped(self, base_url: str) -> None:
+        """Regression guard: a Cloud base_url must never invoke org-scope
+        resolution — the Cloud path stays byte-for-byte unchanged."""
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url=base_url, mcp=LettaMCPConfig(mode="external")
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_server = make_mock_mcp_server()
+        mock_client.mcp_servers.create.return_value = mock_server
+        mock_client.mcp_servers.tools.list.return_value = []
+
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with (
+            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
+            patch("band.adapters.letta.resolve_org_scoped_headers") as mock_resolve,
+        ):
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_resolve.assert_not_called()
+        mock_letta_module.AsyncLetta.assert_called_once_with(
+            base_url=base_url,
+        )
+        mock_client.tools.list.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_started_org_scoped_false_opts_out_on_self_hosted(
+        self,
+    ) -> None:
+        """org_scoped=False is the escape hatch: it opts a self-hosted
+        deployment back out of org scoping."""
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url="http://localhost:8283",
+                org_scoped=False,
+                mcp=LettaMCPConfig(mode="external"),
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_server = make_mock_mcp_server()
+        mock_client.mcp_servers.create.return_value = mock_server
+        mock_client.mcp_servers.tools.list.return_value = []
+
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with (
+            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
+            patch("band.adapters.letta.resolve_org_scoped_headers") as mock_resolve,
+        ):
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_resolve.assert_not_called()
+        mock_letta_module.AsyncLetta.assert_called_once_with(
+            base_url="http://localhost:8283",
+        )
 
     @pytest.mark.asyncio
     async def test_on_started_import_error(self) -> None:
         adapter = LettaAdapter()
 
-        with patch.dict("sys.modules", {"letta_client": None}):
-            with pytest.raises(ImportError, match="letta-client is required"):
-                await adapter.on_started("TestBot", "A test bot")
+        with (
+            patch.dict("sys.modules", {"letta_client": None}),
+            pytest.raises(ImportError, match="letta-client is required"),
+        ):
+            await adapter.on_started("TestBot", "A test bot")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -268,7 +400,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t1"]
         fake_backend = make_fake_mcp_backend()
         adapter._mcp.backend = fake_backend
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -332,7 +464,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
         adapter._mcp.backend = make_fake_mcp_backend()
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", stale_tools=True)
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", stale_tools=True)
 
         # The agent still carries only the old registration's (dead) tool.
         mock_client.agents.tools.list.return_value = make_mock_tool_page(
@@ -369,7 +501,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
-        room_ctx = _RoomContext(agent_id="agent-1", stale_tools=True)
+        room_ctx = RoomContext(agent_id="agent-1", stale_tools=True)
         adapter._rooms["room-1"] = room_ctx
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
@@ -388,22 +520,25 @@ class TestSelfHostedMCPLifecycle:
         adapter._system_prompt = "Test"
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", stale_tools=True)
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", stale_tools=True)
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            LettaSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="not attached"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         mock_client.agents.messages.create.assert_not_called()
 
     @pytest.mark.asyncio
@@ -421,7 +556,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "shared-mcp"
         adapter._mcp.tool_ids = ["t1"]
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
@@ -441,7 +576,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-fixed"
         adapter._mcp.tool_ids = ["t1"]
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
@@ -504,7 +639,7 @@ class TestSelfHostedMCPLifecycle:
         """The MCP resolver reads the room context's current tools."""
         adapter = LettaAdapter()
         tools = FakeAgentTools()
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", tools=tools)
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", tools=tools)
         assert adapter._get_room_tools("room-1") is tools
         assert adapter._get_room_tools("other") is None
 
@@ -524,7 +659,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t1"]
         fake_backend = make_fake_mcp_backend()
         adapter._mcp.backend = fake_backend
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
@@ -582,7 +717,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.server_id = "mcp-dead"
         adapter._mcp.tool_ids = ["t-dead"]
         # A sibling room, live before the recovery, wired to the old ids.
-        adapter._rooms["other"] = _RoomContext(agent_id="agent-other")
+        adapter._rooms["other"] = RoomContext(agent_id="agent-other")
 
         stale = _stale_tool_error("Tool with id=t-dead not found in organization")
         mock_client.agents.tools.attach.side_effect = [stale, None]
@@ -638,18 +773,21 @@ class TestSelfHostedMCPLifecycle:
         mock_client.mcp_servers.list.side_effect = ConnectionError("letta down")
 
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            LettaSessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="MCP server registration failed"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         mock_client.agents.messages.create.assert_not_called()
 
     @pytest.mark.asyncio
@@ -663,12 +801,14 @@ class TestSelfHostedMCPLifecycle:
         mock_client.mcp_servers.list.side_effect = ConnectionError("letta down")
 
         fake_backend = make_fake_mcp_backend()
-        with patch(
-            "band.integrations.letta.mcp.create_band_mcp_backend",
-            AsyncMock(return_value=fake_backend),
+        with (
+            patch(
+                "band.integrations.letta.mcp.create_band_mcp_backend",
+                AsyncMock(return_value=fake_backend),
+            ),
+            pytest.raises(RuntimeError, match="MCP server registration failed"),
         ):
-            with pytest.raises(RuntimeError, match="MCP server registration failed"):
-                await adapter._mcp.ensure_ready(mock_client)
+            await adapter._mcp.ensure_ready(mock_client)
 
         fake_backend.stop.assert_not_awaited()
         assert adapter._mcp.backend is fake_backend

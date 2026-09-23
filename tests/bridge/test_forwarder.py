@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-
 from bridge_core.config import AgentCoreTarget, HTTPTarget
 from bridge_core.forwarder import (
     AgentCoreForwarder,
@@ -140,8 +140,6 @@ class TestAgentCoreForwarder:
     async def test_timeout_raises(self, agentcore_target: AgentCoreTarget) -> None:
         # invoke takes longer than the timeout
         def _slow(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            import time
-
             time.sleep(0.2)
             return {
                 "response": MagicMock(

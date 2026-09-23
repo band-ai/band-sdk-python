@@ -15,9 +15,9 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Self
 
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
-
 from tests.e2e.baseline.settings import BaselineSettings
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class TrackingWebSocketClient:
         self._ws = ws
         self._joined_rooms: set[str] = set()
 
-    async def __aenter__(self) -> TrackingWebSocketClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -93,6 +93,6 @@ class TrackingWebSocketClient:
         for room_id in list(self._joined_rooms):
             try:
                 await self._ws.leave_chat_room_channel(room_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort drain; a failure here should not mask the real test assertion
                 logger.debug("Failed to leave room %s during cleanup", room_id)
         self._joined_rooms.clear()

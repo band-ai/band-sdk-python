@@ -12,18 +12,53 @@ from band.exports import lazy_exports
 
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
-    from band.testing.fake_tools import FakeAgentTools as FakeAgentTools
+    from band.testing.fake_tools import (
+        FakeAgentTools as FakeAgentTools,
+    )
+    from band.testing.fake_tools import (
+        events_of_type as events_of_type,
+    )
+    from band.testing.fake_tools import (
+        reported_failures as reported_failures,
+    )
+    from band.testing.features import feature_kwargs as feature_kwargs
+    from band.testing.phoenix_server import (
+        FakePhoenixServer as FakePhoenixServer,
+    )
+    from band.testing.phoenix_server import (
+        JoinOutcome as JoinOutcome,
+    )
+    from band.testing.phoenix_server import (
+        fake_phoenix_server as fake_phoenix_server,
+    )
+    from band.testing.platform import (
+        platform_connection_stub as platform_connection_stub,
+    )
     from band.testing.strands import (
         ErrorTurn as ErrorTurn,
+    )
+    from band.testing.strands import (
         ScriptedStrandsModel as ScriptedStrandsModel,
+    )
+    from band.testing.strands import (
         ScriptedTurn as ScriptedTurn,
+    )
+    from band.testing.strands import (
         TextTurn as TextTurn,
+    )
+    from band.testing.strands import (
         ToolTurn as ToolTurn,
+    )
+    from band.testing.transport import (
+        force_transport_disconnect as force_transport_disconnect,
     )
 
 __all__, __getattr__ = lazy_exports(
     __name__,
-    fake_tools=["FakeAgentTools"],
+    fake_tools=["FakeAgentTools", "events_of_type", "reported_failures"],
+    features=["feature_kwargs"],
+    phoenix_server=["FakePhoenixServer", "JoinOutcome", "fake_phoenix_server"],
+    platform=["platform_connection_stub"],
     strands=[
         "ErrorTurn",
         "ScriptedStrandsModel",
@@ -31,4 +66,5 @@ __all__, __getattr__ = lazy_exports(
         "TextTurn",
         "ToolTurn",
     ],
+    transport=["force_transport_disconnect"],
 )

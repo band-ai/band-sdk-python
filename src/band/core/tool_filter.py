@@ -7,7 +7,8 @@ from AdapterFeatures to tool schema lists.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from band.core.types import AdapterFeatures
 
@@ -75,6 +76,15 @@ def _sanitize(node: Any, drop: frozenset[str] | set[str]) -> Any:
             cleaned[key] = {
                 name: _sanitize(subschema, drop) for name, subschema in value.items()
             }
+        elif key == "const":
+            # Pydantic emits `const` for a single-value Literal field (unlike a
+            # multi-value Literal, which already renders as `enum`). `const: X`
+            # and `enum: [X]` validate identically for a scalar, but some
+            # providers' restricted JSON-Schema subsets (e.g. Gemini) reject
+            # `const` outright -- so this always normalizes to the more widely
+            # supported keyword, unconditionally (not gated by a drop flag,
+            # since nothing is lost).
+            cleaned["enum"] = [value]
         else:
             cleaned[key] = _sanitize(value, drop)
     return cleaned

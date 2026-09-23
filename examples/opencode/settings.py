@@ -16,8 +16,6 @@ ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 class OpenCodeExampleSettings(BaseSettings):
     """Read and validate the environment used by the OpenCode examples."""
 
-    band_ws_url: str
-    band_rest_url: str
     agent_key: str = "darter"
     opencode_base_url: str = "http://127.0.0.1:4096"
     opencode_provider_id: str = "opencode"

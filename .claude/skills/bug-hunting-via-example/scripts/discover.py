@@ -98,7 +98,7 @@ def script_metadata(source: str) -> dict[str, Any] | None:
         if not line.startswith("#"):
             return None
         value = line[1:]
-        content.append(value[1:] if value.startswith(" ") else value)
+        content.append(value.removeprefix(" "))
     try:
         return tomllib.loads("\n".join(content))
     except tomllib.TOMLDecodeError:
@@ -120,15 +120,17 @@ def metadata_dependencies(source: str) -> tuple[str, ...] | None:
 def settings_config_prefix(node: ast.ClassDef) -> str:
     for statement in node.body:
         value: ast.AST | None = None
-        if isinstance(statement, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "model_config"
-            for target in statement.targets
-        ):
-            value = statement.value
-        elif (
-            isinstance(statement, ast.AnnAssign)
-            and isinstance(statement.target, ast.Name)
-            and statement.target.id == "model_config"
+        if (
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "model_config"
+                for target in statement.targets
+            )
+            or (
+                isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+                and statement.target.id == "model_config"
+            )
         ):
             value = statement.value
         if isinstance(value, ast.Call) and call_name(value.func).endswith(

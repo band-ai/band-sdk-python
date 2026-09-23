@@ -22,12 +22,13 @@ import os
 import random
 import signal
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
+from dotenv import load_dotenv
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import MessageCreatedPayload
-from band.runtime.types import PlatformMessage
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -41,6 +42,7 @@ from band.platform.event import (
     RoomRemovedEvent,
 )
 from band.platform.link import BandLink
+from band.runtime.types import PlatformMessage
 
 from .config import AgentConfig, BridgeConfig, ReconnectConfig
 from .control import ControlSignalHandler
@@ -228,7 +230,7 @@ class AgentRunner:
         behavior.
         """
         jitter = min(self._reconnect.jitter, 1.0)
-        return delay * (1 - jitter) + random.uniform(0, delay * jitter)  # noqa: S311
+        return delay * (1 - jitter) + random.uniform(0, delay * jitter)
 
     async def close(self) -> None:
         """Disconnect link and close forwarder. Idempotent."""
@@ -567,7 +569,7 @@ class AgentRunner:
             "room_id": getattr(event, "room_id", None),
             "payload": payload_dict,
             "raw": getattr(event, "raw", None),
-            "forwarded_at": datetime.now(timezone.utc).isoformat(),
+            "forwarded_at": datetime.now(UTC).isoformat(),
         }
 
     def _remember_processed_message(self, message_id: str) -> None:
@@ -749,8 +751,6 @@ async def main(
 
         asyncio.run(main())
     """
-    from dotenv import load_dotenv
-
     load_dotenv()
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()

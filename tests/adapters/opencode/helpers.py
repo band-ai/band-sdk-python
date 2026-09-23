@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -39,7 +39,7 @@ def make_platform_message(
         sender_name=sender_name,
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -141,6 +141,7 @@ def event_tool_part(
     status: str,
     input_data: dict[str, Any],
     output: Any = None,
+    error: str | None = None,
 ) -> RawOpencodeEvent:
     state: dict[str, Any] = {"status": status, "input": input_data}
     if status == "running":
@@ -149,6 +150,9 @@ def event_tool_part(
         state["output"] = "" if output is None else output
         state["title"] = tool
         state["metadata"] = {}
+        state["time"] = {"start": 1, "end": 2}
+    if status == "error":
+        state["error"] = error or "OpenCode tool failed"
         state["time"] = {"start": 1, "end": 2}
 
     return {
@@ -372,6 +376,9 @@ class FakeOpencodeClient:
             if event is None:
                 return
             yield event
+
+    async def health(self) -> None:
+        """Fake server is always reachable."""
 
     async def close(self) -> None:
         self.closed = True

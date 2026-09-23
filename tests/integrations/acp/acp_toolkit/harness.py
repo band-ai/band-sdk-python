@@ -8,7 +8,7 @@ import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -17,11 +17,12 @@ from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
 from band.core.types import PlatformMessage
-from band.integrations.acp.client_adapter import ACPClientAdapter
-from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
+from band.integrations.acp.client_runtime import ACPRuntime
+from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
+from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
-
-from .agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
 
@@ -103,11 +104,11 @@ def make_acp_connection(*, http: bool = True, sse: bool = False) -> AsyncMock:
 class FakeSpawn:
     """A fake ``spawn_process`` seam: records calls (spy) and yields a scripted conn.
 
-    Drop-in for the injectable ``spawn_process`` on ``ACPClientAdapter``/``ACPRuntime``
+    Drop-in for the injectable ``spawn_process`` on ``ACPRuntime``
     so tests exercise the real transport seam by dependency injection instead of
     patching module globals. The instance *is* the callable and returns an async
     context manager, matching the runtime's contract:
-    ``spawn(client, *command, env=..., transport_kwargs=...) -> CM yielding (conn, proc)``.
+    ``spawn(client, *command, env=..., cwd=..., transport_kwargs=...) -> CM yielding (conn, proc)``.
     """
 
     conn: Any = field(default_factory=make_acp_connection)
@@ -128,6 +129,27 @@ class FakeSpawn:
     @property
     def last_kwargs(self) -> dict[str, Any]:
         return self.calls[-1][1]
+
+
+def inject_acp_spawn(
+    adapter: ACPClientAdapter, spawn: FakeSpawn | Callable[..., Any]
+) -> None:
+    """Patch ``adapter._build_runtime`` so each room runtime uses ``spawn``."""
+
+    def _build_runtime(workspace: str | None = None) -> ACPRuntime:
+        return ACPRuntime(
+            command=_resolve_launcher(adapter._command),
+            env=adapter._env,
+            cwd=workspace,
+            auth_method=adapter._auth_method,
+            client_factory=lambda: BandACPClient(
+                profile=adapter._profile,
+                canonicalize_tool_name=adapter._canonical_tool_name,
+            ),
+            spawn_process=spawn,
+        )
+
+    adapter._build_runtime = _build_runtime  # type: ignore[method-assign]
 
 
 @dataclass
@@ -172,6 +194,24 @@ class Reply:
         return self._events_of("tool_result")
 
     @property
+    def tool_call_names(self) -> list[str]:
+        """Narrated tool_call names in order — the canonical vocabulary
+        consumers match on. Parsed through the room-payload model, so a
+        malformed event fails loudly here rather than passing vacuously."""
+        return [
+            ToolCallRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_calls
+        ]
+
+    @property
+    def tool_result_names(self) -> list[str]:
+        """Narrated tool_result names in order (see ``tool_call_names``)."""
+        return [
+            ToolResultRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_results
+        ]
+
+    @property
     def plans(self) -> list[str]:
         # Task events, minus the adapter's trailing "ACP client session" bookkeeping.
         return [
@@ -195,6 +235,23 @@ class AcpSession:
     def __init__(self, adapter: ACPClientAdapter, agent: FakeACPAgent) -> None:
         self.adapter = adapter
         self.agent = agent
+        self._last_tools: TranscriptTools | None = None
+
+    @property
+    def last_reply(self) -> Reply:
+        """What the most recent ``send`` posted, even if it raised.
+
+        A genuine provider failure now fails the turn (raises out of
+        ``on_message``) instead of returning normally, so a test covering
+        that path can't get the posted error event from ``send``'s return
+        value — it reads this instead.
+        """
+        assert self._last_tools is not None, "send() has not been called yet"
+        return Reply(
+            messages=self._last_tools.messages_sent,
+            events=self._last_tools.events_sent,
+            transcript=self._last_tools.transcript,
+        )
 
     async def send(
         self,
@@ -204,6 +261,8 @@ class AcpSession:
         history: ACPClientSessionState | None = None,
         bootstrap: bool = False,
         room_context: list[dict[str, Any]] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -211,17 +270,19 @@ class AcpSession:
         adapter (re)start, when the runtime hands over the room's converted
         platform history. ``room_context`` seeds what the platform returns if
         the adapter re-fetches the room transcript itself (the off-bootstrap
-        rehydration path).
+        rehydration path). ``participants_msg``/``contacts_msg`` model the
+        change-triggered roster/contacts updates the runtime attaches to a turn.
         """
         tools = TranscriptTools()
         if room_context is not None:
             tools.set_room_context(room_context)
+        self._last_tools = tools
         await self.adapter.on_message(
             _message(content, room),
             tools,
             history or ACPClientSessionState(),
-            None,
-            None,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=room,
         )
@@ -245,10 +306,10 @@ async def acp_adapter(
     """
     adapter = ACPClientAdapter(
         command="fake-agent",  # ignored — the injected transport pairs us with agent
-        spawn_process=_pair_in_process(agent),
         inject_band_tools=inject_band_tools,
         **adapter_kwargs,
     )
+    inject_acp_spawn(adapter, _pair_in_process(agent))
     await adapter.on_started("Fake Agent", "in-process fake")
     try:
         yield AcpSession(adapter, agent)
@@ -262,9 +323,13 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
 
     @asynccontextmanager
     async def _spawn(
-        client: Any, *args: Any, env: Any = None, transport_kwargs: Any = None
+        client: Any,
+        *args: Any,
+        env: Any = None,
+        cwd: Any = None,
+        transport_kwargs: Any = None,
     ) -> AsyncIterator[tuple[Any, Any]]:
-        del args, env, transport_kwargs
+        del args, env, cwd, transport_kwargs
         client_sock, agent_sock = socket.socketpair()
         reader_c, writer_c = await asyncio.open_connection(sock=client_sock)
         reader_a, writer_a = await asyncio.open_connection(sock=agent_sock)
@@ -285,6 +350,18 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
     return _spawn
 
 
+LIVE_SENDER_NAME = "Peer"
+
+
+def live_line(content: str) -> str:
+    """The attributed live-message line ``AcpSession.send`` delivers.
+
+    The adapter's contract puts it last in every prompt, so tests assert
+    position against this projection instead of hand-building the line.
+    """
+    return f"[{LIVE_SENDER_NAME}]: {content}"
+
+
 def _message(content: str, room_id: str) -> PlatformMessage:
     return PlatformMessage(
         id=str(uuid4()),
@@ -292,8 +369,8 @@ def _message(content: str, room_id: str) -> PlatformMessage:
         content=content,
         sender_id="peer-1",
         sender_type="Agent",
-        sender_name="Peer",
+        sender_name=LIVE_SENDER_NAME,
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )

@@ -13,7 +13,7 @@ same ``band_send_message`` MCP tool call for a single LLM-intended send:
   chat).
 
 The platform happily accepts every POST, so the duplicate becomes a visible
-chat message and a charged LLM call. The runtime's ``MessageClaimRegistry``
+chat message and a charged LLM call. The runtime's ``band_sdk_core.ClaimRegistry``
 only dedupes *inbound* user messages from the platform; it has no view of
 outbound tool calls produced by Claude.
 
@@ -216,7 +216,7 @@ class DedupingAgentTools:
     ) -> None:
         try:
             result = task.result()
-        except BaseException:
+        except BaseException:  # noqa: BLE001 -- also catches CancelledError from a task cancelled mid-dedup during shutdown
             should_cache = False
             result = None
         else:

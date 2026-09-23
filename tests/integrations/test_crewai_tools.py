@@ -14,6 +14,12 @@ import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import BaseModel, ValidationError
+
+from band.core.exceptions import BandToolError
+from band.core.memory_types import memory_type_field_description
+from band.core.types import AdapterFeatures, Capability, Emit
+from band.runtime.tools import file_content_placeholder, image_block_placeholder
 
 
 class MockBaseTool:
@@ -48,16 +54,28 @@ def crewai_mocks(monkeypatch):
 
 @pytest.fixture
 def builder_mod(crewai_mocks):
-    import importlib
 
     return importlib.import_module("band.integrations.crewai.tools")
 
 
 @pytest.fixture
 def runtime_mod(crewai_mocks):
-    import importlib
 
     return importlib.import_module("band.integrations.crewai.runtime")
+
+
+@pytest.fixture
+def platform_args_schemas(builder_mod):
+    """Tool name -> the args schema CrewAI actually advertises to the LLM."""
+
+    tools = builder_mod.build_band_crewai_tools(
+        get_context=lambda: None,
+        reporter=builder_mod.NoopReporter(),
+        capabilities=frozenset(
+            {Capability.CONTACTS, Capability.MEMORY, Capability.FILES}
+        ),
+    )
+    return {tool.name: tool.args_schema for tool in tools}
 
 
 # --- Tool-set composition ---
@@ -83,7 +101,6 @@ class TestToolSetComposition:
         assert len(tools) == 7
 
     def test_capability_contacts_adds_five(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -102,7 +119,6 @@ class TestToolSetComposition:
         assert len(tools) == 12
 
     def test_capability_memory_adds_five(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -120,8 +136,23 @@ class TestToolSetComposition:
         assert memory_names.issubset(names)
         assert len(tools) == 12
 
+    def test_capability_files_adds_three(self, builder_mod):
+
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: None,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        names = {t.name for t in tools}
+        file_names = {
+            "band_list_room_files",
+            "band_read_room_file",
+            "band_send_room_file",
+        }
+        assert file_names.issubset(names)
+        assert len(tools) == 10
+
     def test_both_capabilities(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -130,8 +161,18 @@ class TestToolSetComposition:
         )
         assert len(tools) == 17  # 7 base + 5 contacts + 5 memory
 
+    def test_all_three_capabilities(self, builder_mod):
+
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: None,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(
+                {Capability.CONTACTS, Capability.MEMORY, Capability.FILES}
+            ),
+        )
+        assert len(tools) == 20  # 7 base + 5 contacts + 5 memory + 3 files
+
     def test_custom_tools_appended(self, builder_mod):
-        from pydantic import BaseModel
 
         class MyInput(BaseModel):
             """My custom tool."""
@@ -151,7 +192,6 @@ class TestToolSetComposition:
         assert len(tools) == 8
 
     def test_adapter_feature_filters_apply_to_platform_tools(self, builder_mod):
-        from band.core.types import AdapterFeatures, Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -171,9 +211,6 @@ class TestToolSetComposition:
         assert "band_archive_memory" not in names
 
     def test_adapter_feature_filters_only_apply_to_platform_tools(self, builder_mod):
-        from pydantic import BaseModel
-
-        from band.core.types import AdapterFeatures
 
         class MyInput(BaseModel):
             value: str
@@ -206,13 +243,13 @@ class TestToolSetComposition:
             ("band_list_contacts", {"page": 0}),
             ("band_list_contact_requests", {"sent_status": "done"}),
             ("band_respond_contact_request", {"action": "maybe"}),
-            ("band_list_memories", {"memory_type": "fact"}),
+            ("band_list_memories", {"type": "fact"}),
             (
                 "band_store_memory",
                 {
                     "content": "remember this",
                     "system": "working",
-                    "memory_type": "fact",
+                    "type": "fact",
                     "segment": "user",
                     "thought": "useful later",
                     "scope": "organization",
@@ -221,45 +258,25 @@ class TestToolSetComposition:
         ],
     )
     def test_platform_tool_schemas_reject_invalid_values(
-        self, builder_mod, tool_name, payload
+        self, platform_args_schemas, tool_name, payload
     ):
-        from pydantic import ValidationError
-
-        from band.core.types import Capability
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
-        )
-        tool = next(t for t in tools if t.name == tool_name)
 
         with pytest.raises(ValidationError):
-            tool.args_schema.model_validate(payload)
+            platform_args_schemas[tool_name].model_validate(payload)
 
-    def test_platform_tool_schemas_accept_metadata_fields(self, builder_mod):
-        from band.core.types import Capability
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.MEMORY}),
-        )
-        send_event = next(t for t in tools if t.name == "band_send_event")
-        store_memory = next(t for t in tools if t.name == "band_store_memory")
-
-        assert send_event.args_schema.model_validate(
+    def test_platform_tool_schemas_accept_metadata_fields(self, platform_args_schemas):
+        assert platform_args_schemas["band_send_event"].model_validate(
             {
                 "content": "state update",
                 "message_type": "task",
                 "metadata": {"run_id": "run-1"},
             }
         ).metadata == {"run_id": "run-1"}
-        assert store_memory.args_schema.model_validate(
+        assert platform_args_schemas["band_store_memory"].model_validate(
             {
                 "content": "remember this",
                 "system": "working",
-                "memory_type": "semantic",
+                "type": "semantic",
                 "segment": "user",
                 "thought": "useful later",
                 "scope": "organization",
@@ -285,6 +302,48 @@ class TestToolSetComposition:
         assert result["status"] == "success"
         tools_obj.lookup_peers.assert_awaited_once_with(2, 25)
 
+    def test_lookup_peers_reports_serialized_result_for_raw_model_return(
+        self, builder_mod
+    ):
+        """lookup_peers (and the other six read-only tools that call
+        call.tools.X directly, bypassing execute_tool_call's own
+        serialization boundary) must still emit a tool_result event when the
+        platform method returns a raw Pydantic/Fern model. report_result's
+        json.dumps has no default=str, so an unserialized model previously
+        raised inside report_result -- caught by its own try/except and only
+        logged as a warning -- silently dropping the tool_result event."""
+
+        class FakePeersResponse:
+            def __init__(self, data):
+                self._data = data
+
+            def model_dump(self):
+                return self._data
+
+        tools_obj = MagicMock()
+        tools_obj.lookup_peers = AsyncMock(
+            return_value=FakePeersResponse({"peers": [{"id": "p1"}]})
+        )
+        tools_obj.send_event = AsyncMock()
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.EmitToolCallsReporter(features),
+            capabilities=frozenset(),
+        )
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
+
+        result = json.loads(lookup_peers._run())
+
+        assert result["status"] == "success"
+        assert result["peers"] == [{"id": "p1"}]
+        result_event = tools_obj.send_event.call_args_list[-1]
+        assert result_event.kwargs["message_type"] == "tool_result"
+        reported = json.loads(result_event.kwargs["content"])
+        assert reported["output"] == {"peers": [{"id": "p1"}]}
+        assert reported["is_error"] is False
+
     def test_send_message_marks_reply_tracker(self, builder_mod):
         """A successful band_send_message flips both ReplyTracker markers so the
         adapter can treat a later empty final answer as benign."""
@@ -301,7 +360,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "success"
         tools_obj.send_message.assert_awaited_once()
@@ -371,7 +430,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "error"
         assert tracker.replied is False
@@ -380,7 +439,6 @@ class TestToolSetComposition:
     def test_send_failure_appends_available_handles(self, builder_mod):
         """The real empty-mentions error already lists the room's handles, so the
         CrewAI enricher must surface them once — not append a second copy."""
-        from band.core.exceptions import BandToolError
 
         tools_obj = MagicMock()
         tools_obj.agent_id = None
@@ -406,7 +464,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "error"
         assert "@john" in result["message"]
@@ -419,7 +477,6 @@ class TestToolSetComposition:
     def test_send_failure_excludes_agent_own_handle(self, builder_mod):
         """The agent's own handle is never offered as a retry option — an
         agent can't @mention itself, so listing it only misleads the LLM."""
-        from band.core.exceptions import BandToolError
 
         tools_obj = MagicMock()
         tools_obj.agent_id = "self-2"
@@ -440,7 +497,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "error"
         assert "@john" in result["message"]
@@ -448,16 +505,240 @@ class TestToolSetComposition:
         assert "@john/weather-agent" not in result["message"]
 
 
+# --- File tools ---
+
+
+class TestFileTools:
+    def test_list_room_files_forwards_cursor(self, builder_mod):
+
+        tools_obj = MagicMock()
+        tools_obj.list_room_files = AsyncMock(
+            return_value={"data": [{"id": "file-1"}], "next_cursor": None}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        list_room_files = next(t for t in tools if t.name == "band_list_room_files")
+
+        result = json.loads(list_room_files._run(cursor="cursor-1"))
+
+        assert result["status"] == "success"
+        tools_obj.list_room_files.assert_awaited_once_with("cursor-1")
+
+    def test_list_room_files_default_cursor_is_none(self, builder_mod):
+
+        tools_obj = MagicMock()
+        tools_obj.list_room_files = AsyncMock(return_value={"data": []})
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        list_room_files = next(t for t in tools if t.name == "band_list_room_files")
+
+        list_room_files._run()
+
+        tools_obj.list_room_files.assert_awaited_once_with(None)
+
+    def test_read_room_file_forwards_file_id(self, builder_mod):
+
+        tools_obj = MagicMock()
+        tools_obj.read_room_file = AsyncMock(
+            return_value={"name": "report.txt", "text": "hello"}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+        result = json.loads(read_room_file._run(file_id="file-1"))
+
+        assert result["status"] == "success"
+        tools_obj.read_room_file.assert_awaited_once_with("file-1")
+
+    def test_read_room_file_image_result_becomes_vision_sentinel(self, builder_mod):
+        """CrewAI's own StepExecutor rewrites a VISION_IMAGE:<media_type>:<b64>
+        tool-result string into a real image_url content block -- pin that
+        band_read_room_file emits exactly that sentinel for an image result."""
+
+        image_result = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+        tools_obj = MagicMock()
+        tools_obj.read_room_file = AsyncMock(return_value=image_result)
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+        result = read_room_file._run(file_id="file-1")
+
+        assert result == builder_mod.vision_sentinel(image_result)
+
+    def test_read_room_file_image_result_reports_placeholder_not_base64(
+        self, builder_mod
+    ):
+        """The full base64 sentinel must reach CrewAI's StepExecutor, but the
+        platform tool_result event must not carry that same base64 blob."""
+
+        image_result = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+        tools_obj = MagicMock()
+        tools_obj.read_room_file = AsyncMock(return_value=image_result)
+        tools_obj.send_event = AsyncMock()
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        reporter = builder_mod.EmitToolCallsReporter(
+            AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=reporter,
+            capabilities=frozenset({Capability.FILES}),
+        )
+        read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+        result = read_room_file._run(file_id="file-1")
+
+        assert result == builder_mod.vision_sentinel(image_result)
+        result_event = tools_obj.send_event.call_args_list[-1].kwargs
+        reported_output = json.loads(result_event["content"])["output"]
+        assert reported_output == image_block_placeholder(1)
+        assert "ZmFrZQ==" not in reported_output
+
+    def test_send_room_file_forwards_args_in_protocol_order(self, builder_mod):
+        """AgentToolsProtocol.send_room_file wants (content, filename, caption,
+        mentions) positionally -- pin the reorder from the tool's own kwargs."""
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        result = json.loads(
+            send_room_file._run(
+                content="file body",
+                filename="notes.txt",
+                mentions=["Alice", "Bob"],
+                caption="here's a file",
+            )
+        )
+
+        assert result["status"] == "success"
+        tools_obj.send_room_file.assert_awaited_once_with(
+            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
+        )
+
+    def test_send_room_file_mentions_accepts_lenient_string_shape(self, builder_mod):
+        """Smaller models emit mentions as a JSON-string or bracketed string,
+        same leniency need as band_send_message -- see normalize_mentions_lenient."""
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(
+            return_value={"attachment": {}, "message_id": "msg-1"}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        send_room_file._run(
+            content="body", filename="notes.txt", mentions="@alice, @bob"
+        )
+
+        tools_obj.send_room_file.assert_awaited_once_with(
+            "body", "notes.txt", "", ["@alice", "@bob"]
+        )
+
+    def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self, builder_mod
+    ):
+        """The full content must still reach send_room_file, but the
+        tool_call event must not carry that same raw payload."""
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        tools_obj.send_event = AsyncMock()
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        reporter = builder_mod.EmitToolCallsReporter(
+            AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=reporter,
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        # Multi-byte characters pin that the placeholder reports UTF-8 byte
+        # length (what MAX_SEND_CONTENT_BYTES actually measures), not
+        # len(content)'s character count.
+        content = "raw file body 你好 " * 1000
+        send_room_file._run(content=content, filename="notes.txt", mentions=["Alice"])
+
+        tools_obj.send_room_file.assert_awaited_once_with(
+            content, "notes.txt", "", ["Alice"]
+        )
+        call_event = tools_obj.send_event.call_args_list[0].kwargs
+        reported_args = json.loads(call_event["content"])["args"]
+        assert reported_args["content"] == file_content_placeholder(
+            len(content.encode("utf-8"))
+        )
+        assert content not in json.dumps(reported_args)
+
+    def test_send_room_file_failure_returns_error_status(self, builder_mod):
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(side_effect=RuntimeError("upload failed"))
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        result = json.loads(
+            send_room_file._run(
+                content="body", filename="notes.txt", mentions=["Alice"]
+            )
+        )
+
+        assert result["status"] == "error"
+        assert "upload failed" in result["message"]
+
+
 # --- Reporter behavior ---
 
 
-class TestEmitExecutionReporter:
+class TestEmitToolCallsReporter:
     @pytest.mark.asyncio
-    async def test_does_not_emit_when_emit_execution_unset(self, builder_mod):
-        from band.core.types import AdapterFeatures
+    async def test_does_not_emit_when_tool_calls_unset(self, builder_mod):
 
         features = AdapterFeatures()  # empty emit set
-        reporter = builder_mod.EmitExecutionReporter(features)
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -467,11 +748,10 @@ class TestEmitExecutionReporter:
         tools.send_event.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_emits_when_emit_execution_set(self, builder_mod):
-        from band.core.types import AdapterFeatures, Emit
+    async def test_emits_when_tool_calls_set(self, builder_mod):
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -491,10 +771,9 @@ class TestEmitExecutionReporter:
         were silently dropped on read. Pin the schema here so a count-only
         assertion can't let that drift back in.
         """
-        from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -518,10 +797,9 @@ class TestEmitExecutionReporter:
 
     @pytest.mark.asyncio
     async def test_error_result_sets_is_error(self, builder_mod):
-        from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -535,10 +813,9 @@ class TestEmitExecutionReporter:
 
     @pytest.mark.asyncio
     async def test_send_event_failure_does_not_propagate(self, builder_mod):
-        from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock(side_effect=Exception("403 Forbidden"))
 
@@ -571,7 +848,7 @@ class TestMissingContext:
             capabilities=frozenset(),
         )
         send_message_tool = next(t for t in tools if t.name == "band_send_message")
-        result_str = send_message_tool._run(content="hi", mentions="[]")
+        result_str = send_message_tool._run(content="hi", mentions=[])
         result = json.loads(result_str)
         assert result["status"] == "error"
         assert "No room context available" in result["message"]
@@ -597,47 +874,42 @@ class TestRunAsyncLazyPatch:
         assert crewai_mocks.apply.call_count == 1
 
 
-class TestStoreMemoryInputDescription:
-    def test_crewai_store_memory_type_description_is_generated(self, builder_mod):
-        """CrewAI store_memory args schema should use memory_type_field_description()."""
-        from band.core.memory_types import memory_type_field_description
+class TestStoreMemoryArgsSchema:
+    """CrewAI advertises the master model, so master text and validators apply."""
 
-        expected = memory_type_field_description()
+    def test_type_description_comes_from_master(self, platform_args_schemas) -> None:
+
+        schema = platform_args_schemas["band_store_memory"]
         assert (
-            builder_mod._StoreMemoryInput.model_fields["memory_type"].description
-            == expected
+            schema.model_fields["type"].description == memory_type_field_description()
         )
 
-    def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
-        self, builder_mod
+    def test_rejects_subject_scope_without_subject_id(
+        self, platform_args_schemas
     ) -> None:
-        """CrewAI input validation rejects missing subject IDs."""
-        from pydantic import ValidationError
 
         with pytest.raises(ValidationError, match="requires a subject_id"):
-            builder_mod._StoreMemoryInput.model_validate(
+            platform_args_schemas["band_store_memory"].model_validate(
                 {
                     "content": "remember this",
                     "system": "working",
-                    "memory_type": "semantic",
+                    "type": "semantic",
                     "segment": "user",
                     "thought": "useful later",
                     "scope": "subject",
                 }
             )
 
-    def test_crewai_store_memory_rejects_type_for_wrong_system(
-        self, builder_mod
-    ) -> None:
-        """CrewAI input validation rejects system/type mismatches."""
-        from pydantic import ValidationError
+    def test_rejects_type_for_wrong_system(self, platform_args_schemas) -> None:
 
-        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
-            builder_mod._StoreMemoryInput.model_validate(
+        with pytest.raises(
+            ValidationError, match="type `semantic` is not valid for system `sensory`"
+        ):
+            platform_args_schemas["band_store_memory"].model_validate(
                 {
                     "content": "remember this",
                     "system": "sensory",
-                    "memory_type": "semantic",
+                    "type": "semantic",
                     "segment": "user",
                     "thought": "useful later",
                     "scope": "organization",

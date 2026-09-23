@@ -26,3 +26,4 @@ ENV_TEST_FILE = REPO_ROOT / ".env.test"
 BUG_HUNTING_SCRIPTS = (
     REPO_ROOT / ".claude" / "skills" / "bug-hunting-via-example" / "scripts"
 )
+CI_SCRIPTS = REPO_ROOT / ".github" / "scripts"

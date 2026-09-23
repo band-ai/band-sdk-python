@@ -15,7 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, Coroutine, TypeVar
+from collections.abc import Coroutine
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def _ensure_nest_asyncio() -> None:
         return
 
     try:
-        import nest_asyncio
+        import nest_asyncio  # noqa: PLC0415
     except ImportError as e:  # pragma: no cover - same import guard as the adapter
         raise ImportError(
             "crewai is required for CrewAI adapter.\n"

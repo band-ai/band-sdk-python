@@ -25,9 +25,10 @@ from __future__ import annotations
 from band.docker.launcher.bootstrap import bootstrap_repository
 from band.docker.launcher.config import (
     AGENT_HOME,
-    CredentialSource,
     DEFAULT_REST_URL,
     DEFAULT_WS_URL,
+    PLACEHOLDER_AGENT_ID,
+    CredentialSource,
     LauncherEnv,
     RepoSection,
     WorkspaceConfig,
@@ -52,10 +53,11 @@ from band.docker.launcher.sync import sync_customer_environment
 __all__ = [
     "AGENT_HOME",
     "AGENT_UID",
-    "CredentialName",
-    "CredentialSource",
     "DEFAULT_REST_URL",
     "DEFAULT_WS_URL",
+    "PLACEHOLDER_AGENT_ID",
+    "CredentialName",
+    "CredentialSource",
     "LaunchError",
     "LauncherEnv",
     "RepoSection",

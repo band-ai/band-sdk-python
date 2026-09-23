@@ -7,6 +7,7 @@ these tests pin down.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 
 from band_rest.types import ChatMessage
@@ -24,7 +25,7 @@ to_observed = conductor.to_observed
 PM, DEV, ARCH = "pm-id", "dev-id", "arch-id"
 
 
-_STAMP = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+_STAMP = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 def make_message(
@@ -101,9 +102,7 @@ def test_to_observed_projects_all_breaker_inputs() -> None:
         "projection must carry the classified sender"
     )
     assert obs.mentions_architect is True, "projection must carry the handoff signal"
-    assert (
-        obs.timestamp == dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp()
-    ), (
+    assert obs.timestamp == dt.datetime(2026, 1, 1, tzinfo=dt.UTC).timestamp(), (
         "projection must use the message's own timestamp so the breaker's clock is the room's clock"
     )
 
@@ -189,8 +188,6 @@ def test_conductor_caps_do_not_drift_from_breaker_defaults() -> None:
     # BreakerConfig defaults, so the two can never silently drift (300 vs 600 again).
     # `interactive` is intentionally different (conductor defaults to interactive,
     # the breaker to headless-safe), so normalize just that one mode flag.
-    import dataclasses
-
     settings = conductor.ConductorSettings()
     normalized = dataclasses.replace(settings.breaker_config(), interactive=False)
     assert normalized == conductor.BreakerConfig(), (

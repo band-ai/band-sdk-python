@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -20,9 +22,15 @@ from a2a.types import (
     TaskStatus,
 )
 
+from band.core.delivery import DeliveryFailedError
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import PlatformMessage
 from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
-from band.testing import FakeAgentTools
+from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
+from band.testing import FakeAgentTools, reported_failures
 
 
 def make_platform_message(content: str = "Hello") -> PlatformMessage:
@@ -35,7 +43,7 @@ def make_platform_message(content: str = "Hello") -> PlatformMessage:
         sender_name="Test User",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -99,6 +107,25 @@ async def stream(*events: StreamResponse):
         yield event
 
 
+@asynccontextmanager
+async def started_adapter(
+    adapter: A2AAdapter,
+) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    """Start ``adapter`` against a patched ``ClientFactory`` and clean it up
+    afterward -- yields ``(client, factory_type)`` so a test states only its
+    own setup and assertions, not the patch/cleanup dance."""
+    client = MagicMock()
+    with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
+        factory = factory_type.return_value
+        factory.create_from_url = AsyncMock(return_value=client)
+        await adapter.on_started("Agent", "Description")
+    try:
+        yield client, factory_type
+    finally:
+        client.close = AsyncMock()
+        await adapter.cleanup_all()
+
+
 class TestA2AAuth:
     def test_to_headers_combines_authentication_methods(self) -> None:
         auth = A2AAuth(
@@ -121,26 +148,31 @@ class TestA2AAdapterStartup:
             remote_url="http://localhost:10000",
             auth=A2AAuth(api_key="key"),
         )
-        client = MagicMock()
 
-        with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
-            factory = factory_type.return_value
-            factory.create_from_url = AsyncMock(return_value=client)
+        async with started_adapter(adapter) as (client, factory_type):
+            assert adapter._client is client
+            config = factory_type.call_args.args[0]
+            assert config.streaming is True
+            assert adapter._http_client is not None
+            assert adapter._http_client.headers["X-API-Key"] == "key"
+            assert config.httpx_client is adapter._http_client, (
+                "the factory must receive the adapter's own client — this "
+                "identity is what carries auth to card resolution and every "
+                "A2A request"
+            )
 
-            await adapter.on_started("Agent", "Description")
+    @pytest.mark.asyncio
+    async def test_owned_http_client_has_a_generous_bounded_read_timeout(self) -> None:
+        """A real remote turn (a live LLM call, a tool loop) routinely leaves
+        several seconds of silence between SSE events -- httpx's 5s default
+        read timeout would misreport that as a dead connection. The bound
+        must still be finite, though, so a peer that hangs after accepting
+        the connection fails the turn instead of blocking the room forever."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
 
-        assert adapter._client is client
-        config = factory_type.call_args.args[0]
-        assert config.streaming is True
-        assert adapter._http_client is not None
-        assert adapter._http_client.headers["X-API-Key"] == "key"
-        assert config.httpx_client is adapter._http_client, (
-            "the factory must receive the adapter's own client — this identity "
-            "is what carries auth to card resolution and every A2A request"
-        )
-
-        client.close = AsyncMock()
-        await adapter.cleanup_all()
+        async with started_adapter(adapter):
+            assert adapter._http_client is not None
+            assert adapter._http_client.timeout.read == _SSE_READ_TIMEOUT_S
 
 
 class TestA2AAdapterMessageFlow:
@@ -271,10 +303,11 @@ class TestA2AAdapterMessageFlow:
         tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
         task = make_task(artifact_text="Final response")
 
-        with pytest.raises(RuntimeError, match="Band unavailable"):
+        with pytest.raises(DeliveryFailedError) as exc_info:
             await adapter._handle_event(
                 task_event(task), tools, "room-123", "user-456", "Test User"
             )
+        assert "Band unavailable" in str(exc_info.value.cause)
 
         assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
             "TASK_STATE_COMPLETED"
@@ -282,6 +315,55 @@ class TestA2AAdapterMessageFlow:
         assert adapter._tasks == {}, "next turn must start a fresh task"
         assert adapter._task_cache == {}
         assert adapter._task_senders == {}
+
+    @pytest.mark.asyncio
+    async def test_finally_block_failure_does_not_replace_try_blocks_exception(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """The terminal task-event emission in ``finally`` must never clobber
+        a ``DeliveryFailedError`` already propagating from the try block --
+        Python's try/finally semantics otherwise let the finally's own
+        exception silently replace it."""
+        tools = FakeAgentTools()
+        tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
+        tools.send_event_error = RuntimeError("task event post also failed")
+        task = make_task(artifact_text="Final response")
+
+        with pytest.raises(DeliveryFailedError) as exc_info:
+            await adapter._handle_event(
+                task_event(task), tools, "room-123", "user-456", "Test User"
+            )
+        assert "Band unavailable" in str(exc_info.value.cause)
+        assert adapter._tasks == {}, "next turn must start a fresh task"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "state",
+        [TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_AUTH_REQUIRED],
+    )
+    async def test_non_retryable_terminal_task_is_acked_after_error_event(
+        self, adapter: A2AAdapter, state: int
+    ) -> None:
+        tools = FakeAgentTools()
+        status_message = (
+            "Please authenticate"
+            if state == TaskState.TASK_STATE_AUTH_REQUIRED
+            else "The task was canceled"
+        )
+
+        await adapter._handle_event(
+            task_event(make_task(state, status_message=status_message)),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        failures = reported_failures(tools)
+        assert failures, "a non-retryable terminal task must produce an error event"
+        assert failures[-1]["message"] == status_message
+        assert failures[-1]["provider"] == "a2a"
+        assert failures[-1]["code"] == TaskState.Name(state)
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(
@@ -311,25 +393,55 @@ class TestA2AAdapterMessageFlow:
     async def test_remote_error_is_posted_as_error_event(
         self, adapter: A2AAdapter
     ) -> None:
-        """A remote A2A outage must surface in the room, not crash the turn."""
+        """A remote A2A outage must surface in the room and fail the turn."""
         adapter._client = MagicMock()
         adapter._client.send_message = MagicMock(
             side_effect=RuntimeError("remote down")
         )
         tools = FakeAgentTools()
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
+        with pytest.raises(RuntimeError, match="remote down"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                A2ASessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
 
-        assert tools.events_sent[-1]["message_type"] == "error"
-        assert "remote down" in tools.events_sent[-1]["content"]
+        failures = reported_failures(tools)
+        assert failures[-1]["provider"] == "a2a"
+        assert failures[-1]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_on_message_reraises_delivery_failure_without_reporting_it(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """A Band-side post failure must fail the turn for retry, without
+        being reported as an A2A provider failure."""
+        adapter._client = MagicMock()
+
+        async def _events() -> AsyncIterator[StreamResponse]:
+            yield task_event(make_task(artifact_text="Final response"))
+
+        adapter._client.send_message = MagicMock(return_value=_events())
+        tools = FakeAgentTools()
+        tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
+
+        with pytest.raises(RuntimeError, match="Band unavailable"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                A2ASessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+
+        assert not reported_failures(tools)
 
     @pytest.mark.asyncio
     async def test_failed_task_is_posted_as_error_event(
@@ -337,20 +449,22 @@ class TestA2AAdapterMessageFlow:
     ) -> None:
         tools = FakeAgentTools()
 
-        await adapter._handle_event(
-            task_event(make_task(TaskState.TASK_STATE_FAILED, status_message="boom")),
-            tools,
-            "room-123",
-            "user-456",
-            "Test User",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._handle_event(
+                task_event(
+                    make_task(TaskState.TASK_STATE_FAILED, status_message="boom")
+                ),
+                tools,
+                "room-123",
+                "user-456",
+                "Test User",
+            )
 
-        error_events = [
-            event for event in tools.events_sent if event["message_type"] == "error"
-        ]
-        assert error_events, "a failed task must produce an error event"
-        assert error_events[-1]["content"] == "boom"
-        assert error_events[-1]["metadata"]["a2a_state"] == "TASK_STATE_FAILED"
+        failures = reported_failures(tools)
+        assert failures, "a failed task must produce an error event"
+        assert failures[-1]["message"] == "boom"
+        assert failures[-1]["provider"] == "a2a"
+        assert failures[-1]["code"] == "TASK_STATE_FAILED"
 
     @pytest.mark.asyncio
     async def test_working_status_text_is_narrated_as_thought(
@@ -375,6 +489,37 @@ class TestA2AAdapterMessageFlow:
         assert tools.events_sent[-1]["content"] == "Checking sources"
 
     @pytest.mark.asyncio
+    async def test_working_status_delivery_failure_is_not_a_provider_failure(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """A failed progress post must not blame a healthy A2A peer."""
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(
+                task_event(
+                    make_task(
+                        TaskState.TASK_STATE_WORKING,
+                        status_message="Checking sources",
+                    )
+                )
+            )
+        )
+        tools = FakeAgentTools()
+        tools.send_event_error = RuntimeError("Band unavailable")
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_second_turn_carries_the_stored_context(
         self, adapter: A2AAdapter
     ) -> None:
@@ -384,7 +529,7 @@ class TestA2AAdapterMessageFlow:
             return_value=stream(task_event(make_task(artifact_text="done")))
         )
         tools = FakeAgentTools()
-        turn = dict(is_session_bootstrap=False, room_id="room-123")
+        turn = {"is_session_bootstrap": False, "room_id": "room-123"}
 
         await adapter.on_message(
             make_platform_message("first"), tools, A2ASessionState(), None, None, **turn
@@ -438,6 +583,28 @@ class TestA2AAdapterShutdown:
         await adapter.cleanup_all()
 
         assert http_client.is_closed, "owned httpx client must be closed"
+        assert adapter._client is None
+        assert adapter._http_client is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_closes_http_transport_even_if_client_close_fails(
+        self,
+    ) -> None:
+        """A broken remote client must not leak the owned httpx transport."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.close = AsyncMock(
+            side_effect=RuntimeError("client close failed")
+        )
+        adapter._http_client = httpx.AsyncClient()
+        http_client = adapter._http_client
+
+        with pytest.raises(RuntimeError, match="client close failed"):
+            await adapter.cleanup_all()
+
+        assert http_client.is_closed, (
+            "http transport must close even if client.close() raises"
+        )
         assert adapter._client is None
         assert adapter._http_client is None
 

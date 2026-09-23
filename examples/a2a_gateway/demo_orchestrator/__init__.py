@@ -22,4 +22,4 @@ except ImportError:
     from agent_executor import OrchestratorAgentExecutor
     from remote_agent import GatewayClient
 
-__all__ = ["OrchestratorAgent", "OrchestratorAgentExecutor", "GatewayClient"]
+__all__ = ["GatewayClient", "OrchestratorAgent", "OrchestratorAgentExecutor"]

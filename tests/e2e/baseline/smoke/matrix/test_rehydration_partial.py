@@ -37,14 +37,15 @@ rehydration itself works — the gap is specific to replying after a reboot in a
 live multi-agent room). Tracked as a langgraph-adapter behaviour to investigate;
 excluded here so the scenario stays green for the adapters that support it.
 
-Excludes ``letta`` for a different reason confirmed live: the self-hosted Letta
-adapter registers its Band MCP tool server per instance, but Letta stores MCP tools
-by name at organization scope and re-points the shared ``band_send_message`` row to
-whichever instance registered most recently. With two Letta agents live in one org,
-the rebooted agent *does* answer, but its send routes through the peer's MCP server
-and posts under the peer's identity, so the stayer-scoped reply is never observed.
-Fixing it needs per-instance tool-name isolation (or per-agent Letta project/org
-scoping); until then two Letta agents cannot keep separate identities in one org.
+``letta`` was previously excluded here for a different reason, confirmed live: the
+self-hosted Letta adapter registered its Band MCP tool server per instance, but
+Letta stored MCP tools by name at organization scope and re-pointed the shared
+``band_send_message`` row to whichever instance registered most recently. With two
+Letta agents live in one org, the rebooted agent *did* answer, but its send routed
+through the peer's MCP server and posted under the peer's identity, so the
+stayer-scoped reply was never observed. This was fixed by provisioning each
+adapter instance its own Letta organization/user, so ``letta`` now runs this
+scenario like every other adapter.
 
 Wording note: a neutral "note", not a "secret code" (models refuse to echo a
 credential-shaped value — an unrelated false failure).
@@ -53,9 +54,9 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -86,14 +87,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
             Adapter.LANGGRAPH,
             "emits no chat reply after a reboot in a live multi-agent room "
             "(langgraph-adapter behaviour under investigation)",
-        ),
-        ExcludedAdapter(
-            Adapter.LETTA,
-            "self-hosted Letta shares one org-wide send-message tool across "
-            "co-located agents, so a second live agent's reply routes through the "
-            "most-recently-registered adapter's MCP server and posts under the "
-            "wrong identity — the stayer-scoped reply is never observed. Needs "
-            "per-instance tool-name isolation to run two Letta agents in one org",
         ),
         ExcludedAdapter(
             Adapter.CREWAI_FLOW,
@@ -130,44 +123,42 @@ async def test_partial_reboot_preserves_context_and_peer(
     # the liveness probe if a peer's reboot left it undisturbed.
     async with cell.run_as(stayer):
         # Rebooter run 1: state the note to the rebooter, then stop it (exit block).
-        async with cell.run_as(rebooter):
-            async with reply_capture(room_id) as capture:
-                mid = await user_ops.send_message(
-                    room_id,
-                    REMEMBER.format(note=note),
-                    mention_id=rebooter.id,
-                    mention_name=rebooter.name,
-                )
-                await capture.wait_for_processed(mid, rebooter.id)
+        async with cell.run_as(rebooter), reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                REMEMBER.format(note=note),
+                mention_id=rebooter.id,
+                mention_name=rebooter.name,
+            )
+            await capture.wait_for_processed(mid, rebooter.id)
 
         # Rebooter run 2: a brand-new adapter under the SAME identity — no in-memory
         # history. A correct recall proves the platform rehydrated the room on
         # bootstrap, even though the reboot happened alongside a live peer.
-        async with cell.run_as(rebooter):
-            async with reply_capture(room_id) as capture:
-                mark = capture.messages.snapshot()  # scope to the recall turn
-                mid = await user_ops.send_message(
-                    room_id,
-                    RECALL,
-                    mention_id=rebooter.id,
-                    mention_name=rebooter.name,
-                )
-                replies = await capture.wait_for_reply(mid, rebooter.id, since=mark)
-                # Scope to the REBOOTER's replies: it, not the still-live stayer,
-                # must be the one that rehydrated the note.
-                replies.assert_contains_any([note])
+        async with cell.run_as(rebooter), reply_capture(room_id) as capture:
+            mark = capture.messages.snapshot()  # scope to the recall turn
+            mid = await user_ops.send_message(
+                room_id,
+                RECALL,
+                mention_id=rebooter.id,
+                mention_name=rebooter.name,
+            )
+            replies = await capture.wait_for_reply(mid, rebooter.id, since=mark)
+            # Scope to the REBOOTER's replies: it, not the still-live stayer,
+            # must be the one that rehydrated the note.
+            replies.assert_contains_any([note])
 
-                # Peer continuity: the never-rebooted stayer should still respond.
-                # We assert it *produced a reply* (scoped to its own sender id), not
-                # what it said — any reply proves it stayed alive through the
-                # rebooter's churn, and a cautious model's phrasing (even a refusal)
-                # can't flake a liveness check the way an exact-token echo would.
-                mark2 = capture.messages.snapshot()
-                probe = await user_ops.send_message(
-                    room_id,
-                    "Quick check-in — are you still there? A one-line reply is fine.",
-                    mention_id=stayer.id,
-                    mention_name=stayer.name,
-                )
-                replies = await capture.wait_for_reply(probe, stayer.id, since=mark2)
-                replies.assert_present(what="a liveness reply from the stayer")
+            # Peer continuity: the never-rebooted stayer should still respond.
+            # We assert it *produced a reply* (scoped to its own sender id), not
+            # what it said — any reply proves it stayed alive through the
+            # rebooter's churn, and a cautious model's phrasing (even a refusal)
+            # can't flake a liveness check the way an exact-token echo would.
+            mark2 = capture.messages.snapshot()
+            probe = await user_ops.send_message(
+                room_id,
+                "Quick check-in — are you still there? A one-line reply is fine.",
+                mention_id=stayer.id,
+                mention_name=stayer.name,
+            )
+            replies = await capture.wait_for_reply(probe, stayer.id, since=mark2)
+            replies.assert_present(what="a liveness reply from the stayer")

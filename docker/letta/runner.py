@@ -13,6 +13,14 @@ Environment variables:
     LETTA_MODEL                Model ID (e.g., openai/gpt-5.4)
     LETTA_MODE                 Operating mode: per_room or shared (default: per_room)
     LETTA_PROJECT              Letta Cloud project name (optional, ignored for self-hosted)
+    LETTA_ORG_SCOPED           Self-hosted only: provision a dedicated Letta org+user
+                               per instance so MCP tool storage never collides between
+                               instances sharing one server (default: auto-on for
+                               self-hosted, off for Cloud; set "false" to opt out).
+                               Recommend also setting LETTA_NO_DEFAULT_ACTOR=true on the
+                               Letta *server* process itself — it turns an unresolvable
+                               user_id into a loud error instead of a silent fallback
+                               to the default org, which would defeat this scoping.
     LETTA_EMBEDDING            Embedding model for agent create (required by Letta's
                                Docker server, e.g. openai/text-embedding-3-small)
     MCP_SERVER_URL             External band-mcp server URL. When set, the adapter
@@ -47,7 +55,11 @@ except ImportError:
         "pyyaml is required for the Letta runner. Install with: pip install pyyaml"
     )
 
+from band import Agent
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 from band.config.loader import load_agent_config
+from band.config.logs import LogSettings
+from band.core.types import Emit
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -57,10 +69,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 LettaMode = Literal["per_room", "shared"]
@@ -79,13 +87,12 @@ class LettaRunnerSettings(BaseSettings):
 
     agent_config: str = ""  # AGENT_CONFIG (required; validated in main)
     agent_key: str = "agent"  # AGENT_KEY
-    band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"  # BAND_WS_URL
-    band_rest_url: str = "https://app.band.ai"  # BAND_REST_URL
     letta_base_url: str | None = None  # LETTA_BASE_URL
     letta_api_key: str | None = None  # LETTA_API_KEY
     letta_model: str | None = None  # LETTA_MODEL
     letta_mode: str | None = None  # LETTA_MODE
     letta_project: str | None = None  # LETTA_PROJECT
+    letta_org_scoped: str | None = None  # LETTA_ORG_SCOPED
     letta_embedding: str | None = None  # LETTA_EMBEDDING
     letta_mcp_advertised_host: str | None = None  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str | None = None  # MCP_SERVER_URL
@@ -145,7 +152,8 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the Letta agent from YAML configuration."""
-    global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
+    LogSettings().for_application().configure()
+    global _shutdown_event
     _shutdown_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -155,20 +163,11 @@ async def main() -> None:
     settings = LettaRunnerSettings()
     if not settings.agent_config:
         raise ValueError("AGENT_CONFIG environment variable not set")
-    if not settings.band_ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not settings.band_rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
-    ws_url = settings.band_ws_url
-    rest_url = settings.band_rest_url
 
     logger.info(
         "Loading config from: %s (key: %s)", settings.agent_config, settings.agent_key
     )
     config = load_config(settings.agent_config, settings.agent_key)
-
-    from band import Agent
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]
@@ -190,6 +189,11 @@ async def main() -> None:
     mcp_server_url = resolve(settings.mcp_server_url, "mcp_server_url")
     mcp_server_name = resolve(settings.mcp_server_name, "mcp_server_name")
     letta_project = resolve(settings.letta_project, "letta_project")
+    # LettaAdapterConfig.org_scoped is bool | None (unlike the str | None
+    # fields resolve() otherwise threads through); pydantic's lenient
+    # str->bool coercion accepts this resolved string ("true"/"false") fine,
+    # but it's not a literal copy-paste of a str | None passthrough.
+    letta_org_scoped = resolve(settings.letta_org_scoped, "letta_org_scoped")
 
     # An explicit MCP_SERVER_URL selects an external band-mcp; otherwise the
     # adapter self-hosts its own Band MCP server in-process.
@@ -216,19 +220,17 @@ async def main() -> None:
             embedding=letta_embedding,
             mcp=mcp_config,
             project=letta_project,
+            org_scoped=letta_org_scoped,
             custom_section="",
             include_base_instructions=True,
-            enable_task_events=True,
-            enable_execution_reporting=False,
-        )
+        ),
+        emit=Emit.TASK_EVENTS,
     )
 
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Letta agent: %s", agent_id)

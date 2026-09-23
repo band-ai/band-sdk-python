@@ -85,7 +85,7 @@ class CopilotSessionManager:
             if session is not None:
                 try:
                     await session.disconnect()
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
                     logger.warning(
                         "Room %s: session disconnect failed: %s", room_id, exc
                     )
@@ -122,6 +122,6 @@ class CopilotSessionManager:
         if self._owns_client:
             try:
                 await self._client.stop()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
                 logger.warning("Copilot client stop failed: %s", exc)
             logger.info("Copilot client stopped")
