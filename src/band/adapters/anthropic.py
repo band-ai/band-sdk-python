@@ -11,13 +11,14 @@ import logging
 import warnings
 from typing import Any, ClassVar, cast
 
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic
 from anthropic.types import Message, MessageParam, TextBlock, ToolParam, ToolUseBlock
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     Capability,
@@ -60,6 +61,17 @@ def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for block in result["content"]
     ]
+
+
+def _to_agent_failure(e: Exception) -> AgentFailure:
+    """Parse a turn-ending exception into the shared provider-failure shape.
+
+    ``APIStatusError`` carries an HTTP status and response body that a plain
+    exception's message alone does not.
+    """
+    if isinstance(e, APIStatusError):
+        return AgentFailure("anthropic", str(e), str(e.status_code), e.body)
+    return AgentFailure("anthropic", GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
 class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
@@ -279,7 +291,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     )
                 except Exception as e:
                     logger.exception("Error calling Anthropic")
-                    await self._report_error(tools, str(e))
+                    await tools.send_failure(_to_agent_failure(e))
                     raise  # Re-raise so message is marked as failed
 
                 turn_usage = turn_usage + self._usage_from_response(response)
@@ -513,11 +525,3 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             )
 
         return tool_results
-
-    # --- Copied from BaseFrameworkAgent._report_error ---
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            logger.warning("Failed to send error event: %s", e)

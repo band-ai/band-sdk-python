@@ -55,12 +55,33 @@ from band.adapters.pydantic_ai import (
     _is_output_retries_exhausted,
     _is_replayable_history_message,
 )
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.types import Capability, Emit, PlatformMessage, TurnUsage
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import get_tool_description
+from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
+
+
+async def agent_tool_functions(capabilities: Capability) -> dict[str, Any]:
+    """Every tool function on a real, started agent's toolset, by name.
+
+    Grabbed off the real function toolset rather than driven through a
+    mocked agent run, since the behavior under test is a wrapper's own
+    argument plumbing to AgentToolsProtocol -- not pydantic-ai's
+    tool-calling loop.
+    """
+    adapter = PydanticAIAdapter(model="test", capabilities=capabilities)
+    await adapter.on_started(agent_name="Probe", agent_description="probe")
+    return {
+        name: tool.function
+        for name, tool in adapter._agent._function_toolset.tools.items()
+    }
 
 
 def make_stream_events(
@@ -152,6 +173,7 @@ def mock_tools():
     tools = MagicMock()
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.add_participant = AsyncMock(return_value={"id": "user-1"})
     tools.remove_participant = AsyncMock(return_value={"status": "removed"})
     tools.lookup_peers = AsyncMock(return_value={"peers": []})
@@ -720,14 +742,6 @@ class TestFileTools:
         )
         return tools
 
-    async def _tool_functions(self) -> dict[str, Any]:
-        adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
-        await adapter.on_started(agent_name="Probe", agent_description="probe")
-        return {
-            name: tool.function
-            for name, tool in adapter._agent._function_toolset.tools.items()
-        }
-
     @pytest.mark.asyncio
     async def test_agent_has_file_tools_registered_only_with_capability(self):
         without_files = PydanticAIAdapter(model="test")
@@ -738,7 +752,7 @@ class TestFileTools:
         assert "band_read_room_file" not in names
         assert "band_send_room_file" not in names
 
-        with_files = await self._tool_functions()
+        with_files = await agent_tool_functions(Capability.FILES)
 
         assert "band_list_room_files" in with_files
         assert "band_read_room_file" in with_files
@@ -746,7 +760,7 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_list_room_files_forwards_cursor(self, file_tools):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_list_room_files"](
             SimpleNamespace(deps=file_tools), cursor="cursor-1"
@@ -758,7 +772,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_list_room_files_handles_exception(self, file_tools):
         file_tools.list_room_files.side_effect = Exception("backend unavailable")
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_list_room_files"](
             SimpleNamespace(deps=file_tools), cursor=None
@@ -769,7 +783,7 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_forwards_file_id(self, file_tools):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_read_room_file"](
             SimpleNamespace(deps=file_tools), file_id="file-1"
@@ -787,7 +801,7 @@ class TestFileTools:
                 ]
             }
         )
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_read_room_file"](
             SimpleNamespace(deps=file_tools), file_id="file-1"
@@ -802,7 +816,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_read_room_file_handles_exception(self, file_tools):
         file_tools.read_room_file.side_effect = Exception("not found")
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_read_room_file"](
             SimpleNamespace(deps=file_tools), file_id="missing"
@@ -817,7 +831,7 @@ class TestFileTools:
         mentions, caption) differs from the positional order AgentToolsProtocol
         wants (content, filename, caption, mentions) -- assert the call site
         reorders correctly rather than passing mentions where caption goes."""
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_send_room_file"](
             SimpleNamespace(deps=file_tools),
@@ -835,7 +849,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_send_room_file_handles_exception(self, file_tools):
         file_tools.send_room_file.side_effect = Exception("upload failed")
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_send_room_file"](
             SimpleNamespace(deps=file_tools),
@@ -846,6 +860,73 @@ class TestFileTools:
 
         assert "Error sending room file 'notes.txt'" in result
         assert "upload failed" in result
+
+
+class TestContactTools:
+    """band_add_contact/band_remove_contact/band_respond_contact_request,
+    gated behind Capability.CONTACTS.
+
+    Driven by a real ``FakeAgentTools`` rather than a mock returning plain
+    dicts, so the ``@platform_tool``-applied ``serialize_tool_result()``
+    conversion from a real Fern model to a plain dict is actually exercised,
+    not a no-op against an already-dict stub.
+    """
+
+    @pytest.mark.asyncio
+    async def test_add_contact_returns_a_plain_dict(self):
+        functions = await agent_tool_functions(Capability.CONTACTS)
+        tools = FakeAgentTools()
+
+        result = await functions["band_add_contact"](
+            SimpleNamespace(deps=tools), handle="@alice", message="hi"
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_remove_contact_returns_a_plain_dict(self):
+        functions = await agent_tool_functions(Capability.CONTACTS)
+        tools = FakeAgentTools(
+            contacts=[
+                {
+                    "id": "c1",
+                    "handle": "alice",
+                    "name": "Alice",
+                    "type": "User",
+                    "inserted_at": "2025-01-01T00:00:00Z",
+                    "online": True,
+                }
+            ]
+        )
+
+        result = await functions["band_remove_contact"](
+            SimpleNamespace(deps=tools), handle="alice"
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "removed"
+
+    @pytest.mark.asyncio
+    async def test_respond_contact_request_returns_a_plain_dict(self):
+        functions = await agent_tool_functions(Capability.CONTACTS)
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                {
+                    "id": "req-1",
+                    "from_handle": "alice",
+                    "status": "pending",
+                    "inserted_at": "2025-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        result = await functions["band_respond_contact_request"](
+            SimpleNamespace(deps=tools), action="approve", request_id="req-1"
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "approved"
 
 
 class TestOnMessage:
@@ -863,7 +944,10 @@ class TestOnMessage:
 
         result_messages = [ModelRequest(parts=[UserPromptPart(content="test")])]
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=result_messages)
+            return_value=make_stream_events(
+                result_messages=result_messages,
+                tool_results=[("band_send_message", "Message sent", "call-1")],
+            )
         )
 
         await adapter.on_message(
@@ -897,7 +981,10 @@ class TestOnMessage:
             ModelRequest(parts=[UserPromptPart(content="new")])
         ]
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=result_messages)
+            return_value=make_stream_events(
+                result_messages=result_messages,
+                tool_results=[("band_send_message", "Message sent", "call-1")],
+            )
         )
 
         await adapter.on_message(
@@ -926,7 +1013,10 @@ class TestOnMessage:
             await adapter.on_started("TestBot", "Test bot")
 
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=[])
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_results=[("band_send_message", "Message sent", "call-1")],
+            )
         )
 
         await adapter.on_message(
@@ -963,7 +1053,10 @@ class TestOnMessage:
         with patch.object(adapter, "_create_agent") as mock_create:
             mock_agent = MagicMock()
             mock_agent.run_stream_events = MagicMock(
-                return_value=make_stream_events(result_messages=[])
+                return_value=make_stream_events(
+                    result_messages=[],
+                    tool_results=[("band_send_message", "Message sent", "call-1")],
+                )
             )
             mock_create.return_value = mock_agent
 
@@ -978,6 +1071,37 @@ class TestOnMessage:
             )
 
             mock_create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reports_failure_when_no_terminal_tool_ran(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """A clean run that never called a reply/terminal tool is a silently
+        dropped turn — must still surface as a failure, even without an
+        exception."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(result_messages=[])
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "pydantic_ai"
+        assert "band_send_message" in failure.message
 
 
 class TestOnCleanup:
@@ -1018,7 +1142,10 @@ class TestHistoryManagement:
         ]
 
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=new_messages)
+            return_value=make_stream_events(
+                result_messages=new_messages,
+                tool_results=[("band_send_message", "Message sent", "call-1")],
+            )
         )
 
         await adapter.on_message(
@@ -1072,7 +1199,10 @@ class TestHistoryManagement:
             text_response,
         ]
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=result_messages)
+            return_value=make_stream_events(
+                result_messages=result_messages,
+                tool_results=[("band_send_message", {"id": "msg_1"}, "call_1")],
+            )
         )
 
         await adapter.on_message(
@@ -1164,7 +1294,10 @@ class TestHistoryManagement:
             await adapter.on_started("TestBot", "Test bot")
 
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=[])
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_results=[("band_send_message", "Message sent", "call-1")],
+            )
         )
 
         await adapter.on_message(
@@ -1201,6 +1334,7 @@ class TestExecutionReporting:
             return_value=make_stream_events(
                 result_messages=[],
                 tool_calls=[("band_send_message", {"content": "Hello"}, "call-123")],
+                tool_results=[("band_send_message", "Message sent", "call-123")],
             )
         )
 
@@ -1245,6 +1379,7 @@ class TestExecutionReporting:
                         "call-123",
                     )
                 ],
+                tool_results=[("band_send_message", "Message sent", "call-2")],
             )
         )
 
@@ -1322,7 +1457,10 @@ class TestExecutionReporting:
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_stream_events(
                 result_messages=[],
-                tool_results=[("band_read_room_file", [image], "call-1")],
+                tool_results=[
+                    ("band_read_room_file", [image], "call-1"),
+                    ("band_send_message", "Message sent", "call-2"),
+                ],
             )
         )
 
@@ -1429,9 +1567,10 @@ class TestExecutionReporting:
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
 
-        # Mock tools where send_event fails with a real transport error (the kind
-        # _report_error narrowly tolerates); a generic Exception would be a bug and
-        # is intentionally left to propagate.
+        # Mock tools where send_event fails with a real transport error — the
+        # tool_call event's own local guard swallows this and logs a warning;
+        # a generic Exception would be a bug and is intentionally left to
+        # propagate.
         failing_tools = AsyncMock()
         failing_tools.send_event = AsyncMock(
             side_effect=httpx.ConnectError("Network error")
@@ -1441,6 +1580,7 @@ class TestExecutionReporting:
             return_value=make_stream_events(
                 result_messages=[ModelRequest(parts=[UserPromptPart(content="test")])],
                 tool_calls=[("band_send_message", {"content": "Hello"}, "call-123")],
+                tool_results=[("band_send_message", "Message sent", "call-123")],
             )
         )
 
@@ -1554,6 +1694,7 @@ class TestEmptyFinalAnswer:
             isinstance(part, UserPromptPart) and "Hello, agent!" in str(part.content)
             for part in preserved[-1].parts
         )
+        mock_tools.send_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_empty_output_preserves_full_captured_turn(
@@ -1626,6 +1767,11 @@ class TestEmptyFinalAnswer:
                 is_session_bootstrap=True,
                 room_id="room-123",
             )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "pydantic_ai"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_failed_run_still_emits_captured_usage(
@@ -1711,6 +1857,44 @@ class TestEmptyFinalAnswer:
                 is_session_bootstrap=True,
                 room_id="room-123",
             )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "pydantic_ai"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_generic_provider_error_reports_and_propagates(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """A failure that isn't UnexpectedModelBehavior at all (a raw provider/API
+        error) must still surface as a failure and propagate, not vanish uncaught."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                RuntimeError("provider connection reset"),
+                tool_result=False,
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="provider connection reset"):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "pydantic_ai"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_empty_output_after_read_only_tool_propagates(
@@ -1896,7 +2080,10 @@ class TestCustomTools:
 
         result_messages = [ModelRequest(parts=[UserPromptPart(content="test")])]
         adapter._agent.run_stream_events = MagicMock(
-            return_value=make_stream_events(result_messages=result_messages)
+            return_value=make_stream_events(
+                result_messages=result_messages,
+                tool_results=[("band_send_message", "Message sent", "call-1")],
+            )
         )
 
         # Should not raise
