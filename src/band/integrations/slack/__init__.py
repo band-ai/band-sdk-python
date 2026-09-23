@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from band.integrations.slack.adapter import SlackAdapter as SlackAdapter
     from band.integrations.slack.types import (
         SlackApp as SlackApp,
+    )
+    from band.integrations.slack.types import (
         SlackSessionState as SlackSessionState,
     )
 

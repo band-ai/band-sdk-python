@@ -19,8 +19,6 @@ from .forwarder import (
 )
 from .health import HealthServer
 
-BandBridge = BandBridge
-
 __all__ = [
     "AgentConfig",
     "AgentCoreForwarder",
@@ -34,7 +32,6 @@ __all__ = [
     "HealthServer",
     "ReconnectConfig",
     "Target",
-    "BandBridge",
     "build_forwarder",
     "main",
 ]

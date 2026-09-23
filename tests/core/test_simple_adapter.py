@@ -1,6 +1,6 @@
 """Tests for SimpleAdapter base class."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -73,7 +73,7 @@ def make_platform_message(content: str = "Hello") -> PlatformMessage:
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

@@ -58,16 +58,16 @@ import state
 # `tests.e2e.baseline.*` imports the same way `conftest.py` does for pytest.
 sys.path.insert(0, str(state.repo_root()))
 
-from band_rest import AsyncRestClient  # noqa: E402
+from band_rest import AsyncRestClient
 
-from tests.e2e.baseline.settings import BandEndpoints, BaselineSettings  # noqa: E402
-from tests.e2e.baseline.toolkit.capture import reply_capture  # noqa: E402
-from tests.e2e.baseline.toolkit.provisioning import (  # noqa: E402
+from tests.e2e.baseline.settings import BandEndpoints, BaselineSettings
+from tests.e2e.baseline.toolkit.capture import reply_capture
+from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     user_rest_client,
 )
-from tests.e2e.baseline.toolkit.user_ops import UserOps  # noqa: E402
-from tests.e2e.baseline.toolkit.ws import user_ws_observer  # noqa: E402
+from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.e2e.baseline.toolkit.ws import user_ws_observer
 
 logging.basicConfig(
     level=logging.INFO,

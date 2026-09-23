@@ -95,10 +95,12 @@ from langchain_core.tools import tool
 from band import Agent
 from band.adapters import LangGraphAdapter
 
+
 @tool
 def my_custom_tool(query: str) -> str:
     """Does something useful."""
     return "result"
+
 
 adapter = LangGraphAdapter(
     llm=ChatOpenAI(model="gpt-5.4-mini"),

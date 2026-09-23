@@ -54,9 +54,9 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -123,44 +123,42 @@ async def test_partial_reboot_preserves_context_and_peer(
     # the liveness probe if a peer's reboot left it undisturbed.
     async with cell.run_as(stayer):
         # Rebooter run 1: state the note to the rebooter, then stop it (exit block).
-        async with cell.run_as(rebooter):
-            async with reply_capture(room_id) as capture:
-                mid = await user_ops.send_message(
-                    room_id,
-                    REMEMBER.format(note=note),
-                    mention_id=rebooter.id,
-                    mention_name=rebooter.name,
-                )
-                await capture.wait_for_processed(mid, rebooter.id)
+        async with cell.run_as(rebooter), reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                REMEMBER.format(note=note),
+                mention_id=rebooter.id,
+                mention_name=rebooter.name,
+            )
+            await capture.wait_for_processed(mid, rebooter.id)
 
         # Rebooter run 2: a brand-new adapter under the SAME identity — no in-memory
         # history. A correct recall proves the platform rehydrated the room on
         # bootstrap, even though the reboot happened alongside a live peer.
-        async with cell.run_as(rebooter):
-            async with reply_capture(room_id) as capture:
-                mark = capture.messages.snapshot()  # scope to the recall turn
-                mid = await user_ops.send_message(
-                    room_id,
-                    RECALL,
-                    mention_id=rebooter.id,
-                    mention_name=rebooter.name,
-                )
-                replies = await capture.wait_for_reply(mid, rebooter.id, since=mark)
-                # Scope to the REBOOTER's replies: it, not the still-live stayer,
-                # must be the one that rehydrated the note.
-                replies.assert_contains_any([note])
+        async with cell.run_as(rebooter), reply_capture(room_id) as capture:
+            mark = capture.messages.snapshot()  # scope to the recall turn
+            mid = await user_ops.send_message(
+                room_id,
+                RECALL,
+                mention_id=rebooter.id,
+                mention_name=rebooter.name,
+            )
+            replies = await capture.wait_for_reply(mid, rebooter.id, since=mark)
+            # Scope to the REBOOTER's replies: it, not the still-live stayer,
+            # must be the one that rehydrated the note.
+            replies.assert_contains_any([note])
 
-                # Peer continuity: the never-rebooted stayer should still respond.
-                # We assert it *produced a reply* (scoped to its own sender id), not
-                # what it said — any reply proves it stayed alive through the
-                # rebooter's churn, and a cautious model's phrasing (even a refusal)
-                # can't flake a liveness check the way an exact-token echo would.
-                mark2 = capture.messages.snapshot()
-                probe = await user_ops.send_message(
-                    room_id,
-                    "Quick check-in — are you still there? A one-line reply is fine.",
-                    mention_id=stayer.id,
-                    mention_name=stayer.name,
-                )
-                replies = await capture.wait_for_reply(probe, stayer.id, since=mark2)
-                replies.assert_present(what="a liveness reply from the stayer")
+            # Peer continuity: the never-rebooted stayer should still respond.
+            # We assert it *produced a reply* (scoped to its own sender id), not
+            # what it said — any reply proves it stayed alive through the
+            # rebooter's churn, and a cautious model's phrasing (even a refusal)
+            # can't flake a liveness check the way an exact-token echo would.
+            mark2 = capture.messages.snapshot()
+            probe = await user_ops.send_message(
+                room_id,
+                "Quick check-in — are you still there? A one-line reply is fine.",
+                mention_id=stayer.id,
+                mention_name=stayer.name,
+            )
+            replies = await capture.wait_for_reply(probe, stayer.id, since=mark2)
+            replies.assert_present(what="a liveness reply from the stayer")

@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from band.integrations.a2a.adapter import A2AAdapter as A2AAdapter
     from band.integrations.a2a.types import (
         A2AAuth as A2AAuth,
+    )
+    from band.integrations.a2a.types import (
         A2ASessionState as A2ASessionState,
     )
 

@@ -15,7 +15,6 @@ from pathlib import Path
 
 from band.config.logs import LogSettings
 from band.docker.launcher.bootstrap import bootstrap_repository
-from band.logging_config import FormatStyle, LoggingStyle
 from band.docker.launcher.config import (
     AGENT_HOME,
     DEFAULT_CONFIG_FILENAME,
@@ -29,6 +28,7 @@ from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.launch import ResolvedLaunch
 from band.docker.launcher.paths import require_project_materialized, resolve_paths
 from band.docker.launcher.sync import sync_customer_environment
+from band.logging_config import FormatStyle, LoggingStyle
 
 logger = logging.getLogger(__name__)
 

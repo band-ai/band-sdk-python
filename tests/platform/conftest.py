@@ -9,8 +9,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
-from band.client.streaming import WebSocketClient
 from band_sdk_core import DeadReason, SessionState
+
+from band.client.streaming import WebSocketClient
 
 
 class AllTopicsJoined:

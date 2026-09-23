@@ -80,8 +80,9 @@ def _codex_binary() -> str | None:
     if not binary:
         return None
     try:
-        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        proc = subprocess.run(
             [binary, "--version"],
+            check=False,
             capture_output=True,
             text=True,
             timeout=20,
@@ -139,8 +140,9 @@ def _run_codex(config_toml: str, tmp_path: Path) -> tuple[int, str, str]:
     ]
     logger.info("Running: %s (CODEX_HOME=%s)", " ".join(cmd), codex_home)
     try:
-        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        proc = subprocess.run(
             cmd,
+            check=False,
             cwd=str(workdir),
             env=env,
             capture_output=True,

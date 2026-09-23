@@ -103,66 +103,68 @@ from .runtime import (
     render_system_prompt,
     run_with_graceful_shutdown,
 )
+from .workspaces import create_room_workspace_resolver
 
 __all__ = [
-    # Composition
-    "Agent",
+    "ALL_TOOL_NAMES",
+    "BASE_TOOL_NAMES",
+    "CHATTY_LOGGERS",
+    "CHAT_TOOL_NAMES",
+    "CONTACT_TOOL_NAMES",
+    "MCP_TOOL_PREFIX",
+    "MEMORY_TOOL_NAMES",
+    "STANDARD_FORMAT",
+    # Runtime - Tools
+    "TOOL_MODELS",
     # Core types (v0.3.0)
     "AdapterFeatures",
-    "Capability",
-    "Emit",
-    "FeatureKwargs",
-    "BandError",
-    "BandConfigError",
-    "BandConnectionError",
-    "BandToolError",
-    "FileStyle",
-    "FormatStyle",
-    "CHATTY_LOGGERS",
-    "LogLevel",
-    "LogSettings",
-    "LoggingConfig",
-    "LoggingStyle",
-    "LogStream",
-    "STANDARD_FORMAT",
-    "build_logging_config",
-    "chatty_logger_levels",
-    "configure_logging",
-    "configure_logging_from_env",
-    # Platform
-    "BandLink",
-    "PlatformEvent",
+    # Composition
+    "Agent",
+    "AgentConfig",
     # Runtime - Core
     "AgentRuntime",
-    "RoomPresence",
+    "AgentTools",
+    "BandConfigError",
+    "BandConnectionError",
+    "BandError",
+    # Platform
+    "BandLink",
+    "BandToolError",
+    "Capability",
+    "ConversationContext",
+    "Emit",
     "Execution",
     "ExecutionContext",
     "ExecutionHandler",
-    "AgentTools",
-    # Runtime - Types
-    "PlatformMessage",
-    "AgentConfig",
-    "SessionConfig",
-    "ConversationContext",
-    # Runtime - Prompts
-    "render_system_prompt",
-    # Runtime - Tools
-    "TOOL_MODELS",
-    "ALL_TOOL_NAMES",
-    "BASE_TOOL_NAMES",
-    "CHAT_TOOL_NAMES",
-    "CONTACT_TOOL_NAMES",
-    "MEMORY_TOOL_NAMES",
-    "MCP_TOOL_PREFIX",
-    "mcp_tool_names",
-    # Runtime - Formatters
-    "format_message_for_llm",
-    "format_history_for_llm",
-    "build_participants_message",
-    # Runtime - Trackers
-    "MessageRetryTracker",
+    "FeatureKwargs",
+    "FileStyle",
+    "FormatStyle",
     # Runtime - Shutdown
     "GracefulShutdown",
+    "LogLevel",
+    "LogSettings",
+    "LogStream",
+    "LoggingConfig",
+    "LoggingStyle",
+    # Runtime - Trackers
+    "MessageRetryTracker",
+    "PlatformEvent",
+    # Runtime - Types
+    "PlatformMessage",
+    "RoomPresence",
+    "SessionConfig",
+    "build_logging_config",
+    "build_participants_message",
+    "chatty_logger_levels",
+    "configure_logging",
+    "configure_logging_from_env",
+    "create_room_workspace_resolver",
+    "format_history_for_llm",
+    # Runtime - Formatters
+    "format_message_for_llm",
+    "mcp_tool_names",
+    # Runtime - Prompts
+    "render_system_prompt",
     "run_with_graceful_shutdown",
 ]
 

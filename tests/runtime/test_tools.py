@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -14,6 +14,7 @@ from band_rest import (
     GetAgentChatContextResponse,
     GetAgentChatContextResponseMetadata,
 )
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ValidationError
 
 from band.client.rest import (
@@ -28,8 +29,6 @@ from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
-from tests.conftest import make_participant_mock
-from tests.content import BLANK_CONTENT_CASES
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -37,24 +36,26 @@ from band.runtime.tools import (
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
     TOOL_MODELS,
+    AddParticipantInput,
     AgentTools,
+    CreateChatroomInput,
+    GetParticipantsInput,
+    LookupPeersInput,
+    RemoveParticipantInput,
+    SendEventInput,
     SendMessageInput,
     SendRoomFileInput,
-    SendEventInput,
     StoreMemoryInput,
-    AddParticipantInput,
-    RemoveParticipantInput,
-    LookupPeersInput,
-    GetParticipantsInput,
-    CreateChatroomInput,
-    _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
     is_mcp_content_result,
     is_room_posting_tool,
+    matches_identifier,
 )
+from tests.conftest import make_participant_mock
+from tests.content import BLANK_CONTENT_CASES
 
 
 class TestIsMcpContentResult:
@@ -62,10 +63,14 @@ class TestIsMcpContentResult:
     shape so a consumer that supports real MCP content (claude_sdk, the MCP
     engine) can pass it through instead of json.dumps-ing it into text."""
 
-    _IMAGE_RESULT = {
+    _IMAGE_RESULT: ClassVar[dict[str, Any]] = {
         "content": [{"type": "image", "data": "YmFzZTY0", "mimeType": "image/png"}]
     }
-    _TEXT_RESULT = {"name": "notes.txt", "content_type": "text/plain", "text": "hi"}
+    _TEXT_RESULT: ClassVar[dict[str, Any]] = {
+        "name": "notes.txt",
+        "content_type": "text/plain",
+        "text": "hi",
+    }
 
     def test_true_for_image_content_block(self) -> None:
         assert is_mcp_content_result(self._IMAGE_RESULT)
@@ -829,7 +834,7 @@ class TestFileTools:
         evicts it, so the cache never keeps serving metadata it already
         gave up on."""
         expired = _attachment(
-            "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+            "file-1", expires_at=datetime.now(UTC) - timedelta(seconds=1)
         )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
@@ -853,7 +858,7 @@ class TestFileTools:
             "file-1",
             content_type="text/plain",
             size=5,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         expired_page = _context_response(
             [
@@ -862,8 +867,7 @@ class TestFileTools:
                     [
                         _attachment(
                             "file-1",
-                            expires_at=datetime.now(timezone.utc)
-                            - timedelta(seconds=1),
+                            expires_at=datetime.now(UTC) - timedelta(seconds=1),
                         )
                     ],
                 )
@@ -891,7 +895,10 @@ class TestFileTools:
         """A naive (offset-less) expires_at -- the Fern model doesn't enforce
         one -- must be treated as UTC, not raise on comparison to aware
         now()."""
-        expired = _attachment("file-1", expires_at=datetime(2020, 1, 1))  # no tzinfo
+        expired = _attachment(
+            "file-1",
+            expires_at=datetime(2020, 1, 1),  # noqa: DTZ001 -- naive on purpose, see docstring
+        )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -1489,36 +1496,80 @@ class TestAgentToolsSendEvent:
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
 
+class TestAgentToolsSendFailure:
+    """Test send_failure's best-effort delegation over the real REST boundary."""
+
+    async def test_send_failure_posts_an_error_event(self, mock_rest_client):
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.send_failure(AgentFailure("codex", "boom", "timeout"))
+
+        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
+        event = call_args.kwargs["event"]
+        assert event.message_type == "error"
+        assert event.metadata["failure"] == {
+            "provider": "codex",
+            "code": "timeout",
+            "message": "boom",
+            "detail": None,
+        }
+
+    async def test_send_failure_swallows_a_rest_rejection(self, mock_rest_client):
+        """A failed report must resolve, not raise -- it runs inside a
+        caller's except block reporting a real provider failure already."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            RuntimeError("REST rejected the event")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.send_failure(AgentFailure("codex", "boom"))
+
+        assert result == {"ok": False, "error": "REST rejected the event"}
+
+    async def test_send_event_itself_still_raises_on_the_same_rejection(
+        self, mock_rest_client
+    ):
+        """The other half of the best-effort contract: send_event's own
+        raising behavior is unchanged by send_failure wrapping it."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            RuntimeError("REST rejected the event")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(RuntimeError, match="REST rejected the event"):
+            await tools.send_event("task update", "task")
+
+
 class TestMatchesIdentifier:
-    """Tests for the _matches_identifier helper."""
+    """Tests for the matches_identifier helper."""
 
     def test_match_by_handle(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "alice") is True
+        assert matches_identifier(entity, "alice") is True
 
     def test_match_by_name(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "Alice Smith") is True
+        assert matches_identifier(entity, "Alice Smith") is True
 
     def test_match_by_id(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "u-1") is True
+        assert matches_identifier(entity, "u-1") is True
 
     def test_case_insensitive(self):
         entity = {"handle": "Alice", "name": "ALICE SMITH", "id": "U-1"}
-        assert _matches_identifier(entity, "alice") is True
-        assert _matches_identifier(entity, "alice smith") is True
-        assert _matches_identifier(entity, "u-1") is True
+        assert matches_identifier(entity, "alice") is True
+        assert matches_identifier(entity, "alice smith") is True
+        assert matches_identifier(entity, "u-1") is True
 
     def test_no_match(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "bob") is False
+        assert matches_identifier(entity, "bob") is False
 
     def test_missing_fields(self):
         """Should handle entities with missing or None fields."""
-        assert _matches_identifier({"name": "Alice"}, "Alice") is True
-        assert _matches_identifier({"handle": None, "name": "Alice"}, "Alice") is True
-        assert _matches_identifier({}, "anything") is False
+        assert matches_identifier({"name": "Alice"}, "Alice") is True
+        assert matches_identifier({"handle": None, "name": "Alice"}, "Alice") is True
+        assert matches_identifier({}, "anything") is False
 
     def test_at_prefix_normalization(self):
         """@alice and alice should match regardless of which side has the prefix."""
@@ -1526,18 +1577,18 @@ class TestMatchesIdentifier:
         entity_without_at = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
 
         # identifier has @, entity doesn't
-        assert _matches_identifier(entity_without_at, "@alice") is True
+        assert matches_identifier(entity_without_at, "@alice") is True
         # entity has @, identifier doesn't
-        assert _matches_identifier(entity_with_at, "alice") is True
+        assert matches_identifier(entity_with_at, "alice") is True
         # both have @
-        assert _matches_identifier(entity_with_at, "@alice") is True
+        assert matches_identifier(entity_with_at, "@alice") is True
         # neither has @
-        assert _matches_identifier(entity_without_at, "alice") is True
+        assert matches_identifier(entity_without_at, "alice") is True
 
     def test_empty_identifier(self):
         """Empty string should only match empty field values."""
         entity = {"handle": "alice", "name": "Alice", "id": "u-1"}
-        assert _matches_identifier(entity, "") is False
+        assert matches_identifier(entity, "") is False
 
 
 class TestAgentToolsAddParticipant:
@@ -2318,7 +2369,7 @@ class TestToolInputModels:
 
     def test_send_event_input_validates_type(self):
         """SendEventInput should validate message_type."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError, match="literal_error"):
             SendEventInput(content="Test", message_type="invalid")
 
     def test_add_participant_input_defaults(self):

@@ -16,11 +16,11 @@ import os
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
-from typing import Callable
 
 from dotenv import dotenv_values
 

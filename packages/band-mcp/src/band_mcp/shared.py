@@ -15,18 +15,18 @@ from collections import OrderedDict
 from typing import Any
 
 from band_rest import AsyncRestClient
+
 from band.config.logs import LogSettings
 from band.integrations.mcp.engine import dispatch_tool
 from band.logging_config import LogStream
 from band.runtime.tools import (
-    BandTool,
+    TOOL_DEFINITIONS,
     AgentTools,
+    BandTool,
     HumanTools,
     Surface,
     ToolDefinition,
-    TOOL_DEFINITIONS,
 )
-
 from band_mcp.config import Config, Scope, resolve_credential_for_scope, settings
 
 SEND_MESSAGE_METHOD_NAME = TOOL_DEFINITIONS[BandTool.SEND_MESSAGE].method_name

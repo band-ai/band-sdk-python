@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.framework_configs.converters import SenderBehavior
+
 # Shared tool-event fixture payloads.  These include both top-level and nested
 # ``data.*`` paths so all current frameworks find the fields they need.  If you
 # add a converter with a different tool-event schema, verify the payloads in
@@ -21,7 +23,6 @@ from tests.framework_configs.fixtures import (
     TOOL_RESULT_SEARCH,
     TOOL_RESULT_SEARCH_FOUND,
 )
-from tests.framework_configs.converters import SenderBehavior
 
 # Expected content for each SenderBehavior when the raw content is "Hello!".
 # Coupled to the test payloads below — tests that use _assert_sender_content()

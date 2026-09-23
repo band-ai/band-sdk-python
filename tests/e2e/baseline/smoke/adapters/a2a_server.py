@@ -33,7 +33,6 @@ from band.integrations.uvicorn_server import (
     SERVER_STOP_TIMEOUT_S,
     ManagedUvicornServer,
 )
-
 from tests.ports import reserve_port
 
 CANNED_REPLY = "a2a-fixture-canned-reply"

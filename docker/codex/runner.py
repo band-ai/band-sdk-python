@@ -168,7 +168,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 async def main() -> None:
     """Run the Codex agent from YAML configuration."""
     LogSettings().for_application().configure()
-    global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
+    global _shutdown_event
     _shutdown_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -245,7 +245,12 @@ async def main() -> None:
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,
-            cwd=codex_cwd,
+            # Every room in this container shares the one pre-cloned repo
+            # checkout (REQUIRED_MOUNTS guarantees exactly one); only one room
+            # can hold it at a time -- a second room's first message fails
+            # loudly via claim_room_workspace's ValueError rather than running
+            # against a stale or unrelated checkout.
+            workspace_for_room=lambda _room_id: codex_cwd,
             model=codex_model,
             personality="pragmatic",
             approval_policy="never",

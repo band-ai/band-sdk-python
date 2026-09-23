@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from band.integrations.acp.event_converter import EventConverter
-
 from tests.integrations.acp.conftest import (
     make_platform_message,
     make_tool_call_message,

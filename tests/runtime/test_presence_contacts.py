@@ -4,24 +4,23 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
-    MessageEvent,
-    RoomAddedEvent,
-)
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
     MessageCreatedPayload,
     RoomAddedPayload,
 )
+from band.platform.event import (
+    ContactAddedEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
+    MessageEvent,
+    RoomAddedEvent,
+)
 from band.runtime.presence import RoomPresence
-
 from tests.runtime.conftest import admit_room
 
 

@@ -104,7 +104,7 @@ class UpdateTaskInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_at_least_one_field(self) -> "UpdateTaskInput":
+    def validate_at_least_one_field(self) -> UpdateTaskInput:
         at_least_one_of(
             status=self.status,
             active_form=self.active_form,
@@ -157,6 +157,6 @@ class SetBoardInput(BaseModel):
     goal_summary: str | None = Field(None, description="The mission paragraph")
 
     @model_validator(mode="after")
-    def validate_at_least_one_field(self) -> "SetBoardInput":
+    def validate_at_least_one_field(self) -> SetBoardInput:
         at_least_one_of(goal_title=self.goal_title, goal_summary=self.goal_summary)
         return self

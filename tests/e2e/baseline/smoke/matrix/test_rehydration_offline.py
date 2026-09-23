@@ -28,9 +28,9 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -98,14 +98,13 @@ async def test_recalls_offline_note_on_cold_boot(
 
     # First and only run: a brand-new adapter under this identity — no in-memory
     # history, so a correct recall proves the platform rehydrated the room on boot.
-    async with cell.run_as(identity):
-        async with reply_capture(room_id) as capture:
-            mark = capture.messages.snapshot()  # scope to the recall turn
-            mid = await user_ops.send_message(
-                room_id,
-                RECALL,
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(mid, identity.id, since=mark)
-            replies.assert_contains_any([note])
+    async with cell.run_as(identity), reply_capture(room_id) as capture:
+        mark = capture.messages.snapshot()  # scope to the recall turn
+        mid = await user_ops.send_message(
+            room_id,
+            RECALL,
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+        replies.assert_contains_any([note])

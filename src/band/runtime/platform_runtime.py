@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+
+from band_rest.core.api_error import ApiError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.types import PlatformConnection
-from band.platform.link import BandLink
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
+from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
-from band.runtime.runtime import AgentRuntime
 from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import (
     AgentConfig,
@@ -23,7 +25,6 @@ from band.runtime.types import (
     ParticipantRemovedCallback,
     SessionConfig,
 )
-from band_rest.core.api_error import ApiError
 
 logger = logging.getLogger(__name__)
 
@@ -321,11 +322,13 @@ class PlatformRuntime:
 
     async def _setup_contact_handling(self) -> None:
         """Set up contact event handling based on config."""
-        if self._contact_config.strategy == ContactEventStrategy.DISABLED:
-            if not self._contact_config.broadcast_changes:
-                logger.debug("Contact handling disabled")
-                return
-            # Even if DISABLED, we may want broadcasts
+        if (
+            self._contact_config.strategy == ContactEventStrategy.DISABLED
+            and not self._contact_config.broadcast_changes
+        ):
+            logger.debug("Contact handling disabled")
+            return
+        # Even if DISABLED, we may want broadcasts
 
         assert self._link is not None
         assert self._runtime is not None
@@ -404,7 +407,7 @@ class PlatformRuntime:
                 try:
                     execution.inject_system_message(f"[Contacts]: {msg}")
                     logger.debug("Broadcast injected into room %s: %s", room_id, msg)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                     logger.warning(
                         "Failed to inject broadcast into room %s: %s", room_id, e
                     )

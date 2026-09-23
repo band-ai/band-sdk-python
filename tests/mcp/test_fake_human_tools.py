@@ -15,12 +15,12 @@ import json
 from typing import Any
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-
-from band.integrations.mcp.engine import build_engine
 from band_mcp.config import Config
 from band_mcp.server import standalone_spec
 from band_mcp.shared import StandaloneResolver
+from mcp.server.fastmcp import FastMCP
+
+from band.integrations.mcp.engine import build_engine
 from tests.mcp.conftest import FakeHumanTools
 
 

@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0"]
 # ///
 """
 Custom LangGraph orchestrator with platform tools and subgraph delegation.
@@ -34,9 +31,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.pregel import Pregel
-
 from standalone_calculator import create_calculator_graph
 from standalone_sql_agent import create_sql_agent, download_chinook_db
+
 from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 from band.config import load_agent_config

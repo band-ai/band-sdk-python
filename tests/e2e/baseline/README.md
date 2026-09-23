@@ -47,16 +47,16 @@ Every baseline test is the same shape: get a running agent, open a capture, send
 user message, barrier on it, assert. The toolkit supplies all of it.
 
 ```python notest
-@with_adapters(Adapter.ANTHROPIC)                  # 1. agent: built + gated + run + reaped
+@with_adapters(Adapter.ANTHROPIC)  # 1. agent: built + gated + run + reaped
 @pytest.mark.asyncio(loop_scope="session")
 async def test_greets(agent, resource_manager, user_ops, reply_capture):
-    room_id = await resource_manager.provision_room(participants=[agent.id])   # 2. room
-    async with reply_capture(room_id) as capture:                             # 3. capture
-        mid = await user_ops.send_message(                                    # 4. drive as user
+    room_id = await resource_manager.provision_room(participants=[agent.id])  # 2. room
+    async with reply_capture(room_id) as capture:  # 3. capture
+        mid = await user_ops.send_message(  # 4. drive as user
             room_id, "say hi", mention_id=agent.id, mention_name=agent.name
         )
-        replies = await capture.wait_for_reply(mid, agent.id)                 # 5. reply barrier
-    replies.assert_present()                                                  # 6. assert on what it returns
+        replies = await capture.wait_for_reply(mid, agent.id)  # 5. reply barrier
+    replies.assert_present()  # 6. assert on what it returns
 ```
 
 `@with_adapters` / `@per_adapter` auto-apply the `@requires` provider-key gate
@@ -299,7 +299,7 @@ Build-only (cheap, sync test):
 ```python notest
 @per_adapter()
 def test_build(cell):
-    assert isinstance(cell.build(), SimpleAdapter)   # no network, no provisioning
+    assert isinstance(cell.build(), SimpleAdapter)  # no network, no provisioning
 ```
 
 Reboot / rehydration — provision once, enter `run_as` **twice** (stop → fresh run
@@ -312,15 +312,19 @@ async def test_recalls_after_rejoin(cell, resource_manager, user_ops, reply_capt
     identity = await cell.provision(f"rejoin-{cell.adapter_id}")
     room_id = await resource_manager.provision_room(participants=[identity.id])
 
-    async with cell.run_as(identity):          # run 1: state a note, then stop
+    async with cell.run_as(identity):  # run 1: state a note, then stop
         async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(room_id, REMEMBER, mention_id=identity.id, mention_name=identity.name)
+            mid = await user_ops.send_message(
+                room_id, REMEMBER, mention_id=identity.id, mention_name=identity.name
+            )
             await capture.wait_for_processed(mid, identity.id)
 
-    async with cell.run_as(identity):          # run 2: fresh adapter, same identity
+    async with cell.run_as(identity):  # run 2: fresh adapter, same identity
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()
-            mid = await user_ops.send_message(room_id, RECALL, mention_id=identity.id, mention_name=identity.name)
+            mid = await user_ops.send_message(
+                room_id, RECALL, mention_id=identity.id, mention_name=identity.name
+            )
             replies = await capture.wait_for_reply(mid, identity.id, since=mark)
             replies.assert_contains_any([note])
 ```
@@ -337,8 +341,8 @@ to replies that mention a participant. See `smoke/matrix/test_rehydration_cross_
 )
 async def test_foreign_peer(cell, peer, resource_manager, user_ops, reply_capture):
     marker = unique_marker("note")
-    a = await cell.provision(f"a-{cell.adapter_id}")          # A (fanned)
-    b = await peer.provision(f"b-{peer.adapter_id}")          # B (a different framework)
+    a = await cell.provision(f"a-{cell.adapter_id}")  # A (fanned)
+    b = await peer.provision(f"b-{peer.adapter_id}")  # B (a different framework)
     room_id = await resource_manager.provision_room(participants=[a.id, b.id])
 
     # B authors one message mentioning A that carries the marker (so it enters A's
@@ -347,14 +351,21 @@ async def test_foreign_peer(cell, peer, resource_manager, user_ops, reply_captur
     async with peer.run_as(b, prompt=b_prompt):
         async with reply_capture(room_id) as capture:
             probe = capture.messages.snapshot()
-            mid = await user_ops.send_message(room_id, "pass a note", mention_id=b.id, mention_name=b.name)
+            mid = await user_ops.send_message(
+                room_id, "pass a note", mention_id=b.id, mention_name=b.name
+            )
             replies = await capture.wait_for_reply(mid, b.id, since=probe)
             replies.mentioning(a.id).assert_contains_any([marker])  # setup precondition
 
-    async with cell.run_as(a):                                   # A cold-boots → rehydrates B's message
+    async with cell.run_as(a):  # A cold-boots → rehydrates B's message
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()
-            mid = await user_ops.send_message(room_id, "what token did they send?", mention_id=a.id, mention_name=a.name)
+            mid = await user_ops.send_message(
+                room_id,
+                "what token did they send?",
+                mention_id=a.id,
+                mention_name=a.name,
+            )
             replies = await capture.wait_for_reply(mid, a.id, since=mark)
             replies.assert_contains_any([marker])
 ```
@@ -465,8 +476,8 @@ await capture.wait_for_processed(mid, a.id)
 reached = await capture.wait_for_delivery(mid, a.id, until={DeliveryStatus.FAILED})
 
 # Inspect after the fact (no waiting):
-capture.delivery_status(mid, a.id)        # current state, or None if unseen
-capture.delivery_history(mid, a.id)       # e.g. [PROCESSING, PROCESSED]
+capture.delivery_status(mid, a.id)  # current state, or None if unseen
+capture.delivery_history(mid, a.id)  # e.g. [PROCESSING, PROCESSED]
 ```
 
 Note: `DELIVERED` is set at rest but is not pushed as its own WebSocket frame — in
@@ -480,7 +491,7 @@ agent's tool calls and assert what fired:
 ```python notest
 mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
 await capture.wait_for_processed(mid, a.id)
-calls = await capture.tool_calls(sender_id=a.id)   # a ToolCalls (list[ToolCall])
+calls = await capture.tool_calls(sender_id=a.id)  # a ToolCalls (list[ToolCall])
 calls.assert_fired("get_weather", with_args={"place": "Zorath"})
 ```
 

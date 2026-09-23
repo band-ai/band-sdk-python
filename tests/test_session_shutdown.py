@@ -10,8 +10,9 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
@@ -164,7 +165,6 @@ class TestCancellationDuringSync:
         # Simulate slow /next API that can be cancelled
         async def slow_get_next(room_id):
             await asyncio.sleep(10)  # Would take 10 seconds if not cancelled
-            return None
 
         link.get_next_message = slow_get_next
         link.mark_processing = AsyncMock()

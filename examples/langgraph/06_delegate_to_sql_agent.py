@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0"]
 # ///
 """
 Example: Hierarchical agents with graph_as_tool.
@@ -34,7 +31,6 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
-
 from standalone_sql_agent import create_sql_agent, download_chinook_db
 
 from band import Agent, configure_logging

@@ -8,10 +8,11 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
+from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.capabilities import prune_unsupported
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import (
@@ -21,7 +22,6 @@ from band.runtime.types import (
     ParticipantRemovedCallback,
     SessionConfig,
 )
-from band.preprocessing.default import DefaultPreprocessor
 
 if TYPE_CHECKING:
     from band.platform.event import PlatformEvent
@@ -52,9 +52,9 @@ def running_agents() -> list[Agent]:
 class TimeoutNotSet:
     """Sentinel class to distinguish 'not set' from 'explicitly set to None'."""
 
-    _instance: "TimeoutNotSet | None" = None
+    _instance: TimeoutNotSet | None = None
 
-    def __new__(cls) -> "TimeoutNotSet":
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -119,7 +119,7 @@ class Agent:
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
         preprocessor: Preprocessor | None = None,
-    ) -> "Agent":
+    ) -> Agent:
         """
         Create agent with default runtime.
 
@@ -182,7 +182,7 @@ class Agent:
         adapter: FrameworkAdapter | SimpleAdapter,
         config_path: str | Path | None = None,
         **kwargs: Any,
-    ) -> "Agent":
+    ) -> Agent:
         """
         Create an Agent from YAML config + a constructed adapter.
 
@@ -256,7 +256,7 @@ class Agent:
             # 2. Initialize adapter with agent metadata BEFORE message processing.
             # setattr rather than assignment: FrameworkAdapter is a Protocol, so
             # a duck-typed adapter may not declare the attribute.
-            setattr(self._adapter, "platform", self._runtime.connection)
+            setattr(self._adapter, "platform", self._runtime.connection)  # noqa: B010
             if isinstance(self._adapter, SimpleAdapter):
                 # A bare FrameworkAdapter has no SUPPORTED_CAPABILITIES, so it
                 # cannot request a gated capability in the first place and
@@ -356,7 +356,7 @@ class Agent:
 
     # --- Async context manager ---
 
-    async def __aenter__(self) -> "Agent":
+    async def __aenter__(self) -> Self:
         """
         Enter async context - start the agent.
 
@@ -408,8 +408,8 @@ class Agent:
 
     async def _on_execute(
         self,
-        ctx: "ExecutionContext",
-        event: "PlatformEvent",
+        ctx: ExecutionContext,
+        event: PlatformEvent,
     ) -> None:
         """Handle platform event."""
         # Preprocessor is the single source of truth for event filtering.

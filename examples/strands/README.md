@@ -23,7 +23,7 @@ from strands.models.openai import OpenAIModel
 
 from band.adapters import StrandsAdapter
 
-StrandsAdapter(model=OpenAIModel(model_id="gpt-5.4-mini"))          # OpenAI
+StrandsAdapter(model=OpenAIModel(model_id="gpt-5.4-mini"))  # OpenAI
 StrandsAdapter(model="us.anthropic.claude-sonnet-4-5-20250929-v1:0")  # Bedrock id
 StrandsAdapter(model=BedrockModel(model_id="...", region_name="us-east-1"))
 ```

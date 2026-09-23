@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 GitHub Copilot CLI ACP Client - Use GitHub Copilot from Band.
@@ -38,9 +35,6 @@ Prerequisites:
 
     4. Optionally configure:
        - ACP_AGENT_CWD: Working directory for Copilot sessions (default: .)
-       - COPILOT_ACP_HOST / COPILOT_ACP_PORT: connect to an already-running
-         `copilot --acp --port <PORT>` over TCP instead of spawning a subprocess
-         (e.g. Copilot in a container). See examples/acp/copilot_docker/ .
 
 Run with:
     uv run examples/acp/clients/copilot.py
@@ -54,7 +48,7 @@ import logging
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging
+from band import Agent, configure_logging, create_room_workspace_resolver
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
 configure_logging(
@@ -75,10 +69,6 @@ class Settings(BaseSettings):
 
     acp_agent_cwd: str = "."
     github_token: str = ""
-    # Optional TCP transport: connect to an already-running `copilot --acp --port`
-    # instead of spawning a local subprocess.
-    copilot_acp_host: str = ""
-    copilot_acp_port: int | None = None
 
 
 async def main() -> None:
@@ -86,9 +76,7 @@ async def main() -> None:
     settings = Settings()
 
     config = CopilotACPAdapterConfig(
-        host=settings.copilot_acp_host or None,
-        port=settings.copilot_acp_port,
-        cwd=settings.acp_agent_cwd,
+        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
         github_token=settings.github_token or None,
         inject_band_tools=True,
     )

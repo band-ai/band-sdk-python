@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway_demo]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[a2a_gateway_demo]>=1.2.0"]
 # ///
 """
 Run A2A Gateway with Demo Orchestrator Agent.
@@ -69,21 +66,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import uvicorn
+from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
 from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.routes.rest_routes import create_rest_routes
-from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,
     InMemoryTaskStore,
 )
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from demo_orchestrator.agent import OrchestratorAgent
+from demo_orchestrator.agent_executor import OrchestratorAgentExecutor
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 
-from demo_orchestrator.agent import OrchestratorAgent
-from demo_orchestrator.agent_executor import OrchestratorAgentExecutor
 from band import Agent, configure_logging
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config

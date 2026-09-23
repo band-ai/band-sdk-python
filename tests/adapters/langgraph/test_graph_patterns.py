@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.tools import StructuredTool
 
 from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import PlatformMessage
 
 from .helpers import make_capture_graph
-from langchain_core.tools import StructuredTool
 
 
 class TestStaticGraph:
@@ -135,7 +135,7 @@ class TestGraphFactoryMultiRoom:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         msg_b = PlatformMessage(
             id="msg-b",
@@ -146,7 +146,7 @@ class TestGraphFactoryMultiRoom:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         await adapter.on_message(

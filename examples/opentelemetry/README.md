@@ -54,9 +54,9 @@ leaves you with pure telemetry and `1>/dev/null` with pure logs.
 ## The order that matters
 
 ```python
-with telemetry(SERVICE) as otel:          # 1. providers + trace-context injection
-    LogSettings(...).configure()          # 2. Band's logging
-    otel.attach_log_handler()             # 3. the OTEL log handler
+with telemetry(SERVICE) as otel:  # 1. providers + trace-context injection
+    LogSettings(...).configure()  # 2. Band's logging
+    otel.attach_log_handler()  # 3. the OTEL log handler
 ```
 
 Step 3 comes last because `logging.config.dictConfig` is non-incremental: it

@@ -1,26 +1,25 @@
 """Unit tests for BandLink contact subscription."""
 
 import asyncio
-
-import pytest
 from unittest.mock import patch
 
-from band.platform.link import BandLink
-from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
-)
-from band.client.streaming import (
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
-    ContactAddedPayload,
-    ContactRemovedPayload,
-    WireEvent,
-)
+import pytest
 from band_sdk_core import AgentTopicKind, AgentTopicStatus
 
+from band.client.streaming import (
+    ContactAddedPayload,
+    ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
+    WireEvent,
+)
+from band.platform.event import (
+    ContactAddedEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
+)
+from band.platform.link import BandLink
 from tests.platform.conftest import cancelled_mid_await
 
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 import warnings
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -29,9 +29,9 @@ from band.adapters.agno import (
     _bind_room_tools,
     _make_band_entrypoint,
 )
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage
-from band.testing import FakeAgentTools
-
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.agno.helpers import (
     CapturingModel,
     ContactAwareTools,
@@ -60,7 +60,7 @@ def _msg(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -260,7 +260,7 @@ class TestBandInstructionInjection:
         self, make_started_adapter
     ):
         # Band guidance is injected in on_started, not lazily on first message.
-        adapter, agent = await make_started_adapter()
+        _adapter, agent = await make_started_adapter()
 
         # The Band operating contract frames the agent via ``description`` (ahead of
         # the developer's own ``instructions``), not via ``additional_context``.
@@ -837,7 +837,7 @@ class TestFeatureFilters:
     """include_tools/exclude_tools/include_categories gate which Band tools
     are wired (parity with LangGraph)."""
 
-    ALL_SCHEMAS = [
+    ALL_SCHEMAS: ClassVar[list[dict[str, Any]]] = [
         openai_tool_schema("band_send_message"),  # chat
         openai_tool_schema("band_lookup_peers"),  # chat
         openai_tool_schema("band_store_memory"),  # memory
@@ -889,14 +889,14 @@ class TestRunFailureReporting:
                 room_id="room-A",
             )
 
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        assert (
-            errors[0]["content"]
-            == "Internal error while processing message; see agent logs."
-        )
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         # The exception text (which can carry secrets) must not leak to the room.
-        assert "secret-token" not in errors[0]["content"]
+        assert "secret-token" not in failures[0]["message"]
+        assert failures[0]["provider"] == "agno"
+        # A plain RuntimeError isn't a swallowed Agno run status -- no code.
+        assert failures[0]["code"] is None
 
     async def test_error_status_run_is_raised_and_reported(
         self, make_started_adapter, tools
@@ -905,7 +905,7 @@ class TestRunFailureReporting:
         # returns a normal-looking RunOutput with status=error. The adapter
         # must surface it as a failure — otherwise the runtime marks the
         # message processed and the turn dies silently with no reply.
-        adapter, agent = await make_started_adapter(
+        adapter, _agent = await make_started_adapter(
             response=RunOutput(
                 content="api dsn leaked: secret-token", status=RunStatus.error
             )
@@ -922,9 +922,10 @@ class TestRunFailureReporting:
                 room_id="room-A",
             )
 
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        assert "secret-token" not in errors[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert "secret-token" not in failures[0]["message"]
+        assert failures[0]["code"] == RunStatus.error.value
         # A failed turn must not be committed to the room transcript.
         assert not adapter._message_history.get("room-A")
 
@@ -935,7 +936,7 @@ class TestRunFailureReporting:
         # RunErrorEvent — the stream never yields a final RunOutput. The
         # adapter must raise on it instead of returning None (a "successful"
         # empty turn).
-        adapter, agent = await make_started_adapter(
+        adapter, _agent = await make_started_adapter(
             emit=Emit.TOOL_CALLS,
             events=[RunErrorEvent(content="api dsn leaked: secret-token")],
         )
@@ -951,9 +952,10 @@ class TestRunFailureReporting:
                 room_id="room-A",
             )
 
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        assert "secret-token" not in errors[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert "secret-token" not in failures[0]["message"]
+        assert failures[0]["code"] == RunStatus.error.value
         assert not adapter._message_history.get("room-A")
 
     async def test_error_event_failure_does_not_mask_original(

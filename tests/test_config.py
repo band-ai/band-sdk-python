@@ -8,6 +8,7 @@ from YAML configuration files.
 from __future__ import annotations
 
 import pytest
+
 from band.config import load_agent_config
 
 

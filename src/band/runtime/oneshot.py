@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, cast
 
@@ -54,9 +54,6 @@ from band_sdk_core import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.logging_config import current_traceparent
-from band.runtime.capabilities import prune_unsupported
-from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -64,13 +61,16 @@ from band.core.types import (
     HistoryProvider,
     PlatformMessage,
 )
+from band.logging_config import current_traceparent
 from band.platform.link import BandLink
+from band.runtime.capabilities import prune_unsupported
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import (
     build_participants_message,
     format_history_for_llm,
     replace_uuid_mentions,
 )
+from band.runtime.participants import participant_snapshot
 from band.runtime.tools import AgentTools
 
 # BandLink.get_next_message returns this dataclass, not band.core.types'
@@ -192,7 +192,7 @@ class OneShotInvoker:
         ) = await self._fetch_agent_metadata()
         # Parity with Agent.start(): adapters read their identity and platform
         # coordinates from the injected connection.
-        setattr(
+        setattr(  # noqa: B010
             self._adapter,
             "platform",
             self._link.to_platform_connection(self._agent_id),
@@ -637,10 +637,10 @@ def _lookup_sender_name(
 def _parse_inserted_at(value: Any) -> datetime:
     if isinstance(value, str) and value:
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return datetime.fromisoformat(value)
         except ValueError:
             pass
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _build_platform_message(

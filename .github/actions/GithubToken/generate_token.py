@@ -1,8 +1,8 @@
-import jwt
-import time
-import requests
 import os
+import time
 
+import jwt
+import requests
 
 app_id = os.getenv("github_app_id")
 installation_id = os.getenv("github_app_installation_id")
@@ -22,7 +22,7 @@ payload = {
 
 try:
     jwt_token = jwt.encode(payload, private_key, algorithm="RS256")
-except Exception as e:
+except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
     raise ValueError(f"Error encoding JWT: {e}")
 
 headers = {
@@ -38,7 +38,7 @@ try:
     response.raise_for_status()  # Raise an error for bad status codes
 except requests.exceptions.HTTPError as http_err:
     raise SystemExit(f"HTTP error occurred: {http_err}")  # Handle specific HTTP error
-except Exception as err:
+except Exception as err:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
     raise SystemExit(f"Other error occurred: {err}")  # Handle other errors
 
 # Extract and print the access token

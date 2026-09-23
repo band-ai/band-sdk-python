@@ -12,8 +12,8 @@ import pytest
 from pydantic import ValidationError
 
 from band import (
-    LogSettings,
     LoggingStyle,
+    LogSettings,
     LogStream,
     configure_logging_from_env,
 )
@@ -66,9 +66,11 @@ def test_empty_env_falls_back_to_defaults(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_invalid_level_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    with band_log_env(monkeypatch, LEVEL="LOUD"):
-        with pytest.raises(ValidationError, match="must be a valid logging level"):
-            LogSettings()
+    with (
+        band_log_env(monkeypatch, LEVEL="LOUD"),
+        pytest.raises(ValidationError, match="must be a valid logging level"),
+    ):
+        LogSettings()
 
 
 def test_explicit_init_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:

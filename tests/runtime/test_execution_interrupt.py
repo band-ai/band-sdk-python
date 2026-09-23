@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from band.client.streaming import ControlMode
-from band.runtime.execution import ExecutionContext, BacklogProcessResult
+from band.runtime.execution import BacklogProcessResult, ExecutionContext
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 
@@ -810,9 +810,11 @@ class TestCycleWatchdog:
             # nothing was ever actually cancelled.
             yield _FakeExpiredDeadline()
 
-        with patch("band.runtime.execution.asyncio_timeout", fake_timeout):
-            with caplog.at_level(logging.DEBUG, logger="band.runtime.execution"):
-                result = await ctx._process_event(make_message_event(msg_id="boundary"))
+        with (
+            patch("band.runtime.execution.asyncio_timeout", fake_timeout),
+            caplog.at_level(logging.DEBUG, logger="band.runtime.execution"),
+        ):
+            result = await ctx._process_event(make_message_event(msg_id="boundary"))
 
         assert result is True
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")

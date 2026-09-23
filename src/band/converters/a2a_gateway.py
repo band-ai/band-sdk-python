@@ -45,7 +45,9 @@ class GatewayHistoryConverter(HistoryConverter["GatewaySessionState"]):
         # band.integrations.a2a.gateway.types imports the optional
         # `a2a_gateway` extra (a2a-sdk) at module top level — deferred so
         # this converter stays importable without it.
-        from band.integrations.a2a.gateway.types import GatewaySessionState  # noqa: PLC0415
+        from band.integrations.a2a.gateway.types import (  # noqa: PLC0415
+            GatewaySessionState,
+        )
 
         context_to_room: dict[str, str] = {}
         room_participants: dict[str, set[str]] = defaultdict(set)

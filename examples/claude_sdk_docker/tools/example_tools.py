@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ast
 import operator
-from datetime import datetime
+from datetime import UTC, datetime
 from random import randint
 from typing import Any
 
@@ -69,12 +69,13 @@ def _safe_eval(node: ast.AST, depth: int = 0) -> float | int:
         left = _safe_eval(node.left, depth + 1)
         right = _safe_eval(node.right, depth + 1)
         # Bounds check for pow to prevent resource exhaustion
-        if op_type is ast.Pow:
-            if abs(left) > _MAX_POW_BASE or abs(right) > _MAX_POW_EXPONENT:
-                raise ValueError(
-                    f"Pow operands too large (max base: {_MAX_POW_BASE}, "
-                    f"max exponent: {_MAX_POW_EXPONENT})"
-                )
+        if op_type is ast.Pow and (
+            abs(left) > _MAX_POW_BASE or abs(right) > _MAX_POW_EXPONENT
+        ):
+            raise ValueError(
+                f"Pow operands too large (max base: {_MAX_POW_BASE}, "
+                f"max exponent: {_MAX_POW_EXPONENT})"
+            )
         return _OPERATORS[op_type](left, right)
     elif isinstance(node, ast.UnaryOp):
         op_type = type(node.op)
@@ -90,15 +91,18 @@ def _safe_eval(node: ast.AST, depth: int = 0) -> float | int:
             raise ValueError(f"Unsupported function: {func_name}")
         eval_args = [_safe_eval(arg, depth + 1) for arg in node.args]
         # Bounds check for pow() function to prevent resource exhaustion
-        if func_name == "pow" and len(eval_args) >= 2:
-            if (
+        if (
+            func_name == "pow"
+            and len(eval_args) >= 2
+            and (
                 abs(eval_args[0]) > _MAX_POW_BASE
                 or abs(eval_args[1]) > _MAX_POW_EXPONENT
-            ):
-                raise ValueError(
-                    f"Pow operands too large (max base: {_MAX_POW_BASE}, "
-                    f"max exponent: {_MAX_POW_EXPONENT})"
-                )
+            )
+        ):
+            raise ValueError(
+                f"Pow operands too large (max base: {_MAX_POW_BASE}, "
+                f"max exponent: {_MAX_POW_EXPONENT})"
+            )
         return _FUNCTIONS[func_name](*eval_args)
     else:
         raise ValueError(f"Unsupported expression type: {type(node).__name__}")
@@ -127,7 +131,7 @@ async def calculator(args: dict[str, Any]) -> dict[str, Any]:
 @tool("get_time", "Get current date/time", {})
 async def get_time(_args: dict[str, Any]) -> dict[str, Any]:
     """Returns current time in ISO format."""
-    return {"content": [{"type": "text", "text": datetime.now().isoformat()}]}
+    return {"content": [{"type": "text", "text": datetime.now(UTC).isoformat()}]}
 
 
 @tool("random_number", "Generate random number", {"min": int, "max": int})

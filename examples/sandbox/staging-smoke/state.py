@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
@@ -101,7 +101,7 @@ class ProbeResult(BaseModel):
     marker: str
     passed: bool
     detail: str = ""
-    at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class SmokeState(BaseModel):
@@ -119,8 +119,8 @@ class SmokeState(BaseModel):
     # Free-text behavioral observations, one per OBSERVATION_CHECKS entry
     # (how a recovery happened — not a verdict; the probes are the verdicts).
     residual_checks: dict[str, str] = Field(default_factory=dict)
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def latest(self, label: str) -> ProbeResult | None:
         """The most recent attempt for ``label`` — a probe may be retried after
@@ -138,8 +138,8 @@ class SmokeState(BaseModel):
             return False
         updated = self.updated_at
         if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) - updated < MAX_RESUMABLE_AGE
+            updated = updated.replace(tzinfo=UTC)
+        return datetime.now(UTC) - updated < MAX_RESUMABLE_AGE
 
 
 def root_dir() -> Path:
@@ -178,7 +178,7 @@ def save(run_state: SmokeState) -> None:
     """Write ``run_state`` atomically: a write killed mid-flight (Ctrl-C, the
     operator's Wi-Fi toggle) must never leave a truncated, unloadable
     state.json — the whole point of this being a resumable workflow."""
-    run_state.updated_at = datetime.now(timezone.utc)
+    run_state.updated_at = datetime.now(UTC)
     state_dir().mkdir(parents=True, exist_ok=True)
     path = state_path()
     tmp_path = path.with_suffix(".json.tmp")

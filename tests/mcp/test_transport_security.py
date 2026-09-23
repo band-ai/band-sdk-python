@@ -7,11 +7,11 @@ settings, allowing users to configure allowed hosts for Docker/remote deployment
 from __future__ import annotations
 
 import pytest
-
-from band.integrations.mcp.engine import build_engine
 from band_mcp.config import Config, Settings, Transport, settings
 from band_mcp.server import _build_transport_security, standalone_spec
 from band_mcp.shared import build_standalone_resolver
+
+from band.integrations.mcp.engine import build_engine
 
 
 class TestTransportSecuritySettings:

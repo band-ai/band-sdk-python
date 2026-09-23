@@ -28,9 +28,9 @@ from acp.schema import (
     ResumeSessionResponse,
     SessionCapabilities,
     SessionForkCapabilities,
+    SessionInfo,
     SessionListCapabilities,
     SessionResumeCapabilities,
-    SessionInfo,
     SetSessionConfigOptionResponse,
     SetSessionModeResponse,
     TextContentBlock,
@@ -500,10 +500,10 @@ class ACPServer:
         room_id = self._adapter.get_room_for_session(session_id)
         if room_id is None:
             logger.debug("close_session: session %s not found", session_id)
-            return None
+            return
         logger.info("Closing ACP session %s (room %s)", session_id, room_id)
         await self._adapter.on_cleanup(room_id)
-        return None
+        return
 
     @staticmethod
     def _extract_text(prompt: list[Any]) -> str:

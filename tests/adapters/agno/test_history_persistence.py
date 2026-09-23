@@ -16,7 +16,7 @@ is exactly the behaviour the guard protects.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from agno.agent import Agent as AgnoAgent
@@ -25,7 +25,6 @@ from agno.db.in_memory import InMemoryDb
 from band.adapters.agno import AgnoAdapter
 from band.core.types import PlatformMessage
 from band.runtime.formatters import format_history_for_llm
-
 from tests.adapters.agno.helpers import (
     CapturingModel,
     SchemaTools,
@@ -48,7 +47,7 @@ def _platform_message(msg_id: str, content: str) -> PlatformMessage:
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

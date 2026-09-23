@@ -77,8 +77,8 @@ from band.core.types import Capability, Emit
 
 adapter = CopilotSDKAdapter(
     config,
-    emit=Emit.TOOL_CALLS | Emit.THOUGHTS,                    # narrow (optional)
-    capabilities=Capability.MEMORY | Capability.CONTACTS,    # band_* tool groups
+    emit=Emit.TOOL_CALLS | Emit.THOUGHTS,  # narrow (optional)
+    capabilities=Capability.MEMORY | Capability.CONTACTS,  # band_* tool groups
 )
 ```
 
@@ -88,7 +88,7 @@ Copilot's built-in `ask_user` tool lets the model ask a human a question —
 freeform or multiple-choice. Off by default; route it with `ask_user`:
 
 ```python notest
-config = CopilotSDKAdapterConfig(ask_user="room")   # ask the people in the room
+config = CopilotSDKAdapterConfig(ask_user="room")  # ask the people in the room
 config = CopilotSDKAdapterConfig(ask_user=handler)  # ask someone outside it
 ```
 

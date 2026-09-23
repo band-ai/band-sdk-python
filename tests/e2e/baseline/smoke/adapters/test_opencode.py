@@ -37,7 +37,6 @@ from band.adapters.opencode.approvals import (
     APPROVAL_REQUESTED_PREFIX,
 )
 from band.client.streaming import MessageCreatedPayload
-
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
@@ -56,7 +55,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # the exact line its template renders. Only the ``approve <id>`` fragment is local --
 # it is the room command vocabulary, not the narration.
 APPROVAL_ASKED = re.compile(
-    re.escape(APPROVAL_REQUESTED_PREFIX) + r" `bash`.*?`approve (\S+?)`", re.S
+    re.escape(APPROVAL_REQUESTED_PREFIX) + r" `bash`.*?`approve (\S+?)`", re.DOTALL
 )
 
 # Two sequential live turns: the gated tool use, then the resumed turn.

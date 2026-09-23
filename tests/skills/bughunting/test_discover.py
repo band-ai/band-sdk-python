@@ -182,7 +182,7 @@ def test_a_top_level_example_belongs_to_no_family(discovery: ModuleType) -> None
 
 def test_family_filter_scopes_to_one_directory(discovery: ModuleType) -> None:
     inventory = discovery.discover(REPO_ROOT, "examples", None)
-    family = sorted({item.family for item in inventory if item.family})[0]
+    family = min({item.family for item in inventory if item.family})
 
     scoped = discovery.discover(REPO_ROOT, "examples", family)
 

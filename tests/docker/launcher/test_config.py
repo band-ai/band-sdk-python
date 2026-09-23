@@ -9,8 +9,8 @@ import pytest
 from band.docker.launcher import (
     DEFAULT_REST_URL,
     DEFAULT_WS_URL,
-    LaunchError,
     PLACEHOLDER_AGENT_ID,
+    LaunchError,
     load_workspace_config,
     resolve_launch,
 )

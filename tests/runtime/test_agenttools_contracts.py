@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
+from band.client.rest import ChatParticipant
 from band.core.exceptions import BandToolError
 from band.runtime.tools import serialize_tool_result
 from band.testing.fake_tools import FakeAgentTools
+
+ALICE_PARTICIPANT_SEED = {
+    "id": "p1",
+    "name": "Alice",
+    "handle": "@alice",
+    "role": "member",
+    "status": "active",
+    "type": "User",
+}
 
 
 class TestFakeAgentToolsSeededData:
@@ -14,10 +25,21 @@ class TestFakeAgentToolsSeededData:
         tools = FakeAgentTools()
         assert tools._peers == []
 
-    def test_seeded_participants(self) -> None:
-        participants = [{"id": "p1", "name": "Alice"}]
-        tools = FakeAgentTools(participants=participants)
-        assert tools._participants == participants
+    def test_seeded_participants_are_canonicalized_through_chat_participant(
+        self,
+    ) -> None:
+        seed = ALICE_PARTICIPANT_SEED
+        tools = FakeAgentTools(participants=[seed])
+        assert tools._participants == [
+            ChatParticipant.model_validate(seed).model_dump()
+        ]
+
+    def test_seeded_participants_reject_a_shape_missing_required_fields(self) -> None:
+        """``role``/``status``/``type`` are required on the real Fern model --
+        a seed missing them must fail loudly, not pass silently as it did
+        before participants were validated at seed time."""
+        with pytest.raises(ValidationError):
+            FakeAgentTools(participants=[{"id": "p1", "name": "Alice"}])
 
     @pytest.mark.asyncio
     async def test_seeded_peers_returned(self) -> None:
@@ -29,6 +51,7 @@ class TestFakeAgentToolsSeededData:
                 "handle": "@bob",
                 "is_contact": False,
                 "source": "internal",
+                "online": True,
             }
         ]
         tools = FakeAgentTools(peers=peers)
@@ -49,6 +72,7 @@ class TestFakeAgentToolsSeededData:
                 "name": "Alice",
                 "type": "User",
                 "inserted_at": "2025-01-01T00:00:00Z",
+                "online": True,
             }
         ]
         tools = FakeAgentTools(contacts=contacts)
@@ -61,11 +85,42 @@ class TestFakeAgentToolsSeededData:
         assert listing["metadata"]["total_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_seeded_participants_returned(self) -> None:
-        participants = [{"id": "p1", "name": "Alice"}]
-        tools = FakeAgentTools(participants=participants)
+    async def test_seeded_participants_returned_as_chat_participant_models(
+        self,
+    ) -> None:
+        seed = ALICE_PARTICIPANT_SEED
+        tools = FakeAgentTools(participants=[seed])
+
         result = await tools.get_participants()
-        assert result == participants
+
+        assert result == [ChatParticipant.model_validate(seed)], (
+            "get_participants must match AgentTools' real return type: a list "
+            "of Fern ChatParticipant models, not raw seed dicts"
+        )
+
+    @pytest.mark.asyncio
+    async def test_seeded_room_context_is_canonicalized_through_chat_message(
+        self,
+    ) -> None:
+        seed = {
+            "id": "msg-1",
+            "content": "hi",
+            "sender_id": "user-1",
+            "sender_type": "User",
+            "message_type": "text",
+        }
+        tools = FakeAgentTools(room_context=[seed])
+
+        listing = await tools.fetch_room_context(room_id=tools.room_id)
+
+        assert listing["data"][0]["content"] == "hi"
+        assert listing["data"][0]["sender_id"] == "user-1"
+
+    def test_seeded_room_context_rejects_a_shape_missing_required_fields(self) -> None:
+        """``sender_id``/``sender_type``/``message_type`` are required on the
+        real Fern ``ChatMessage`` -- a malformed seed must fail loudly."""
+        with pytest.raises(ValidationError):
+            FakeAgentTools(room_context=[{"id": "msg-1", "content": "hi"}])
 
 
 class TestFakeAgentToolsAssertions:

@@ -20,22 +20,30 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
-from band.testing import FakeAgentTools
-
-
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     RaisingSendTools,
-    run_single_turn,
     event_message_updated,
     event_permission,
     event_question,
     event_session_idle,
     event_text_part,
     make_platform_message,
+    run_single_turn,
     tools_protocol,
     wait_for,
 )
+
+#: A seeded participant these tests mention -- shared so a mention-handles
+#: assertion always resolves against the same roster entry.
+ALICE_PARTICIPANT = {
+    "id": "user-1",
+    "handle": "@alice",
+    "role": "member",
+    "status": "active",
+    "type": "User",
+}
 
 
 class BlockingReplyClient(FakeOpencodeClient):
@@ -104,7 +112,7 @@ def make_room_approvals(
             session_id=lambda: "sess-1",
             client=lambda: client,
             tools=lambda: cast(AgentToolsProtocol, tools),
-            turn_mentions=lambda: [],
+            turn_mentions=list,
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
             is_own_band_tool=lambda _permission: False,
@@ -159,7 +167,7 @@ async def test_concurrent_permission_asks_are_both_answerable() -> None:
     per-session list). A second ask must not evict the first, whose tool call
     would then block server-side until the turn timed out."""
     client = FakeOpencodeClient()
-    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    tools = FakeAgentTools(participants=[ALICE_PARTICIPANT])
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
@@ -183,7 +191,7 @@ async def test_unnamed_reply_asks_which_of_several_approvals() -> None:
     """A bare `approve` cannot pick between two pending asks. Naming them beats
     both guessing and forwarding the reply to the model as a fresh prompt."""
     client = FakeOpencodeClient()
-    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    tools = FakeAgentTools(participants=[ALICE_PARTICIPANT])
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
@@ -203,7 +211,7 @@ async def test_one_resolved_ask_keeps_the_other_parked() -> None:
     """The watcher must stay parked while a second ask still owes a reply,
     otherwise its human-wait time is charged to the compute budget."""
     client = FakeOpencodeClient()
-    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    tools = FakeAgentTools(participants=[ALICE_PARTICIPANT])
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
@@ -626,8 +634,11 @@ async def test_permission_timeout_expiry() -> None:
 
     await wait_for(lambda: len(fake_client.permission_replies) > 0, timeout_s=3.0)
     assert fake_client.permission_replies[0]["response"] == "reject"
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("timed out" in e["content"].lower() for e in error_events)
+    # A human-approval timeout is a Band-side procedural notice, never an
+    # AgentFailure -- it must not carry the shared failure metadata shape.
+    assert "failure" not in error_events[0]["metadata"]
 
     await adapter.on_cleanup("room-1")
 
@@ -682,8 +693,11 @@ async def test_question_timeout_expiry() -> None:
 
     await wait_for(lambda: len(fake_client.question_rejections) > 0, timeout_s=3.0)
     assert fake_client.question_rejections == ["q-timeout"]
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("timed out" in e["content"].lower() for e in error_events)
+    # A human-approval timeout is a Band-side procedural notice, never an
+    # AgentFailure -- it must not carry the shared failure metadata shape.
+    assert "failure" not in error_events[0]["metadata"]
 
     await adapter.on_cleanup("room-1")
 
@@ -757,7 +771,7 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
             session_id=lambda: "sess-1",
             client=lambda: client["current"],
             tools=lambda: cast(AgentToolsProtocol, FakeAgentTools()),
-            turn_mentions=lambda: [],
+            turn_mentions=list,
             release_turn_wait=lambda: None,
             fail_turn=lambda _message: None,
             is_own_band_tool=lambda _permission: False,

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 
 from band_mcp import server as server_mod
 
-
 # ---------------------------------------------------------------------------
 # health_check
 # ---------------------------------------------------------------------------

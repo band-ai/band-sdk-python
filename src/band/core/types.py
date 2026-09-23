@@ -42,11 +42,48 @@ class ToolEventKey(StrEnum):
 # event kinds. Derived from MessageType so the taxonomy stays single-sourced.
 EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
+
+class ContactRequestStatus(StrEnum):
+    """A single contact request's lifecycle status."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
 # Status filter vocabulary shared by every list-contact-requests-family tool
 # (master models and each adapter's own schema), so the choices have one
-# definition instead of a hand-copied tuple per call site.
+# definition instead of a hand-copied tuple per call site. Derived from
+# ContactRequestStatus plus the listing-only "all" wildcard.
 ContactRequestSentStatus = Literal[
-    "pending", "approved", "rejected", "cancelled", "all"
+    ContactRequestStatus.PENDING,
+    ContactRequestStatus.APPROVED,
+    ContactRequestStatus.REJECTED,
+    ContactRequestStatus.CANCELLED,
+    "all",
+]
+
+
+class ContactRequestAction(StrEnum):
+    """``respond_contact_request``'s ``action`` vocabulary.
+
+    Mirrors ``RespondContactRequestInput.action``
+    (``band.runtime.tools.inputs.contacts``).
+    """
+
+    APPROVE = "approve"
+    REJECT = "reject"
+    CANCEL = "cancel"
+
+
+# RespondContactRequestInput.action's field type -- derived from
+# ContactRequestAction so the master model's schema and the enum stay one
+# definition, the same relationship EventMessageType has to MessageType above.
+ContactRequestActionField = Literal[
+    ContactRequestAction.APPROVE,
+    ContactRequestAction.REJECT,
+    ContactRequestAction.CANCEL,
 ]
 
 
@@ -58,7 +95,7 @@ class _FlagEnum(StrEnum):
     way everywhere else they are used (e.g. ``SUPPORTED_EMIT`` set algebra).
     """
 
-    def __or__(self, other: "Self | frozenset[Self]") -> frozenset[Self]:
+    def __or__(self, other: Self | frozenset[Self]) -> frozenset[Self]:
         # Only guards a member on at least one side of `|`. Two already-combined
         # frozensets of different _FlagEnum subclasses (e.g. `(Emit.A | Emit.B) |
         # (Capability.C | Capability.D)`) are both plain `frozenset` by then, so
@@ -407,7 +444,7 @@ class HistoryProvider:
 
     raw: list[dict[str, Any]]
 
-    def convert(self, converter: "HistoryConverter[T]") -> T:
+    def convert(self, converter: HistoryConverter[T]) -> T:
         """
         Convert history using provided converter.
 
@@ -436,7 +473,7 @@ class AgentInput:
     """
 
     msg: PlatformMessage
-    tools: "AgentToolsProtocol"  # Protocol for testability (FakeAgentTools)
+    tools: AgentToolsProtocol  # Protocol for testability (FakeAgentTools)
     history: HistoryProvider
     participants_msg: str | None
     contacts_msg: str | None  # Contact changes broadcast message

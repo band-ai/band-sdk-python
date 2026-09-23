@@ -14,8 +14,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_mcp import shared as shared_mod
+from band_mcp.config import Config
+from band_mcp.server import standalone_spec
+from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from mcp import ClientSession
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel, Field, ValidationError
 
@@ -33,12 +38,7 @@ from band.integrations.mcp.engine import (
 )
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing.fake_tools import FakeAgentTools
-from band_mcp import shared as shared_mod
-from band_mcp.config import Config
-from band_mcp.server import standalone_spec
-from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from tests.mcp.conftest import FakeHumanTools
-from mcp.server.transport_security import TransportSecuritySettings
 
 
 async def _list_tool(session: ClientSession, name: str) -> Any:
@@ -63,6 +63,30 @@ def _agent_resolver(fake: FakeAgentTools) -> EmbeddedResolver:
     """A resolver that always returns the same room-scoped fake -- mirrors
     the embedded door's uniform routing for a single-room test."""
     return EmbeddedResolver(get_tools=lambda chat_id: fake)
+
+
+#: A seeded peer resolvable by ``add_participant(identifier="@bob")`` --
+#: shared by every test that just needs *some* real peer to add.
+BOB_PEER = {
+    "id": "bob-id",
+    "handle": "bob",
+    "name": "Bob",
+    "type": "User",
+    "is_contact": False,
+    "source": "registry",
+    "online": True,
+}
+
+#: A seeded participant mentionable via ``@alice`` -- shared by every test
+#: that just needs *some* real participant to send a message to.
+ALICE_PARTICIPANT = {
+    "id": "u1",
+    "name": "Alice",
+    "handle": "@alice",
+    "role": "member",
+    "status": "active",
+    "type": "User",
+}
 
 
 async def _direct_call(mcp: FastMCP, name: str, **kwargs: object) -> Any:
@@ -314,10 +338,7 @@ async def test_embedded_style_uniform_wrap_room_bound_dispatch(
 async def test_embedded_send_message_round_trip_and_participant_refresh(
     agent_session_factory,
 ) -> None:
-    fake = FakeAgentTools(
-        room_id="room-1",
-        participants=[{"id": "u1", "name": "Alice", "handle": "@alice"}],
-    )
+    fake = FakeAgentTools(room_id="room-1", participants=[ALICE_PARTICIPANT])
     mcp = await agent_session_factory(fake)
 
     async with create_connected_server_and_client_session(mcp) as session:
@@ -328,7 +349,7 @@ async def test_embedded_send_message_round_trip_and_participant_refresh(
             content="hi",
             mentions=["@alice"],
         )
-        assert result["content"] == "hi"
+        assert result["success"] is True
         assert fake.messages_sent == [
             {"id": "msg-0", "content": "hi", "mentions": ["@alice"]}
         ]
@@ -337,10 +358,7 @@ async def test_embedded_send_message_round_trip_and_participant_refresh(
 async def test_embedded_send_message_error_enriched_with_available_handles(
     agent_session_factory,
 ) -> None:
-    fake = FakeAgentTools(
-        room_id="room-1",
-        participants=[{"id": "u1", "name": "Alice", "handle": "@alice"}],
-    )
+    fake = FakeAgentTools(room_id="room-1", participants=[ALICE_PARTICIPANT])
     mcp = await agent_session_factory(fake)
 
     async with create_connected_server_and_client_session(mcp) as session:
@@ -394,7 +412,7 @@ async def test_cli_style_pinned_agent_send_message_ignores_client_chat_id(
             mentions=["@bob"],
             chat_id="room-should-be-ignored",
         )
-        assert result["content"] == "hi"
+        assert result["success"] is True
 
 
 class _NoopHumanResolver:
@@ -548,7 +566,7 @@ async def test_agent_multi_step_room_lifecycle(agent_session_factory) -> None:
     sequence: add_participant -> send_message (mentioning the participant
     that call just added) -> get_participants. Each step's assertion
     depends on the prior step's real mutated state, not a hardcoded id."""
-    fake = FakeAgentTools(room_id="room-1")
+    fake = FakeAgentTools(room_id="room-1", peers=[BOB_PEER])
     mcp = await agent_session_factory(
         fake,
         definitions=[
@@ -565,20 +583,20 @@ async def test_agent_multi_step_room_lifecycle(agent_session_factory) -> None:
         added = await _call(
             session, "band_add_participant", chat_id="room-1", identifier="@bob"
         )
-        mention_handle = added["handle"]
 
         sent = await _call(
             session,
             "band_send_message",
             chat_id="room-1",
             content="welcome",
-            mentions=[mention_handle],
+            mentions=[added["id"]],
         )
-        assert sent["mentions"] == [mention_handle]
+        assert sent["success"] is True
+        assert fake.messages_sent[-1]["mentions"] == [added["id"]]
 
         participants = await _call(session, "band_get_participants", chat_id="room-1")
         assert any(p["id"] == added["id"] for p in participants)
-        assert any(p["handle"] == mention_handle for p in participants)
+        assert any(p["handle"] == "bob" for p in participants)
 
 
 class BootstrapInput(BaseModel):
@@ -593,7 +611,7 @@ async def test_custom_tool_alongside_builtin_tools_in_one_session() -> None:
     calls straight through to the fake's real add_participant; a later
     built-in band_get_participants call is asserted against state that only
     makes sense if that mutation actually ran first."""
-    fake = FakeAgentTools(room_id="room-1")
+    fake = FakeAgentTools(room_id="room-1", peers=[BOB_PEER])
     resolver = _agent_resolver(fake)
 
     async def bootstrap(input_data: BootstrapInput) -> dict[str, str]:
@@ -634,7 +652,8 @@ async def test_custom_tool_alongside_builtin_tools_in_one_session() -> None:
             content="welcome",
             mentions=["@bob"],
         )
-        assert sent["mentions"] == ["@bob"]
+        assert sent["success"] is True
+        assert fake.messages_sent[-1]["mentions"] == ["@bob"]
 
 
 async def test_concurrent_dispatch_through_one_engine(monkeypatch) -> None:
@@ -651,7 +670,7 @@ async def test_concurrent_dispatch_through_one_engine(monkeypatch) -> None:
 
     class RoomAgentTools(FakeAgentTools):
         def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            super().__init__(room_id=room_id)
+            super().__init__(room_id=room_id, peers=[BOB_PEER])
             constructed.append(room_id)
 
     monkeypatch.setattr(shared_mod, "AgentTools", RoomAgentTools)
@@ -698,7 +717,7 @@ async def test_concurrent_dispatch_through_one_engine(monkeypatch) -> None:
 
     room_a_participants = await get_participants("room_A")
     room_b_participants = await get_participants("room_B")
-    assert any(p["handle"] == "@bob" for p in room_a_participants)
+    assert any(p["handle"] == "bob" for p in room_a_participants)
     assert room_b_participants == []  # no leakage from room_A's mutation
 
     # Cold-starting past the LRU cap still evicts down to the configured max.

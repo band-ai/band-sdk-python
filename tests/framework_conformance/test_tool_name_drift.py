@@ -18,11 +18,15 @@ for individual names.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+from pathlib import Path
 
 import pytest
+
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from band.core.types import ALL_CAPABILITIES
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures
+from band.integrations.crewai.tools import PLATFORM_TOOLS
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -34,10 +38,15 @@ from band.runtime.tools import (
     iter_tool_definitions,
 )
 
-from band.integrations.crewai.tools import PLATFORM_TOOLS
-
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
+
+if importlib.util.find_spec("pydantic_ai") is None:
+    _HAS_PYDANTIC_AI = False
+else:
+    from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
+
+    _HAS_PYDANTIC_AI = True
 
 from tests.paths import SRC_ROOT
 
@@ -62,6 +71,17 @@ def _extract_tool_names(source: str) -> set[str]:
     return {
         name for name in ALL_TOOL_NAMES if re.search(re.escape(name) + r"\b", source)
     }
+
+
+def _assert_derives_from_registry(file_path: Path, integration_label: str) -> None:
+    """Fail unless ``file_path`` derives its tools from the central registry
+    instead of hand-rolling per-tool wrappers."""
+    source = file_path.read_text()
+    assert "iter_tool_definitions" in source, (
+        f"{integration_label} integration should derive its tool objects "
+        "from iter_tool_definitions() in band.runtime.tools instead of "
+        "hand-rolling per-tool wrappers."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -155,12 +175,7 @@ class TestLangGraphToolDrift:
     _FILE = SRC_ROOT / "integrations" / "langgraph" / "langchain_tools.py"
 
     def test_derives_tools_from_central_registry(self):
-        source = self._FILE.read_text()
-        assert "iter_tool_definitions" in source, (
-            "LangGraph integration should derive its StructuredTool wrappers "
-            "from iter_tool_definitions() in band.runtime.tools instead of "
-            "hand-rolling per-tool wrappers."
-        )
+        _assert_derives_from_registry(self._FILE, "LangGraph")
 
 
 class TestCrewAIToolDrift:
@@ -181,24 +196,32 @@ class TestCrewAIToolDrift:
 
 
 class TestPydanticAIToolDrift:
-    """PydanticAI adapter (adapters/pydantic_ai.py)."""
+    """PydanticAI built-in tools (integrations/pydantic_ai/tools.py).
 
-    _FILE = SRC_ROOT / "adapters" / "pydantic_ai.py"
+    Registry-driven like the LangGraph integration, so the drift check is that
+    the registry is still the source — plus the live proof that every tool in
+    it really gets built.
+    """
 
+    _FILE = SRC_ROOT / "integrations" / "pydantic_ai" / "tools.py"
+
+    def test_derives_tools_from_central_registry(self):
+        _assert_derives_from_registry(self._FILE, "PydanticAI")
+
+    @pytest.mark.skipif(
+        not _HAS_PYDANTIC_AI, reason="pydantic-ai not installed in this lane"
+    )
     def test_all_tools_registered(self):
-        """Every non-file tool in TOOL_MODELS has a PydanticAI tool function.
-
-        File tools are excluded: each Band tool is its own
-        ``@platform_tool``-decorated function here, so exposing
-        ``Capability.FILES`` needs a real new function per tool, not just a
-        capability declaration -- not yet done.
-        """
-        source = self._FILE.read_text()
-        found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - FILE_TOOL_NAMES - found
+        """Every tool in TOOL_MODELS is built for a fully-capable adapter."""
+        built = {
+            tool.name
+            for tool in build_band_pydantic_ai_tools(
+                AdapterFeatures(capabilities=ALL_CAPABILITIES)
+            )
+        }
+        missing = ALL_TOOL_NAMES - built
         assert not missing, (
-            f"PydanticAI adapter is missing tool functions for: {sorted(missing)}. "
-            f"Add tool registrations in _register_tools()."
+            f"PydanticAI integration is missing tools for: {sorted(missing)}."
         )
 
 

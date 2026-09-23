@@ -41,7 +41,6 @@ from band.runtime.tools import (
     READ_ONLY_TOOL_NAMES,
     TASK_TOOL_NAMES,
 )
-
 from tests.e2e.baseline.toolkit.observations.matching import (
     named_subset,
     tolerant_match,

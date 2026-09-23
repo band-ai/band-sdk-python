@@ -232,13 +232,16 @@ instance of that model:
 ```python
 from pydantic import BaseModel
 
+
 class WeatherInput(BaseModel):
     """Get the weather for a city."""
 
     city: str
 
+
 async def get_weather(args: WeatherInput) -> str:
     return f"{args.city}: sunny, 22°C"
+
 
 return AnthropicAdapter(
     ...,

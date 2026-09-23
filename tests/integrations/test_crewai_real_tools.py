@@ -19,8 +19,8 @@ import pytest
 
 pytest.importorskip("crewai", reason="crewai not installed (band-sdk[crewai])")
 
-from band.core.types import AdapterFeatures, Capability  # noqa: E402
-from band.integrations.crewai.tools import (  # noqa: E402
+from band.core.types import AdapterFeatures, Capability
+from band.integrations.crewai.tools import (
     NoopReporter,
     build_band_crewai_tools,
 )

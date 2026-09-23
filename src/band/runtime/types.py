@@ -6,10 +6,11 @@ Extracted from core/types.py - data structures used across the runtime layer.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 # --- Constants for synthetic messages (injected by SDK, not from platform) ---
 #
@@ -90,7 +91,7 @@ def _require_positive_when_set(name: str, value: float | None) -> None:
     """Shared guard for the optional-timeout fields below: unset (None) means
     unbounded and is always valid; a set value must be strictly positive."""
     if value is not None and value <= 0:
-        raise ValueError("%s must be > 0 when set (got %s)" % (name, value))
+        raise ValueError(f"{name} must be > 0 when set (got {value})")
 
 
 @dataclass
@@ -140,7 +141,7 @@ class SessionConfig:
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
-                "idle_resync_seconds must be > 0 (got %s)" % self.idle_resync_seconds
+                f"idle_resync_seconds must be > 0 (got {self.idle_resync_seconds})"
             )
 
         # Working-state invariants only matter when reporting is enabled.
@@ -148,27 +149,21 @@ class SessionConfig:
             ttl_half = PLATFORM_WORKING_STATE_TTL_SECONDS / 2
             if self.working_keep_alive_seconds <= 0:
                 raise ValueError(
-                    "working_keep_alive_seconds must be > 0 (got %s)"
-                    % self.working_keep_alive_seconds
+                    f"working_keep_alive_seconds must be > 0 (got {self.working_keep_alive_seconds})"
                 )
             if self.working_keep_alive_seconds >= ttl_half:
                 raise ValueError(
-                    "working_keep_alive_seconds must be < TTL/2 (%s) to keep TTL "
-                    "headroom (got %s)" % (ttl_half, self.working_keep_alive_seconds)
+                    f"working_keep_alive_seconds must be < TTL/2 ({ttl_half}) to keep TTL "
+                    f"headroom (got {self.working_keep_alive_seconds})"
                 )
             if self.working_request_timeout_seconds <= 0:
                 raise ValueError(
-                    "working_request_timeout_seconds must be > 0 (got %s)"
-                    % self.working_request_timeout_seconds
+                    f"working_request_timeout_seconds must be > 0 (got {self.working_request_timeout_seconds})"
                 )
             if self.working_request_timeout_seconds >= self.working_keep_alive_seconds:
                 raise ValueError(
-                    "working_request_timeout_seconds (%s) must be < "
-                    "working_keep_alive_seconds (%s) so a slow POST can't stack"
-                    % (
-                        self.working_request_timeout_seconds,
-                        self.working_keep_alive_seconds,
-                    )
+                    f"working_request_timeout_seconds ({self.working_request_timeout_seconds}) must be < "
+                    f"working_keep_alive_seconds ({self.working_keep_alive_seconds}) so a slow POST can't stack"
                 )
             _require_positive_when_set(
                 "max_working_state_seconds", self.max_working_state_seconds

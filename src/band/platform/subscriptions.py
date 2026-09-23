@@ -9,7 +9,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from band.client.streaming import WebSocketClient
 from band_sdk_core import (
     AgentTopicKind,
     LeaveOutcome,
@@ -18,6 +17,8 @@ from band_sdk_core import (
     chat_room_topic,
     room_participants_topic,
 )
+
+from band.client.streaming import WebSocketClient
 
 if TYPE_CHECKING:
     from band.client.streaming import (
@@ -102,7 +103,7 @@ class SubscriptionManager:
         try:
             await leave()
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.log(level, "Error %s: %s", description, e)
             return False
 
@@ -160,7 +161,7 @@ class SubscriptionManager:
                     room_id,
                     on_message_created=on_message_created,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join chat_room:%s: %s", room_id, e)
                 self._subscriptions.record_chat_room_join_failed(
                     room_id=room_id, ticket=ticket
@@ -176,7 +177,7 @@ class SubscriptionManager:
                     on_participant_removed=on_participant_removed,
                     on_room_deleted=on_room_deleted,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join room_participants:%s: %s", room_id, e)
                 # Clean up the chat_room channel we already joined. Logged at
                 # DEBUG here (not WARNING) so a rollback failure produces one
@@ -279,7 +280,7 @@ class SubscriptionManager:
             )
             settled = True
             logger.debug("Joined agent topic %s", topic)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to join agent topic %s: %s", topic, e)
             self._subscriptions.record_agent_topic_join(
                 topic=topic, ticket=ticket, joined=False
@@ -290,13 +291,12 @@ class SubscriptionManager:
             # unknown (e.g. cancelled after PHX's own join call started) --
             # record_agent_topic_join_ambiguous resolves core straight to
             # NeedsReconciliation instead of Absent.
-            if not settled:
-                if self._subscriptions.record_agent_topic_join_ambiguous(
-                    topic=topic, ticket=ticket
-                ):
-                    self._mark_needing_reconciliation(
-                        topic, self._agent_topics_needing_reconciliation, ws
-                    )
+            if not settled and self._subscriptions.record_agent_topic_join_ambiguous(
+                topic=topic, ticket=ticket
+            ):
+                self._mark_needing_reconciliation(
+                    topic, self._agent_topics_needing_reconciliation, ws
+                )
 
     async def unsubscribe_room(self, ws: WebSocketClient, room_id: str) -> None:
         ticket = self._subscriptions.unsubscribe_room(room_id=room_id)
@@ -457,12 +457,12 @@ class SubscriptionManager:
             if not self._is_current_session(ws):
                 return
             await self._leave_channel(
-                lambda: ws.leave_chat_room_channel(room_id),
+                lambda: ws.leave_chat_room_channel(room_id),  # noqa: B023 -- _leave_channel awaits this immediately, before the loop advances
                 description=f"best-effort reconciliation leave of chat_room:{room_id}",
                 level=logging.DEBUG,
             )
             await self._leave_channel(
-                lambda: ws.leave_room_participants_channel(room_id),
+                lambda: ws.leave_room_participants_channel(room_id),  # noqa: B023 -- see above
                 description=(
                     f"best-effort reconciliation leave of room_participants:{room_id}"
                 ),
@@ -486,7 +486,7 @@ class SubscriptionManager:
                 else ws.leave_agent_contacts_channel
             )
             await self._leave_channel(
-                lambda: leave(agent_id),
+                lambda: leave(agent_id),  # noqa: B023 -- _leave_channel awaits this immediately, before the loop advances
                 description=f"best-effort reconciliation leave of {topic}",
                 level=logging.DEBUG,
             )

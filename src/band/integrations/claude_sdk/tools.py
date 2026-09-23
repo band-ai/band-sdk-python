@@ -16,7 +16,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 try:
-    from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool  # type: ignore[import-not-found]
+    from claude_agent_sdk import (  # type: ignore[import-not-found]
+        SdkMcpTool,
+        create_sdk_mcp_server,
+        tool,
+    )
 except ImportError as e:
     raise ImportError(
         "claude-agent-sdk is required for Claude SDK tools.\n"
@@ -245,7 +249,7 @@ def _build_builtin_sdk_tool(
                 return _make_error(append_mention_handles_hint(str(error), available))
             return _make_error(str(error))
         except Exception as error:
-            logger.exception("%s failed: %s", definition.name, error)
+            logger.exception("%s failed", definition.name)
             return _make_error(str(error))
 
     return handler
@@ -271,7 +275,7 @@ def _build_custom_sdk_tool(
             result = await execute_custom_tool(tool_def, tool_args)
             return _make_result(result)
         except Exception as error:
-            logger.exception("Custom tool %s failed: %s", tool_name, error)
+            logger.exception("Custom tool %s failed", tool_name)
             return _make_error(str(error))
 
     return handler

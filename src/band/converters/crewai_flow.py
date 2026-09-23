@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -223,8 +223,7 @@ _UUID_RE = re.compile(
 
 def _basic_normalize(raw: str) -> str:
     s = raw.strip()
-    if s.startswith("@"):
-        s = s[1:]
+    s = s.removeprefix("@")
     if "/" in s:
         s = s.rsplit("/", 1)[-1]
     return s.strip().lower()
@@ -309,21 +308,36 @@ def _coerce_inserted_at(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         try:
-            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(value)
         except ValueError:
             return None
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     return None
 
 
 def _sort_key(event: dict[str, Any]) -> tuple[datetime, str]:
     inserted = _coerce_inserted_at(event.get("inserted_at"))
     if inserted is None:
-        inserted = datetime.fromtimestamp(0, tz=timezone.utc)
+        inserted = datetime.fromtimestamp(0, tz=UTC)
     return (inserted, str(event.get("id") or event.get("message_id") or ""))
+
+
+def _metadata_dict(event: dict[str, Any]) -> dict[str, Any]:
+    """An event's ``metadata`` as a plain dict, regardless of source.
+
+    ``AgentTools.fetch_room_context`` items carry it as the Fern-typed
+    ``ChatMessageMetadata`` model (``extra="allow"``); events from
+    ``AgentInput.history`` already carry a plain dict.
+    """
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, BaseModel):
+        return metadata.model_dump(exclude_none=True)
+    return {}
 
 
 class CrewAIFlowStateConverter:
@@ -372,10 +386,7 @@ class CrewAIFlowStateConverter:
         # Filter and sort.
         candidate: list[tuple[datetime, str, dict[str, Any], dict[str, Any]]] = []
         for event in raw:
-            metadata = event.get("metadata") or {}
-            if not isinstance(metadata, dict):
-                continue
-            payload = metadata.get(self.metadata_namespace)
+            payload = _metadata_dict(event).get(self.metadata_namespace)
             if payload is None:
                 continue
             inserted, msg_id = _sort_key(event)
@@ -423,7 +434,7 @@ class CrewAIFlowStateConverter:
             runs[run_id] = self._merge(existing, incoming)
 
         if self.max_run_age is not None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for run_id, run in list(runs.items()):
                 if run.status in _TERMINAL_RUN_STATUSES:
                     continue

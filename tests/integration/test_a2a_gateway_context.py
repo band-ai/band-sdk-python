@@ -12,11 +12,11 @@ import asyncio
 import logging
 
 import pytest
-
-from band.integrations.a2a.gateway import A2AGatewayAdapter
 from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
 from band_rest.core.api_error import ApiError
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
+
+from band.integrations.a2a.gateway import A2AGatewayAdapter
 
 from .conftest import fetch_all_context, requires_api
 

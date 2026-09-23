@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]", "pyyaml"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[claude_sdk]>=1.2.0", "pyyaml"]
 # ///
 """
 YAML-based agent runner for Band Claude SDK.
@@ -28,10 +25,9 @@ from typing import Any
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import LogSettings
-from band.core.types import Emit
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters import ClaudeSDKAdapter
+from band.core.types import Emit
 
 
 class Settings(BaseSettings):
@@ -143,7 +139,7 @@ def load_custom_tools(tools_dir: Path, config_dir: Path, tool_names: list[str]) 
         tool_registry = getattr(tools_module, "TOOL_REGISTRY", {})
         # Filter to only requested tools, return as list
         return [tool_registry[name] for name in tool_names if name in tool_registry]
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.warning("Could not load custom tools: %s", e)
         return []
 
@@ -313,7 +309,7 @@ async def main() -> None:
     try:
         if hasattr(agent, "close"):
             await agent.close()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.warning("Error during agent cleanup: %s", e)
     logger.info("Agent stopped")
 

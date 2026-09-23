@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[parlant,logging]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[parlant,logging]>=1.2.0"]
 # ///
 """
 Tom the cat agent using Parlant.
@@ -31,6 +28,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
+
 from band import Agent, configure_logging
 from band.adapters import ParlantAdapter
 

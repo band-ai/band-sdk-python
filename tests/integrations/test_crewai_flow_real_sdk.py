@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-
 from pydantic import BaseModel
 
 from band.adapters.crewai_flow import (
@@ -16,7 +15,7 @@ from band.core.types import PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
 
 try:
-    from crewai.flow.flow import Flow, start  # noqa: F401
+    from crewai.flow.flow import Flow, start
 
     _HAS_CREWAI = True
 except ImportError:
@@ -59,7 +58,7 @@ async def test_real_crewai_flow_can_call_adapter_registered_custom_tool() -> Non
         sender_name="Pat",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     adapter = CrewAIFlowAdapter(
         flow_factory=InboxFlow,

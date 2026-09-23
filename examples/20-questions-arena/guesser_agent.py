@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0"]
 # ///
 """
 Guesser agent for the 20 Questions Arena game.
@@ -38,8 +35,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 sys.path.insert(0, os.path.dirname(__file__))
 
 from prompts import create_llm, create_llm_by_name, generate_guesser_prompt
-
 from setup_logging import setup_logging
+
 from band import Agent
 from band.adapters import LangGraphAdapter
 

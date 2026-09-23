@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[letta]", "pydantic-settings", "python-dotenv"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[letta]>=1.2.0", "pydantic-settings", "python-dotenv"]
 # ///
 """
 Basic Letta agent example.
@@ -70,7 +67,6 @@ import logging
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 from band import Agent, configure_logging
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig

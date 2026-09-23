@@ -22,7 +22,6 @@ import pytest
 
 from band.platform.link import BandLink
 from band.runtime.types import PlatformMessage
-
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager

@@ -64,7 +64,11 @@ def login_codex() -> None:
     if not key:
         return
     result = subprocess.run(
-        ["codex", "login", "--with-api-key"], input=key, text=True, capture_output=True
+        ["codex", "login", "--with-api-key"],
+        check=False,
+        input=key,
+        text=True,
+        capture_output=True,
     )
     if result.returncode != 0:
         # Fail here, not later with a confusing 401. Redact the key from the error.
@@ -82,7 +86,9 @@ async def main() -> None:
     config = DevConfig()
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            model=config.model, approval_policy="never", custom_section=build_persona()
+            model=config.model,
+            approval_policy="never",
+            custom_section=build_persona(),
         ),
         # Emit tool_call/tool_result and reasoning to the room, keeping the default
         # per-turn task markers but excluding usage events. Codex's Band tools

@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[crewai]>=1.2.0"]
 # ///
 """CrewAI Flow router example.
 
@@ -29,10 +26,11 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-
-from band import Agent  # noqa: E402, configure_logging
-from band.adapters import CrewAIFlowAdapter  # noqa: E402
-from band import configure_logging  # noqa: E402
+from band import (
+    Agent,
+    configure_logging,
+)
+from band.adapters import CrewAIFlowAdapter
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)

@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 Basic ACP Server example - Band as an ACP agent.
@@ -50,8 +47,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import ACPServer, BandACPServerAdapter
-from band.integrations.acp import run_acp_server
 from band.config import load_agent_config
+from band.integrations.acp import run_acp_server
 
 configure_logging(
     level=logging.INFO,
@@ -84,7 +81,7 @@ async def main() -> None:
     if not api_key:
         try:
             agent_id, api_key = load_agent_config("acp_server_agent")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- ACP request handler must return a JSON-RPC error over stdio instead of crashing the transport loop
             raise ValueError(
                 "BAND_API_KEY environment variable is required, "
                 "or configure 'acp_server_agent' in agent_config.yaml"

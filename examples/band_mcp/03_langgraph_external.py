@@ -70,9 +70,11 @@ async def main() -> None:
             "messages": [
                 (
                     "user",
-                    "List my chat rooms, pick the most recently active one, and read "
-                    "its most recent messages. Summarize what's happening there in "
-                    "one or two sentences.",
+                    (
+                        "List my chat rooms, pick the most recently active one, and read "
+                        "its most recent messages. Summarize what's happening there in "
+                        "one or two sentences."
+                    ),
                 )
             ]
         }

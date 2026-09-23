@@ -1,6 +1,7 @@
 """Tests for composition layer types."""
 
-from datetime import datetime, timezone
+from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,7 +23,7 @@ class TestPlatformMessage:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         result = msg.format_for_llm()
@@ -40,7 +41,7 @@ class TestPlatformMessage:
             sender_name=None,
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         result = msg.format_for_llm()
@@ -58,7 +59,7 @@ class TestPlatformMessage:
             sender_name=None,
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         result = msg.format_for_llm()
@@ -76,10 +77,10 @@ class TestPlatformMessage:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             msg.content = "Modified"
 
 
@@ -155,7 +156,7 @@ class TestAgentInput:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         tools = FakeAgentTools()
         history = HistoryProvider(raw=[])
@@ -188,7 +189,7 @@ class TestAgentInput:
             sender_name=None,
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         inp = AgentInput(
@@ -214,7 +215,7 @@ class TestAgentInput:
             sender_name=None,
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         inp = AgentInput(
@@ -227,5 +228,5 @@ class TestAgentInput:
             room_id="room-1",
         )
 
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             inp.room_id = "modified"
