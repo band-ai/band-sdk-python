@@ -37,7 +37,7 @@ from band.adapters.crewai_flow import CrewAIFlowAdapter
 from band.adapters.google_adk import GoogleADKAdapter
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.parlant import ParlantAdapter
-from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 
@@ -147,10 +147,7 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
         PydanticAIAdapter,
     )
 
-    adapter = PydanticAIAdapter(
-        model="test",
-        capabilities=Capability.CONTACTS | Capability.MEMORY | Capability.FILES,
-    )
+    adapter = PydanticAIAdapter(model="test", capabilities=ALL_CAPABILITIES)
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
         name: tool.function_schema
