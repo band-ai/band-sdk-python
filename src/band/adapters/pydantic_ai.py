@@ -1,7 +1,9 @@
 """
 Pydantic AI adapter using SimpleAdapter pattern.
 
-Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
+Owns the agent lifecycle only — prompt, history, streaming, custom tools. The
+built-in Band tool surface is built by
+``band.integrations.pydantic_ai.tools.build_band_pydantic_ai_tools``.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ import inspect
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, ClassVar, Literal, cast, get_origin, get_type_hints
+from typing import Any, ClassVar, get_origin, get_type_hints
 
 from band_sdk_core import AgentFailure
 from pydantic_ai import (
@@ -36,15 +38,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from typing_extensions import Unpack
 
-from band.client.rest import (
-    ChatParticipant,
-    GetChatTaskHistoryResponse,
-    ListAgentContactRequestsResponse,
-    ListAgentContactsResponse,
-    ListAgentMemoriesResponse,
-    ListAgentPeersResponse,
-    ListChatTasksResponse,
-)
 from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
@@ -55,7 +48,6 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
-from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import (
     Capability,
     Emit,
@@ -64,6 +56,7 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
+from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
@@ -72,15 +65,10 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    ParticipantAddResult,
-    ParticipantRemoveResult,
     band_tool_errored,
-    decode_image_block,
     image_block_placeholder,
-    is_mcp_content_result,
     is_terminal_success,
     missing_reply_error,
-    platform_tool,
     redact_tool_call_args,
 )
 
@@ -222,8 +210,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
 
-    Uses Pydantic AI's Agent for LLM interactions,
-    with platform tools registered via @agent.tool decorators.
+    Uses Pydantic AI's Agent for LLM interactions, built with the platform
+    tools ``band.integrations.pydantic_ai.tools`` derives from the registry.
 
     Example:
         adapter = PydanticAIAdapter(
@@ -312,9 +300,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._agent = self._create_agent()
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
-    # --- Copied from BandPydanticAgent._create_agent ---
     def _create_agent(self) -> Agent[AgentToolsProtocol, str | None]:
-        """Create Pydantic AI Agent with platform tools."""
+        """Create the Pydantic AI Agent: prompt, run policy, and tools."""
         system = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
             agent_description=self.agent_description or "An AI assistant",
@@ -363,6 +350,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 ProcessHistory(_drop_non_replayable_messages),
                 Hooks(after_model_request=_drop_blank_text),
             ],
+            # The built-in Band surface, selected and built from the tool
+            # registry. Custom tools keep their own registration paths below.
+            tools=build_band_pydantic_ai_tools(self.features),
         )
 
         # Instrumentation is a property, not a constructor argument, so it is
@@ -370,461 +360,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # end to end — None is pydantic-ai's own "inherit Agent.instrument_all()",
         # which is exactly what a caller who passed nothing wants.
         agent.instrument = self.instrument
-
-        # Register platform tools dynamically from centralized definitions
-        # All tools catch exceptions and return error strings so LLM can see failures
-
-        @platform_tool
-        async def band_send_message(
-            ctx: RunContext[AgentToolsProtocol],
-            content: str,
-            mentions: list[str],
-        ) -> dict[str, Any] | str:
-            try:
-                return await ctx.deps.send_message(content, mentions)
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error sending message: {e}"
-
-        agent.tool(band_send_message)
-
-        @platform_tool
-        async def band_send_event(
-            ctx: RunContext[AgentToolsProtocol],
-            content: str,
-            message_type: str,
-            metadata: dict[str, Any] | None = None,
-        ) -> dict[str, Any] | str:
-            try:
-                return await ctx.deps.send_event(content, message_type, metadata)
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error sending event: {e}"
-
-        agent.tool(band_send_event)
-
-        @platform_tool
-        async def band_add_participant(
-            ctx: RunContext[AgentToolsProtocol],
-            identifier: str,
-            role: str = "member",
-        ) -> ParticipantAddResult | str:
-            try:
-                return await ctx.deps.add_participant(identifier, role)
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error adding participant '{identifier}': {e}"
-
-        agent.tool(band_add_participant)
-
-        @platform_tool
-        async def band_remove_participant(
-            ctx: RunContext[AgentToolsProtocol],
-            identifier: str,
-        ) -> ParticipantRemoveResult | str:
-            try:
-                return await ctx.deps.remove_participant(identifier)
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error removing participant '{identifier}': {e}"
-
-        agent.tool(band_remove_participant)
-
-        @platform_tool
-        async def band_lookup_peers(
-            ctx: RunContext[AgentToolsProtocol],
-            page: int = 1,
-            page_size: int = 50,
-        ) -> ListAgentPeersResponse | str:
-            try:
-                return await ctx.deps.lookup_peers(page, page_size)
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error looking up peers: {e}"
-
-        agent.tool(band_lookup_peers)
-
-        @platform_tool
-        async def band_get_participants(
-            ctx: RunContext[AgentToolsProtocol],
-        ) -> list[ChatParticipant] | str:
-            try:
-                return await ctx.deps.get_participants()
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error getting participants: {e}"
-
-        agent.tool(band_get_participants)
-
-        @platform_tool
-        async def band_create_chatroom(
-            ctx: RunContext[AgentToolsProtocol],
-            task_id: str | None = None,
-        ) -> str:
-            try:
-                return await ctx.deps.create_chatroom(task_id)
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                return f"Error creating chatroom (task_id={task_id}): {e}"
-
-        agent.tool(band_create_chatroom)
-
-        # Contact management tools (opt-in via Capability.CONTACTS)
-        if Capability.CONTACTS in self.features.capabilities:
-
-            @platform_tool
-            async def band_list_contacts(
-                ctx: RunContext[AgentToolsProtocol],
-                page: int = 1,
-                page_size: int = 50,
-            ) -> ListAgentContactsResponse | str:
-                try:
-                    return await ctx.deps.list_contacts(page, page_size)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error listing contacts: {e}"
-
-            agent.tool(band_list_contacts)
-
-            @platform_tool
-            async def band_add_contact(
-                ctx: RunContext[AgentToolsProtocol],
-                handle: str,
-                message: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.add_contact(handle, message)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error adding contact '{handle}': {e}"
-
-            agent.tool(band_add_contact)
-
-            @platform_tool
-            async def band_remove_contact(
-                ctx: RunContext[AgentToolsProtocol],
-                handle: str | None = None,
-                contact_id: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.remove_contact(handle, contact_id)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error removing contact: {e}"
-
-            agent.tool(band_remove_contact)
-
-            @platform_tool
-            async def band_list_contact_requests(
-                ctx: RunContext[AgentToolsProtocol],
-                page: int = 1,
-                page_size: int = 50,
-                sent_status: str = "pending",
-            ) -> ListAgentContactRequestsResponse | str:
-                try:
-                    return await ctx.deps.list_contact_requests(
-                        page, page_size, sent_status
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error listing contact requests: {e}"
-
-            agent.tool(band_list_contact_requests)
-
-            @platform_tool
-            async def band_respond_contact_request(
-                ctx: RunContext[AgentToolsProtocol],
-                action: str,
-                handle: str | None = None,
-                request_id: str | None = None,
-            ) -> dict[str, Any] | str:
-                logger.info(
-                    "band_respond_contact_request called: action=%s, handle=%s, request_id=%s",
-                    action,
-                    handle,
-                    request_id,
-                )
-                try:
-                    result = await ctx.deps.respond_contact_request(
-                        action, handle, request_id
-                    )
-                    logger.info("band_respond_contact_request result: %s", result)
-                    return result
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    logger.error("band_respond_contact_request error: %s", e)
-                    error_msg = f"Error responding to contact request: {e}"
-                    # Auto-send error event so it's visible in the room
-                    try:
-                        await ctx.deps.send_event(error_msg, "error")
-                    except Exception:  # noqa: BLE001, S110 -- best-effort error-reporting fallback; must not raise if sending the error event itself fails
-                        pass  # Don't fail if error reporting fails
-                    return error_msg
-
-            agent.tool(band_respond_contact_request)
-
-        # Memory management tools (enterprise only - opt-in)
-        if Capability.MEMORY in self.features.capabilities:
-
-            @platform_tool
-            async def band_list_memories(
-                ctx: RunContext[AgentToolsProtocol],
-                subject_id: str | None = None,
-                scope: str | None = None,
-                system: str | None = None,
-                type: str | None = None,
-                segment: str | None = None,
-                content_query: str | None = None,
-                page_size: int = 50,
-                status: str | None = None,
-            ) -> ListAgentMemoriesResponse | str:
-                try:
-                    response = await ctx.deps.list_memories(
-                        subject_id=subject_id,
-                        scope=scope,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        content_query=content_query,
-                        page_size=page_size,
-                        status=status,
-                    )
-                    return response
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error listing memories: {e}"
-
-            agent.tool(band_list_memories)
-
-            @platform_tool
-            async def band_store_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                content: str,
-                system: str,
-                type: str,
-                segment: str,
-                thought: str,
-                scope: str,
-                subject_id: str | None = None,
-                metadata: dict[str, Any] | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.store_memory(
-                        content=content,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        thought=thought,
-                        scope=scope,
-                        subject_id=subject_id,
-                        metadata=metadata,
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error storing memory: {e}"
-
-            agent.tool(band_store_memory)
-
-            @platform_tool
-            async def band_get_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                memory_id: str,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.get_memory(memory_id)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error getting memory: {e}"
-
-            agent.tool(band_get_memory)
-
-            @platform_tool
-            async def band_supersede_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                memory_id: str,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.supersede_memory(memory_id)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error superseding memory: {e}"
-
-            agent.tool(band_supersede_memory)
-
-            @platform_tool
-            async def band_archive_memory(
-                ctx: RunContext[AgentToolsProtocol],
-                memory_id: str,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.archive_memory(memory_id)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error archiving memory: {e}"
-
-            agent.tool(band_archive_memory)
-
-        # Task board tools (opt-in via Capability.TASKS)
-        if Capability.TASKS in self.features.capabilities:
-
-            @platform_tool
-            async def band_list_tasks(
-                ctx: RunContext[AgentToolsProtocol],
-                state: TaskListState | None = None,
-                cursor: str | None = None,
-                limit: int | None = None,
-            ) -> ListChatTasksResponse | str:
-                try:
-                    return await ctx.deps.list_tasks(
-                        state=state, cursor=cursor, limit=limit
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error listing tasks: {e}"
-
-            agent.tool(band_list_tasks)
-
-            @platform_tool
-            async def band_create_task(
-                ctx: RunContext[AgentToolsProtocol],
-                subject: str,
-                detail: str | None = None,
-                supersedes_id: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.create_task(
-                        subject, detail=detail, supersedes_id=supersedes_id
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error creating task '{subject}': {e}"
-
-            agent.tool(band_create_task)
-
-            @platform_tool
-            async def band_get_task(
-                ctx: RunContext[AgentToolsProtocol],
-                id: str,
-                # str, not Literal["history"] | None: pydantic-ai's own schema
-                # builder emits an unsanitized JSON-Schema `const` for a
-                # single-value Literal (unlike the master model/MCP paths,
-                # which run sanitize_tool_schema()), which providers with a
-                # restricted JSON-Schema subset (e.g. Gemini) reject.
-                include: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.get_task(
-                        id, include=cast(Literal["history"] | None, include)
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error getting task '{id}': {e}"
-
-            agent.tool(band_get_task)
-
-            @platform_tool
-            async def band_update_task(
-                ctx: RunContext[AgentToolsProtocol],
-                id: str,
-                status: TaskAssignmentStatus | None = None,
-                active_form: str | None = None,
-                comment: str | None = None,
-                subject: str | None = None,
-                detail: str | None = None,
-                state: TaskLifecycleState | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.update_task(
-                        id,
-                        status=status,
-                        active_form=active_form,
-                        comment=comment,
-                        subject=subject,
-                        detail=detail,
-                        state=state,
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error updating task '{id}': {e}"
-
-            agent.tool(band_update_task)
-
-            @platform_tool
-            async def band_get_task_history(
-                ctx: RunContext[AgentToolsProtocol],
-                id: str,
-                cursor: str | None = None,
-                limit: int | None = None,
-            ) -> GetChatTaskHistoryResponse | str:
-                try:
-                    return await ctx.deps.get_task_history(
-                        id, cursor=cursor, limit=limit
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error getting task history for '{id}': {e}"
-
-            agent.tool(band_get_task_history)
-
-            @platform_tool
-            async def band_get_board(
-                ctx: RunContext[AgentToolsProtocol],
-                # See band_get_task's `include` for why this is str, not Literal.
-                include: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.get_board(
-                        include=cast(Literal["history"] | None, include)
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error getting board: {e}"
-
-            agent.tool(band_get_board)
-
-            @platform_tool
-            async def band_set_board(
-                ctx: RunContext[AgentToolsProtocol],
-                goal_title: str | None = None,
-                goal_summary: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.set_board(
-                        goal_title=goal_title, goal_summary=goal_summary
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error setting board: {e}"
-
-            agent.tool(band_set_board)
-
-        # Room-file tools (opt-in via Capability.FILES)
-        if Capability.FILES in self.features.capabilities:
-
-            @platform_tool
-            async def band_list_room_files(
-                ctx: RunContext[AgentToolsProtocol],
-                cursor: str | None = None,
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.list_room_files(cursor)
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error listing room files: {e}"
-
-            agent.tool(band_list_room_files)
-
-            @platform_tool
-            async def band_read_room_file(
-                ctx: RunContext[AgentToolsProtocol],
-                file_id: str,
-            ) -> dict[str, Any] | str | list[BinaryContent]:
-                try:
-                    result = await ctx.deps.read_room_file(file_id)
-                    if is_mcp_content_result(result):
-                        return [
-                            BinaryContent(data=data, media_type=mime_type)
-                            for data, mime_type in (
-                                decode_image_block(block) for block in result["content"]
-                            )
-                        ]
-                    return result
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error reading room file: {e}"
-
-            agent.tool(band_read_room_file)
-
-            @platform_tool
-            async def band_send_room_file(
-                ctx: RunContext[AgentToolsProtocol],
-                content: str,
-                filename: str,
-                mentions: list[str],
-                caption: str = "",
-            ) -> dict[str, Any] | str:
-                try:
-                    return await ctx.deps.send_room_file(
-                        content, filename, caption, mentions
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    return f"Error sending room file '{filename}': {e}"
-
-            agent.tool(band_send_room_file)
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on
         # the path their signature calls for — pydantic-ai keeps the two apart.
