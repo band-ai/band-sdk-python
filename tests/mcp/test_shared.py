@@ -288,13 +288,13 @@ async def test_invoke_agent_survives_its_own_cache_entry_evicted_mid_flight(
     result = await send_task
 
     room_a_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
-    assert result == room_a_tools.messages_sent[0]
+    assert result.id == room_a_tools.messages_sent[0]["id"]
 
     release.set()
     result = await send_task
 
     room_a_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
-    assert result == room_a_tools.messages_sent[0]
+    assert result.id == room_a_tools.messages_sent[0]["id"]
 
 
 async def test_get_agent_tools_accepts_none_cache_key_with_sdk_room_sentinel(
@@ -389,7 +389,7 @@ async def test_invoke_send_message_refreshes_participants_first():
 
     assert fake_agent_tools.call_order == ["get_participants", "send_message"]
     fake_agent_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
-    assert result == fake_agent_tools.messages_sent[0]
+    assert result.id == fake_agent_tools.messages_sent[0]["id"]
 
 
 async def test_invoke_send_message_discards_cache_entry_on_refresh_failure():
@@ -412,8 +412,22 @@ async def test_invoke_send_message_error_enriched_with_available_handles():
     fake_agent_tools = BareBandToolErrorAgentTools(
         room_id="room_A",
         participants=[
-            {"id": "user-1", "name": "Alice", "handle": "@alice"},
-            {"id": "self", "name": "Self", "handle": "@self"},
+            {
+                "id": "user-1",
+                "name": "Alice",
+                "handle": "@alice",
+                "role": "member",
+                "status": "active",
+                "type": "User",
+            },
+            {
+                "id": "self",
+                "name": "Self",
+                "handle": "@self",
+                "role": "member",
+                "status": "active",
+                "type": "Agent",
+            },
         ],
         agent_id="self",
     )

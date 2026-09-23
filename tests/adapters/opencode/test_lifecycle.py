@@ -14,7 +14,7 @@ from band.core.types import (
 )
 from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
@@ -345,7 +345,7 @@ async def test_concurrent_message_rejected(make_adapter, tools) -> None:
     )
 
     # Second message should get rejected with "still processing" error
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("still processing" in e["content"].lower() for e in error_events)
     assert len(fake_client.prompt_calls) == 1
 
