@@ -39,11 +39,6 @@ from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestOmpACPAdapterConstruction:
-    def test_stdio_only_no_tcp_fields(self) -> None:
-        adapter = OmpACPAdapter()
-        assert adapter._host is None
-        assert adapter._port is None
-
     def test_default_command_gets_final_always_ask(self) -> None:
         adapter = OmpACPAdapter()
         assert adapter._command[-2:] == [
@@ -94,15 +89,15 @@ class TestOmpACPAdapterConstruction:
         assert adapter._use_unstable_protocol is True
         assert adapter._pass_builtin_transport_options is True
 
-    def test_custom_spawn_does_not_require_builtin_transport_options(self) -> None:
+    def test_custom_spawn_is_rejected_for_room_process_isolation(self) -> None:
         async def custom_spawn(*_args, **_kwargs):
             raise AssertionError("not called in this construction test")
 
-        adapter = OmpACPAdapter(
-            OmpACPAdapterConfig(),
-            spawn_process=custom_spawn,  # type: ignore[arg-type]
-        )
-        assert adapter._pass_builtin_transport_options is False
+        with pytest.raises(ValueError, match="room process isolation"):
+            OmpACPAdapter(
+                OmpACPAdapterConfig(),
+                spawn_process=custom_spawn,  # type: ignore[arg-type]
+            )
 
     def test_session_config_and_permission_resolvers_forwarded(self) -> None:
         async def resolver(_request: ACPConfigRequest) -> dict[str, str]:
@@ -338,12 +333,13 @@ class TestOmpElicitationHandlerWiring:
         """``on_message`` must register the OMP form elicitation handler."""
         adapter = OmpACPAdapter()
         adapter._inject_band_tools = False
-        adapter._runtime._conn = AsyncMock()
+        runtime = await adapter._runtime_for("room-123")
+        runtime._conn = AsyncMock()
         mock_session = MagicMock()
         mock_session.session_id = "acp-session-123"
-        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
-        adapter._runtime._conn.prompt = AsyncMock()
-        adapter._runtime._client = adapter._runtime_client_factory()
+        runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        runtime._conn.prompt = AsyncMock()
+        runtime._client = adapter._runtime_client_factory()
 
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
@@ -356,7 +352,7 @@ class TestOmpElicitationHandlerWiring:
             is_session_bootstrap=False,
             room_id="room-123",
         )
-        assert "acp-session-123" in adapter._runtime._client._elicitation_handlers
+        assert "acp-session-123" in runtime._client._elicitation_handlers
 
 
 class TestOmpDeterministicMcpReply:

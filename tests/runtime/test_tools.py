@@ -14,6 +14,7 @@ from band_rest import (
     GetAgentChatContextResponse,
     GetAgentChatContextResponseMetadata,
 )
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ValidationError
 
 from band.client.rest import (
@@ -45,13 +46,13 @@ from band.runtime.tools import (
     SendMessageInput,
     SendRoomFileInput,
     StoreMemoryInput,
-    _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
     is_mcp_content_result,
     is_room_posting_tool,
+    matches_identifier,
 )
 from tests.conftest import make_participant_mock
 from tests.content import BLANK_CONTENT_CASES
@@ -1495,36 +1496,80 @@ class TestAgentToolsSendEvent:
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
 
+class TestAgentToolsSendFailure:
+    """Test send_failure's best-effort delegation over the real REST boundary."""
+
+    async def test_send_failure_posts_an_error_event(self, mock_rest_client):
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.send_failure(AgentFailure("codex", "boom", "timeout"))
+
+        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
+        event = call_args.kwargs["event"]
+        assert event.message_type == "error"
+        assert event.metadata["failure"] == {
+            "provider": "codex",
+            "code": "timeout",
+            "message": "boom",
+            "detail": None,
+        }
+
+    async def test_send_failure_swallows_a_rest_rejection(self, mock_rest_client):
+        """A failed report must resolve, not raise -- it runs inside a
+        caller's except block reporting a real provider failure already."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            RuntimeError("REST rejected the event")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.send_failure(AgentFailure("codex", "boom"))
+
+        assert result == {"ok": False, "error": "REST rejected the event"}
+
+    async def test_send_event_itself_still_raises_on_the_same_rejection(
+        self, mock_rest_client
+    ):
+        """The other half of the best-effort contract: send_event's own
+        raising behavior is unchanged by send_failure wrapping it."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            RuntimeError("REST rejected the event")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(RuntimeError, match="REST rejected the event"):
+            await tools.send_event("task update", "task")
+
+
 class TestMatchesIdentifier:
-    """Tests for the _matches_identifier helper."""
+    """Tests for the matches_identifier helper."""
 
     def test_match_by_handle(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "alice") is True
+        assert matches_identifier(entity, "alice") is True
 
     def test_match_by_name(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "Alice Smith") is True
+        assert matches_identifier(entity, "Alice Smith") is True
 
     def test_match_by_id(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "u-1") is True
+        assert matches_identifier(entity, "u-1") is True
 
     def test_case_insensitive(self):
         entity = {"handle": "Alice", "name": "ALICE SMITH", "id": "U-1"}
-        assert _matches_identifier(entity, "alice") is True
-        assert _matches_identifier(entity, "alice smith") is True
-        assert _matches_identifier(entity, "u-1") is True
+        assert matches_identifier(entity, "alice") is True
+        assert matches_identifier(entity, "alice smith") is True
+        assert matches_identifier(entity, "u-1") is True
 
     def test_no_match(self):
         entity = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
-        assert _matches_identifier(entity, "bob") is False
+        assert matches_identifier(entity, "bob") is False
 
     def test_missing_fields(self):
         """Should handle entities with missing or None fields."""
-        assert _matches_identifier({"name": "Alice"}, "Alice") is True
-        assert _matches_identifier({"handle": None, "name": "Alice"}, "Alice") is True
-        assert _matches_identifier({}, "anything") is False
+        assert matches_identifier({"name": "Alice"}, "Alice") is True
+        assert matches_identifier({"handle": None, "name": "Alice"}, "Alice") is True
+        assert matches_identifier({}, "anything") is False
 
     def test_at_prefix_normalization(self):
         """@alice and alice should match regardless of which side has the prefix."""
@@ -1532,18 +1577,18 @@ class TestMatchesIdentifier:
         entity_without_at = {"handle": "alice", "name": "Alice Smith", "id": "u-1"}
 
         # identifier has @, entity doesn't
-        assert _matches_identifier(entity_without_at, "@alice") is True
+        assert matches_identifier(entity_without_at, "@alice") is True
         # entity has @, identifier doesn't
-        assert _matches_identifier(entity_with_at, "alice") is True
+        assert matches_identifier(entity_with_at, "alice") is True
         # both have @
-        assert _matches_identifier(entity_with_at, "@alice") is True
+        assert matches_identifier(entity_with_at, "@alice") is True
         # neither has @
-        assert _matches_identifier(entity_without_at, "alice") is True
+        assert matches_identifier(entity_without_at, "alice") is True
 
     def test_empty_identifier(self):
         """Empty string should only match empty field values."""
         entity = {"handle": "alice", "name": "Alice", "id": "u-1"}
-        assert _matches_identifier(entity, "") is False
+        assert matches_identifier(entity, "") is False
 
 
 class TestAgentToolsAddParticipant:

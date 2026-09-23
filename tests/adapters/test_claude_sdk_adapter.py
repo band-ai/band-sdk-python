@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,15 +32,18 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
+    _NATIVE_TOOL_MATCHER,
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
     BAND_MEMORY_TOOLS,
     BAND_TASK_TOOLS,
     ClaudeSDKAdapter,
     PendingApproval,
+    TurnResultAlreadyReported,
     _pre_tool_use_continue_hook,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import get_custom_tool_name
@@ -46,6 +51,7 @@ from band.runtime.tools import (
     ALL_TOOL_NAMES,
     FILE_TOOL_NAMES,
     MAX_INLINE_IMAGE_BYTES,
+    MCP_TOOL_PREFIX,
     mcp_tool_names,
     missing_reply_error,
 )
@@ -70,9 +76,8 @@ if _CLAUDE_SDK_AVAILABLE:
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 _SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 _ANY_MODEL = "claude-sonnet-4-6"
-# What a turn that ended without a reply going out must say — the "Error: "
-# prefix is _report_error's own formatting, asserted by substring below
-# rather than re-derived here.
+# What a turn that ended without a reply going out must say, asserted by
+# substring below rather than re-derived here.
 _MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
 
 
@@ -93,12 +98,8 @@ def _tool_turn(mcp_tool_name: str) -> list:
 
 
 def _error_events(mock_tools: MagicMock) -> list[str]:
-    """Contents of the error events posted through send_event."""
-    return [
-        call.kwargs["content"]
-        for call in mock_tools.send_event.call_args_list
-        if call.kwargs.get("message_type") == "error"
-    ]
+    """Room-visible message of each failure reported through send_failure."""
+    return [call.args[0].message for call in mock_tools.send_failure.call_args_list]
 
 
 def _narrated_message_types(mock_tools: MagicMock) -> list[str]:
@@ -171,6 +172,24 @@ def _denial(tool_use_id: str, tool_name: str) -> dict[str, Any]:
     return {"tool_name": tool_name, "tool_use_id": tool_use_id, "tool_input": {}}
 
 
+def _blocking_turn() -> tuple[asyncio.Event, asyncio.Event, Callable[..., Any]]:
+    """A ``_process_response`` stand-in that parks a turn until released.
+
+    Returns ``(started, release, wait_for_response)``. ``started`` fires once
+    the stand-in is entered, so a test can await the detached turn actually
+    reaching it before asserting against a concurrent cleanup/cancellation;
+    the stand-in then blocks on ``release`` until the test sets it.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def wait_for_response(*_args: Any) -> None:
+        started.set()
+        await release.wait()
+
+    return started, release, wait_for_response
+
+
 @pytest.fixture
 def sample_message():
     """Create a sample platform message."""
@@ -193,6 +212,7 @@ def mock_tools():
     tools = MagicMock()
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.add_participant = AsyncMock(return_value={"id": "user-1"})
     tools.remove_participant = AsyncMock(return_value={"status": "removed"})
     tools.lookup_peers = AsyncMock(return_value={"peers": []})
@@ -329,6 +349,29 @@ class TestOnStarted:
             assert sdk_options.model == "opus"
             assert sdk_options.fallback_model == "sonnet"
 
+    @pytest.mark.asyncio
+    async def test_approval_hook_matches_native_tools_only(self):
+        """Manual approval must not intercept the adapter's own MCP tools."""
+        adapter = ClaudeSDKAdapter(approval_mode="manual")
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            [matcher] = sdk_options.hooks["PreToolUse"]
+
+            assert matcher.matcher == _NATIVE_TOOL_MATCHER
+            assert re.fullmatch(matcher.matcher, "Bash")
+            assert not re.fullmatch(
+                matcher.matcher, f"{MCP_TOOL_PREFIX}band_send_message"
+            )
+
 
 class TestOnMessage:
     """Tests for on_message() method (bootstrap, history, invoke and response)."""
@@ -454,13 +497,46 @@ class TestOnMessage:
             assert "Hello, agent!" in full_message
             mock_process.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_refuses_second_message_while_a_turn_is_running(
+        self, sample_message, mock_tools
+    ):
+        """A room with a still-running turn is refused, not queued or double-started."""
+        adapter = ClaudeSDKAdapter()
+        adapter._session_manager = AsyncMock()
+        never_release = asyncio.Event()
+        running_turn = asyncio.create_task(never_release.wait())
+        adapter._turn_tasks["room-123"] = running_turn
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=ClaudeSDKSessionState(text=""),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        adapter._session_manager.get_or_create_session.assert_not_awaited()
+        assert adapter._turn_tasks["room-123"] is running_turn
+        mock_tools.send_message.assert_awaited_once()
+        assert (
+            mock_tools.send_message.call_args[0][0]
+            == "Still processing the previous request in this room."
+        )
+        assert mock_tools.send_message.call_args[0][1] == ["user-456"]
+
+        never_release.set()
+        await running_turn
+
 
 class TestErrorHandling:
     """Tests for error handling when SDK or tools raise."""
 
     @pytest.mark.asyncio
     async def test_reports_error_on_query_failure(self, sample_message, mock_tools):
-        """When client.query raises, adapter reports error via send_event and re-raises."""
+        """When client.query raises, adapter reports error via send_failure and re-raises."""
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
         mock_client.query = AsyncMock(side_effect=Exception("API Error"))
@@ -486,10 +562,10 @@ class TestErrorHandling:
                     room_id="room-123",
                 )
 
-            mock_tools.send_event.assert_called()
-            call_kwargs = mock_tools.send_event.call_args[1]
-            assert call_kwargs.get("message_type") == "error"
-            assert "API Error" in call_kwargs.get("content", "")
+            mock_tools.send_failure.assert_called_once()
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "claude_sdk"
+            assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
 class TestCLIConnectionError:
@@ -567,10 +643,10 @@ class TestCLIConnectionError:
                 )
 
             # Error should be surfaced to the user
-            mock_tools.send_event.assert_called()
-            call_kwargs = mock_tools.send_event.call_args[1]
-            assert call_kwargs.get("message_type") == "error"
-            assert "Process dead" in call_kwargs.get("content", "")
+            mock_tools.send_failure.assert_called_once()
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "claude_sdk"
+            assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_clears_session_id_on_cli_connection_error(
@@ -651,7 +727,7 @@ class TestCLIConnectionError:
         assert "room-123" not in adapter._session_ids
         errors = _error_events(mock_tools)
         assert len(errors) == 1
-        assert "ended without a result" in errors[0]
+        assert errors[0] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
 class TestRoomToolsStorage:
@@ -690,6 +766,39 @@ class TestOnCleanup:
         assert "room-123" not in adapter._room_tools
 
     @pytest.mark.asyncio
+    async def test_cancels_turn_before_cleaning_up_session(self, mock_tools):
+        """Room cleanup must stop a detached turn before closing its client."""
+        adapter = ClaudeSDKAdapter()
+        response_started, _release, wait_for_response = _blocking_turn()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        adapter._session_manager = AsyncMock()
+        turn_task = asyncio.create_task(
+            adapter._run_turn(
+                client,
+                "room-123",
+                mock_tools,
+                "message",
+                "message-id",
+                asyncio.get_running_loop().create_future(),
+            )
+        )
+        adapter._turn_tasks["room-123"] = turn_task
+
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            await response_started.wait()
+            cleanup_saw_completed = []
+
+            async def cleanup_session(_room_id):
+                cleanup_saw_completed.append(turn_task.done())
+
+            adapter._session_manager.cleanup_session.side_effect = cleanup_session
+            await adapter.on_cleanup("room-123")
+
+        assert cleanup_saw_completed == [True]
+
+    @pytest.mark.asyncio
     async def test_cleanup_without_session_manager_is_safe(self):
         """Should handle cleanup when session manager not initialized."""
         adapter = ClaudeSDKAdapter()
@@ -699,6 +808,143 @@ class TestOnCleanup:
         await adapter.on_cleanup("room-123")
 
         assert "room-123" not in adapter._room_tools
+
+    @pytest.mark.asyncio
+    async def test_old_turn_cannot_release_a_rejoined_turn(self, mock_tools):
+        """A turn surviving cleanup must not release a later turn in the same room."""
+        adapter = ClaudeSDKAdapter()
+        old_release = asyncio.get_running_loop().create_future()
+        adapter._turn_release["room-123"] = old_release
+        response_started, release_response, wait_for_response = _blocking_turn()
+
+        client = MagicMock()
+        client.query = AsyncMock()
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            old_turn = asyncio.create_task(
+                adapter._run_turn(
+                    client,
+                    "room-123",
+                    mock_tools,
+                    "old message",
+                    "old-message-id",
+                    old_release,
+                )
+            )
+            await response_started.wait()
+            adapter._turn_release.pop("room-123")
+            rejoined_release = asyncio.get_running_loop().create_future()
+            adapter._turn_release["room-123"] = rejoined_release
+
+            release_response.set()
+            await old_turn
+
+        assert not rejoined_release.done()
+
+    @pytest.mark.asyncio
+    async def test_run_turn_always_releases_its_handed_future(self, mock_tools):
+        """``_run_turn`` resolves the release future it was given directly, never
+        by looking it up in ``_turn_release`` -- so a caller isn't stranded even
+        when that dict never held (or no longer holds) this room's entry."""
+        adapter = ClaudeSDKAdapter()
+        release_future = asyncio.get_running_loop().create_future()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        with patch.object(adapter, "_process_response", new_callable=AsyncMock):
+            await adapter._run_turn(
+                client,
+                "room-123",
+                mock_tools,
+                "message",
+                "message-id",
+                release_future,
+            )
+
+        assert release_future.done()
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_drops_its_task(self, mock_tools):
+        """A completed turn must not retain its client and prompt in the room map."""
+        adapter = ClaudeSDKAdapter()
+        release_future = asyncio.get_running_loop().create_future()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        with patch.object(adapter, "_process_response", new_callable=AsyncMock):
+            turn_task = asyncio.create_task(
+                adapter._run_turn(
+                    client,
+                    "room-123",
+                    mock_tools,
+                    "message",
+                    "message-id",
+                    release_future,
+                )
+            )
+            adapter._turn_tasks["room-123"] = turn_task
+            await turn_task
+
+        assert "room-123" not in adapter._turn_tasks
+
+    @pytest.mark.asyncio
+    async def test_cancelled_message_cancels_detached_turn(
+        self, sample_message, mock_tools
+    ):
+        """Cancelling the runtime callback must stop its detached Claude turn."""
+        adapter = ClaudeSDKAdapter()
+        response_started, _release, wait_for_response = _blocking_turn()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+        adapter._session_manager = mock_manager
+
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            message_task = asyncio.create_task(
+                adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+            )
+            await response_started.wait()
+            turn_task = adapter._turn_tasks["room-123"]
+            message_task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await message_task
+
+        assert turn_task.cancelled()
+        assert "room-123" not in adapter._turn_tasks
+
+    @pytest.mark.asyncio
+    async def test_log_turn_task_exception_skips_cancelled_tasks(self):
+        """A cancelled task's exception must never be retrieved -- that call raises."""
+        adapter = ClaudeSDKAdapter()
+        task = asyncio.create_task(asyncio.sleep(10))
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        adapter._log_turn_task_exception(task)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_log_turn_task_exception_retrieves_a_failed_turns_exception(self):
+        """A failed (non-cancelled) turn's exception is retrieved without raising."""
+        adapter = ClaudeSDKAdapter()
+
+        async def failing_turn() -> None:
+            raise RuntimeError("boom")
+
+        task = asyncio.create_task(failing_turn())
+        with pytest.raises(RuntimeError):
+            await task
+
+        adapter._log_turn_task_exception(task)  # must not raise
 
 
 class TestCleanupAll:
@@ -718,6 +964,39 @@ class TestCleanupAll:
 
         mock_session_manager.stop.assert_awaited_once()
         assert len(adapter._room_tools) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancels_turns_before_stopping_session_manager(self, mock_tools):
+        """Adapter shutdown must stop detached turns before closing all sessions."""
+        adapter = ClaudeSDKAdapter()
+        response_started, _release, wait_for_response = _blocking_turn()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        adapter._session_manager = AsyncMock()
+        turn_task = asyncio.create_task(
+            adapter._run_turn(
+                client,
+                "room-123",
+                mock_tools,
+                "message",
+                "message-id",
+                asyncio.get_running_loop().create_future(),
+            )
+        )
+        adapter._turn_tasks["room-123"] = turn_task
+
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            await response_started.wait()
+            stop_saw_completed = []
+
+            async def stop():
+                stop_saw_completed.append(turn_task.done())
+
+            adapter._session_manager.stop.side_effect = stop
+            await adapter.cleanup_all()
+
+        assert stop_saw_completed == [True]
 
 
 class TestBandTools:
@@ -1110,6 +1389,82 @@ class TestSessionPersistence:
             # Second call should be without resume
             second_call = mock_manager.get_or_create_session.call_args_list[1]
             assert second_call == (("room-123",), {"resume_session_id": None})
+            # A self-healed retry is not a reportable failure.
+            mock_tools.send_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reports_error_when_no_stored_session_to_retry(
+        self, sample_message, mock_tools
+    ):
+        """No stored session id means there is nothing to fall back to, so
+        the failure must surface without leaking the raw exception text."""
+        adapter = ClaudeSDKAdapter()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(
+            side_effect=Exception("Session setup failed")
+        )
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager",
+            return_value=mock_manager,
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            with pytest.raises(Exception, match="Session setup failed"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "claude_sdk"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "Session setup failed" not in failure.message
+
+    @pytest.mark.asyncio
+    async def test_reports_error_when_fallback_session_also_fails(
+        self, sample_message, mock_tools
+    ):
+        """A failure in the fallback session-creation attempt must surface
+        without leaking the raw exception text."""
+        adapter = ClaudeSDKAdapter()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(
+            side_effect=[Exception("Resume failed"), Exception("Fresh session failed")]
+        )
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager",
+            return_value=mock_manager,
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            with pytest.raises(Exception, match="Fresh session failed"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=ClaudeSDKSessionState(text="", session_id="sess-broken"),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "claude_sdk"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "Fresh session failed" not in failure.message
 
     @pytest.mark.asyncio
     async def test_task_event_failure_does_not_break_flow(self, mock_tools):
@@ -1175,11 +1530,17 @@ class TestTurnFailureSurfacing:
         )
         mock_client = self._client_yielding(result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
         assert "Not logged in · Please run /login" in errors[0]
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "claude_sdk"
+        # No structured api_error_status on this failure -- code stays unset
+        # rather than inventing one.
+        assert failure.code is None
 
     @pytest.mark.asyncio
     async def test_error_detail_includes_api_error_status(self, mock_tools):
@@ -1189,14 +1550,19 @@ class TestTurnFailureSurfacing:
             is_error=True,
             result="Failed to authenticate. API Error: 401",
             api_error_status=401,
+            errors=["authentication_error: invalid API key"],
         )
         mock_client = self._client_yielding(result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
         assert "401" in errors[0]
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.code == "401"
+        assert failure.detail == ["authentication_error: invalid API key"]
 
     @pytest.mark.asyncio
     async def test_reports_missing_reply_when_no_terminal_tool_ran(self, mock_tools):
@@ -1205,7 +1571,8 @@ class TestTurnFailureSurfacing:
         result_msg = _result_message(is_error=False)
         mock_client = self._client_yielding(result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1274,7 +1641,8 @@ class TestTurnFailureSurfacing:
         )
         mock_client = self._client_yielding(assistant_msg, user_msg, _result_message())
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         payload = _tool_result_payload(mock_tools)
         assert payload[ToolEventKey.NAME] == "band_send_message"
@@ -1288,7 +1656,8 @@ class TestTurnFailureSurfacing:
         result_msg = _result_message(is_error=False)
         mock_client = self._client_yielding(*turn, result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1413,7 +1782,8 @@ class TestTurnFailureSurfacing:
         )
         mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1551,7 +1921,8 @@ class TestTurnFailureSurfacing:
             assistant_msg, failed_result, _result_message(is_error=False)
         )
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1610,7 +1981,8 @@ class TestTurnFailureSurfacing:
         )
         mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1638,7 +2010,8 @@ class TestTurnFailureSurfacing:
 
         # A fresh, unrelated turn: no tool activity, no permission_denials.
         next_turn_client = self._client_yielding(_result_message(is_error=False))
-        await adapter._process_response(next_turn_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(next_turn_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1664,7 +2037,8 @@ class TestTurnFailureSurfacing:
         result_msg = _result_message(is_error=False)
         mock_client = self._client_yielding(result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -1697,7 +2071,8 @@ class TestTurnFailureSurfacing:
         result_msg = _result_message(is_error=False)
         mock_client = self._client_yielding(result_msg)
 
-        await adapter._process_response(mock_client, "room-123", mock_tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
@@ -2492,9 +2867,14 @@ class TestPreToolUseHook:
     """Tests for the PreToolUse hook that enables can_use_tool delegation."""
 
     @pytest.mark.asyncio
-    async def test_hook_returns_continue_true(self):
+    async def test_hook_forces_permission_decision_ask(self):
         result = await _pre_tool_use_continue_hook(None, None, None)
-        assert result == {"continue_": True}
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+            }
+        }
 
 
 class TestApprovalCleanup:

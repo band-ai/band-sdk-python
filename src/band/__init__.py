@@ -103,6 +103,7 @@ from .runtime import (
     render_system_prompt,
     run_with_graceful_shutdown,
 )
+from .workspaces import create_room_workspace_resolver
 
 __all__ = [
     "ALL_TOOL_NAMES",
@@ -157,6 +158,7 @@ __all__ = [
     "chatty_logger_levels",
     "configure_logging",
     "configure_logging_from_env",
+    "create_room_workspace_resolver",
     "format_history_for_llm",
     # Runtime - Formatters
     "format_message_for_llm",

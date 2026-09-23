@@ -48,9 +48,9 @@ import shlex
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging
+from band import Agent, configure_logging, create_room_workspace_resolver
 from band.adapters import ACPClientAdapter
-from band.integrations.acp.client_profiles import CursorACPClientProfile
+from band.integrations.acp.client_profiles import resolve_acp_client_profile
 
 configure_logging(
     level=logging.INFO,
@@ -80,15 +80,13 @@ async def main() -> None:
     settings = Settings()
 
     command = shlex.split(settings.acp_agent_command)
-    cwd = settings.acp_agent_cwd
     auth_method = settings.acp_auth_method or None
     inject_band_tools = settings.acp_inject_band_tools
-    profile_name = settings.acp_client_profile.strip().lower()
-    profile = CursorACPClientProfile() if profile_name == "cursor" else None
+    profile = resolve_acp_client_profile(settings.acp_client_profile)
 
     adapter = ACPClientAdapter(
         command=command,
-        cwd=cwd,
+        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
         inject_band_tools=inject_band_tools,
         auth_method=auth_method,
         profile=profile,

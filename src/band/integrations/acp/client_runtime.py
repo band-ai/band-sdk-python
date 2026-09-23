@@ -275,6 +275,8 @@ class ACPConnectionProtocol(Protocol):
 
     async def close_session(self, session_id: str) -> object: ...
 
+    async def cancel(self, session_id: str) -> None: ...
+
 
 class ACPSpawnContextProtocol(Protocol):
     """Protocol for the spawn_agent_process async context manager."""
@@ -766,6 +768,7 @@ class ACPRuntime:
         *,
         command: list[str],
         env: dict[str, str] | None = None,
+        cwd: str | None = None,
         auth_method: str | None = None,
         client_factory: Callable[[], ACPCollectingClient] | None = None,
         spawn_process: Callable[..., object] | None = None,
@@ -775,6 +778,7 @@ class ACPRuntime:
     ) -> None:
         self._command = list(command)
         self._env = env
+        self._cwd = cwd
         self._auth_method = auth_method
         self._client_factory = client_factory or ACPCollectingClient
         self._spawn_process = spawn_process or spawn_agent_process
@@ -814,6 +818,7 @@ class ACPRuntime:
                 # injected spawn_process closure) and receives no positional args.
                 *self._command,
                 env=self._env,
+                cwd=self._cwd,
                 **spawn_kwargs,
             ),
         )
@@ -849,7 +854,7 @@ class ACPRuntime:
         async with self._stop_lock:
             if self._conn is None:
                 if self._ctx is None and can_respawn:
-                    await self.start(respawn=True)
+                    await self.start(respawn=False)
                 else:
                     raise RuntimeError(
                         "ACP client not initialized. Call on_started first."
@@ -980,6 +985,11 @@ class ACPRuntime:
                 self._client.set_sink(session_id, None)
         return self.get_collected_chunks(session_id)
 
+    async def cancel_turn(self, session_id: str) -> None:
+        """Tell the agent to stop a timed-out room's prompt."""
+        conn = await self.ensure_connection(can_respawn=False)
+        await conn.cancel(session_id)
+
     def reset_session(self, session_id: str) -> None:
         if self._client is not None:
             self._client.reset_session(session_id)
@@ -1016,6 +1026,11 @@ class ACPRuntime:
         ``ACPRuntime`` a passthrough per client method.
         """
         return self._client
+
+    @property
+    def agent_mcp_transport(self) -> MCPTransportKind:
+        """The MCP transport the connected agent negotiated during ``start()``."""
+        return self._agent_mcp_transport
 
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
