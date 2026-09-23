@@ -27,6 +27,7 @@ from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.formatters import strip_leading_mentions
+from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,15 @@ _INVALID_DECISION = object()
 
 @dataclass(frozen=True)
 class CursorACPAdapterConfig:
-    """Runtime configuration for Cursor's ``agent acp`` backend."""
+    """Runtime configuration for Cursor's ``agent acp`` backend.
+
+    ``cwd`` is a compatibility alias for a workspace root; prefer
+    ``workspace_for_room`` for new code.
+    """
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
     cwd: str | None = None
+    workspace_for_room: WorkspaceResolver | None = None
     env: dict[str, str] | None = None
     api_key: str | None = None
     auth_token: str | None = None
@@ -98,9 +104,14 @@ class CursorACPAdapter(ACPClientAdapter):
         self._active_turn: CursorTurn | None = None
         self._pending_decisions: dict[str, PendingDecision] = {}
         env = self._cursor_env(config)
+        workspace_for_room = config.workspace_for_room
+        if config.cwd is not None:
+            if workspace_for_room is not None:
+                raise ValueError("set either cwd or workspace_for_room, not both")
+            workspace_for_room = create_room_workspace_resolver(config.cwd)
         super().__init__(
             command=list(config.command),
-            cwd=config.cwd,
+            workspace_for_room=workspace_for_room,
             env=env,
             auth_method="cursor_login",
             profile=self._cursor_profile,

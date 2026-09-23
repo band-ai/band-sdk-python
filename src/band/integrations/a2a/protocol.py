@@ -17,6 +17,13 @@ TERMINAL_TASK_STATES = frozenset(
     }
 )
 
+RETRYABLE_TASK_FAILURE_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_REJECTED,
+    }
+)
+
 # Terminal states as persisted in task-event metadata. Includes the values
 # written by the pre-protobuf adapter (a2a-sdk 0.x string enums), so rooms
 # with history from before the migration still rehydrate as terminal.

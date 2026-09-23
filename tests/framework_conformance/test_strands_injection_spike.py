@@ -66,13 +66,17 @@ from pydantic import BaseModel
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from band.adapters.strands import StrandsAdapter
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.types import Emit, PlatformMessage
 from band.testing import (
     FakeAgentTools,
     ScriptedStrandsModel,
     TextTurn,
     ToolTurn,
+    reported_failures,
 )
 
 _SEND_CONTENT = "Injected reply: PINEAPPLE"
@@ -205,13 +209,17 @@ async def test_negative_control_text_only_sends_no_message() -> None:
     adapter = StrandsAdapter(
         model=ScriptedStrandsModel([TextTurn("just a reply, no tools")])
     )
-    await _run(adapter, tools, room_id)
+    with pytest.raises(TurnResultAlreadyReported):
+        await _run(adapter, tools, room_id)
 
     assert tools.messages_sent == [], (
         f"expected no send for a text-only decision, got: {tools.messages_sent}"
     )
     assert tools.tool_calls == []
     # The plain-text answer was silently dropped — the adapter must surface it.
-    errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-    assert len(errors) == 1, f"expected one error event, got: {tools.events_sent}"
-    assert "band_send_message" in errors[0]["content"]
+    failures = reported_failures(tools)
+    assert len(failures) == 1, (
+        f"expected one reported failure, got: {tools.events_sent}"
+    )
+    assert failures[0]["provider"] == "strands"
+    assert "band_send_message" in failures[0]["message"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -70,6 +71,20 @@ class TestCursorACPAdapterConstruction:
     def test_rejects_ambiguous_auth(self) -> None:
         with pytest.raises(ValueError, match="either api_key or auth_token"):
             CursorACPAdapter(CursorACPAdapterConfig(api_key="a", auth_token="b"))
+
+    def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+        adapter = CursorACPAdapter(CursorACPAdapterConfig(cwd=str(tmp_path)))
+
+        assert adapter._workspace("room-a") == str(tmp_path / "room-a")
+
+    def test_rejects_ambiguous_workspace_config(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="either cwd or workspace_for_room"):
+            CursorACPAdapter(
+                CursorACPAdapterConfig(
+                    cwd=str(tmp_path),
+                    workspace_for_room=lambda room_id: str(tmp_path / room_id),
+                )
+            )
 
     def test_forwards_the_live_session_catalog_resolver(self) -> None:
         async def resolve(request: ACPConfigRequest) -> dict[str, str]:

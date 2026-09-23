@@ -245,7 +245,12 @@ async def main() -> None:
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,
-            cwd=codex_cwd,
+            # Every room in this container shares the one pre-cloned repo
+            # checkout (REQUIRED_MOUNTS guarantees exactly one); only one room
+            # can hold it at a time -- a second room's first message fails
+            # loudly via claim_room_workspace's ValueError rather than running
+            # against a stale or unrelated checkout.
+            workspace_for_room=lambda _room_id: codex_cwd,
             model=codex_model,
             personality="pragmatic",
             approval_policy="never",
