@@ -36,6 +36,15 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from typing_extensions import Unpack
 
+from band.client.rest import (
+    ChatParticipant,
+    GetChatTaskHistoryResponse,
+    ListAgentContactRequestsResponse,
+    ListAgentContactsResponse,
+    ListAgentMemoriesResponse,
+    ListAgentPeersResponse,
+    ListChatTasksResponse,
+)
 from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
@@ -63,6 +72,8 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    ParticipantAddResult,
+    ParticipantRemoveResult,
     band_tool_errored,
     decode_image_block,
     image_block_placeholder,
@@ -71,7 +82,6 @@ from band.runtime.tools import (
     missing_reply_error,
     platform_tool,
     redact_tool_call_args,
-    serialize_tool_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -396,7 +406,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
             role: str = "member",
-        ) -> dict[str, Any] | str:
+        ) -> ParticipantAddResult | str:
             try:
                 return await ctx.deps.add_participant(identifier, role)
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
@@ -408,7 +418,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         async def band_remove_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
-        ) -> dict[str, Any] | str:
+        ) -> ParticipantRemoveResult | str:
             try:
                 return await ctx.deps.remove_participant(identifier)
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
@@ -421,11 +431,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ctx: RunContext[AgentToolsProtocol],
             page: int = 1,
             page_size: int = 50,
-        ) -> dict[str, Any] | str:
+        ) -> ListAgentPeersResponse | str:
             try:
-                return serialize_tool_result(
-                    await ctx.deps.lookup_peers(page, page_size)
-                )
+                return await ctx.deps.lookup_peers(page, page_size)
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error looking up peers: {e}"
 
@@ -434,7 +442,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         @platform_tool
         async def band_get_participants(
             ctx: RunContext[AgentToolsProtocol],
-        ) -> list[dict[str, Any]] | str:
+        ) -> list[ChatParticipant] | str:
             try:
                 return await ctx.deps.get_participants()
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
@@ -462,11 +470,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
                 page_size: int = 50,
-            ) -> dict[str, Any] | str:
+            ) -> ListAgentContactsResponse | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.list_contacts(page, page_size)
-                    )
+                    return await ctx.deps.list_contacts(page, page_size)
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing contacts: {e}"
 
@@ -504,12 +510,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 page: int = 1,
                 page_size: int = 50,
                 sent_status: str = "pending",
-            ) -> dict[str, Any] | str:
+            ) -> ListAgentContactRequestsResponse | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.list_contact_requests(
-                            page, page_size, sent_status
-                        )
+                    return await ctx.deps.list_contact_requests(
+                        page, page_size, sent_status
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing contact requests: {e}"
@@ -561,7 +565,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 content_query: str | None = None,
                 page_size: int = 50,
                 status: str | None = None,
-            ) -> dict[str, Any] | str:
+            ) -> ListAgentMemoriesResponse | str:
                 try:
                     response = await ctx.deps.list_memories(
                         subject_id=subject_id,
@@ -573,7 +577,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         page_size=page_size,
                         status=status,
                     )
-                    return serialize_tool_result(response)
+                    return response
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing memories: {e}"
 
@@ -592,17 +596,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 metadata: dict[str, Any] | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.store_memory(
-                            content=content,
-                            system=system,
-                            type=type,
-                            segment=segment,
-                            thought=thought,
-                            scope=scope,
-                            subject_id=subject_id,
-                            metadata=metadata,
-                        )
+                    return await ctx.deps.store_memory(
+                        content=content,
+                        system=system,
+                        type=type,
+                        segment=segment,
+                        thought=thought,
+                        scope=scope,
+                        subject_id=subject_id,
+                        metadata=metadata,
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error storing memory: {e}"
@@ -615,7 +617,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(await ctx.deps.get_memory(memory_id))
+                    return await ctx.deps.get_memory(memory_id)
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting memory: {e}"
 
@@ -627,9 +629,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.supersede_memory(memory_id)
-                    )
+                    return await ctx.deps.supersede_memory(memory_id)
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error superseding memory: {e}"
 
@@ -641,9 +641,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.archive_memory(memory_id)
-                    )
+                    return await ctx.deps.archive_memory(memory_id)
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error archiving memory: {e}"
 
@@ -658,12 +656,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 state: TaskListState | None = None,
                 cursor: str | None = None,
                 limit: int | None = None,
-            ) -> dict[str, Any] | str:
+            ) -> ListChatTasksResponse | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.list_tasks(
-                            state=state, cursor=cursor, limit=limit
-                        )
+                    return await ctx.deps.list_tasks(
+                        state=state, cursor=cursor, limit=limit
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing tasks: {e}"
@@ -678,10 +674,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 supersedes_id: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.create_task(
-                            subject, detail=detail, supersedes_id=supersedes_id
-                        )
+                    return await ctx.deps.create_task(
+                        subject, detail=detail, supersedes_id=supersedes_id
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error creating task '{subject}': {e}"
@@ -700,10 +694,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 include: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.get_task(
-                            id, include=cast(Literal["history"] | None, include)
-                        )
+                    return await ctx.deps.get_task(
+                        id, include=cast(Literal["history"] | None, include)
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting task '{id}': {e}"
@@ -722,16 +714,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 state: TaskLifecycleState | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.update_task(
-                            id,
-                            status=status,
-                            active_form=active_form,
-                            comment=comment,
-                            subject=subject,
-                            detail=detail,
-                            state=state,
-                        )
+                    return await ctx.deps.update_task(
+                        id,
+                        status=status,
+                        active_form=active_form,
+                        comment=comment,
+                        subject=subject,
+                        detail=detail,
+                        state=state,
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error updating task '{id}': {e}"
@@ -744,10 +734,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 id: str,
                 cursor: str | None = None,
                 limit: int | None = None,
-            ) -> dict[str, Any] | str:
+            ) -> GetChatTaskHistoryResponse | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.get_task_history(id, cursor=cursor, limit=limit)
+                    return await ctx.deps.get_task_history(
+                        id, cursor=cursor, limit=limit
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting task history for '{id}': {e}"
@@ -761,10 +751,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 include: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.get_board(
-                            include=cast(Literal["history"] | None, include)
-                        )
+                    return await ctx.deps.get_board(
+                        include=cast(Literal["history"] | None, include)
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting board: {e}"
@@ -778,10 +766,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 goal_summary: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return serialize_tool_result(
-                        await ctx.deps.set_board(
-                            goal_title=goal_title, goal_summary=goal_summary
-                        )
+                    return await ctx.deps.set_board(
+                        goal_title=goal_title, goal_summary=goal_summary
                     )
                 except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error setting board: {e}"

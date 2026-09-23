@@ -6,11 +6,13 @@ every input model in this package.
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
-from band.core.types import ContactRequestSentStatus
+from band.core.types import (
+    ContactRequestActionField,
+    ContactRequestSentStatus,
+    ContactRequestStatus,
+)
 
 
 class ListContactsInput(BaseModel):
@@ -53,7 +55,7 @@ class ListContactRequestsInput(BaseModel):
         50, description="Items per page per direction (max 100)", ge=1, le=100
     )
     sent_status: ContactRequestSentStatus = Field(
-        "pending", description="Filter sent requests by status"
+        ContactRequestStatus.PENDING, description="Filter sent requests by status"
     )
 
 
@@ -65,8 +67,6 @@ class RespondContactRequestInput(BaseModel):
     - 'cancel': For requests you SENT (handle = recipient's handle)
     """
 
-    action: Literal["approve", "reject", "cancel"] = Field(
-        ..., description="Action to take"
-    )
+    action: ContactRequestActionField = Field(..., description="Action to take")
     handle: str | None = Field(None, description="Other party's handle")
     request_id: str | None = Field(None, description="Or request ID (UUID)")
