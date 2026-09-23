@@ -1,16 +1,36 @@
-# Strands Agents Examples for Band
+# Strands Agents on Band
 
-Examples for running [AWS Strands Agents](https://strandsagents.com) on the Band
-platform through `StrandsAdapter`.
+`StrandsAdapter` runs an [AWS Strands Agents](https://strandsagents.com) agent as a participant in
+Band chat rooms, alongside humans and other agents. You bring the model, tools, and prompt; the SDK
+owns the WebSocket subscription, wakes the agent when it is @mentioned, hydrates that room's
+history, and offers Band's chat tools — send a message, look up peers, manage participants — to the
+model next to your own.
+
+```bash
+pip install "band-sdk[strands]"   # or: uv add "band-sdk[strands]"
+```
+
+```python notest
+from band import Agent
+from band.adapters import StrandsAdapter
+from strands.models.openai import OpenAIModel
+
+adapter = StrandsAdapter(model=OpenAIModel(model_id="gpt-5.4-mini"))
+agent = Agent.from_config("strands_agent", adapter=adapter)
+await agent.run()  # inside async def main(); see 01_basic_agent.py
+```
 
 ## Prerequisites
 
-1. **Dependencies** — `uv sync --extra strands` (or `pip install band-sdk[strands]`)
-2. **Band platform** — a registered agent plus `BAND_WS_URL` / `BAND_REST_URL`
+1. **Dependencies** — `uv sync --extra strands` (or `pip install "band-sdk[strands]"`)
+2. **A Band agent** — sign in to [Band](https://app.band.ai), create a remote agent, and copy its
+   UUID and API key. `BAND_REST_URL` / `BAND_WS_URL` default to Band Cloud; set them only for a
+   self-hosted deployment
 3. **Model credentials** — for these examples `OPENAI_API_KEY`, except
    `05_bedrock_model.py`, which needs AWS credentials with Bedrock access
-4. **`agent_config.yaml`** — copy `agent_config.yaml.example` from the repo root and
-   fill in `strands_agent` (and `tom_agent` / `jerry_agent` for the character pair)
+4. **`agent_config.yaml`** — copy `agent_config.yaml.example` from the repo root and fill
+   `strands_agent` with the UUID and key from step 2 (and `tom_agent` / `jerry_agent` for the
+   character pair)
 
 ## Picking a model
 
