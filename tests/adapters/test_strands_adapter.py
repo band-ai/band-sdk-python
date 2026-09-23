@@ -37,7 +37,11 @@ from band.adapters.strands import (
     _tool_result,
 )
 from band.converters.strands import StrandsHistoryConverter
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.types import (
     USAGE_METADATA_KEY,
     AgentInput,
@@ -55,6 +59,7 @@ from band.testing import (
     ScriptedStrandsModel,
     ScriptedTurn,
     ToolTurn,
+    reported_failures,
 )
 
 _INPUT_TOKENS_PER_CALL = 7
@@ -142,10 +147,6 @@ def _alternates(history: list) -> bool:
     """Whether the transcript never puts two same-role turns in a row."""
     roles = [message["role"] for message in history]
     return all(first != second for first, second in itertools.pairwise(roles))
-
-
-def _errors(tools: FakeAgentTools) -> list[str]:
-    return [e["content"] for e in tools.events_sent if e["message_type"] == "error"]
 
 
 class TestCustomToolWiring:
@@ -449,11 +450,16 @@ class TestOnMessage:
         A later turn that reseeded would replay the room's own transcript on top
         of the one the adapter is already holding.
         """
-        adapter = await scripted(SEND_TURN, SEND_TURN)
+        adapter = await scripted(SEND_TURN)
         await _run_message(adapter, tools, history=[])
         after_first = list(adapter._message_history[ROOM])
 
-        await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
+        # The scripted model has no turn left for a second reply, so this
+        # turn ends without calling band_send_message -- irrelevant to what
+        # this test checks (the transcript isn't re-seeded), so only the
+        # failure is asserted here, not suppressed.
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
 
         assert adapter._message_history[ROOM][: len(after_first)] == after_first
 
@@ -528,10 +534,14 @@ class TestTurnProductivity:
         tools = FailingTools(room_id=ROOM)
         adapter = await scripted(SEND_TURN)
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert tools.messages_sent == []
-        assert len(_errors(tools)) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "strands"
+        assert "band_send_message" in failures[0]["message"]
         # The shared bridge returns a normalized, model-visible tool failure.
         assert any(
             text.startswith("Error executing band_send_message:")
@@ -550,7 +560,8 @@ class TestTurnProductivity:
         tools = FailingTools(room_id=ROOM)
         adapter = await scripted(SEND_TURN, emit=Emit.TOOL_CALLS)
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         rehydrated = StrandsHistoryConverter(agent_name="Bot").convert(
             [
@@ -572,11 +583,14 @@ class TestTurnProductivity:
         """Looking peers up succeeds but posts nothing, so the reply is still missing."""
         adapter = await scripted(ToolTurn("band_lookup_peers", {}))
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert _tool_results(adapter)  # the lookup did run and succeed
         assert tools.messages_sent == []
-        assert "band_send_message" in _errors(tools)[0]
+        failure = reported_failures(tools)[0]
+        assert failure["provider"] == "strands"
+        assert "band_send_message" in failure["message"]
 
     @pytest.mark.asyncio
     async def test_invalid_tool_arguments_are_answered_not_raised(
@@ -585,7 +599,8 @@ class TestTurnProductivity:
         """A malformed call is the model's mistake to correct, not a turn-ending crash."""
         adapter = await scripted(ToolTurn("band_send_message", {"mentions": ["@x"]}))
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert tools.messages_sent == []
         assert _tool_results(adapter) == [
@@ -606,7 +621,8 @@ class TestTurnProductivity:
             ToolTurn("boom", {"note": "go"}), additional_tools=[(BoomInput, boom)]
         )
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
 
@@ -637,6 +653,9 @@ class TestTurnFailure:
         assert usage[0]["metadata"][USAGE_METADATA_KEY]["input_tokens"] == (
             _INPUT_TOKENS_PER_CALL
         )
+        failure = reported_failures(tools)[0]
+        assert failure["provider"] == "strands"
+        assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
 class TestUsageMapping:
@@ -781,7 +800,8 @@ class TestSendRoomFileArgsRedaction:
         )
         await adapter.on_started("Bot", "A bot")
 
-        await _run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_message(adapter, tools)
 
         tool_calls = [
             json.loads(e["content"])
