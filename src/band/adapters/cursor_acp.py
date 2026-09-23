@@ -22,7 +22,7 @@ from band.integrations.acp.client_profiles import (
     CURSOR_CREATE_PLAN_METHOD,
     CursorACPClientProfile,
 )
-from band.integrations.acp.client_runtime import select_allow_option_id
+from band.integrations.acp.client_runtime import ACPRuntime, select_allow_option_id
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
@@ -182,10 +182,13 @@ class CursorACPAdapter(ACPClientAdapter):
 
     async def _get_or_create_session(
         self,
+        runtime: ACPRuntime,
         room_id: str,
         history: ACPClientSessionState | None,
     ) -> tuple[str, bool]:
-        session_id, created = await super()._get_or_create_session(room_id, history)
+        session_id, created = await super()._get_or_create_session(
+            runtime, room_id, history
+        )
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
             turn.session_id = session_id

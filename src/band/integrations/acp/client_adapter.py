@@ -17,7 +17,6 @@ from acp.schema import (
     HttpMcpServer,
     NewSessionResponse,
     PermissionOption,
-    SetSessionConfigOptionResponse,
     SseMcpServer,
 )
 from band_sdk_core import AgentFailure
