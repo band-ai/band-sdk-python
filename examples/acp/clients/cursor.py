@@ -50,7 +50,6 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
@@ -67,18 +66,8 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
-
-    acp_agent_cwd: str = "."
-
-
 async def main() -> None:
     load_dotenv()
-    settings = Settings()
-    cwd = settings.acp_agent_cwd
 
     # Cursor authentication environment — passed to the subprocess, so left as
     # a direct os.getenv pair rather than a Settings field.
@@ -95,7 +84,6 @@ async def main() -> None:
     # - Band tools are injected through a local localhost-only MCP server
     adapter = ACPClientAdapter(
         command=[os.path.expanduser("~/.local/bin/agent"), "acp"],
-        cwd=cwd,
         env=cursor_env or None,
         inject_band_tools=True,
         auth_method="cursor_login",

@@ -201,6 +201,37 @@ class FakeCodexClient:
         self.closed = True
 
 
+def patch_codex_client(adapter: CodexAdapter, client: FakeCodexClient) -> None:
+    def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+        return client
+
+    adapter._build_client = _build  # type: ignore[method-assign]
+
+
+def make_codex_adapter(
+    client: FakeCodexClient,
+    config: CodexAdapterConfig | None = None,
+    **kwargs: Any,
+) -> CodexAdapter:
+    adapter = CodexAdapter(config=config or CodexAdapterConfig(), **kwargs)
+    patch_codex_client(adapter, client)
+    return adapter
+
+
+def wire_codex_room(
+    adapter: CodexAdapter,
+    client: FakeCodexClient,
+    room_id: str = "room-1",
+    *,
+    initialized: bool = True,
+) -> None:
+    adapter._room_client(room_id)
+    adapter._active_room.set(room_id)
+    adapter._client = client  # type: ignore[assignment]
+    if initialized:
+        adapter._initialized = True
+
+
 def _event_notification(method: str, params: dict[str, Any]) -> RpcEvent:
     return RpcEvent(
         kind="notification",
@@ -271,11 +302,7 @@ async def run_codex_turn(
     test states only the events it scripts and the outcome it asserts.
     """
     client = FakeCodexClient(events=events)
-    adapter = CodexAdapter(
-        config=config or CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _config: client,
-        **adapter_kwargs,
-    )
+    adapter = make_codex_adapter(client, config=config, **adapter_kwargs)
     room_tools = tools if tools is not None else ToolSchemaFakeTools()
 
     await adapter.on_started("Codex Agent", "A coding agent")
@@ -330,10 +357,7 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -376,9 +400,8 @@ class TestCodexAdapter:
             ),
             turn_start_error_once=True,
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", model="gpt-5.5"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-5.5")
         )
         tools = ToolSchemaFakeTools()
 
@@ -426,10 +449,7 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -496,10 +516,7 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = SendMessageFailureTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -526,10 +543,7 @@ class TestCodexAdapter:
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -558,12 +572,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="auto_decline")
         )
         tools = ToolSchemaFakeTools()
 
@@ -603,13 +613,11 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-                approval_text_notifications=True,
+                approval_mode="auto_decline", approval_text_notifications=True
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = FailingNotifyTools()
 
@@ -648,12 +656,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = FailingNotifyTools()
 
@@ -695,10 +699,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_cleanup_closes_client_when_last_room_removed(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -720,10 +721,7 @@ class TestCodexAdapter:
     async def test_cleanup_idempotent(self) -> None:
         """Calling on_cleanup twice for the same room should not raise."""
         fake_client = FakeCodexClient(events=[_turn_completed()])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -743,44 +741,43 @@ class TestCodexAdapter:
         await adapter.on_cleanup("room-1")
 
     @pytest.mark.asyncio
-    async def test_cleanup_multi_room_keeps_client_until_last(self) -> None:
-        """Client stays open until the last room is cleaned up."""
-        events_room1 = [_turn_completed()]
-        events_room2 = [_turn_completed("turn-2")]
-        fake_client = FakeCodexClient(events=events_room1 + events_room2)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+    async def test_cleanup_multi_room_closes_each_room_client(self) -> None:
+        """Each room owns its Codex client; cleanup closes only that room's client."""
+        clients = {
+            "room-1": FakeCodexClient(events=[_turn_completed()]),
+            # Each room owns a separate FakeCodexClient with its own turn
+            # counter, so room-2's first turn is also "turn-1" -- matching
+            # this room's client, not a global counter.
+            "room-2": FakeCodexClient(events=[_turn_completed()]),
+        }
+        adapter = CodexAdapter(config=CodexAdapterConfig())
+
+        def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+            room_id = adapter._active_room.get()
+            assert room_id is not None
+            return clients[room_id]
+
+        adapter._build_client = _build  # type: ignore[method-assign]
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(room_id="room-1"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await adapter.on_message(
-            make_platform_message(room_id="room-2"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-2",
-        )
+        for room_id in ("room-1", "room-2"):
+            await adapter.on_message(
+                make_platform_message(room_id=room_id),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id=room_id,
+            )
 
-        # Cleaning up room-1 should NOT close the client (room-2 still active)
         await adapter.on_cleanup("room-1")
-        assert fake_client.closed is False
+        assert clients["room-1"].closed is True
+        assert clients["room-2"].closed is False
 
-        # Cleaning up room-2 should close the client (last room)
         await adapter.on_cleanup("room-2")
-        assert fake_client.closed is True
+        assert clients["room-2"].closed is True
 
     @pytest.mark.asyncio
     async def test_forwards_raw_codex_task_events(self) -> None:
@@ -796,10 +793,7 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -843,12 +837,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_task_markers=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -886,12 +876,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_task_markers=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -920,10 +906,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_status_command_returns_state_without_starting_turn(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -947,10 +930,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_model_command_sets_override_without_starting_turn(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -967,7 +947,7 @@ class TestCodexAdapter:
         methods = [method for method, _ in fake_client.requests]
         assert "turn/start" not in methods
         assert "thread/start" not in methods
-        assert adapter.config.model == "gpt-5.5-codex"
+        assert adapter._selected_model == "gpt-5.5-codex"
         assert len(tools.messages_sent) == 1
         assert (
             "Model override set to `gpt-5.5-codex`" in tools.messages_sent[0]["content"]
@@ -976,10 +956,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_models_alias_lists_models_without_starting_turn(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1003,13 +980,11 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_reasoning_effort_passed_in_turn_overrides(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                reasoning_effort="high",
-                reasoning_summary="concise",
+                reasoning_effort="high", reasoning_summary="concise"
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1031,10 +1006,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_reasoning_effort_omitted_when_none(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -1055,10 +1027,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_reasoning_command_sets_effort(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -1070,17 +1039,15 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.reasoning_effort == "high"
+        room = adapter._room_clients["room-1"]
+        assert room.reasoning_effort == "high"
         assert len(tools.messages_sent) == 1
         assert "Reasoning effort set to `high`" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
     async def test_reasoning_command_rejects_invalid_effort(self) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -1099,9 +1066,9 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_self_config_tools_registered_when_enabled(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(enable_self_config_tools=True),
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1127,9 +1094,9 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_self_config_tools_not_registered_when_disabled(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(enable_self_config_tools=False),
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1166,9 +1133,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1181,7 +1147,6 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.model == "o3"
         assert adapter._selected_model == "o3"
         # Verify the tool response was sent back
         tool_responses = [
@@ -1208,9 +1173,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1223,8 +1187,9 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.reasoning_effort == "xhigh"
-        assert adapter.config.reasoning_summary == "detailed"
+        room = adapter._room_clients["room-1"]
+        assert room.reasoning_effort == "xhigh"
+        assert room.reasoning_summary == "detailed"
 
     @pytest.mark.asyncio
     async def test_setreasoning_tool_rejects_invalid_effort(self) -> None:
@@ -1241,9 +1206,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -1272,12 +1236,8 @@ class TestCodexAdapter:
     async def test_sandbox_alias_is_normalized_for_thread_and_turn(self) -> None:
         events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                sandbox="dangerFullAccess",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(sandbox="dangerFullAccess")
         )
         tools = ToolSchemaFakeTools()
 
@@ -1309,12 +1269,8 @@ class TestCodexAdapter:
     async def test_external_sandbox_alias_uses_sandbox_policy(self) -> None:
         events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                sandbox="external-sandbox",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(sandbox="external-sandbox")
         )
         tools = ToolSchemaFakeTools()
 
@@ -1354,10 +1310,7 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1387,10 +1340,7 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1422,10 +1372,7 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Codex Agent", "A coding agent")
 
@@ -1464,10 +1411,7 @@ class TestCodexAdapter:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Codex Agent", "A coding agent")
 
@@ -1509,10 +1453,7 @@ class TestCodexAdapter:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Codex Agent", "A coding agent")
 
@@ -1536,9 +1477,8 @@ class TestCodexAdapter:
         every sibling adapter's own turn-timeout handling."""
         # No events means FakeCodexClient raises asyncio.TimeoutError immediately.
         fake_client = FakeCodexClient(events=[])
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", turn_timeout_s=0.01),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(turn_timeout_s=0.01)
         )
         tools = ToolSchemaFakeTools()
 
@@ -1579,13 +1519,12 @@ class TestCodexAdapter:
         inside its own except clause, so it can't rely on the sibling
         `except TurnResultAlreadyReported` handler to emit it."""
         fake_client = FakeCodexClient(events=[])
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
                 turn_timeout_s=0.01,
                 emit_turn_lifecycle_events=True,
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
 
@@ -1635,10 +1574,7 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1671,7 +1607,7 @@ class TestCodexAdapter:
 
         custom_tools: list[CustomToolDef] = [(WeatherInput, get_weather)]
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
+            config=CodexAdapterConfig(),
             additional_tools=custom_tools,
         )
 
@@ -1715,10 +1651,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            additional_tools=custom_tools,
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), additional_tools=custom_tools
         )
         tools = ToolSchemaFakeTools()
 
@@ -1759,10 +1693,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -1802,10 +1734,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -1843,11 +1773,7 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=(),
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(), emit=())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1894,10 +1820,10 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(),
             additional_tools=custom_tools,
-            client_factory=lambda _config: fake_client,
             emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
@@ -1946,10 +1872,8 @@ class TestCodexAdapter:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2010,10 +1934,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2057,10 +1979,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2113,10 +2033,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2161,10 +2079,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2203,10 +2119,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2250,10 +2164,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2301,10 +2213,7 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -2343,10 +2252,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2403,10 +2310,7 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -2446,10 +2350,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2506,10 +2408,7 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -2548,10 +2447,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.THOUGHTS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.THOUGHTS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2591,10 +2488,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit={Emit.THOUGHTS},
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit={Emit.THOUGHTS}
         )
         tools = ToolSchemaFakeTools()
 
@@ -2651,10 +2546,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit={Emit.THOUGHTS},
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit={Emit.THOUGHTS}
         )
         tools = ToolSchemaFakeTools()
 
@@ -2687,10 +2580,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit={Emit.THOUGHTS},
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit={Emit.THOUGHTS}
         )
         tools = ToolSchemaFakeTools()
 
@@ -2736,10 +2627,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TASK_EVENTS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TASK_EVENTS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2790,10 +2679,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2832,10 +2719,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2876,10 +2761,7 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -2916,10 +2798,8 @@ class TestItemCompletedForwarding:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-            emit=Emit.TOOL_CALLS,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
         tools = ToolSchemaFakeTools()
 
@@ -2951,10 +2831,7 @@ class TestHistoryInjection:
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -3011,10 +2888,7 @@ class TestHistoryInjection:
         """Resume succeeds, no history injection."""
         events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -3060,12 +2934,9 @@ class TestHistoryInjection:
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                inject_history_on_resume_failure=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(inject_history_on_resume_failure=False),
         )
         tools = ToolSchemaFakeTools()
 
@@ -3104,10 +2975,7 @@ class TestHistoryInjection:
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -3184,9 +3052,8 @@ class TestHistoryInjection:
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_history_messages=3),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(max_history_messages=3)
         )
         tools = ToolSchemaFakeTools()
 
@@ -3243,10 +3110,7 @@ class TestHistoryInjection:
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -3290,10 +3154,7 @@ class TestHistoryInjection:
                 ]
             },
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
@@ -3324,11 +3185,11 @@ class TestHistoryInjection:
                 ]
             },
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
+        adapter._room_client("room-1")
+        adapter._active_room.set("room-1")
+        await adapter._ensure_client_ready()
 
         assert adapter._selected_model == "gpt-5.4-mini"
 
@@ -3348,9 +3209,8 @@ class TestHistoryInjection:
                 ]
             },
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model="unavailable-test-model"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="unavailable-test-model")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
@@ -3379,11 +3239,11 @@ class TestHistoryInjection:
     async def test_model_selection_uses_default_when_model_list_empty(self) -> None:
         """Auto-selection uses the adapter default when Codex returns no visible models."""
         fake_client = FakeCodexClient(model_list_result={"data": []})
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
+        adapter._room_client("room-1")
+        adapter._active_room.set("room-1")
+        await adapter._ensure_client_ready()
 
         assert adapter._selected_model == "gpt-5.5"
 
@@ -3406,11 +3266,11 @@ class TestHistoryInjection:
                 )
 
         fake_client = ModelListFailsClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
+        adapter._room_client("room-1")
+        adapter._active_room.set("room-1")
+        await adapter._ensure_client_ready()
 
         assert adapter._selected_model == "gpt-5.5"
 
@@ -3423,10 +3283,7 @@ class TestHistoryInjection:
             ),
             turn_start_error_once=False,
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
@@ -3448,14 +3305,11 @@ class TestHistoryInjection:
     ) -> None:
         """Startup emits a redacted config summary log line."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="stdio",
-                model="gpt-5.5",
-                sandbox="workspace-write",
-                approval_mode="manual",
+                model="gpt-5.5", sandbox="workspace-write", approval_mode="manual"
             ),
-            client_factory=lambda _config: fake_client,
         )
 
         with caplog.at_level("INFO", logger="band.adapters.codex"):
@@ -3487,10 +3341,7 @@ class TestHistoryInjection:
                 ),
             ],
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
@@ -3513,9 +3364,9 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_cleanup_before_start(self) -> None:
         """Calling on_cleanup on a freshly constructed adapter should not raise."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="stdio"),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(),
         )
         # No on_started called — cleanup should be safe (idempotent)
         await adapter.on_cleanup("room-x")
@@ -3524,10 +3375,7 @@ class TestHistoryInjection:
     async def test_cleanup_clears_pending_approvals(self) -> None:
         """on_cleanup should evict all pending approvals for the given room."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="stdio"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         await adapter.on_started("Bot", "desc")
 
         # Manually inject a pending approval for room-1
@@ -3546,9 +3394,8 @@ class TestHistoryInjection:
                 },
             )(),
         }
-        # Also register a room thread so the client isn't closed
+        wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
-        adapter._room_threads["room-2"] = "thr-2"
 
         await adapter.on_cleanup("room-1")
 
@@ -3581,10 +3428,7 @@ class TestHistoryInjection:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ValidationErrorTools()
 
         await adapter.on_started("Bot", "desc")
@@ -3636,10 +3480,7 @@ class TestStructuredErrors:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -3683,10 +3524,7 @@ class TestStructuredErrors:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -3716,10 +3554,7 @@ class TestStructuredErrors:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -3748,10 +3583,7 @@ class TestStructuredErrors:
             turn_start_error=RuntimeError("transport hiccup"),
             turn_start_error_once=False,
         )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -3792,9 +3624,8 @@ class TestEnrichedApprovals:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=first_events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -3846,12 +3677,8 @@ class TestEnrichedApprovals:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="auto_decline")
         )
         tools = ToolSchemaFakeTools()
 
@@ -3879,10 +3706,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_command_changes_mode(self) -> None:
         """The /sandbox command sets a per-room override, not mutating global config."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -3904,10 +3728,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_command_is_per_room(self) -> None:
         """Sandbox override in one room does not affect other rooms."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         await adapter.on_started("Agent", "A coding agent")
 
         adapter._sandbox_overrides["room-1"] = "read-only"
@@ -3919,10 +3740,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_danger_full_access_requires_confirm_flag(self) -> None:
         """Escalating to danger-full-access without --confirm shows a prompt."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -3946,10 +3764,7 @@ class TestEnrichedApprovals:
     ) -> None:
         """Escalating to danger-full-access with --confirm logs a warning."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
@@ -3973,10 +3788,7 @@ class TestEnrichedApprovals:
     async def test_sandbox_command_rejects_invalid_mode(self) -> None:
         """The /sandbox command rejects invalid modes."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -3997,10 +3809,7 @@ class TestEnrichedApprovals:
     async def test_permissions_command_shows_state(self) -> None:
         """/permissions shows current effective permissions."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -4042,9 +3851,8 @@ class TestPlanAndLifecycle:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4088,9 +3896,8 @@ class TestPlanAndLifecycle:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4119,12 +3926,8 @@ class TestPlanAndLifecycle:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4159,10 +3962,7 @@ class TestPlanAndLifecycle:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -4203,10 +4003,7 @@ class TestPlanAndLifecycle:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -4251,9 +4048,8 @@ class TestRealtimeStreaming:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_reasoning_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_reasoning_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4288,9 +4084,8 @@ class TestRealtimeStreaming:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_reasoning_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_reasoning_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4321,9 +4116,8 @@ class TestRealtimeStreaming:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4369,9 +4163,8 @@ class TestRealtimeStreaming:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_commentary_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_commentary_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4420,9 +4213,8 @@ class TestRealtimeStreaming:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_commentary_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_commentary_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4466,9 +4258,8 @@ class TestRealtimeStreaming:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_commentary_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_commentary_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4508,12 +4299,8 @@ class TestDiffsAndTokenUsage:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_diff_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_diff_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4550,13 +4337,8 @@ class TestDiffsAndTokenUsage:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_diff_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
-            emit=(),
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_diff_events=True), emit=()
         )
         tools = ToolSchemaFakeTools()
 
@@ -4596,9 +4378,8 @@ class TestDiffsAndTokenUsage:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_token_usage_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_token_usage_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4640,9 +4421,8 @@ class TestDiffsAndTokenUsage:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_token_usage_events=False),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_token_usage_events=False)
         )
         tools = ToolSchemaFakeTools()
 
@@ -4689,10 +4469,7 @@ class TestDiffsAndTokenUsage:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -4914,12 +4691,8 @@ class TestSessionAutoApproval:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -4958,12 +4731,8 @@ class TestSessionAutoApproval:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="auto_decline",
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="auto_decline")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -4999,13 +4768,11 @@ class TestSessionAutoApproval:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-                session_approval_granularity="binary",
+                approval_mode="manual", session_approval_granularity="binary"
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5051,10 +4818,7 @@ class TestCleanup:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -5083,9 +4847,9 @@ class TestCleanup:
 class TestAuditCap:
     def test_audit_trail_capped_at_limit(self) -> None:
         """Approval audit trail is capped at max_approval_audit_per_room."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_approval_audit_per_room=5),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(max_approval_audit_per_room=5),
         )
         for i in range(10):
             adapter._record_approval_audit(
@@ -5103,9 +4867,9 @@ class TestAuditCap:
 
     def test_session_approved_capped_at_limit(self) -> None:
         """Session approvals evict LRU when max_session_approved_per_room is hit."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_session_approved_per_room=3),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(max_session_approved_per_room=3),
         )
         for i in range(5):
             adapter._record_session_approval("room-1", f"commandExecution:cmd{i}")
@@ -5118,9 +4882,9 @@ class TestAuditCap:
 
     def test_session_approval_reinsert_moves_to_end(self) -> None:
         """Re-approving an existing key moves it to the most-recent slot."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", max_session_approved_per_room=3),
-            client_factory=lambda _config: FakeCodexClient(),
+        adapter = make_codex_adapter(
+            FakeCodexClient(),
+            config=CodexAdapterConfig(max_session_approved_per_room=3),
         )
         adapter._record_session_approval("room-1", "commandExecution:a")
         adapter._record_session_approval("room-1", "commandExecution:b")
@@ -5145,12 +4909,8 @@ class TestReviewFixes:
     async def test_sandbox_command_blocked_when_sandbox_policy_set(self) -> None:
         """/sandbox is rejected when sandbox_policy is configured."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                sandbox_policy={"type": "readOnly"},
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(sandbox_policy={"type": "readOnly"})
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5174,10 +4934,7 @@ class TestReviewFixes:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -5246,12 +5003,8 @@ class TestReviewFixes:
                 raise ConnectionError("transport died")
 
         fake_client = BrokenClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                fallback_send_agent_text=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(fallback_send_agent_text=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5280,10 +5033,7 @@ class TestReviewFixes:
                 raise rpc_error
 
         rpc_error_client = RpcErrorClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: rpc_error_client,
-        )
+        adapter = make_codex_adapter(rpc_error_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -5312,12 +5062,11 @@ class TestReviewFixes:
             )
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
                 emit_turn_lifecycle_events=True,
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5362,9 +5111,8 @@ class TestAcceptForSession:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5414,9 +5162,8 @@ class TestAcceptForSession:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5459,9 +5206,8 @@ class TestNetworkContext:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5511,12 +5257,8 @@ class TestTurnStartedLifecycle:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5554,12 +5296,8 @@ class TestContextCompaction:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5592,12 +5330,8 @@ class TestContextCompaction:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=False)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5779,9 +5513,8 @@ class TestSessionApprovalValidation:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -5851,10 +5584,7 @@ class TestTokenUsageEmission:
         """
 
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -5898,7 +5628,7 @@ class TestSessionApprovalKeying:
 
     def test_file_change_session_key_requires_paths(self) -> None:
         """/approve-session must refuse fileChange requests with no paths."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         key = adapter._session_approval_key(
             "item/fileChange/requestApproval",
             {"reason": "something vague"},
@@ -5907,7 +5637,7 @@ class TestSessionApprovalKeying:
 
     def test_file_change_session_key_uses_paths_when_present(self) -> None:
         """fileChange session key includes sorted path list for stable matching."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         key1 = adapter._session_approval_key(
             "item/fileChange/requestApproval",
             {"changes": [{"path": "b.py"}, {"path": "a.py"}]},
@@ -5921,7 +5651,7 @@ class TestSessionApprovalKeying:
 
     def test_file_change_session_key_handles_top_level_paths(self) -> None:
         """fileChange session key also picks up top-level path/paths fields."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         key = adapter._session_approval_key(
             "item/fileChange/requestApproval",
             {"paths": ["src/foo.py", "src/bar.py"]},
@@ -5931,7 +5661,7 @@ class TestSessionApprovalKeying:
 
     def test_unknown_approval_method_returns_empty_key(self) -> None:
         """Session-level approval refuses unknown methods rather than bucketing them."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         assert adapter._session_approval_key("item/unknown/requestApproval", {}) == ""
 
     @pytest.mark.asyncio
@@ -5946,14 +5676,13 @@ class TestSessionApprovalKeying:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
                 approval_mode="manual",
                 approval_wait_timeout_s=0.05,
                 approval_timeout_decision="decline",
             ),
-            client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6020,7 +5749,7 @@ class TestApprovalAuditRecording:
 
     def test_record_approval_audit_returns_entry(self) -> None:
         """_record_approval_audit returns the entry it appended."""
-        adapter = CodexAdapter(config=CodexAdapterConfig(transport="ws"))
+        adapter = CodexAdapter(config=CodexAdapterConfig())
         entry = adapter._record_approval_audit(
             room_id="room-1",
             request_id="req-1",
@@ -6091,10 +5820,7 @@ class TestSlashCommandCoverage:
     async def test_thread_info_with_no_mapping(self) -> None:
         """/thread info reports gracefully when the room has no thread yet."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -6127,12 +5853,8 @@ class TestSlashCommandCoverage:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_token_usage_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_token_usage_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6166,10 +5888,7 @@ class TestSlashCommandCoverage:
     async def test_permissions_reflects_sandbox_override(self) -> None:
         """/permissions reports the per-room sandbox override once set."""
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
@@ -6214,10 +5933,7 @@ class TestSlashCommandCoverage:
                 raise RuntimeError("platform rejected the message")
 
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = FailingSendMessageTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -6256,10 +5972,7 @@ class TestSlashCommandCoverage:
                 raise RuntimeError("platform rejected the message")
 
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = FailingSendMessageTools()
 
         await adapter.on_started("Agent", "A coding agent")
@@ -6295,10 +6008,7 @@ class TestMalformedPayloadTolerance:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6335,10 +6045,7 @@ class TestMalformedPayloadTolerance:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6375,10 +6082,7 @@ class TestMalformedPayloadTolerance:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6407,10 +6111,7 @@ class TestMalformedPayloadTolerance:
             ),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws"),
-            client_factory=lambda _config: fake_client,
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6435,9 +6136,8 @@ class TestMalformedPayloadTolerance:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", stream_plan_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(stream_plan_events=True)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6464,13 +6164,11 @@ class TestCleanupOnCancel:
         not that the natural approval timeout fired first.
         """
         fake_client = FakeCodexClient(events=[])
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                approval_mode="manual",
-                approval_wait_timeout_s=30.0,
+                approval_mode="manual", approval_wait_timeout_s=30.0
             ),
-            client_factory=lambda _config: fake_client,
         )
         await adapter.on_started("Agent", "A coding agent")
 
@@ -6478,6 +6176,7 @@ class TestCleanupOnCancel:
         loop = asyncio.get_running_loop()
         approval_future: asyncio.Future[str] = loop.create_future()
 
+        wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
         adapter._pending_approvals["room-1"] = {
             "token-1": PendingApproval(
@@ -6508,12 +6207,8 @@ class TestTurnLifecycleEventsDisabled:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_lifecycle_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_turn_lifecycle_events=False)
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
@@ -6674,9 +6369,8 @@ class TestDiffByteCap:
             _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_diff_events=True),
-            client_factory=lambda _config: fake_client,
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(emit_diff_events=True)
         )
         tools = ToolSchemaFakeTools()
 
@@ -6762,13 +6456,11 @@ class TestDoubleEmitStartupWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=True,
-                emit_turn_lifecycle_events=True,
+                emit_turn_task_markers=True, emit_turn_lifecycle_events=True
             ),
-            client_factory=lambda _config: fake_client,
         )
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_started("Agent", "A coding agent")
@@ -6781,13 +6473,11 @@ class TestDoubleEmitStartupWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
+        adapter = make_codex_adapter(
+            fake_client,
             config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=True,
-                emit_turn_lifecycle_events=False,
+                emit_turn_task_markers=True, emit_turn_lifecycle_events=False
             ),
-            client_factory=lambda _config: fake_client,
         )
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_started("Agent", "A coding agent")
