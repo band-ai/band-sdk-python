@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Literal, Protocol, cast
 
@@ -52,33 +52,58 @@ MCPTransportKind = Literal["http", "sse"]
 _ALLOW_OPTION_KINDS = ("allow_once", "allow_always")
 
 
+def _resolve_option_id(option: object) -> str | None:
+    """One offered option's wire id, preferring ``optionId`` over ``option_id``.
+
+    Coalesces the camelCase (wire/JSON) and snake_case spellings on
+    *absence*, not falsiness — an explicit (if empty) id must not fall
+    through to the alias and get dropped. Accepts the ACP ``PermissionOption``
+    objects or plain dicts/Mappings.
+    """
+    if isinstance(option, Mapping):
+        option_id = option.get("optionId")
+        if option_id is None:
+            option_id = option.get("option_id")
+    else:
+        option_id = getattr(option, "option_id", None)
+        if option_id is None:
+            option_id = getattr(option, "optionId", None)
+    return str(option_id) if option_id is not None else None
+
+
+def permission_option_ids(options: object) -> tuple[str, ...]:
+    """The wire option ids offered by a permission/tool-call request, in order.
+
+    Accepts the ACP ``PermissionOption`` objects or plain dicts/Mappings.
+    """
+    if not isinstance(options, (list, tuple)):
+        return ()
+    return tuple(
+        option_id
+        for option in options
+        if (option_id := _resolve_option_id(option)) is not None
+    )
+
+
 def select_allow_option_id(options: object) -> str | None:
     """The ``optionId`` of an allow option offered in a permission request, else None.
 
     Prefers the least-privilege ``allow_once`` over ``allow_always``. Returns None
     when the agent offered no allow option, so the caller cancels rather than
-    guessing (selecting a reject option would silently deny). Accepts the ACP
-    ``PermissionOption`` objects or plain dicts.
+    guessing (selecting a reject option would silently deny).
     """
     if not isinstance(options, (list, tuple)):
         return None
     candidates: list[tuple[object, str]] = []
     for option in options:
-        if isinstance(option, dict):
-            kind = option.get("kind")
-            # Coalesce the camelCase (wire/JSON) and snake_case spellings on
-            # *absence*, not falsiness — an explicit (if empty) id must not fall
-            # through to the alias and get dropped.
-            option_id = option.get("optionId")
-            if option_id is None:
-                option_id = option.get("option_id")
-        else:
-            kind = getattr(option, "kind", None)
-            option_id = getattr(option, "option_id", None)
-            if option_id is None:
-                option_id = getattr(option, "optionId", None)
+        kind = (
+            option.get("kind")
+            if isinstance(option, Mapping)
+            else getattr(option, "kind", None)
+        )
+        option_id = _resolve_option_id(option)
         if option_id is not None:
-            candidates.append((kind, str(option_id)))
+            candidates.append((kind, option_id))
     for preferred in _ALLOW_OPTION_KINDS:
         for kind, option_id in candidates:
             if kind == preferred:
@@ -616,6 +641,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     ) -> dict[str, object]:
         handler = self._permission_handlers.get(session_id)
         if handler:
+            # A manual handler can wait for room input. Holding the ingestion lock
+            # for that wait stalls every live update, so the handler receives a
+            # narrow narrator for the denied tool-call/tool-result pair instead.
             return await handler(
                 options=options,
                 session_id=session_id,
@@ -714,6 +742,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
     async def ext_notification(self, method: str, params: dict[str, object]) -> None:
         session_id = str(params.get("sessionId") or params.get("session_id") or "")
+        if not session_id:
+            # A profile written against the pre-extension_session_id
+            # ACPClientProfile protocol has no such attribute at all.
+            session_id = getattr(self._profile, "extension_session_id", None) or ""
         if not session_id:
             return
 

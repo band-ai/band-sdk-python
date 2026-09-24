@@ -70,6 +70,12 @@ if TYPE_CHECKING:
     )
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapter
     from band.adapters.crewai_flow import CrewAIFlowAdapter as CrewAIFlowAdapter
+    from band.adapters.cursor_acp import (
+        CursorACPAdapter as CursorACPAdapter,
+    )
+    from band.adapters.cursor_acp import (
+        CursorACPAdapterConfig as CursorACPAdapterConfig,
+    )
     from band.adapters.gemini import GeminiAdapter as GeminiAdapter
     from band.adapters.google_adk import GoogleADKAdapter as GoogleADKAdapter
     from band.adapters.langgraph import LangGraphAdapter as LangGraphAdapter
@@ -112,6 +118,7 @@ __all__, __getattr__ = lazy_exports(
     claude_sdk=["ClaudeSDKAdapter"],
     copilot_sdk=["CopilotSDKAdapter", "CopilotSDKAdapterConfig"],
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
+    cursor_acp=["CursorACPAdapter", "CursorACPAdapterConfig"],
     omp_acp=["OmpACPAdapter", "OmpACPAdapterConfig"],
     parlant=["ParlantAdapter"],
     crewai=["CrewAIAdapter"],

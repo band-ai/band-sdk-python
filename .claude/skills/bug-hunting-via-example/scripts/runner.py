@@ -848,8 +848,8 @@ async def start_group_examples(
     settings: BaselineSettings,
     repo: Path,
     results: list[Result],
-) -> dict[str, RunningExample]:
-    running: dict[str, RunningExample] = {}
+    running: dict[str, RunningExample],
+) -> None:
     for spec in plan.examples:
         try:
             agent = await resources.provision_agent(f"group-{spec.id}")
@@ -859,7 +859,6 @@ async def start_group_examples(
                 results,
                 Result("together", spec.id, "fail", f"startup: {error}"),
             )
-    return running
 
 
 async def exercise_group_steps(
@@ -1013,8 +1012,9 @@ async def run_group(
     repo: Path,
     results: list[Result],
 ) -> None:
-    running = await start_group_examples(plan, resources, settings, repo, results)
+    running: dict[str, RunningExample] = {}
     try:
+        await start_group_examples(plan, resources, settings, repo, results, running)
         await exercise_group_steps(running, resources, ws, settings, results)
         await exercise_shared_room(running, resources, ws, settings, results)
         await exercise_collaborations(

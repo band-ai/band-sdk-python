@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import TypeVar
 
 from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
@@ -37,6 +39,7 @@ class PendingPermission:
     permission: str
     patterns: list[str]
     timeout_task: asyncio.Task[None] | None = None
+    replying: bool = False
 
 
 @dataclass
@@ -44,6 +47,7 @@ class PendingQuestion:
     request_id: str
     questions: list[OpencodeQuestion]
     timeout_task: asyncio.Task[None] | None = None
+    replying: bool = False
 
 
 @dataclass
@@ -57,6 +61,7 @@ class ApprovalPorts:
     turn_mentions: Callable[[], list[dict[str, str]]]
     release_turn_wait: Callable[[], None]
     fail_turn: Callable[[str], None]
+    abort_session: Callable[[], Awaitable[None]]
     is_own_band_tool: Callable[[str], bool]
 
 
@@ -68,6 +73,10 @@ class PermissionCommand:
     # None when the user named no request: resolved against the pending ask
     # when exactly one is outstanding.
     request_id: str | None
+
+
+class ApprovalReplyError(Exception):
+    """A reply could not be sent after its terminal lifecycle was handled."""
 
 
 def parse_permission_reply(content: str) -> PermissionCommand | None:
@@ -118,6 +127,12 @@ def parse_question_answers(
 # of re-typing the sentence.
 APPROVAL_REQUESTED_PREFIX = "OpenCode approval requested for"
 APPROVAL_HANDLED_TEMPLATE = "OpenCode approval `{request_id}` handled with `{reply}`."
+APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
+    "OpenCode approval `{request_id}` is no longer pending."
+)
+QUESTION_NO_LONGER_PENDING_TEMPLATE = (
+    "OpenCode question `{request_id}` is no longer pending."
+)
 
 
 def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -> str:
@@ -131,7 +146,14 @@ def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -
 class RoomApprovals:
     """Owns one room's pending permission/question state and its lifecycle."""
 
-    def __init__(self, config: OpencodeAdapterConfig, ports: ApprovalPorts) -> None:
+    def __init__(
+        self,
+        config: OpencodeAdapterConfig,
+        ports: ApprovalPorts,
+        *,
+        known_permission_ids: set[str] | None = None,
+        known_question_ids: set[str] | None = None,
+    ) -> None:
         self._config = config
         self._ports = ports
         # Keyed by request id, because OpenCode can have several asks
@@ -141,6 +163,15 @@ class RoomApprovals:
         # until the turn timed out.
         self._permissions: dict[str, PendingPermission] = {}
         self._questions: dict[str, PendingQuestion] = {}
+        # Every id ever asked, so a reply naming one still gets "no longer
+        # pending" feedback instead of being forwarded as a fresh prompt --
+        # the caller may pass a room-scoped set that outlives this instance.
+        self._known_permission_ids = (
+            known_permission_ids if known_permission_ids is not None else set()
+        )
+        self._known_question_ids = (
+            known_question_ids if known_question_ids is not None else set()
+        )
         # Set while NO manual ask is parked on a human. Cleared only when we
         # actually forward an ask to the room and wait; set again the moment it
         # resolves. Both transitions go through the helpers below, which own
@@ -152,6 +183,11 @@ class RoomApprovals:
 
     def awaiting_human(self) -> bool:
         """Whether a manual permission/question is parked on a human reply."""
+        if any(
+            pending.replying
+            for pending in (*self._permissions.values(), *self._questions.values())
+        ):
+            return True
         return not self._idle.is_set()
 
     def _parked_on_human(self) -> bool:
@@ -216,12 +252,16 @@ class RoomApprovals:
             await self._approve_own_band_tool(request_id)
             return
 
+        if not _supersede_ask(self._permissions, request_id):
+            return
+
         pending = PendingPermission(
             request_id=request_id,
             permission=request.permission,
             patterns=request.patterns,
         )
         self._permissions[request_id] = pending
+        self._known_permission_ids.add(request_id)
 
         if self._config.approval_mode == "auto_accept":
             await self._reply_permission(pending, "once")
@@ -247,13 +287,32 @@ class RoomApprovals:
     async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
         request_id = request.id
         if not request_id:
+            logger.warning(
+                "Ignoring malformed OpenCode question.asked with no request id "
+                "(request_id=%s room=%s)",
+                request_id,
+                self._ports.room_id,
+            )
             return
 
+        if not _supersede_ask(self._questions, request_id):
+            return
         pending = PendingQuestion(
             request_id=request_id,
             questions=request.questions,
         )
         self._questions[request_id] = pending
+        self._known_question_ids.add(request_id)
+
+        if not request.questions:
+            logger.warning(
+                "Rejecting malformed OpenCode question.asked with no questions "
+                "(request_id=%s room=%s)",
+                request_id,
+                self._ports.room_id,
+            )
+            await self._reject_question(pending)
+            return
 
         if self._config.question_mode == "auto_reject":
             await self._reject_question(pending)
@@ -286,12 +345,25 @@ class RoomApprovals:
         mentions = [{"id": sender_id}] if sender_id else []
 
         approval = parse_permission_reply(command)
-        if approval and self._permissions:
+        if approval and self._permission_command_applies(approval):
+            if (
+                approval.request_id is None
+                and approval.reply == "reject"
+                and self._permissions
+                and self._questions
+            ):
+                await self._notify_room(self._which_dual_reject_hint(), mentions)
+                return True
             pending = self._resolve_permission(approval.request_id)
             if pending is None and approval.request_id is None:
                 # Ambiguous rather than unknown: name the asks instead of
                 # forwarding the reply to the model as a fresh prompt.
-                await self._notify_room(self._which_permission_hint(), mentions)
+                if self._questions and not self._permissions:
+                    await self._notify_room(
+                        self._which_question_command_hint(), mentions
+                    )
+                else:
+                    await self._notify_room(self._which_permission_hint(), mentions)
                 return True
             if pending is not None:
                 if await self._reply_permission(pending, approval.reply):
@@ -302,6 +374,24 @@ class RoomApprovals:
                         mentions,
                     )
                 return True
+            # A named permission id that matches nothing currently pending
+            # (already resolved, or another permission is pending instead):
+            # feedback, not a fresh prompt for the model.
+            if (
+                approval.reply in ("once", "always")
+                and approval.request_id in self._questions
+                and approval.request_id not in self._permissions
+                and not self._permissions
+            ):
+                await self._notify_room(self._which_question_command_hint(), mentions)
+            else:
+                await self._notify_room(
+                    APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
+                        request_id=approval.request_id
+                    ),
+                    mentions,
+                )
+            return True
 
         question = self._resolve_question(command)
         if question is not None:
@@ -334,7 +424,59 @@ class RoomApprovals:
                 )
             return True
 
+        if (
+            approval is not None
+            and approval.reply == "reject"
+            and approval.request_id is not None
+        ):
+            request_id = approval.request_id
+            if self._questions or request_id in self._known_question_ids:
+                # A named question id that matched no pending question above:
+                # feedback, not a fresh prompt for the model.
+                await self._notify_room(
+                    QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id=request_id),
+                    mentions,
+                )
+                return True
+
         return False
+
+    def _permission_command_applies(self, approval: PermissionCommand) -> bool:
+        """Whether a parsed approve/always/reject targets a permission.
+
+        ``reject <id>`` is also the question-rejection grammar. A named id
+        that is a live or known question (and not a permission) must fall
+        through so ``_resolve_question`` / ``_reject_question`` can run.
+        ``approve`` / ``always`` are not shared; those stay on this branch
+        so they are not submitted as free-text question answers.
+        """
+        named = approval.request_id
+        if (
+            named is not None
+            and approval.reply in ("once", "always")
+            and named not in self._permissions
+            and named not in self._known_permission_ids
+            and named not in self._known_question_ids
+            and self._questions
+        ):
+            return False
+        if (
+            named is not None
+            and approval.reply == "reject"
+            and named in self._questions
+        ):
+            return False
+        if approval.reply in ("once", "always"):
+            return bool(self._permissions or self._questions) or (
+                named is not None
+                and (
+                    named in self._known_permission_ids
+                    or named in self._known_question_ids
+                )
+            )
+        return bool(self._permissions) or (
+            named is not None and named in self._known_permission_ids
+        )
 
     def _resolve_permission(self, request_id: str | None) -> PendingPermission | None:
         """The ask a reply targets: the named one, else the only one pending."""
@@ -364,6 +506,22 @@ class RoomApprovals:
             "request id, e.g. `approve <id>`."
         )
 
+    def _which_question_command_hint(self) -> str:
+        ids = ", ".join(f"`{request_id}`" for request_id in self._questions)
+        return (
+            f"OpenCode is waiting for question answers ({ids}). Reply with your "
+            "answer or `reject <id>` — not `approve`/`always`."
+        )
+
+    def _which_dual_reject_hint(self) -> str:
+        perm_ids = ", ".join(f"`{request_id}`" for request_id in self._permissions)
+        question_ids = ", ".join(f"`{request_id}`" for request_id in self._questions)
+        return (
+            "Both an approval and a question are pending "
+            f"({perm_ids}; {question_ids}). Reply with `reject <id>` naming "
+            "which ask to reject."
+        )
+
     async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
         """Post a room message best-effort.
 
@@ -391,40 +549,64 @@ class RoomApprovals:
         # No ask is parked anymore -- release any watcher waiting on us.
         self._release_from_human()
 
-    async def _approve_own_band_tool(self, request_id: str) -> None:
-        client = self._ports.client()
-        session_id = self._ports.session_id()
-        if client is None or not session_id:
-            self._fail_request(
-                "auto-approve permission",
-                request_id,
+    async def abandon(self) -> bool:
+        """Stop a parked session after local approval state is discarded.
+
+        Returns whether this method aborted the session, so a caller with its
+        own unconditional abort afterward can skip a redundant one.
+        """
+        pending_entries = (*self._permissions.values(), *self._questions.values())
+        was_pending = any(not pending.replying for pending in pending_entries)
+        self.cancel()
+        if was_pending:
+            logger.info(
+                "OpenCode turn: abandon pending approvals room=%s",
+                self._ports.room_id,
             )
-            return
+            await self._ports.abort_session()
+        return was_pending
+
+    async def _approve_own_band_tool(self, request_id: str) -> None:
         try:
-            await client.reply_permission(session_id, request_id, response="always")
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            self._fail_request("auto-approve permission", request_id, error=error)
+            async with self._permission_reply(
+                "auto-approve permission", request_id
+            ) as (
+                client,
+                session_id,
+            ):
+                await client.reply_permission(session_id, request_id, response="always")
+        except ApprovalReplyError:
+            return
+
+    def _claim(self, pending: PendingPermission | PendingQuestion) -> bool:
+        """Claim a pending ask for reply.
+
+        False when it's already been superseded (forgotten, or replaced by a
+        redelivery) or another reply is already in flight for it -- either
+        way, this call must not touch it.
+        """
+        registry = self._registry_for(pending)
+        if registry.get(pending.request_id) is not pending or pending.replying:
+            return False
+        pending.replying = True
+        _cancel_timeout(pending)
+        if not self._parked_on_human():
+            self._release_from_human()
+        return True
 
     async def _reply_permission(
         self, pending: PendingPermission, reply: ApprovalReply
     ) -> bool:
-        client = self._ports.client()
-        if client is None:
-            self._fail_request("reply to permission", pending.request_id)
+        if not self._claim(pending):
             return False
-        session_id = self._ports.session_id()
-        if not session_id:
-            self._fail_request("reply to permission", pending.request_id)
-            return False
-        _cancel_timeout(pending)
         try:
-            await client.reply_permission(
-                session_id,
-                pending.request_id,
-                response=reply,
-            )
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            self._fail_request("reply to permission", pending.request_id, error=error)
+            async with self._permission_reply(
+                "reply to permission", pending.request_id
+            ) as (client, session_id):
+                await client.reply_permission(
+                    session_id, pending.request_id, response=reply
+                )
+        except ApprovalReplyError:
             return False
         self._forget(pending)
         return True
@@ -432,40 +614,43 @@ class RoomApprovals:
     async def _reply_question(
         self, pending: PendingQuestion, answers: list[list[str]]
     ) -> bool:
-        client = self._ports.client()
-        if client is None:
-            self._fail_request("answer question", pending.request_id)
+        if not self._claim(pending):
             return False
-        _cancel_timeout(pending)
         try:
-            await client.reply_question(pending.request_id, answers=answers)
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            self._fail_request("answer question", pending.request_id, error=error)
+            async with self._question_reply(
+                "answer question", pending.request_id
+            ) as client:
+                await client.reply_question(pending.request_id, answers=answers)
+        except ApprovalReplyError:
             return False
         self._forget(pending)
         return True
 
     async def _reject_question(self, pending: PendingQuestion) -> bool:
-        client = self._ports.client()
-        if client is None:
-            self._fail_request("reject question", pending.request_id)
+        if not self._claim(pending):
             return False
-        _cancel_timeout(pending)
         try:
-            await client.reject_question(pending.request_id)
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            self._fail_request("reject question", pending.request_id, error=error)
+            async with self._question_reply(
+                "reject question", pending.request_id
+            ) as client:
+                await client.reject_question(pending.request_id)
+        except ApprovalReplyError:
             return False
         self._forget(pending)
         return True
 
-    def _forget(self, pending: PendingPermission | PendingQuestion) -> None:
-        """Drop a resolved ask, releasing the watcher once none are parked."""
-        registry = (
+    def _registry_for(
+        self, pending: PendingPermission | PendingQuestion
+    ) -> dict[str, PendingPermission] | dict[str, PendingQuestion]:
+        return (
             self._permissions
             if isinstance(pending, PendingPermission)
             else self._questions
         )
+
+    def _forget(self, pending: PendingPermission | PendingQuestion) -> None:
+        """Drop a resolved ask, releasing the watcher once none are parked."""
+        registry = self._registry_for(pending)
         if registry.get(pending.request_id) is pending:
             del registry[pending.request_id]
         self._release_if_idle()
@@ -488,7 +673,7 @@ class RoomApprovals:
                     "error",
                 )
 
-    def _fail_request(
+    async def _fail_request(
         self, action: str, request_id: str, *, error: Exception | None = None
     ) -> None:
         message = f"OpenCode failed to {action} `{request_id}`."
@@ -501,10 +686,45 @@ class RoomApprovals:
         # Abandoning a request must stop its expiry timer in the same step:
         # once popped, the entry is past cancel()'s reach, and a surviving
         # timer holds this room's state alive until the wait timeout elapses.
+        # abort_session then kills the whole session, so leftover siblings
+        # can never be answered -- cancel() drops them too.
         _cancel_timeout(self._permissions.pop(request_id, None))
         _cancel_timeout(self._questions.pop(request_id, None))
-        self._release_if_idle()
+        self.cancel()
         self._ports.fail_turn(message)
+        await self._ports.abort_session()
+
+    @asynccontextmanager
+    async def _reply_guard(self, action: str, request_id: str) -> AsyncIterator[None]:
+        """Shared failure handling for the two reply context managers below."""
+        try:
+            yield
+        except Exception as error:
+            await self._fail_request(action, request_id, error=error)
+            raise ApprovalReplyError from error
+
+    @asynccontextmanager
+    async def _permission_reply(
+        self, action: str, request_id: str
+    ) -> AsyncIterator[tuple[OpencodeClientProtocol, str]]:
+        client = self._ports.client()
+        session_id = self._ports.session_id()
+        if client is None or not session_id:
+            await self._fail_request(action, request_id)
+            raise ApprovalReplyError
+        async with self._reply_guard(action, request_id):
+            yield client, session_id
+
+    @asynccontextmanager
+    async def _question_reply(
+        self, action: str, request_id: str
+    ) -> AsyncIterator[OpencodeClientProtocol]:
+        client = self._ports.client()
+        if client is None:
+            await self._fail_request(action, request_id)
+            raise ApprovalReplyError
+        async with self._reply_guard(action, request_id):
+            yield client
 
     async def _expire_question(self, request_id: str) -> None:
         try:
@@ -535,6 +755,22 @@ def _clock() -> float:
     return asyncio.get_running_loop().time()
 
 
+_AskT = TypeVar("_AskT", PendingPermission, PendingQuestion)
+
+
+def _supersede_ask(registry: dict[str, _AskT], request_id: str) -> bool:
+    """Cancel a previous ask's timer so a redelivery can replace it.
+
+    False when a reply is already in flight -- the redelivery must not
+    replace or cancel that claim.
+    """
+    existing = registry.get(request_id)
+    if existing is not None and existing.replying:
+        return False
+    _cancel_timeout(existing)
+    return True
+
+
 def _cancel_timeout(pending: PendingPermission | PendingQuestion | None) -> None:
     if (
         pending
@@ -542,3 +778,4 @@ def _cancel_timeout(pending: PendingPermission | PendingQuestion | None) -> None
         and pending.timeout_task is not asyncio.current_task()
     ):
         pending.timeout_task.cancel()
+        pending.timeout_task = None

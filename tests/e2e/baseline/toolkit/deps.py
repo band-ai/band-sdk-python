@@ -155,6 +155,7 @@ class Dep(Enum):
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
+    CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
 
 
@@ -250,6 +251,13 @@ def _copilot_cli_available(settings: BaselineSettings) -> bool:
     return _cli_on_path(settings.backends.copilot_command, "copilot")
 
 
+def _cursor_cli_available(settings: BaselineSettings) -> bool:
+    """The Cursor CLI and its noninteractive E2E credential are available."""
+    return bool(settings.backends.cursor_api_key) and _cli_on_path(
+        settings.backends.cursor_command, "agent"
+    )
+
+
 def _codex_cwd_available(settings: BaselineSettings) -> bool:
     """``CODEX_CWD`` is an existing, explicitly-disposable dir outside the repo.
 
@@ -329,6 +337,11 @@ _DEPS: dict[Dep, DepSpec] = {
     # PATH, so its ACP backend rides the ``backends`` lane alongside codex/opencode.
     Dep.COPILOT_CLI: DepSpec(
         _copilot_cli_available, "Copilot CLI not found on PATH", lane=Lane.BACKENDS
+    ),
+    Dep.CURSOR_CLI: DepSpec(
+        _cursor_cli_available,
+        "Cursor agent CLI not found on PATH or CURSOR_API_KEY not set",
+        lane=Lane.BACKENDS,
     ),
     Dep.OMP: DepSpec(
         _omp_available,

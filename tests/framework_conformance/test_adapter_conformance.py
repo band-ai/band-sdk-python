@@ -255,6 +255,11 @@ class TestFilesCapabilityMatrix:
 # Two distinct kinds of exception, deliberately not flattened together:
 #   - a framework that *cannot* carry image content at all, and
 #   - one that gets passthrough elsewhere, so has no adapter-local path to probe.
+_WRAPS_ACP_CLIENT_ADAPTER_REASON = (
+    "wraps the ACP client adapter, which shares the same MCP engine fix; "
+    "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own"
+)
+
 IMAGE_PASSTHROUGH_EXCLUSIONS = (
     ExcludedAdapter(
         Adapter.GOOGLE_ADK,
@@ -269,16 +274,9 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
         "execute_tool_call, so it inherits opencode's fix and has no "
         "adapter-local path to probe",
     ),
-    ExcludedAdapter(
-        Adapter.COPILOT_ACP,
-        "wraps the ACP client adapter, which shares the same MCP engine fix; "
-        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
-    ),
-    ExcludedAdapter(
-        Adapter.OMP_ACP,
-        "wraps the ACP client adapter, which shares the same MCP engine fix; "
-        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
-    ),
+    ExcludedAdapter(Adapter.COPILOT_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
+    ExcludedAdapter(Adapter.CURSOR_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
+    ExcludedAdapter(Adapter.OMP_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
 )
 
 # parlant is absent from the Adapter enum entirely (NON_AGENT_ADAPTERS), so it
@@ -338,10 +336,10 @@ class TestImagePassthroughMatrix:
         the E2E smoke silently never added for it, and CI would stay green
         while coverage quietly regressed. The two lists differ by design
         (see the comment above IMAGE_PASSTHROUGH_ADAPTERS): -crewai_flow (no
-        Band tool loop to drive a file round-trip), +copilot_acp and +letta
-        (both share opencode's already-fixed MCP engine, so they're excluded
-        from *this* unit-level set as having no probe of their own, but get
-        a real E2E cell each)."""
+        Band tool loop to drive a file round-trip), +copilot_acp, +cursor_acp,
+        +omp_acp, and +letta (they share opencode's already-fixed MCP engine,
+        so they're excluded from *this* unit-level set as having no probe of
+        their own, but get a real E2E cell each)."""
         # Real circular import: test_capability_matrix imports
         # IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS from this module at its own
         # top level, so this side must defer to call time.
@@ -351,6 +349,11 @@ class TestImagePassthroughMatrix:
 
         expected = (
             IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS - {Adapter.CREWAI_FLOW.value}
-        ) | {Adapter.COPILOT_ACP.value, Adapter.OMP_ACP.value, Adapter.LETTA.value}
+        ) | {
+            Adapter.COPILOT_ACP.value,
+            Adapter.CURSOR_ACP.value,
+            Adapter.OMP_ACP.value,
+            Adapter.LETTA.value,
+        }
 
         assert {a.value for a in IMAGE_PASSTHROUGH_ADAPTERS} == expected

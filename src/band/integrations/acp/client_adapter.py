@@ -51,6 +51,7 @@ from band.integrations.acp.client_runtime import (
     PermissionNarrator,
     allow_permission,
     cancel_permission,
+    permission_option_ids,
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import (
@@ -654,15 +655,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     @staticmethod
     def _permission_option_ids(options: tuple[PermissionOptionValue, ...]) -> set[str]:
         """The wire option ids a resolver may select."""
-        option_ids: set[str] = set()
-        for option in options:
-            if isinstance(option, Mapping):
-                option_id = option.get("optionId", option.get("option_id"))
-            else:
-                option_id = option.option_id
-            if isinstance(option_id, str):
-                option_ids.add(option_id)
-        return option_ids
+        return set(permission_option_ids(options))
 
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
         agent_name = self.agent_name or "Agent"
