@@ -21,6 +21,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from band.core.types import metadata_to_dict
+
 logger = logging.getLogger(__name__)
 
 
@@ -326,18 +328,8 @@ def _sort_key(event: dict[str, Any]) -> tuple[datetime, str]:
 
 
 def _metadata_dict(event: dict[str, Any]) -> dict[str, Any]:
-    """An event's ``metadata`` as a plain dict, regardless of source.
-
-    ``AgentTools.fetch_room_context`` items carry it as the Fern-typed
-    ``ChatMessageMetadata`` model (``extra="allow"``); events from
-    ``AgentInput.history`` already carry a plain dict.
-    """
-    metadata = event.get("metadata")
-    if isinstance(metadata, dict):
-        return metadata
-    if isinstance(metadata, BaseModel):
-        return metadata.model_dump(exclude_none=True)
-    return {}
+    """An event's ``metadata`` field as a plain dict."""
+    return metadata_to_dict(event.get("metadata"), exclude_none=True)
 
 
 class CrewAIFlowStateConverter:

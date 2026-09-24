@@ -323,12 +323,12 @@ USAGE_METADATA_KEY: str = "band_usage"
 def metadata_to_dict(metadata: object, *, exclude_none: bool = False) -> dict[str, Any]:
     """Normalize message/event metadata to a plain dict, whether it arrived as
     a dict or a Pydantic model (e.g. the Fern client's frozen, ``.get()``-less
-    ``ChatMessageMetadata``).
+    ``ChatMessageMetadata``, or the websocket ``MessageMetadata``).
 
-    ``exclude_none`` defaults to ``False`` because some callers (e.g.
-    ``ExecutionContext``) treat a missing ``status`` key as "sent" — a default
-    dump of ``MessageMetadata(status=None)`` must still contain that key so
-    callers see it as explicitly unset rather than absent."""
+    ``exclude_none`` defaults to ``False`` (a bare ``model_dump()``) to match
+    every pre-existing dict-or-model normalizer this consolidates; a caller
+    that only wants meaningful keys (e.g. ``_message_metadata``) opts into
+    ``exclude_none=True`` explicitly."""
     if isinstance(metadata, dict):
         return metadata
 

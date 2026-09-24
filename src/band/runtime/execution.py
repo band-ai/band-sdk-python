@@ -396,16 +396,12 @@ class ExecutionContext:
         self._llm_initialized = True
         logger.debug("ExecutionContext %s: LLM initialized", self.room_id)
 
-    def _metadata_to_dict(self, metadata: Any) -> dict[str, Any]:
-        """Normalize platform metadata from dict or Pydantic models."""
-        return metadata_to_dict(metadata)
-
     def _delivery_status_for_agent(self, metadata: Any) -> str | None:
         """Return this agent's delivery status from message metadata."""
         if not self._agent_id:
             return None
 
-        metadata_dict = self._metadata_to_dict(metadata)
+        metadata_dict = metadata_to_dict(metadata)
         delivery_status = metadata_dict.get("delivery_status")
         if not isinstance(delivery_status, dict):
             return None
@@ -424,8 +420,7 @@ class ExecutionContext:
 
         for message in self._context_cache.messages:
             if message.get("id") == message_id:
-                metadata = self._metadata_to_dict(message.get("metadata"))
-                return metadata
+                return metadata_to_dict(message.get("metadata"))
 
         return None
 
@@ -1489,7 +1484,7 @@ class ExecutionContext:
             )
 
             # Normalize metadata.mentions to include username field
-            metadata = self._metadata_to_dict(msg.metadata).copy()
+            metadata = metadata_to_dict(msg.metadata).copy()
             if "mentions" in metadata:
                 normalized_mentions = []
                 for mention in metadata.get("mentions", []):

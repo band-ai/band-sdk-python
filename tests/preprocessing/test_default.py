@@ -22,13 +22,14 @@ def make_message_payload(
     sender_type: str = "User",
     room_id: str = "room-1",
     message_type: str = "text",
+    metadata: MessageMetadata | None = None,
 ) -> MessageCreatedPayload:
     """Create test MessageCreatedPayload."""
     return MessageCreatedPayload(
         id=id,
         content=content,
         message_type=message_type,
-        metadata=MessageMetadata(mentions=[], status="sent"),
+        metadata=metadata or MessageMetadata(mentions=[], status="sent"),
         sender_id=sender_id,
         sender_type=sender_type,
         chat_room_id=room_id,
@@ -44,6 +45,7 @@ def make_message_event(
     content: str = "Hello",
     sender_id: str = "user-1",
     sender_type: str = "User",
+    metadata: MessageMetadata | None = None,
 ) -> MessageEvent:
     """Create test MessageEvent."""
     return MessageEvent(
@@ -53,6 +55,7 @@ def make_message_event(
             sender_id=sender_id,
             sender_type=sender_type,
             room_id=room_id,
+            metadata=metadata,
         ),
     )
 
@@ -267,6 +270,38 @@ class TestAgentInputConstruction:
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
 
         assert isinstance(result.history, HistoryProvider)
+
+
+class TestMetadataNormalization:
+    """``PlatformMessage.metadata`` must always be a plain dict.
+
+    The websocket ``MessageMetadata`` model is ``extra="allow"``, so
+    server-minted keys like an A2A relay's ``failure`` payload live as
+    unmodeled extras. Consumers (e.g. the A2A gateway) read metadata with
+    ``.get(...)`` / an ``isinstance(dict)`` guard — passing the raw model
+    through unnormalized silently drops those keys instead of raising.
+    """
+
+    async def test_extra_keys_survive_as_plain_dict(self):
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(
+            metadata=MessageMetadata(
+                mentions=[], status="sent", failure={"error_type": "timeout"}
+            ),
+        )
+
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "band.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+        assert type(result.msg.metadata) is dict
+        assert result.msg.metadata["failure"] == {"error_type": "timeout"}
 
 
 class TestSessionBootstrap:

@@ -55,10 +55,10 @@ class TestMetadataToDict:
     def test_non_dict_non_model_becomes_empty_dict(self, bad: object) -> None:
         assert metadata_to_dict(bad) == {}
 
-    def test_default_dump_keeps_none_valued_status_key(self) -> None:
-        """ExecutionContext fills a missing ``status`` key with ``"sent"`` —
-        a default dump must keep an explicitly-unset status distinguishable
-        from an absent one."""
+    def test_default_dump_keeps_none_valued_keys(self) -> None:
+        """Default ``exclude_none=False`` is a bare ``model_dump()`` — an
+        explicitly-``None`` field stays present, distinguishable from one
+        that was never on the model at all."""
         dumped = metadata_to_dict(MessageMetadata(status=None))
         assert "status" in dumped
         assert dumped["status"] is None
