@@ -22,7 +22,7 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
     tcp_spawn_process,
 )
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ChunkType, CollectedChunk
 
 
 class TestSelectAllowOptionId:
@@ -59,39 +59,83 @@ class TestACPCollectingClientProfiles:
 
     @pytest.mark.asyncio
     async def test_cursor_profile_handles_methods_and_notifications(self) -> None:
-        client = ACPCollectingClient(profile=CursorACPClientProfile())
+        async def resolve(method: str, params: dict[str, object]) -> dict[str, object]:
+            del params
+            return {
+                "outcome": {
+                    "outcome": "accepted" if method.endswith("plan") else "cancelled"
+                }
+            }
+
+        profile = CursorACPClientProfile(resolve)
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
 
         ask_result = await client.ext_method(
             "cursor/ask_question",
             {
-                "options": [
-                    {"optionId": "a", "name": "Option A"},
-                    {"optionId": "b", "name": "Option B"},
-                ]
+                "questions": [
+                    {
+                        "id": "q1",
+                        "prompt": "Choose",
+                        "options": [{"id": "a", "label": "A"}],
+                    }
+                ],
             },
         )
         plan_result = await client.ext_method("cursor/create_plan", {"plan": "x"})
         await client.ext_notification(
             "cursor/update_todos",
             {
-                "sessionId": "sess-1",
                 "todos": [
-                    {"content": "Read code", "completed": True},
-                    {"content": "Write tests", "completed": False},
+                    {"id": "read", "content": "Read code", "status": "completed"},
+                    {"id": "test", "content": "Write tests", "status": "pending"},
                 ],
+                "merge": False,
             },
         )
         await client.ext_notification(
             "cursor/task",
-            {"sessionId": "sess-1", "result": "Refactored the module"},
+            {
+                "description": "Refactor the module",
+                "prompt": "Do it",
+                "subagentType": "explore",
+            },
         )
 
         chunks = client.get_collected_chunks("sess-1")
-        assert ask_result == {"outcome": {"type": "selected", "optionId": "a"}}
-        assert plan_result == {"outcome": {"type": "approved"}}
-        assert [chunk.chunk_type for chunk in chunks] == ["plan", "text"]
+        assert ask_result == {"outcome": {"outcome": "cancelled"}}
+        assert plan_result == {"outcome": {"outcome": "accepted"}}
+        assert [chunk.chunk_type for chunk in chunks] == ["plan", "plan"]
         assert "[x] Read code" in chunks[0].content
-        assert "Refactored the module" in chunks[1].content
+        assert "Refactor the module" in chunks[1].content
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_tolerates_a_profile_without_extension_session_id(
+        self,
+    ) -> None:
+        """A custom ACPClientProfile written before extension_session_id was
+        added to the protocol has no such attribute; a session-less
+        notification must not raise AttributeError reading it."""
+
+        class LegacyProfile:
+            async def ext_method(
+                self, method: str, params: dict[str, object]
+            ) -> dict[str, object]:
+                del method, params
+                return {}
+
+            async def ext_notification(
+                self, method: str, params: dict[str, object]
+            ) -> list[CollectedChunk]:
+                del method, params
+                return [CollectedChunk(chunk_type=ChunkType.TEXT, content="hi")]
+
+        client = ACPCollectingClient(profile=LegacyProfile())  # type: ignore[arg-type]
+
+        await client.ext_notification("cursor/task", {"description": "d"})
+
+        assert client.get_collected_chunks() == []
 
 
 class TestACPCollectingClientCoalescing:
@@ -608,8 +652,14 @@ class TestACPCollectingClientSerialization:
                 pass
 
         async def handler(**kwargs: object) -> dict[str, object]:
-            async with probe:
-                return {"outcome": {"outcome": "cancelled"}}
+            narrator = kwargs["narrate_permission"]
+
+            async def post_denial() -> None:
+                async with probe:
+                    pass
+
+            await narrator(post_denial())  # type: ignore[operator]
+            return {"outcome": {"outcome": "cancelled"}}
 
         client.set_sink("s1", sink)
         client.set_permission_handler("s1", handler)
@@ -622,6 +672,37 @@ class TestACPCollectingClientSerialization:
         )
 
         assert probe.peak == 1
+
+    @pytest.mark.asyncio
+    async def test_permission_wait_does_not_block_live_session_updates(self) -> None:
+        client = ACPCollectingClient()
+        decision_started = asyncio.Event()
+        release_decision = asyncio.Event()
+        posted: list[str] = []
+
+        async def sink(chunk: CollectedChunk) -> None:
+            posted.append(chunk.content)
+
+        async def handler(**kwargs: object) -> dict[str, object]:
+            del kwargs
+            decision_started.set()
+            await release_decision.wait()
+            return {"outcome": {"outcome": "cancelled"}}
+
+        client.set_sink("s1", sink)
+        client.set_permission_handler("s1", handler)
+        permission = asyncio.create_task(
+            client.request_permission(
+                options=[], session_id="s1", tool_call=MagicMock()
+            )
+        )
+        await decision_started.wait()
+
+        await client.session_update("s1", self._tool_call("tool-0", "tc-0"))
+
+        assert posted == ["tool-0"]
+        release_decision.set()
+        await permission
 
     @pytest.mark.asyncio
     async def test_sink_failure_is_logged_and_keeps_the_chunk_buffered(
