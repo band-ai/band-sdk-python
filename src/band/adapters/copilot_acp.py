@@ -35,7 +35,7 @@ from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
-from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
+from band.workspaces import WorkspaceResolver, workspace_resolver_for
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +108,9 @@ class CopilotACPAdapter(ACPClientAdapter):
                 env.setdefault("GITHUB_TOKEN", config.github_token)
             env = env or None
 
-        workspace_for_room = config.workspace_for_room
-        if config.cwd is not None:
-            if workspace_for_room is not None:
-                raise ValueError("set either cwd or workspace_for_room, not both")
-            workspace_for_room = create_room_workspace_resolver(config.cwd)
+        workspace_for_room = workspace_resolver_for(
+            config.cwd, config.workspace_for_room
+        )
 
         common: dict[str, Any] = {
             "env": env,

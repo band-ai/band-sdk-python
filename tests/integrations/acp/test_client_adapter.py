@@ -1688,6 +1688,36 @@ class TestACPCollectingClientCursorProfileExtensions:
         assert "[ ] Write tests" in chunks[-1].content
 
     @pytest.mark.asyncio
+    async def test_ext_notification_cursor_update_todos_clearing_the_list_still_renders(
+        self,
+    ) -> None:
+        """Regression: a `todos: []` update that legitimately clears the list
+        used to emit no chunk at all, leaving the room showing the stale
+        checklist from before the clear."""
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
+
+        await client.ext_notification(
+            "cursor/update_todos",
+            {
+                "todos": [
+                    {"id": "read", "content": "Read code", "status": "completed"}
+                ],
+                "merge": False,
+            },
+        )
+        await client.ext_notification(
+            "cursor/update_todos",
+            {"todos": [], "merge": False},
+        )
+
+        chunks = client.get_collected_chunks("sess-1")
+        assert len(chunks) == 2
+        assert profile._todos_by_session["sess-1"] == {}
+        assert chunks[-1].content != chunks[0].content
+
+    @pytest.mark.asyncio
     async def test_ext_notification_cursor_todos_do_not_cross_sessions(self) -> None:
         profile = CursorACPClientProfile()
         client = ACPCollectingClient(profile=profile)
@@ -1732,6 +1762,55 @@ class TestACPCollectingClientCursorProfileExtensions:
         assert len(chunks) == 1
         assert chunks[0].chunk_type == "plan"
         assert "Explore authentication" in chunks[0].content
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_cursor_task_without_a_description_is_a_noop(
+        self,
+    ) -> None:
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
+
+        await client.ext_notification("cursor/task", {"description": ""})
+
+        assert client.get_collected_chunks("sess-1") == []
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_cursor_generate_image_without_a_description_is_a_noop(
+        self,
+    ) -> None:
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
+
+        await client.ext_notification(
+            "cursor/generate_image", {"filePath": "/tmp/logo.png"}
+        )
+
+        assert client.get_collected_chunks("sess-1") == []
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_cursor_update_todos_marks_in_progress_and_cancelled(
+        self,
+    ) -> None:
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
+
+        await client.ext_notification(
+            "cursor/update_todos",
+            {
+                "todos": [
+                    {"id": "a", "content": "Working", "status": "in_progress"},
+                    {"id": "b", "content": "Dropped", "status": "cancelled"},
+                ],
+                "merge": False,
+            },
+        )
+
+        chunks = client.get_collected_chunks("sess-1")
+        assert "[~] Working" in chunks[-1].content
+        assert "[-] Dropped" in chunks[-1].content
 
     @pytest.mark.asyncio
     async def test_ext_notification_uses_serialized_profile_session(self) -> None:

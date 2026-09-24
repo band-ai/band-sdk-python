@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
@@ -21,13 +21,19 @@ from band.integrations.acp.client_profiles import (
     CURSOR_ASK_QUESTION_METHOD,
     CURSOR_CREATE_PLAN_METHOD,
     CursorACPClientProfile,
+    CursorQuestion,
+    parse_cursor_questions,
 )
-from band.integrations.acp.client_runtime import ACPRuntime, select_allow_option_id
+from band.integrations.acp.client_runtime import (
+    ACPRuntime,
+    permission_option_ids,
+    select_allow_option_id,
+)
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.formatters import strip_leading_mentions
-from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
+from band.workspaces import WorkspaceResolver, workspace_resolver_for
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +43,21 @@ QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
 _INVALID_DECISION = object()
+
+
+class CursorCommandWord(StrEnum):
+    """The `/cursor <word> ...` vocabulary this adapter's room commands accept.
+
+    Single source for both the room-facing prompt text and the parser, so
+    the two can't drift apart.
+    """
+
+    DECISIONS = "decisions"
+    SELECT = "select"
+    DENY = "deny"
+    ACCEPT = "accept"
+    REJECT = "reject"
+    ANSWER = "answer"
 
 
 @dataclass(frozen=True)
@@ -110,11 +131,9 @@ class CursorACPAdapter(ACPClientAdapter):
         self._active_turn: CursorTurn | None = None
         self._pending_decisions: dict[str, PendingDecision] = {}
         env = self._cursor_env(config)
-        workspace_for_room = config.workspace_for_room
-        if config.cwd is not None:
-            if workspace_for_room is not None:
-                raise ValueError("set either cwd or workspace_for_room, not both")
-            workspace_for_room = create_room_workspace_resolver(config.cwd)
+        workspace_for_room = workspace_resolver_for(
+            config.cwd, config.workspace_for_room
+        )
         super().__init__(
             command=list(config.command),
             workspace_for_room=workspace_for_room,
@@ -198,7 +217,7 @@ class CursorACPAdapter(ACPClientAdapter):
             )
         )
         self._background_tasks.add(turn_task)
-        turn_task.add_done_callback(self._on_background_task_done)
+        turn_task.add_done_callback(lambda task: self._on_turn_task_done(task, room_id))
         done, _ = await asyncio.wait(
             {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
         )
@@ -206,6 +225,24 @@ class CursorACPAdapter(ACPClientAdapter):
             # No decision ever opened -- surface completion/failure exactly
             # as before this turn body ran detached.
             await turn_task
+
+    def _on_turn_task_done(self, task: asyncio.Task[None], room_id: str) -> None:
+        """Like the inherited generic background-task sink, but room-tagged.
+
+        A turn that's still running when its room cleans up (see
+        ``on_cleanup``) keeps going detached; if it then fails, the generic
+        sink's log line carries no room/session context to debug from.
+        """
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning(
+                "Cursor turn for room %s failed in the background",
+                room_id,
+                exc_info=error,
+            )
 
     async def _run_turn(
         self,
@@ -280,15 +317,16 @@ class CursorACPAdapter(ACPClientAdapter):
                 turn = self._active_turn_for(request.room_id, request.session_id)
                 if turn is None:
                     return None
-                choices = {"permission": self._option_ids(request.options)}
+                choices = {"permission": permission_option_ids(request.options)}
                 result = await self._wait_for_decision(
                     kind="permission",
                     turn=turn,
                     choices=choices,
                     prompt=(
                         f"Cursor needs permission to run `{request.tool_call.name}`. "
-                        "Reply `/cursor select {token} <option-id>` or "
-                        "`/cursor deny {token}`. Available options: "
+                        f"Reply `/cursor {CursorCommandWord.SELECT} {{token}} <option-id>` "
+                        f"or `/cursor {CursorCommandWord.DENY} {{token}}`. "
+                        f"Available options: "
                         f"{', '.join(sorted(choices['permission'])) or 'none'}"
                     ),
                 )
@@ -311,9 +349,17 @@ class CursorACPAdapter(ACPClientAdapter):
     async def _resolve_question(
         self, turn: CursorTurn, params: dict[str, object]
     ) -> dict[str, object]:
-        choices = self._question_choices(params)
-        if not choices:
+        questions = parse_cursor_questions(params)
+        # A question with no valid option can never be answered, so a
+        # complete reply is impossible to construct; cancel the whole
+        # exchange rather than silently presenting the others as if it were
+        # complete without it.
+        if not questions or any(not question.options for question in questions):
             return {"outcome": {"outcome": "cancelled"}}
+        choices = {
+            question.id: tuple(option_id for option_id, _ in question.options)
+            for question in questions
+        }
         match self._config.question_mode:
             case "auto_first":
                 return self._answered_questions(
@@ -325,15 +371,18 @@ class CursorACPAdapter(ACPClientAdapter):
             case "auto_cancel":
                 return {"outcome": {"outcome": "cancelled"}}
             case "manual":
+                multi_select = frozenset(
+                    question.id for question in questions if question.allow_multiple
+                )
                 result = await self._wait_for_decision(
                     kind="question",
                     turn=turn,
                     choices=choices,
-                    multi_select=self._multiple_choice_questions(params),
+                    multi_select=multi_select,
                     prompt=(
-                        "Cursor needs input. Reply `/cursor answer {token} "
-                        "question-id=option-id[,option-id] ...`. Questions: "
-                        + self._question_summary(params)
+                        f"Cursor needs input. Reply `/cursor {CursorCommandWord.ANSWER} "
+                        "{token} question-id=option-id[,option-id] ...`. Questions: "
+                        + self._question_summary(questions)
                     ),
                 )
                 return (
@@ -357,8 +406,9 @@ class CursorACPAdapter(ACPClientAdapter):
                     kind="plan",
                     turn=turn,
                     prompt=(
-                        f"{description} needs approval. Reply `/cursor accept {{token}}` "
-                        "or `/cursor reject {token}`."
+                        f"{description} needs approval. Reply "
+                        f"`/cursor {CursorCommandWord.ACCEPT} {{token}}` or "
+                        f"`/cursor {CursorCommandWord.REJECT} {{token}}`."
                     ),
                 )
                 return (
@@ -406,6 +456,11 @@ class CursorACPAdapter(ACPClientAdapter):
                     future, timeout=self._config.decision_timeout_s
                 )
             except TimeoutError:
+                # Pop before the (awaited) notice send below: a room reply
+                # for this token that lands while the notice is still being
+                # sent must see it as no-longer-pending, not resolve a
+                # future the timeout has already cancelled.
+                self._pending_decisions.pop(token, None)
                 try:
                     await turn.tools.send_message(
                         f"Cursor {kind} decision `{token}` timed out and was cancelled.",
@@ -426,12 +481,13 @@ class CursorACPAdapter(ACPClientAdapter):
         if not words or words[0].lower() != "/cursor":
             return False
         mentions = [msg.sender_id]
-        if len(words) == 1 or words[1].lower() == "decisions":
+        if len(words) == 1 or words[1].lower() == CursorCommandWord.DECISIONS:
             await self._list_decisions(tools, room_id, mentions=mentions)
             return True
         if len(words) < 3:
             await tools.send_message(
-                "Use `/cursor decisions` to list pending Cursor decisions.",
+                f"Use `/cursor {CursorCommandWord.DECISIONS}` to list pending "
+                "Cursor decisions.",
                 mentions=mentions,
             )
             return True
@@ -466,19 +522,19 @@ class CursorACPAdapter(ACPClientAdapter):
         self, action: str, args: list[str], pending: PendingDecision
     ) -> object:
         match pending.kind, action:
-            case "permission", "deny":
+            case "permission", CursorCommandWord.DENY:
                 return None
-            case "permission", "select" if len(args) == 1:
+            case "permission", CursorCommandWord.SELECT if len(args) == 1:
                 return (
                     args[0]
                     if args[0] in pending.choices["permission"]
                     else _INVALID_DECISION
                 )
-            case "plan", "accept":
+            case "plan", CursorCommandWord.ACCEPT:
                 return {"outcome": {"outcome": "accepted"}}
-            case "plan", "reject":
+            case "plan", CursorCommandWord.REJECT:
                 return {"outcome": {"outcome": "rejected"}}
-            case "question", "answer":
+            case "question", CursorCommandWord.ANSWER:
                 return self._answer_result(args, pending.choices, pending.multi_select)
             case _:
                 return _INVALID_DECISION
@@ -524,90 +580,12 @@ class CursorACPAdapter(ACPClientAdapter):
         }
 
     @staticmethod
-    def _question_choices(params: dict[str, object]) -> dict[str, tuple[str, ...]]:
-        return {
-            question_id: tuple(option_id for option_id, _ in options)
-            for question_id, (_, options) in CursorACPAdapter._question_details(
-                params
-            ).items()
-        }
-
-    @staticmethod
-    def _question_details(
-        params: dict[str, object],
-    ) -> dict[str, tuple[str, tuple[tuple[str, str], ...]]]:
-        """Project the valid question IDs, prompts, and labeled options once.
-
-        Every entry here is required for a complete ``/cursor answer`` (see
-        ``_answer_result``), so each gets a displayable prompt -- falling
-        back to its id -- rather than being silently absent from the summary
-        while still being required.
-        """
-        questions = params.get("questions")
-        if not isinstance(questions, list):
-            return {}
-        details: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {}
-        for question in questions:
-            if not isinstance(question, Mapping):
-                continue
-            question_id, options = question.get("id"), question.get("options")
-            if not isinstance(question_id, str) or not isinstance(options, list):
-                continue
-            option_details = tuple(
-                (
-                    option_id,
-                    label
-                    if isinstance((label := option.get("label")), str)
-                    else option_id,
-                )
-                for option in options
-                if isinstance(option, Mapping)
-                and isinstance((option_id := option.get("id")), str)
-            )
-            if option_details:
-                prompt = question.get("prompt")
-                details[question_id] = (
-                    prompt if isinstance(prompt, str) and prompt else question_id,
-                    option_details,
-                )
-        return details
-
-    @staticmethod
-    def _multiple_choice_questions(params: dict[str, object]) -> frozenset[str]:
-        """The question ids that permit more than one selected option."""
-        questions = params.get("questions")
-        if not isinstance(questions, list):
-            return frozenset()
-        return frozenset(
-            question_id
-            for question in questions
-            if isinstance(question, dict)
-            and question.get("allowMultiple") is True
-            and isinstance((question_id := question.get("id")), str)
-        )
-
-    @staticmethod
-    def _question_summary(params: dict[str, object]) -> str:
+    def _question_summary(questions: tuple[CursorQuestion, ...]) -> str:
         return "; ".join(
-            f"{question_id}: {prompt} ({', '.join(f'{option_id}={label}' for option_id, label in options)})"
-            for question_id, (prompt, options) in CursorACPAdapter._question_details(
-                params
-            ).items()
+            f"{question.id}: {question.prompt} ("
+            f"{', '.join(f'{option_id}={label}' for option_id, label in question.options)})"
+            for question in questions
         )
-
-    @staticmethod
-    def _option_ids(options: tuple[object, ...]) -> tuple[str, ...]:
-        """Return offered permission IDs in the runtime's advertised order."""
-        option_ids: list[str] = []
-        for option in options:
-            option_id = (
-                option.get("optionId", option.get("option_id"))
-                if isinstance(option, Mapping)
-                else getattr(option, "option_id", None)
-            )
-            if isinstance(option_id, str):
-                option_ids.append(option_id)
-        return tuple(option_ids)
 
     def _active_turn_for(self, room_id: str, session_id: str) -> CursorTurn | None:
         turn = self._active_turn
@@ -626,6 +604,13 @@ class CursorACPAdapter(ACPClientAdapter):
             return
         oldest_token = next(iter(self._pending_decisions))
         pending = self._pending_decisions.pop(oldest_token)
+        logger.info(
+            "Evicting oldest pending Cursor %s decision `%s` in room %s "
+            "(max_pending_decisions reached)",
+            pending.kind,
+            oldest_token,
+            pending.room_id,
+        )
         if not pending.future.done():
             pending.future.set_result(None)
 
@@ -633,11 +618,25 @@ class CursorACPAdapter(ACPClientAdapter):
         for token, pending in tuple(self._pending_decisions.items()):
             if pending.room_id == room_id:
                 self._pending_decisions.pop(token)
+                logger.info(
+                    "Cancelling pending Cursor %s decision `%s` in room %s "
+                    "(room cleanup)",
+                    pending.kind,
+                    token,
+                    room_id,
+                )
                 if not pending.future.done():
                     pending.future.set_result(None)
 
     def _cancel_all_decisions(self) -> None:
-        for pending in self._pending_decisions.values():
+        for token, pending in self._pending_decisions.items():
+            logger.info(
+                "Cancelling pending Cursor %s decision `%s` in room %s "
+                "(adapter shutdown)",
+                pending.kind,
+                token,
+                pending.room_id,
+            )
             if not pending.future.done():
                 pending.future.set_result(None)
         self._pending_decisions.clear()

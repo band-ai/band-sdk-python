@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Protocol
 
 from band.integrations.acp.types import ChunkType, CollectedChunk
@@ -13,6 +14,65 @@ logger = logging.getLogger(__name__)
 CursorMethodResolver = Callable[[str, dict[str, object]], Awaitable[dict[str, object]]]
 CURSOR_ASK_QUESTION_METHOD = "cursor/ask_question"
 CURSOR_CREATE_PLAN_METHOD = "cursor/create_plan"
+
+
+@dataclass(frozen=True)
+class CursorQuestion:
+    """One validated question from a ``cursor/ask_question`` payload."""
+
+    id: str
+    prompt: str
+    options: tuple[tuple[str, str], ...]  # (option_id, label)
+    allow_multiple: bool
+
+
+def parse_cursor_questions(params: Mapping[str, object]) -> tuple[CursorQuestion, ...]:
+    """Parse Cursor's ``questions`` payload once, preserving wire order.
+
+    A question with no valid option keeps its slot (an empty ``options``)
+    instead of vanishing, so a caller that requires every question answered
+    can tell an unanswerable question apart from one Cursor never asked. A
+    duplicate ``id`` keeps its first occurrence; later duplicates are
+    dropped and logged rather than silently overwriting it.
+    """
+    questions = params.get("questions")
+    if not isinstance(questions, list):
+        return ()
+    seen: set[str] = set()
+    parsed: list[CursorQuestion] = []
+    for question in questions:
+        if not isinstance(question, Mapping):
+            continue
+        question_id = question.get("id")
+        if not isinstance(question_id, str):
+            continue
+        if question_id in seen:
+            logger.warning(
+                "Cursor question id %s repeated in one payload; keeping the first",
+                question_id,
+            )
+            continue
+        seen.add(question_id)
+        options_raw = question.get("options")
+        options = tuple(
+            (
+                option_id,
+                label if isinstance((label := option.get("label")), str) else option_id,
+            )
+            for option in (options_raw if isinstance(options_raw, list) else [])
+            if isinstance(option, Mapping)
+            and isinstance((option_id := option.get("id")), str)
+        )
+        prompt = question.get("prompt")
+        parsed.append(
+            CursorQuestion(
+                id=question_id,
+                prompt=prompt if isinstance(prompt, str) and prompt else question_id,
+                options=options,
+                allow_multiple=question.get("allowMultiple") is True,
+            )
+        )
+    return tuple(parsed)
 
 
 class ACPClientProfile(Protocol):
@@ -102,30 +162,18 @@ class CursorACPClientProfile:
 
     @staticmethod
     def _auto_answer_question(params: dict[str, object]) -> dict[str, object]:
-        """Pick each question's first advertised option, unattended."""
-        questions = params.get("questions")
-        if not isinstance(questions, list):
-            return {"outcome": {"outcome": "cancelled"}}
-        answers: list[dict[str, object]] = []
-        for question in questions:
-            if not isinstance(question, Mapping):
-                continue
-            question_id, options = question.get("id"), question.get("options")
-            if not isinstance(question_id, str) or not isinstance(options, list):
-                continue
-            first_option_id = next(
-                (
-                    option_id
-                    for option in options
-                    if isinstance(option, Mapping)
-                    and isinstance((option_id := option.get("id")), str)
-                ),
-                None,
-            )
-            if first_option_id is not None:
-                answers.append(
-                    {"questionId": question_id, "selectedOptionIds": [first_option_id]}
-                )
+        """Pick each question's first advertised option, unattended.
+
+        Skips a question with no valid option rather than failing the whole
+        exchange -- unlike the manual room-decision path (which needs every
+        question answerable to ever complete), an unattended answer is
+        best-effort.
+        """
+        answers = [
+            {"questionId": question.id, "selectedOptionIds": [question.options[0][0]]}
+            for question in parse_cursor_questions(params)
+            if question.options
+        ]
         if not answers:
             return {"outcome": {"outcome": "cancelled"}}
         return {"outcome": {"outcome": "answered", "answers": answers}}
@@ -176,7 +224,16 @@ class CursorACPClientProfile:
             self._todos_by_session[session_id] = updates
         current_todos = self._todos_by_session[session_id]
         if not current_todos:
-            return []
+            # A real update that cleared the list still needs a chunk, so the
+            # room drops the stale checklist instead of keeping the last one
+            # rendered before it was cleared.
+            return [
+                CollectedChunk(
+                    chunk_type=ChunkType.PLAN,
+                    content="(no todos)",
+                    metadata={"cursor_todos": True},
+                )
+            ]
         marks = {
             "completed": "x",
             "in_progress": "~",

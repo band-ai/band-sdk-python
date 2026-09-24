@@ -255,6 +255,11 @@ class TestFilesCapabilityMatrix:
 # Two distinct kinds of exception, deliberately not flattened together:
 #   - a framework that *cannot* carry image content at all, and
 #   - one that gets passthrough elsewhere, so has no adapter-local path to probe.
+_WRAPS_ACP_CLIENT_ADAPTER_REASON = (
+    "wraps the ACP client adapter, which shares the same MCP engine fix; "
+    "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own"
+)
+
 IMAGE_PASSTHROUGH_EXCLUSIONS = (
     ExcludedAdapter(
         Adapter.GOOGLE_ADK,
@@ -269,16 +274,8 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
         "execute_tool_call, so it inherits opencode's fix and has no "
         "adapter-local path to probe",
     ),
-    ExcludedAdapter(
-        Adapter.COPILOT_ACP,
-        "wraps the ACP client adapter, which shares the same MCP engine fix; "
-        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
-    ),
-    ExcludedAdapter(
-        Adapter.CURSOR_ACP,
-        "wraps the ACP client adapter, which shares the same MCP engine fix; "
-        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
-    ),
+    ExcludedAdapter(Adapter.COPILOT_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
+    ExcludedAdapter(Adapter.CURSOR_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
 )
 
 # parlant is absent from the Adapter enum entirely (NON_AGENT_ADAPTERS), so it

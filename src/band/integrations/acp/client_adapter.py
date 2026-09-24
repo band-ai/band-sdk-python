@@ -47,6 +47,7 @@ from band.integrations.acp.client_runtime import (
     PermissionNarrator,
     allow_permission,
     cancel_permission,
+    permission_option_ids,
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import (
@@ -597,42 +598,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     @staticmethod
     def _permission_option_ids(options: tuple[PermissionOptionValue, ...]) -> set[str]:
         """The wire option ids a resolver may select."""
-        option_ids: set[str] = set()
-        for option in options:
-            if isinstance(option, Mapping):
-                option_id = option.get("optionId", option.get("option_id"))
-            else:
-                option_id = option.option_id
-            if isinstance(option_id, str):
-                option_ids.add(option_id)
-        return option_ids
-
-    @staticmethod
-    def _resolve_transport(
-        command: str | list[str] | None,
-        host: str | None,
-        port: int | None,
-    ) -> tuple[str | None, int | None]:
-        """Validate exactly one transport is configured; return (host, port) for TCP.
-
-        stdio spawns a subprocess from ``command``; TCP connects to an
-        already-running ACP server at ``host``/``port``. The two are mutually
-        exclusive and one is required.
-        """
-        # An empty command ("" or []) is not a usable stdio transport — treat it as
-        # absent so it fails the "one is required" check below with a clear error,
-        # rather than slipping through to crash at spawn time.
-        has_command = bool(command)
-        has_tcp = host is not None or port is not None
-        if has_command and has_tcp:
-            raise ValueError(
-                "Provide either command (stdio) or host+port (TCP), not both"
-            )
-        if not has_command and not has_tcp:
-            raise ValueError("Provide either command (stdio) or host+port (TCP)")
-        if has_tcp and (host is None or port is None):
-            raise ValueError("TCP transport requires both host and port")
-        return (host, port) if has_tcp else (None, None)
+        return set(permission_option_ids(options))
 
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
         agent_name = self.agent_name or "Agent"
