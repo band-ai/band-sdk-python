@@ -81,7 +81,7 @@ class DefaultPreprocessor(Preprocessor):
             sender_type=msg_data.sender_type,
             sender_name=sender_name,
             message_type=msg_data.message_type,
-            metadata=metadata_to_dict(msg_data.metadata),
+            metadata=metadata_to_dict(msg_data.metadata, exclude_none=True),
             created_at=datetime.fromisoformat(msg_data.inserted_at),
         )
 

@@ -325,10 +325,13 @@ def metadata_to_dict(metadata: object, *, exclude_none: bool = False) -> dict[st
     a dict or a Pydantic model (e.g. the Fern client's frozen, ``.get()``-less
     ``ChatMessageMetadata``, or the websocket ``MessageMetadata``).
 
-    ``exclude_none`` defaults to ``False`` (a bare ``model_dump()``) to match
-    every pre-existing dict-or-model normalizer this consolidates; a caller
-    that only wants meaningful keys (e.g. ``_message_metadata``) opts into
-    ``exclude_none=True`` explicitly."""
+    ``exclude_none`` defaults to ``False`` (a bare ``model_dump()``) for read
+    paths that only ever ``.get()`` a specific key, where an explicit-``None``
+    vs. absent distinction never matters. Every call site that *constructs* a
+    ``PlatformMessage.metadata`` field (``_message_metadata``,
+    ``DefaultPreprocessor``) opts into ``exclude_none=True``, so that field
+    has one consistent shape — free of ``None``-valued housekeeping keys —
+    regardless of whether the message came from REST or the websocket."""
     if isinstance(metadata, dict):
         return metadata
 

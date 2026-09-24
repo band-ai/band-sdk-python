@@ -302,6 +302,10 @@ class TestMetadataNormalization:
         assert result is not None
         assert type(result.msg.metadata) is dict
         assert result.msg.metadata["failure"] == {"error_type": "timeout"}
+        assert "delivery_status" not in result.msg.metadata, (
+            "exclude_none=True keeps PlatformMessage.metadata's shape "
+            "consistent with the REST-sourced backlog path"
+        )
 
 
 class TestSessionBootstrap:
