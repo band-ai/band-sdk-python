@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Literal, cast
 
 from pydantic import BaseModel
@@ -34,6 +34,7 @@ from tests.adapters.opencode.helpers import (
     tools_protocol,
     wait_for,
 )
+from tests.testing.support import seeded_participant
 
 #: A seeded participant these tests mention -- shared so a mention-handles
 #: assertion always resolves against the same roster entry.
@@ -82,6 +83,27 @@ class BlockingReplyClient(FakeOpencodeClient):
         await self._block("reject")
 
 
+class BlockBeforeReplyClient(FakeOpencodeClient):
+    """Pause *before* the OpenCode POST so an in-flight expiry can be
+    interleaved with a same-id redelivery."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reply_started = asyncio.Event()
+        self.allow_reply = asyncio.Event()
+
+    async def reply_permission(
+        self,
+        session_id: str,
+        permission_id: str,
+        *,
+        response: str,
+    ) -> None:
+        self.reply_started.set()
+        await self.allow_reply.wait()
+        await super().reply_permission(session_id, permission_id, response=response)
+
+
 class FailingReplyClient(FakeOpencodeClient):
     async def reply_permission(
         self,
@@ -96,12 +118,17 @@ class FailingReplyClient(FakeOpencodeClient):
         raise RuntimeError("question rejection failed")
 
 
+async def _ignore_abort() -> None:
+    return None
+
+
 def make_room_approvals(
     client: OpencodeClientProtocol,
     *,
     tools: FakeAgentTools | None = None,
     release_turn_wait: Callable[[], None] = lambda: None,
     fail_turn: Callable[[str], None] = lambda _message: None,
+    abort_session: Callable[[], Awaitable[None]] = _ignore_abort,
     config: OpencodeAdapterConfig | None = None,
 ) -> RoomApprovals:
     tools = tools if tools is not None else FakeAgentTools()
@@ -115,6 +142,7 @@ def make_room_approvals(
             turn_mentions=list,
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
+            abort_session=abort_session,
             is_own_band_tool=lambda _permission: False,
         ),
     )
@@ -236,18 +264,49 @@ async def test_polite_permission_reply_uses_pending_request() -> None:
     assert client.permission_replies[0]["permission_id"] == "req-1"
 
 
-async def test_reply_to_nonmatching_request_id_is_not_consumed() -> None:
-    """A reply naming a different id is not for this pending ask: it is left
-    alone (forwarded as an ordinary prompt), not swallowed."""
+async def test_reply_to_nonmatching_request_id_is_consumed() -> None:
+    """A named stale approval command is feedback, not a new model prompt."""
     client = FakeOpencodeClient()
-    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="req-current", permission="bash")
     )
 
-    assert not await approvals.try_handle_reply("approve req-stale", "user-1")
+    assert await approvals.try_handle_reply("approve req-stale", "user-1")
     assert client.permission_replies == []
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
+
+
+async def test_reply_naming_a_never_asked_id_is_not_consumed() -> None:
+    """A room message naming an id this room has never asked about is an
+    ordinary message, not a reply -- it must be forwarded to the model
+    rather than swallowed as 'no longer pending' feedback."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    assert not await approvals.try_handle_reply("approve never-asked-id", "user-1")
+    assert client.permission_replies == []
+
+
+async def test_reply_naming_an_already_resolved_id_is_consumed() -> None:
+    """A reply that arrives after every pending ask has already resolved
+    still gets 'no longer pending' feedback instead of being forwarded to
+    the model as a fresh prompt."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools(participants=[seeded_participant("user-1", handle="@alice")])
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+    assert await approvals.try_handle_reply("approve perm-1", "user-1")
+    client.permission_replies.clear()
+
+    assert await approvals.try_handle_reply("approve perm-1", "user-1")
+    assert client.permission_replies == []
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
 
 
 async def test_notify_room_send_failure_does_not_strand_turn() -> None:
@@ -299,6 +358,318 @@ async def test_mention_only_question_reply_requests_a_real_answer() -> None:
     assert await approvals.try_handle_reply("@alexander.zaikman/tom", "user-1")
     assert client.question_replies == []
     assert "waiting for answers" in tools.messages_sent[-1]["content"].lower()
+
+
+async def test_malformed_question_with_no_questions_is_rejected() -> None:
+    """A malformed question with an id must not leave OpenCode blocked."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-empty", questions=[])
+    )
+
+    assert client.question_rejections == ["q-empty"]
+    assert not approvals.awaiting_human()
+    assert tools.messages_sent == []
+
+
+async def test_reject_by_id_targets_a_pending_question_not_a_stale_permission() -> None:
+    """`reject <id>` is ambiguous between the permission and question reply
+    grammars. When only a question is pending under that id -- no permission
+    has ever used it -- the reply must resolve as a question rejection, not
+    be claimed by the permission branch and swallowed as 'no longer
+    pending'."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("reject q-1", "user-1")
+    assert client.question_rejections == ["q-1"]
+
+
+async def test_reject_question_id_is_not_stolen_by_a_pending_permission() -> None:
+    """`reject <question-id>` must reach the question while a different
+    permission is also pending -- the permission branch must not consume
+    it as a stale approval id."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("reject q-1", "user-1")
+    assert client.question_rejections == ["q-1"]
+    assert client.permission_replies == []
+    assert approvals.awaiting_human()
+
+
+async def test_approve_question_id_does_not_answer_the_question() -> None:
+    """`approve <question-id>` is not the shared reject grammar -- it must
+    not fall through and be submitted as a free-text question answer."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("approve q-1", "user-1")
+    assert client.question_replies == []
+    assert client.permission_replies == []
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
+    assert list(approvals._permissions) == ["req-1"]
+    assert list(approvals._questions) == ["q-1"]
+
+
+async def test_approve_question_id_with_only_a_question_pending() -> None:
+    """Permission vocabulary must not be submitted as a question answer."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("approve q-1", "user-1")
+    assert client.question_replies == []
+    assert "not `approve`/`always`" in tools.messages_sent[-1]["content"]
+
+
+async def test_bare_approve_with_only_a_question_pending() -> None:
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("approve", "user-1")
+    assert client.question_replies == []
+    assert "not `approve`/`always`" in tools.messages_sent[-1]["content"]
+
+
+async def test_question_answer_starting_with_approve_is_not_a_command() -> None:
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "How?"}])
+    )
+
+    assert await approvals.try_handle_reply("approve with spaces", "user-1")
+    assert client.question_replies == [
+        {"request_id": "q-1", "answers": [["approve with spaces"]]}
+    ]
+
+
+async def test_bare_reject_with_both_permission_and_question_pending() -> None:
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("reject", "user-1")
+    assert client.permission_replies == []
+    assert client.question_rejections == []
+    assert (
+        "Both an approval and a question are pending"
+        in tools.messages_sent[-1]["content"]
+    )
+
+
+async def test_reject_shared_id_rejects_the_question() -> None:
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    shared = "shared-id"
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id=shared, permission="bash")
+    )
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id=shared, questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply(f"reject {shared}", "user-1")
+    assert client.question_rejections == [shared]
+    assert client.permission_replies == []
+
+
+async def test_named_reject_of_a_never_asked_question_is_not_consumed() -> None:
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    assert not await approvals.try_handle_reply("reject never-asked-q", "user-1")
+    assert client.question_rejections == []
+
+
+async def test_named_reject_of_an_already_resolved_question_is_consumed() -> None:
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    assert await approvals.try_handle_reply("reject q-1", "user-1")
+    client.question_rejections.clear()
+
+    assert await approvals.try_handle_reply("reject q-1", "user-1")
+    assert client.question_rejections == []
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
+
+
+async def test_redelivered_permission_while_reply_in_flight_is_ignored() -> None:
+    """A permission redelivered with the SAME id while its own reply is
+    still in flight must not create a second pending entry or send a
+    duplicate reply."""
+    client = BlockingReplyClient("permission")
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    pending_before = approvals._permissions["req-1"]
+    notifications_before = len(tools.messages_sent)
+
+    reply_task = asyncio.create_task(
+        approvals.try_handle_reply("approve req-1", "user-1")
+    )
+    await client.reply_started.wait()
+
+    # OpenCode redelivers the same ask while the reply above is in flight:
+    # it must be a no-op, not a fresh ask that replaces the in-flight entry
+    # or notifies the room again.
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    assert approvals._permissions["req-1"] is pending_before
+    assert len(tools.messages_sent) == notifications_before
+
+    client.allow_reply.set()
+
+    assert await reply_task
+    assert [reply["permission_id"] for reply in client.permission_replies] == ["req-1"]
+
+
+async def test_redelivered_question_while_reply_in_flight_is_ignored() -> None:
+    """A question redelivered with the SAME id while its own reply is still
+    in flight must not create a second pending entry or send a duplicate
+    ask to the room."""
+    client = BlockingReplyClient("question")
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    pending_before = approvals._questions["q-1"]
+    notifications_before = len(tools.messages_sent)
+
+    reply_task = asyncio.create_task(approvals.try_handle_reply("Alice", "user-1"))
+    await client.reply_started.wait()
+
+    # OpenCode redelivers the same ask while the reply above is in flight:
+    # it must be a no-op, not a fresh ask that replaces the in-flight entry
+    # or notifies the room again.
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    assert approvals._questions["q-1"] is pending_before
+    assert len(tools.messages_sent) == notifications_before
+
+    client.allow_reply.set()
+
+    assert await reply_task
+    assert [reply["request_id"] for reply in client.question_replies] == ["q-1"]
+
+
+async def test_redelivered_permission_cancels_previous_timeout() -> None:
+    """A permission redelivered with the SAME id (no reply in flight) must
+    cancel the FIRST ask's expiry timer, not leave it running to later
+    auto-reject the replacement."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        config=OpencodeAdapterConfig(
+            approval_wait_timeout_s=0.2,
+            approval_timeout_reply="reject",
+        ),
+    )
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await asyncio.sleep(0.12)
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    # Past the first timer's deadline (0.2s), before the replacement's (0.32s).
+    await asyncio.sleep(0.12)
+
+    assert client.permission_replies == []
+    assert await approvals.try_handle_reply("approve req-1", "user-1")
+    assert [reply["response"] for reply in client.permission_replies] == ["once"]
+
+
+async def test_redelivered_question_cancels_previous_timeout() -> None:
+    """A question redelivered with the SAME id must cancel the first
+    expiry, not leave it running to later auto-reject the replacement."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        config=OpencodeAdapterConfig(question_wait_timeout_s=0.2),
+    )
+
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    await asyncio.sleep(0.12)
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    await asyncio.sleep(0.12)
+
+    assert client.question_rejections == []
+    assert await approvals.try_handle_reply("Alice", "user-1")
+    assert client.question_replies == [{"request_id": "q-1", "answers": [["Alice"]]}]
+
+
+async def test_redelivered_permission_does_not_cancel_in_flight_expiry() -> None:
+    """A redelivery must not cancel `_expire_permission` itself once that
+    task has claimed the ask and is awaiting the OpenCode reply."""
+    client = BlockBeforeReplyClient()
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        config=OpencodeAdapterConfig(
+            approval_wait_timeout_s=0.01,
+            approval_timeout_reply="reject",
+        ),
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await asyncio.wait_for(client.reply_started.wait(), timeout=1.0)
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    client.allow_reply.set()
+    await asyncio.wait_for(approvals.wait_until_idle(), timeout=1.0)
+
+    assert [reply["response"] for reply in client.permission_replies] == ["reject"]
+    assert not approvals.awaiting_human()
 
 
 async def test_new_permission_ask_survives_previous_reply() -> None:
@@ -728,10 +1099,16 @@ async def test_question_timeout_does_not_cancel_its_own_rejection() -> None:
 
 async def test_failed_auto_replies_fail_only_the_affected_turn() -> None:
     failures: list[str] = []
+    aborted: list[bool] = []
+
+    async def record_abort() -> None:
+        aborted.append(True)
+
     client = FailingReplyClient()
     approvals = make_room_approvals(
         cast(OpencodeClientProtocol, client),
         fail_turn=failures.append,
+        abort_session=record_abort,
         config=OpencodeAdapterConfig(
             approval_mode="auto_accept",
             question_mode="auto_reject",
@@ -752,6 +1129,91 @@ async def test_failed_auto_replies_fail_only_the_affected_turn() -> None:
         "OpenCode failed to reply to permission `permission-1`.",
         "OpenCode failed to reject question `question-1`.",
     ]
+    assert aborted == [True, True]
+
+
+async def test_failed_reply_cancels_sibling_asks() -> None:
+    """A failed permission reply aborts the session, so leftover siblings
+    must be dropped -- they can never be answered."""
+    aborted: list[bool] = []
+
+    async def record_abort() -> None:
+        aborted.append(True)
+
+    client = FailingReplyClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        tools=tools,
+        abort_session=record_abort,
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-2", permission="edit")
+    )
+
+    assert await approvals.try_handle_reply("approve perm-1", "user-1")
+    assert aborted == [True]
+    assert not approvals.awaiting_human()
+    assert await approvals.try_handle_reply("approve perm-2", "user-1")
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
+
+
+async def test_abandon_does_not_abort_an_in_flight_reply() -> None:
+    """An ask the human has already claimed (`replying=True`) is not
+    'parked on a human' -- abandon must not abort that session."""
+    aborted: list[bool] = []
+
+    async def record_abort() -> None:
+        aborted.append(True)
+
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        abort_session=record_abort,
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    reply_task = asyncio.create_task(
+        approvals.try_handle_reply("approve req-1", "user-1")
+    )
+    await client.reply_started.wait()
+
+    assert await approvals.abandon() is False
+    assert aborted == []
+    client.allow_reply.set()
+    assert await reply_task
+
+
+async def test_abandon_does_not_abort_while_another_reply_is_in_flight() -> None:
+    aborted: list[bool] = []
+
+    async def record_abort() -> None:
+        aborted.append(True)
+
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        abort_session=record_abort,
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-a", permission="bash")
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-b", permission="edit")
+    )
+    reply_task = asyncio.create_task(
+        approvals.try_handle_reply("approve req-b", "user-1")
+    )
+    await client.reply_started.wait()
+
+    assert await approvals.abandon() is True
+    assert aborted == [True]
+    client.allow_reply.set()
+    assert await reply_task
 
 
 async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
@@ -764,6 +1226,11 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
     client: dict[str, OpencodeClientProtocol | None] = {
         "current": cast(OpencodeClientProtocol, FakeOpencodeClient())
     }
+    aborted: list[bool] = []
+
+    async def record_abort() -> None:
+        aborted.append(True)
+
     approvals = RoomApprovals(
         OpencodeAdapterConfig(approval_mode="manual"),
         ApprovalPorts(
@@ -774,6 +1241,7 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
             turn_mentions=list,
             release_turn_wait=lambda: None,
             fail_turn=lambda _message: None,
+            abort_session=record_abort,
             is_own_band_tool=lambda _permission: False,
         ),
     )
@@ -789,6 +1257,7 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
     client["current"] = None
     await approvals.try_handle_reply("approve perm-1", "user-1")
 
+    assert aborted == [True]
     approvals.cancel()
     await wait_for(timer.done)
 
@@ -831,8 +1300,10 @@ async def test_cleanup_with_pending_permission() -> None:
     except asyncio.CancelledError:
         pass
 
-    # No permission reply should have been sent (just cleaned up)
+    # No permission reply should have been sent (just cleaned up), but the
+    # abandoned session must still be told to stop working.
     assert fake_client.permission_replies == []
+    assert fake_client.aborted_sessions == ["sess-1"]
 
 
 async def test_cleanup_with_pending_question() -> None:
@@ -873,9 +1344,11 @@ async def test_cleanup_with_pending_question() -> None:
     except asyncio.CancelledError:
         pass
 
-    # No question reply should have been sent
+    # No question reply should have been sent, but the abandoned session
+    # must still be told to stop working.
     assert fake_client.question_replies == []
     assert fake_client.question_rejections == []
+    assert fake_client.aborted_sessions == ["sess-1"]
 
 
 async def test_always_permission_reply_from_follow_up_message(

@@ -822,6 +822,50 @@ async def test_group_startup_failure_is_reported_per_example(
 
 
 @pytest.mark.asyncio
+async def test_group_startup_cancellation_still_stops_already_started_examples(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancellation partway through start_group_examples (unlike an
+    ordinary per-item failure) isn't caught by its own except Exception --
+    it must still leave the already-started example reachable for
+    run_group's finally: stop_examples cleanup, not leaked."""
+    stopped: list[str] = []
+
+    async def start(spec: Any, *args: Any, **kwargs: Any) -> Any:
+        if spec.id == "second":
+            raise asyncio.CancelledError()
+        return SimpleNamespace(spec=spec)
+
+    async def stop(running: Any) -> None:
+        stopped.append(running.spec.id)
+
+    monkeypatch.setattr(runner, "start_example", start)
+    monkeypatch.setattr(runner, "stop_example", stop)
+
+    class Provisioner:
+        async def provision_agent(self, label: str) -> object:
+            return object()
+
+    examples = tuple(
+        runner.ExampleSpec(name, Path("example.py"), "agent")
+        for name in ("first", "second")
+    )
+    results: list[Any] = []
+
+    with pytest.raises(asyncio.CancelledError):
+        await runner.run_group(
+            runner.Plan(examples, ()),
+            Provisioner(),
+            object(),
+            object(),
+            Path.cwd(),
+            results,
+        )
+
+    assert stopped == ["first"]
+
+
+@pytest.mark.asyncio
 async def test_group_cleanup_failure_is_reported(
     runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
