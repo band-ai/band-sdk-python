@@ -20,14 +20,16 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import cast
+from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
 
 from band.client.streaming import MessageCreatedPayload
-from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.deps import _is_letta_cloud
+from tests.e2e.baseline.settings import Backends, BaselineSettings
+from tests.e2e.baseline.toolkit.deps import _is_letta_cloud, _omp_cli_responds
+from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import (
     MAX_MENTIONED_LABEL_LEN,
@@ -94,6 +96,60 @@ def test_is_letta_cloud_matches_host_regardless_of_shape(url: str) -> None:
 )
 def test_is_letta_cloud_rejects_non_cloud(url: str) -> None:
     assert _is_letta_cloud(url) is False
+
+
+# --- _omp_cli_responds (OMP_COMMAND is the full base command, not a bare binary) --
+
+
+def _settings_with_omp_command(omp_command: str) -> BaselineSettings:
+    return BaselineSettings(backends=Backends(omp_command=omp_command))
+
+
+def test_omp_cli_responds_defaults_base_to_omp_acp() -> None:
+    with (
+        mock.patch(
+            "tests.e2e.baseline.toolkit.deps.shutil.which", return_value="/bin/omp"
+        ),
+        mock.patch(
+            "tests.e2e.baseline.toolkit.deps.subprocess.run",
+            return_value=MagicMock(returncode=0),
+        ) as run,
+    ):
+        assert _omp_cli_responds(_settings_with_omp_command("")) is True
+
+    run.assert_called_once()
+    assert run.call_args.args[0] == ["omp", "acp", "--help"]
+
+
+def test_omp_cli_responds_treats_override_as_full_base_command() -> None:
+    # A custom OMP_COMMAND already carries its own subcommand; the probe must not
+    # append "acp" a second time (that produced "omp acp acp --help" before the fix).
+    with (
+        mock.patch(
+            "tests.e2e.baseline.toolkit.deps.shutil.which", return_value="/bin/omp"
+        ),
+        mock.patch(
+            "tests.e2e.baseline.toolkit.deps.subprocess.run",
+            return_value=MagicMock(returncode=0),
+        ) as run,
+    ):
+        assert _omp_cli_responds(_settings_with_omp_command("omp acp")) is True
+
+    run.assert_called_once()
+    assert run.call_args.args[0] == ["omp", "acp", "--help"]
+
+
+# --- omp_provider_api_key (a bad OMP_MODEL must not crash Dep.OMP evaluation) --
+
+
+def test_omp_provider_api_key_returns_empty_for_unsupported_provider() -> None:
+    settings = BaselineSettings(backends=Backends(omp_model="bedrock/x"))
+    assert omp_provider_api_key(settings) == ""
+
+
+def test_omp_provider_api_key_returns_empty_for_malformed_model() -> None:
+    settings = BaselineSettings(backends=Backends(omp_model="gemini-2.5-flash"))
+    assert omp_provider_api_key(settings) == ""
 
 
 # --- Replies.assert_at_most (the narrow upper-bound runaway guard) ------------

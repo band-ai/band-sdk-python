@@ -111,7 +111,7 @@ def validate_omp_command(command: Sequence[str]) -> None:
             raise ValueError(f"Unsafe OMP flag {token!r} is not allowed")
         if token == OMP_APPROVAL_MODE_FLAG:
             mode = tokens[index + 1] if index + 1 < len(tokens) else ""
-            joined = f"{OMP_APPROVAL_MODE_FLAG} {mode}".strip()
+            joined = f"{OMP_APPROVAL_MODE_FLAG} {mode.lower()}".strip()
             if joined in OMP_UNSAFE_APPROVAL_FLAGS:
                 raise ValueError(f"Unsafe OMP approval mode {mode!r} is not allowed")
             index += 2
@@ -119,7 +119,7 @@ def validate_omp_command(command: Sequence[str]) -> None:
         match = _APPROVAL_MODE_EQ.match(token)
         if (
             match
-            and f"{OMP_APPROVAL_MODE_FLAG}={match.group(1)}"
+            and f"{OMP_APPROVAL_MODE_FLAG}={match.group(1).lower()}"
             in OMP_UNSAFE_APPROVAL_FLAGS
         ):
             raise ValueError(

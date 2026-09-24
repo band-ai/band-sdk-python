@@ -46,6 +46,7 @@ from band.integrations.omp import (
     omp_elicitation_call_id,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,15 @@ class OmpACPCollectingClient(ACPCollectingClient):
 
 @dataclass(frozen=True)
 class OmpACPAdapterConfig:
-    """Runtime configuration for OMP over ACP (stdio only)."""
+    """Runtime configuration for OMP over ACP (stdio only).
+
+    ``cwd`` is a compatibility alias for a workspace root; prefer
+    ``workspace_for_room`` for new code.
+    """
 
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
     cwd: str | None = None
+    workspace_for_room: WorkspaceResolver | None = None
     env: dict[str, str] | None = None
     custom_section: str = ""
     inject_band_tools: bool = True
@@ -112,10 +118,15 @@ class OmpACPAdapter(ACPClientAdapter):
         **features: Unpack[FeatureKwargs],
     ) -> None:
         config = config or OmpACPAdapterConfig()
+        workspace_for_room = config.workspace_for_room
+        if config.cwd is not None:
+            if workspace_for_room is not None:
+                raise ValueError("set either cwd or workspace_for_room, not both")
+            workspace_for_room = create_room_workspace_resolver(config.cwd)
         super().__init__(
             command=finalize_omp_command(config.command),
             env=config.env,
-            cwd=config.cwd,
+            workspace_for_room=workspace_for_room,
             mcp_servers=config.mcp_servers,
             additional_tools=additional_tools,
             inject_band_tools=config.inject_band_tools,

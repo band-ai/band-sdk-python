@@ -219,29 +219,22 @@ def _bun_meets_min_version(min_version: str) -> bool:
 
 
 def _omp_cli_responds(settings: BaselineSettings) -> bool:
-    binary = (
-        settings.backends.omp_command.split()[0]
-        if settings.backends.omp_command.strip()
-        else "omp"
-    )
-    if shutil.which(binary) is None:
+    """The OMP ``acp`` subcommand responds (``OMP_COMMAND`` overrides the full base command)."""
+    raw = settings.backends.omp_command.strip()
+    base = raw.split() if raw else ["omp", "acp"]
+    if shutil.which(base[0]) is None:
         return False
-    command = settings.backends.omp_command.strip() or "omp"
-    base = command.split()
-    for args in (["--version"], ["acp", "--help"]):
-        try:
-            completed = subprocess.run(
-                [*base, *args],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        if completed.returncode != 0:
-            return False
-    return True
+    try:
+        completed = subprocess.run(
+            [*base, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 def _omp_available(settings: BaselineSettings) -> bool:

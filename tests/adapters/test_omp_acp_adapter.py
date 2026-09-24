@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -62,6 +63,21 @@ class TestOmpACPAdapterConstruction:
                         OMP_APPROVAL_MODE_FLAG,
                         OMP_APPROVAL_MODE_WRITE,
                     )
+                )
+            )
+
+    def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(cwd=str(tmp_path)))
+
+        assert adapter._workspace("room-a") == str(tmp_path / "room-a")
+
+    def test_cwd_and_workspace_for_room_together_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="not both"):
+            OmpACPAdapter(
+                OmpACPAdapterConfig(
+                    cwd=str(tmp_path), workspace_for_room=lambda room_id: room_id
                 )
             )
 

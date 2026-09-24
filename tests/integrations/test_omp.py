@@ -44,6 +44,10 @@ def test_default_command_is_safe_after_finalize() -> None:
         ("omp", "acp", OMP_APPROVAL_MODE_FLAG, "yolo"),
         ("omp", "acp", f"{OMP_APPROVAL_MODE_FLAG}=write"),
         ("omp", "acp", f"{OMP_APPROVAL_MODE_FLAG}=yolo"),
+        ("omp", "acp", OMP_APPROVAL_MODE_FLAG, "YOLO"),
+        ("omp", "acp", OMP_APPROVAL_MODE_FLAG, "Write"),
+        ("omp", "acp", f"{OMP_APPROVAL_MODE_FLAG}=YOLO"),
+        ("omp", "acp", f"{OMP_APPROVAL_MODE_FLAG}=Write"),
     ],
 )
 def test_validate_rejects_unsafe_flags(command: tuple[str, ...]) -> None:
