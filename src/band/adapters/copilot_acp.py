@@ -32,7 +32,7 @@ from typing import Any
 from typing_extensions import Unpack
 
 from band.core.types import FeatureKwargs
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import ACPClientAdapter, PermissionResolver
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.workspaces import WorkspaceResolver, workspace_resolver_for
@@ -64,6 +64,7 @@ class CopilotACPAdapterConfig:
     inject_band_tools: bool = True
     mcp_servers: list[dict[str, Any]] | None = None
     resolve_session_config: SessionConfigResolver | None = None
+    resolve_permission: PermissionResolver | None = None
 
 
 class CopilotACPAdapter(ACPClientAdapter):
@@ -120,6 +121,7 @@ class CopilotACPAdapter(ACPClientAdapter):
             "inject_band_tools": config.inject_band_tools,
             "custom_section": config.custom_section,
             "resolve_session_config": config.resolve_session_config,
+            "resolve_permission": config.resolve_permission,
         }
 
         if use_tcp:

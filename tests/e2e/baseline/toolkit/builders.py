@@ -551,6 +551,67 @@ def _build_copilot_acp(
     )
 
 
+def omp_agent_home_dir(work_dir: str) -> str:
+    """Create and return the ``pi-coding-agent-home`` subdirectory of ``work_dir``."""
+    home = os.path.join(work_dir, "pi-coding-agent-home")
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
+def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
+    """Hermetic OMP child env: model, provider key, and isolated agent state dir."""
+    from band.integrations.omp import (  # noqa: PLC0415 -- keep builder imports lazy like sibling adapters
+        DEFAULT_OMP_MODEL,
+        omp_provider_env,
+    )
+    from tests.e2e.baseline.toolkit.omp_credentials import (  # noqa: PLC0415
+        omp_provider_api_key,
+    )
+
+    model = s.backends.omp_model.strip() or DEFAULT_OMP_MODEL
+    env = omp_provider_env(model=model, api_key=omp_provider_api_key(s))
+    env["PI_CODING_AGENT_DIR"] = agent_home
+    return env
+
+
+@adapter(
+    Adapter.OMP_ACP,
+    requires=[Dep.OMP],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+)
+def _build_omp_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.omp_acp import (  # noqa: PLC0415
+        OmpACPAdapter,
+        OmpACPAdapterConfig,
+    )
+
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-omp-acp-")
+    config_kwargs: dict[str, Any] = {
+        "custom_section": prompt or "",
+        "cwd": sandbox,
+        "env": omp_acp_env(s, omp_agent_home_dir(sandbox)),
+    }
+    if s.backends.omp_command.strip():
+        config_kwargs["command"] = tuple(s.backends.omp_command.split())
+
+    built_features = feature_kwargs(features)
+    if "emit" in built_features:
+        built_features["emit"] &= OmpACPAdapter.SUPPORTED_EMIT
+
+    return OmpACPAdapter(
+        config=OmpACPAdapterConfig(**config_kwargs),
+        additional_tools=_custom_tool_defs(tools),
+        **built_features,
+    )
+
+
 @adapter(
     Adapter.CURSOR_ACP,
     requires=[Dep.CURSOR_CLI],

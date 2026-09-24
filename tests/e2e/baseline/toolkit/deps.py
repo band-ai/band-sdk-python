@@ -27,14 +27,18 @@ in ``..requires``; this module just reports availability.
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
+from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.paths import REPO_ROOT
 
 # REPO_ROOT: used to reject a Codex working directory inside the SDK checkout,
@@ -152,6 +156,7 @@ class Dep(Enum):
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
+    OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
 
 
 @dataclass(frozen=True)
@@ -188,6 +193,57 @@ def _cli_on_path(command: str, default_binary: str) -> bool:
 def _codex_cli_available(settings: BaselineSettings) -> bool:
     """The Codex CLI (or the binary named by ``CODEX_COMMAND``) is on PATH."""
     return _cli_on_path(settings.backends.codex_command, "codex")
+
+
+def _bun_meets_min_version(min_version: str) -> bool:
+    binary = shutil.which("bun")
+    if binary is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [binary, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if completed.returncode != 0:
+        return False
+    match = re.search(r"(\d+\.\d+\.\d+)", completed.stdout)
+    if not match:
+        return False
+    found = tuple(int(part) for part in match.group(1).split("."))
+    required = tuple(int(part) for part in min_version.split("."))
+    return found >= required
+
+
+def _omp_cli_responds(settings: BaselineSettings) -> bool:
+    """The OMP ``acp`` subcommand responds (``OMP_COMMAND`` overrides the full base command)."""
+    raw = settings.backends.omp_command.strip()
+    base = raw.split() if raw else ["omp", "acp"]
+    if shutil.which(base[0]) is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [*base, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def _omp_available(settings: BaselineSettings) -> bool:
+    return (
+        _bun_meets_min_version(OMP_MIN_BUN)
+        and _omp_cli_responds(settings)
+        and bool(omp_provider_api_key(settings))
+    )
 
 
 def _copilot_cli_available(settings: BaselineSettings) -> bool:
@@ -285,6 +341,11 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.CURSOR_CLI: DepSpec(
         _cursor_cli_available,
         "Cursor agent CLI not found on PATH or CURSOR_API_KEY not set",
+        lane=Lane.BACKENDS,
+    ),
+    Dep.OMP: DepSpec(
+        _omp_available,
+        f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(

@@ -257,6 +257,10 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-cursor.sh
 
+    - name: Install Bun and OMP (omp_acp)
+      if: matrix.lane == 'backends'
+      run: bash .github/scripts/setup-omp.sh
+
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
       env:
