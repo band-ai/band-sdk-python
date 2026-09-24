@@ -34,7 +34,7 @@ from datetime import datetime
 
 from band_rest import ChatMessage
 
-from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
+from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY, metadata_to_dict
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
@@ -62,12 +62,10 @@ class UsageRecord:
         Returns ``None`` for any event that does not carry usage under
         ``USAGE_METADATA_KEY`` — this is the filter that ignores ordinary
         ``task`` (lifecycle) events. Tolerant of shape drift: a non-dict
-        metadata or payload yields ``None`` (not raised); missing or
-        non-integer fields default to 0.
+        payload yields ``None`` (not raised); missing or non-integer fields
+        default to 0.
         """
-        metadata = message.metadata
-        if not isinstance(metadata, dict):
-            return None
+        metadata = metadata_to_dict(message.metadata)
         payload = metadata.get(USAGE_METADATA_KEY)
         if not isinstance(payload, dict):
             return None

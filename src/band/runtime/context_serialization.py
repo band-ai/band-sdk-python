@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.core.types import metadata_to_dict
+
 
 def context_item_to_dict(item: Any) -> dict[str, Any]:
     """Serialize a Fern context message model into a plain dict.
@@ -18,7 +20,9 @@ def context_item_to_dict(item: Any) -> dict[str, Any]:
     but a sender_name fallback to ``name`` is necessary because some payloads
     carry the participant's display name in the alternate field. Field access
     uses ``getattr`` with defaults to tolerate older platform responses where
-    optional fields are absent.
+    optional fields are absent. ``metadata`` is itself a Fern model (e.g.
+    ``ChatMessageMetadata``), so it goes through ``metadata_to_dict`` rather
+    than being carried through as-is.
     """
     sender_name = getattr(item, "sender_name", None) or getattr(item, "name", None)
     return {
@@ -28,7 +32,7 @@ def context_item_to_dict(item: Any) -> dict[str, Any]:
         "sender_type": getattr(item, "sender_type", ""),
         "sender_name": sender_name,
         "message_type": getattr(item, "message_type", "text"),
-        "metadata": getattr(item, "metadata", {}),
+        "metadata": metadata_to_dict(getattr(item, "metadata", {})),
         "inserted_at": getattr(item, "inserted_at", None),
         "created_at": getattr(item, "inserted_at", None),
     }

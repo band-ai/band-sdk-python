@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from band_rest.types.chat_message_metadata import ChatMessageMetadata
 
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.client.streaming import MessageMetadata
+from band.core.types import AdapterFeatures, Capability, Emit, metadata_to_dict
 
 
 class TestCapabilityEnum:
@@ -39,3 +41,35 @@ class TestAdapterFeatures:
         f = AdapterFeatures()
         with pytest.raises(AttributeError):
             f.capabilities = frozenset({Capability.MEMORY})  # type: ignore[misc]
+
+
+class TestMetadataToDict:
+    """Normalizes dict-or-Pydantic-model metadata (band-client-rest 0.0.38
+    made ``ChatMessage.metadata`` a frozen, ``.get()``-less model)."""
+
+    def test_dict_passes_through_unchanged(self) -> None:
+        original = {"a": 1}
+        assert metadata_to_dict(original) is original
+
+    @pytest.mark.parametrize("bad", [None, "nope", 42])
+    def test_non_dict_non_model_becomes_empty_dict(self, bad: object) -> None:
+        assert metadata_to_dict(bad) == {}
+
+    def test_default_dump_keeps_none_valued_status_key(self) -> None:
+        """ExecutionContext fills a missing ``status`` key with ``"sent"`` —
+        a default dump must keep an explicitly-unset status distinguishable
+        from an absent one."""
+        dumped = metadata_to_dict(MessageMetadata(status=None))
+        assert "status" in dumped
+        assert dumped["status"] is None
+
+    def test_exclude_none_keeps_extras_and_omits_none_fields(self) -> None:
+        model = ChatMessageMetadata(
+            delegation=None,
+            band_usage={"input_tokens": 1},
+            claude_sdk_session_id="sess-1",
+        )
+        dumped = metadata_to_dict(model, exclude_none=True)
+        assert dumped["band_usage"] == {"input_tokens": 1}
+        assert dumped["claude_sdk_session_id"] == "sess-1"
+        assert "delegation" not in dumped

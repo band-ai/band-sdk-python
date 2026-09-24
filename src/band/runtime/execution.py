@@ -37,6 +37,7 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
+from band.core.types import metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
@@ -397,15 +398,7 @@ class ExecutionContext:
 
     def _metadata_to_dict(self, metadata: Any) -> dict[str, Any]:
         """Normalize platform metadata from dict or Pydantic models."""
-        if isinstance(metadata, dict):
-            return metadata
-
-        model_dump = getattr(metadata, "model_dump", None)
-        if callable(model_dump):
-            dumped = model_dump()
-            return dumped if isinstance(dumped, dict) else {}
-
-        return {}
+        return metadata_to_dict(metadata)
 
     def _delivery_status_for_agent(self, metadata: Any) -> str | None:
         """Return this agent's delivery status from message metadata."""

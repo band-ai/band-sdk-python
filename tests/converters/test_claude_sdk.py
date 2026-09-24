@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import json
 
+from band_rest import ChatMessage
+from band_rest.types.chat_message_metadata import ChatMessageMetadata
+
 from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
+from band.runtime.context_serialization import context_item_to_dict
 
 
 class TestBasicConversion:
@@ -253,6 +257,27 @@ class TestSessionIdExtraction:
         result = converter.convert(raw)
 
         assert result.session_id is None
+
+    def test_extracts_session_id_through_fern_context_item(self):
+        """band-client-rest 0.0.38 types ``ChatMessage.metadata`` as a frozen
+        ``ChatMessageMetadata`` model rather than a dict. Feeding a real
+        ``ChatMessage`` through ``context_item_to_dict`` (the boundary that
+        normalizes it) must still let the converter extract the session id,
+        not raise ``AttributeError`` from a ``.get()``-less model."""
+        converter = ClaudeSDKHistoryConverter()
+        item = ChatMessage(
+            id="task-1",
+            content="Claude SDK session",
+            sender_id="agent-1",
+            sender_type="Agent",
+            message_type="task",
+            metadata=ChatMessageMetadata(claude_sdk_session_id="sess-abc-123"),
+        )
+        raw = [context_item_to_dict(item)]
+
+        result = converter.convert(raw)
+
+        assert result.session_id == "sess-abc-123"
 
     def test_ignores_task_events_without_session_id_key(self):
         """Should ignore task events that don't have claude_sdk_session_id."""
