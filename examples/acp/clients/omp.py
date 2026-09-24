@@ -20,7 +20,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import OmpACPAdapter, OmpACPAdapterConfig
-from band.integrations.omp import DEFAULT_OMP_MODEL, omp_provider_env
+from band.integrations.omp import (
+    DEFAULT_OMP_MODEL,
+    omp_model_provider,
+    omp_provider_api_key_env,
+    omp_provider_env,
+)
 
 configure_logging(level=logging.INFO, root_level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,16 +44,24 @@ class Settings(BaseSettings):
 
 
 def _provider_api_key(settings: Settings) -> str:
-    provider = settings.omp_model.split("/", 1)[0].lower()
-    match provider:
-        case "google":
+    # omp_provider_api_key_env is the SDK's single source of truth for which
+    # providers OMP supports; this example only wires up credentials for the
+    # three most common ones, so an OMP-supported-but-unwired provider gets an
+    # actionable message instead of being misreported as unsupported by OMP.
+    env_key = omp_provider_api_key_env(omp_model_provider(settings.omp_model))
+    match env_key:
+        case "GEMINI_API_KEY":
             return settings.gemini_api_key
-        case "anthropic":
+        case "ANTHROPIC_API_KEY":
             return settings.anthropic_api_key
-        case "openai":
+        case "OPENAI_API_KEY":
             return settings.openai_api_key
         case _:
-            raise ValueError(f"Unsupported OMP model provider in {settings.omp_model}")
+            raise ValueError(
+                f"{settings.omp_model!r} needs {env_key}, which this example "
+                "doesn't read; add a field for it to Settings, or use "
+                "anthropic/google/openai"
+            )
 
 
 async def main() -> None:
