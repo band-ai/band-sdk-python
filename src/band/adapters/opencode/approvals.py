@@ -286,9 +286,9 @@ class RoomApprovals:
 
     async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
         request_id = request.id
-        if not request_id or not request.questions:
+        if not request_id:
             logger.warning(
-                "Ignoring malformed OpenCode question.asked with no questions "
+                "Ignoring malformed OpenCode question.asked with no request id "
                 "(request_id=%s room=%s)",
                 request_id,
                 self._ports.room_id,
@@ -303,6 +303,16 @@ class RoomApprovals:
         )
         self._questions[request_id] = pending
         self._known_question_ids.add(request_id)
+
+        if not request.questions:
+            logger.warning(
+                "Rejecting malformed OpenCode question.asked with no questions "
+                "(request_id=%s room=%s)",
+                request_id,
+                self._ports.room_id,
+            )
+            await self._reject_question(pending)
+            return
 
         if self._config.question_mode == "auto_reject":
             await self._reject_question(pending)
@@ -443,6 +453,15 @@ class RoomApprovals:
         named = approval.request_id
         if (
             named is not None
+            and approval.reply in ("once", "always")
+            and named not in self._permissions
+            and named not in self._known_permission_ids
+            and named not in self._known_question_ids
+            and self._questions
+        ):
+            return False
+        if (
+            named is not None
             and approval.reply == "reject"
             and named in self._questions
         ):
@@ -533,18 +552,13 @@ class RoomApprovals:
     async def abandon(self) -> bool:
         """Stop a parked session after local approval state is discarded.
 
-        Returns whether an ask was actually pending (and so the session was
-        aborted), so a caller with its own unconditional abort afterward
-        (on_message's interrupt handler) can skip a redundant one.
+        Returns whether this method aborted the session, so a caller with its
+        own unconditional abort afterward can skip a redundant one.
         """
-        # An in-flight reply stays in the dict with ``replying=True`` until
-        # ``_forget``; aborting that session would cancel work the human
-        # already claimed. Only unanswered asks need the session stopped.
         pending_entries = (*self._permissions.values(), *self._questions.values())
-        in_flight = any(pending.replying for pending in pending_entries)
         was_pending = any(not pending.replying for pending in pending_entries)
         self.cancel()
-        if was_pending and not in_flight:
+        if was_pending:
             logger.info(
                 "OpenCode turn: abandon pending approvals room=%s",
                 self._ports.room_id,

@@ -360,9 +360,8 @@ async def test_mention_only_question_reply_requests_a_real_answer() -> None:
     assert "waiting for answers" in tools.messages_sent[-1]["content"].lower()
 
 
-async def test_malformed_question_with_no_questions_is_ignored() -> None:
-    """A question.asked with an empty questions list must not park the turn
-    -- there is nothing answerable to show a human."""
+async def test_malformed_question_with_no_questions_is_rejected() -> None:
+    """A malformed question with an id must not leave OpenCode blocked."""
     client = FakeOpencodeClient()
     tools = FakeAgentTools()
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
@@ -371,6 +370,7 @@ async def test_malformed_question_with_no_questions_is_ignored() -> None:
         OpencodeQuestionRequest(id="q-empty", questions=[])
     )
 
+    assert client.question_rejections == ["q-empty"]
     assert not approvals.awaiting_human()
     assert tools.messages_sent == []
 
@@ -457,6 +457,19 @@ async def test_bare_approve_with_only_a_question_pending() -> None:
     assert await approvals.try_handle_reply("approve", "user-1")
     assert client.question_replies == []
     assert "not `approve`/`always`" in tools.messages_sent[-1]["content"]
+
+
+async def test_question_answer_starting_with_approve_is_not_a_command() -> None:
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "How?"}])
+    )
+
+    assert await approvals.try_handle_reply("approve with spaces", "user-1")
+    assert client.question_replies == [
+        {"request_id": "q-1", "answers": [["approve with spaces"]]}
+    ]
 
 
 async def test_bare_reject_with_both_permission_and_question_pending() -> None:
@@ -1198,7 +1211,7 @@ async def test_abandon_does_not_abort_while_another_reply_is_in_flight() -> None
     await client.reply_started.wait()
 
     assert await approvals.abandon() is True
-    assert aborted == []
+    assert aborted == [True]
     client.allow_reply.set()
     assert await reply_task
 
