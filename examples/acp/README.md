@@ -22,7 +22,7 @@ backend via `ACPClientAdapter`.
 |------|---------------|
 | `generic.py` | Generic/Codex ACP client with advertised model/reasoning selection |
 | `rich_streaming.py` | Rich streaming of tool calls / plans / text |
-| `cursor.py` | Cursor CLI with a vendor profile + auth |
+| `cursor.py` | Cursor CLI backend with dynamic ACP configuration and room decisions |
 | `bridge_architecture.py` | Fully env-driven bridge configuration |
 | `copilot.py` | GitHub Copilot CLI (`copilot --acp`), stdio or TCP |
 

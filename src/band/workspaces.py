@@ -70,6 +70,22 @@ def release_room_workspace(
     del workspace_rooms[workspace]
 
 
+def workspace_resolver_for(
+    cwd: str | None, workspace_for_room: WorkspaceResolver | None
+) -> WorkspaceResolver | None:
+    """Resolve an adapter's ``cwd``/``workspace_for_room`` config into one resolver.
+
+    The two are mutually exclusive: ``cwd`` is a compatibility alias that
+    becomes a per-room resolver rooted at it, while an explicit
+    ``workspace_for_room`` is returned unchanged.
+    """
+    if cwd is None:
+        return workspace_for_room
+    if workspace_for_room is not None:
+        raise ValueError("set either cwd or workspace_for_room, not both")
+    return create_room_workspace_resolver(cwd)
+
+
 def create_room_workspace_resolver(root: str | Path) -> WorkspaceResolver:
     """Build a resolver that creates an isolated child workspace per room."""
     workspace_root = Path(root).expanduser().resolve()
