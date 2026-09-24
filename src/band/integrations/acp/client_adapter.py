@@ -45,6 +45,7 @@ from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
     ElicitationHandler,
+    ElicitationNarrator,
     MCPTransportKind,
     PermissionHandler,
     PermissionNarrator,
@@ -577,18 +578,36 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if option_id is not None:
                 return allow_permission(option_id)
 
-            narration = emitter.open_permission(
+            await self._narrate_cancelled_permission(
                 call=call,
                 session_id=session_id,
-                outcome="cancelled",
+                emitter=emitter,
+                narrate=narrate_permission,
             )
-            if narrate_permission is None:
-                await narration
-            else:
-                await narrate_permission(narration)
             return cancel_permission()
 
         return handler
+
+    @staticmethod
+    async def _narrate_cancelled_permission(
+        *,
+        call: ACPToolCall,
+        session_id: str,
+        emitter: RoomTurnEmitter,
+        narrate: PermissionNarrator | ElicitationNarrator | None,
+    ) -> None:
+        """Post a cancelled-permission narration, serialized under the caller's
+        session narrator when one is given (permission and elicitation share
+        this shape; only the wire response each caller returns differs)."""
+        narration = emitter.open_permission(
+            call=call,
+            session_id=session_id,
+            outcome="cancelled",
+        )
+        if narrate is None:
+            await narration
+        else:
+            await narrate(narration)
 
     async def _resolve_permission_option(
         self,

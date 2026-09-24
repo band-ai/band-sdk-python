@@ -64,7 +64,6 @@ _OMP_PROVIDER_API_KEY_ENV: dict[str, str] = {
     "groq": "GROQ_API_KEY",
     "together": "TOGETHER_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
-    "cohere": "COHERE_API_KEY",
 }
 
 _APPROVAL_MODE_EQ = re.compile(

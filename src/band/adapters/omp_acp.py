@@ -197,15 +197,12 @@ class OmpACPAdapter(ACPClientAdapter):
                     action="accept",
                     content={field: OMP_FORM_APPROVE},
                 )
-            narration = emitter.open_permission(
+            await self._narrate_cancelled_permission(
                 call=synthetic_call,
                 session_id=session_id,
-                outcome="cancelled",
+                emitter=emitter,
+                narrate=narrate_elicitation,
             )
-            if narrate_elicitation is None:
-                await narration
-            else:
-                await narrate_elicitation(narration)
             return DeclineElicitationResponse(action="decline")
 
         return handler
