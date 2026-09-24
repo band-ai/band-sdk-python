@@ -221,6 +221,53 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     assert fake_backend.stop_calls == 1
 
 
+async def test_mcp_registration_retries_until_connected() -> None:
+    """A transient non-connected registration result must not be treated as
+    success -- the next on_message (which always calls
+    _ensure_client_started) retries instead of leaving Band tools
+    unregistered for the rest of the process."""
+    fake_backend = FakeMCPBackend()
+    fake_client = FakeOpencodeClient(
+        register_mcp_statuses=["pending"],
+        prompt_event_sequences=[
+            [event_session_idle("sess-1")],
+            [event_session_idle("sess-1")],
+        ],
+    )
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+    tools = FakeAgentTools()
+
+    with patch(
+        "band.adapters.opencode.adapter.create_band_mcp_backend",
+        make_fake_mcp_backend_factory(fake_backend),
+    ):
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert adapter._registered_client is None
+        assert len(fake_client.registered_mcp_servers) == 1
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert adapter._registered_client is fake_client
+        assert len(fake_client.registered_mcp_servers) == 2
+
+
 async def test_bootstrap_creates_session_relays_text_and_persists_task(
     make_adapter, tools
 ) -> None:

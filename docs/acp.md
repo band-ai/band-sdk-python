@@ -24,6 +24,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (room-owned stdio lifecycle) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink) |
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
+| `src/band/adapters/cursor_acp.py` | `CursorACPAdapter` — Cursor CLI backend with room-routed decisions |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -125,6 +126,30 @@ selection, because choosing a model can change the available reasoning levels. A
 invalid selection, rejection, timeout, or malformed `session/set_config_option`
 response fails that room turn visibly instead of silently falling back to a different
 setting.
+
+## Cursor CLI backend
+
+`CursorACPAdapter` starts Cursor with `agent acp` and authenticates through the
+standard `cursor_login` method. Its `resolve_session_config` callback receives
+Cursor's live ACP catalog, so model, embedded reasoning effort, mode, and future
+provider options stay provider-defined rather than being copied into the SDK.
+The Cursor example logs that published catalog and selects `CURSOR_MODEL` and
+`CURSOR_REASONING_EFFORT` only when the active session advertises those values.
+
+Cursor's question, plan, and permission requests can be manual or automatic.
+Manual is the default: the adapter posts a tokenized room prompt, and an authorized
+participant resolves it with `/cursor answer <token>`, `/cursor accept <token>` or
+`/cursor reject <token>`, or `/cursor select <token>` or `/cursor deny <token>`.
+`CursorACPAdapterConfig` controls the
+automatic policies, timeout, capacity, and optional sender allowlist. Cursor omits
+session identifiers from its extension notifications, so its adapter serializes
+extension-capable turns and binds todo, task, and image notifications to that turn.
+
+For a noninteractive deployment, provide `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`
+to the subprocess; otherwise authenticate the CLI with `agent login`. See the
+[Cursor ACP documentation](https://cursor.com/docs/cli/acp) for the provider's
+wire contract and [the Cursor example](../examples/acp/clients/cursor.py) for the
+SDK entry point.
 
 ## Optional Dependency
 
