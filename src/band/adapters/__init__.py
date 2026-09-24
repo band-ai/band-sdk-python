@@ -39,6 +39,9 @@ if TYPE_CHECKING:
         ACPClientAdapter as ACPClientAdapter,
     )
     from band.adapters.acp import (
+        ACPConfigRequest as ACPConfigRequest,
+    )
+    from band.adapters.acp import (
         ACPServer as ACPServer,
     )
     from band.adapters.acp import (
@@ -109,7 +112,7 @@ __all__, __getattr__ = lazy_exports(
     a2a=["A2AAdapter"],
     a2a_gateway=["A2AGatewayAdapter", "A2AGatewayAdapterConfig"],
     codex=["CodexAdapter", "CodexAdapterConfig"],
-    acp=["ACPClientAdapter", "ACPServer", "BandACPServerAdapter"],
+    acp=["ACPConfigRequest", "ACPClientAdapter", "ACPServer", "BandACPServerAdapter"],
     agno=["AgnoAdapter"],
     gemini=["GeminiAdapter"],
     google_adk=["GoogleADKAdapter"],
