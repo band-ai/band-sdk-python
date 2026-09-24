@@ -29,8 +29,8 @@ from pydantic import BaseModel
 from band.client.streaming import MessageCreatedPayload
 from tests.e2e.baseline.settings import Backends, BaselineSettings
 from tests.e2e.baseline.toolkit.deps import _is_letta_cloud, _omp_cli_responds
-from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.e2e.baseline.toolkit.observations import Replies
+from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.e2e.baseline.toolkit.provisioning import (
     MAX_MENTIONED_LABEL_LEN,
     MENTION_HANDLE_CAP,
