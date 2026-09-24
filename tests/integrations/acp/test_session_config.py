@@ -51,7 +51,7 @@ def malformed_catalog_response() -> SimpleNamespace:
 def assert_config_error(reply: Reply, expected: dict[str, str]) -> None:
     """Assert the observable failure contract for one rejected configuration."""
     assert reply.outline == ["error"]
-    assert reply.events[0]["metadata"]["acp_session_config"] == expected
+    assert reply.events[0]["metadata"]["failure"]["detail"] == expected
 
 
 class TestApplySessionConfigSelections:
@@ -428,3 +428,32 @@ class TestACPConfigurationHarness:
         assert agent.config_option_requests == [
             ("persisted-session", "reasoning_effort", "high")
         ]
+
+    @pytest.mark.asyncio
+    async def test_restored_session_closes_when_configuration_fails(self) -> None:
+        agent = FakeACPAgent(supports_session_load=True).knows_session(
+            "persisted-session"
+        )
+
+        async def resolve_config(request: ACPConfigRequest) -> dict[str, str]:
+            assert request.config_options == ()
+            return {"model": "unsupported"}
+
+        async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
+            reply = await session.send(
+                "Resume",
+                bootstrap=True,
+                history=ACPClientSessionState(
+                    room_to_session={"room-1": "persisted-session"}
+                ),
+            )
+
+        assert_config_error(
+            reply,
+            {
+                "session_id": "persisted-session",
+                "option_id": "model",
+                "selected_value": "unsupported",
+            },
+        )
+        assert agent.closed_sessions == ["persisted-session"]
