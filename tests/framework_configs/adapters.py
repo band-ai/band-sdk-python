@@ -526,6 +526,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
             "max_thinking_tokens": _default_from_init(
                 ClaudeSDKAdapter, "max_thinking_tokens"
             ),
+            "effort": _default_from_init(ClaudeSDKAdapter, "effort"),
             "permission_mode": _default_from_init(ClaudeSDKAdapter, "permission_mode"),
         },
         custom_kwargs={
@@ -533,6 +534,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
             "fallback_model": "sonnet",
             "custom_section": "Be helpful.",
             "max_thinking_tokens": 10000,
+            "effort": "high",
             "permission_mode": "bypassPermissions",
         },
         custom_expected={
@@ -540,6 +542,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
             "fallback_model": "sonnet",
             "custom_section": "Be helpful.",
             "max_thinking_tokens": 10000,
+            "effort": "high",
             "permission_mode": "bypassPermissions",
         },
         skip_on_started_conformance=True,  # on_started creates real MCP server + ClaudeSessionManager; tested in test_claude_sdk_adapter

@@ -38,6 +38,7 @@ try:
     )
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
+        EffortLevel,
         HookContext,
         HookInput,
         HookJSONOutput,
@@ -282,6 +283,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         fallback_model: str | None = None,
         custom_section: str | None = None,
         max_thinking_tokens: int | None = None,
+        effort: EffortLevel | None = None,
         permission_mode: PermissionMode = "acceptEdits",
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
@@ -313,6 +315,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 Aliases are accepted here too.
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
+            effort: Response effort level. ``None`` uses the model default.
             permission_mode: SDK permission mode
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
@@ -359,6 +362,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.fallback_model = fallback_model
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
+        self.effort = effort
         self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
@@ -472,6 +476,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             mcp_servers={"band": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
             permission_mode=self.permission_mode,
+            effort=self.effort,
             max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
             # Left at the SDK default, setting_sources loads the host's user + project
@@ -520,11 +525,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         logger.info(
-            "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, approval=%s)",
+            "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, effort=%s, approval=%s)",
             agent_name,
             resolved_model,
             self.fallback_model or "none",
             self.max_thinking_tokens,
+            self.effort or "default",
             self.approval_mode,
         )
 
