@@ -25,6 +25,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/adapters/cursor_acp.py` | `CursorACPAdapter` — Cursor CLI backend with room-routed decisions |
+| `src/band/adapters/omp_acp.py` | `OmpACPAdapter` — stdio-only OMP (`omp acp`) with enforced `always-ask` approval |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -193,3 +194,21 @@ framework-conformance as a bridge.
   over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
   isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary
   stdio transport; auth is out-of-band via `sbx secret set -g github`.
+
+## OMP (oh-my-pi) ACP backend
+
+`OmpACPAdapter` (`src/band/adapters/omp_acp.py`) drives OMP's native `omp acp`
+stdio server through `ACPClientAdapter`. The spawn command always ends with
+`--approval-mode always-ask` (overlays / global config cannot widen approvals),
+and the adapter advertises only form-elicitation client capabilities — never
+filesystem or terminal. Provider credentials are passed only via the child
+`env` (see `omp_provider_env` in `band.integrations.omp`); do not log keys.
+
+Registered in the baseline matrix under the `backends` lane, gated on
+`Dep.OMP` (Bun >= 1.3.14, a working `omp` / `omp acp`, and the provider API key
+for the selected `OMP_MODEL`). Each matrix spawn uses a disposable cwd and a
+fresh `PI_CODING_AGENT_DIR`. Excluded from framework-conformance as a bridge.
+
+- Example: `examples/acp/clients/omp.py`.
+- Pin used by CI: `@oh-my-pi/pi-coding-agent@18.2.8` (see `.github/scripts/setup-omp.sh`).
+

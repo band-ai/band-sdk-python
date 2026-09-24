@@ -532,8 +532,15 @@ class TestACPClientAdapterOnStarted:
         transport.conn.initialize.assert_awaited_once_with(protocol_version=1)
 
     @pytest.mark.asyncio
-    async def test_on_started_uses_large_stdio_limit(self, make_acp_transport) -> None:
-        """Should raise the stdio reader limit for large ACP JSON frames."""
+    async def test_on_started_skips_builtin_transport_options_for_injected_spawn(
+        self, make_acp_transport
+    ) -> None:
+        """Injected ``spawn_process`` factories must not receive stdio transport knobs.
+
+        ``transport_kwargs`` / ``use_unstable_protocol`` are only meaningful for
+        the built-in stdio/TCP constructors; an injected factory owns its own
+        connection options.
+        """
         transport = make_acp_transport()
         adapter = ACPClientAdapter(command=["npx", "@zed-industries/codex-acp"])
         inject_acp_spawn(adapter, transport)
@@ -541,7 +548,8 @@ class TestACPClientAdapterOnStarted:
         runtime = await adapter._runtime_for("room-1")
         await runtime.start()
 
-        assert transport.last_kwargs["transport_kwargs"] == {"limit": 16 * 1024 * 1024}
+        assert "transport_kwargs" not in transport.last_kwargs
+        assert "use_unstable_protocol" not in transport.last_kwargs
 
     @pytest.mark.asyncio
     async def test_on_started_forwards_command_positionally(
@@ -659,12 +667,12 @@ class TestACPClientAdapterOnMessage:
                 SessionConfigSelectOption(value="high", name="High"),
             ],
         )
-        self._runtime(adapter_with_mocks)._conn.new_session = AsyncMock(
+        adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.new_session = AsyncMock(
             return_value=NewSessionResponse(
                 session_id="acp-session-123", config_options=[effort]
             )
         )
-        self._runtime(adapter_with_mocks)._conn.set_config_option = AsyncMock(
+        adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.set_config_option = AsyncMock(
             return_value=SetSessionConfigOptionResponse(
                 config_options=[effort.model_copy(update={"current_value": "high"})]
             )
@@ -687,9 +695,9 @@ class TestACPClientAdapterOnMessage:
         resolver.assert_awaited_once()
         request = resolver.await_args.args[0]
         assert request.config_options == (effort,)
-        self._runtime(
-            adapter_with_mocks
-        )._conn.set_config_option.assert_awaited_once_with(
+        adapter_with_mocks._runtimes[
+            _MOCK_ROOM
+        ]._conn.set_config_option.assert_awaited_once_with(
             session_id="acp-session-123",
             config_id="reasoning_effort",
             value="high",
@@ -1038,6 +1046,71 @@ class TestACPClientAdapterPermissionHandler:
             "allow",
             "reject",
         ]
+
+    @pytest.mark.asyncio
+    async def test_permission_resolver_invalid_option_raises(self) -> None:
+        async def resolve(_request: ACPPermissionRequest) -> str:
+            return "missing"
+
+        adapter = ACPClientAdapter(command="codex", resolve_permission=resolve)
+        with pytest.raises(ValueError, match="unavailable option"):
+            await adapter._resolve_permission_option(
+                call=ACPToolCall("call-1", "write_file", {}),
+                options=(
+                    PermissionOption(optionId="allow", name="Allow", kind="allow_once"),
+                ),
+                room_id="room-1",
+                session_id="session-1",
+            )
+
+    @pytest.mark.asyncio
+    async def test_permission_resolver_deny_cancels_via_request_permission(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A wired PermissionResolver deny must cancel through request_permission."""
+
+        async def deny(_request: ACPPermissionRequest) -> None:
+            return None
+
+        adapter_with_mocks._resolve_permission = deny
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+        captured: dict[str, object] = {}
+
+        async def mock_prompt(**kwargs: object) -> None:
+            tool_call = MagicMock()
+            tool_call.title = "write_file"
+            tool_call.tool_call_id = "tc-deny"
+            tool_call.raw_input = {"path": "/tmp/x"}
+            result = await adapter_with_mocks._runtimes[
+                _MOCK_ROOM
+            ]._client.request_permission(
+                options=[
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                    {"optionId": "reject", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            captured.update(result)
+
+        adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.prompt = AsyncMock(
+            side_effect=mock_prompt
+        )
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert captured == {"outcome": {"outcome": "cancelled"}}
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_permission_handler_skips_pair_for_approved_band_send_message(

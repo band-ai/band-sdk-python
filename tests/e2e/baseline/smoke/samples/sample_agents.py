@@ -136,6 +136,7 @@ USAGE_EXCLUSIONS = (
     ),
     ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
     ExcludedAdapter(Adapter.CURSOR_ACP, "ACP exposes no per-turn token-usage updates"),
+    ExcludedAdapter(Adapter.OMP_ACP, "ACP exposes no per-turn token-usage updates"),
 )
 
 

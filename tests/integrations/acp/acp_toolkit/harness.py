@@ -147,6 +147,7 @@ def inject_acp_spawn(
                 canonicalize_tool_name=adapter._canonical_tool_name,
             ),
             spawn_process=spawn,
+            pass_builtin_transport_options=False,
         )
 
     adapter._build_runtime = _build_runtime  # type: ignore[method-assign]

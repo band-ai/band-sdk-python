@@ -169,6 +169,11 @@ class Backends(BaseSettings):
     cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
     cursor_api_key: str = ""  # CURSOR_API_KEY
 
+    # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
+    # provider-qualified OMP_MODEL; override the binary + args via OMP_COMMAND.
+    omp_command: str = ""  # OMP_COMMAND
+    omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
+
     # Copilot-hosted auth for the single non-BYOK smoke
     # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix
     # cells never read it. The smoke skips when unset.

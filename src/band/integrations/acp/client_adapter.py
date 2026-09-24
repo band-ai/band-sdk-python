@@ -14,6 +14,7 @@ from uuid import uuid4
 from acp import spawn_agent_process
 from acp.exceptions import RequestError
 from acp.schema import (
+    ClientCapabilities,
     HttpMcpServer,
     NewSessionResponse,
     PermissionOption,
@@ -40,8 +41,11 @@ from band.core.types import (
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
+    ACPCollectingClient,
     ACPConnectionProtocol,
     ACPRuntime,
+    ElicitationHandler,
+    ElicitationNarrator,
     MCPTransportKind,
     PermissionHandler,
     PermissionNarrator,
@@ -236,6 +240,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         port: int | None = None,
         custom_section: str = "",
         spawn_process: SpawnProcess | None = None,
+        client_capabilities: ClientCapabilities | None = None,
+        use_unstable_protocol: bool = False,
         turn_timeout_s: float = 300.0,
         **features: Unpack[FeatureKwargs],
     ) -> None:
@@ -268,6 +274,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._profile = profile
         self._resolve_session_config = resolve_session_config
         self._resolve_permission = resolve_permission
+        self._client_capabilities = client_capabilities
+        self._use_unstable_protocol = use_unstable_protocol
+        self._pass_builtin_transport_options = spawn_process is None
         self._custom_section = custom_section
         self._runtimes: dict[str, ACPRuntime] = {}
         self._room_workspaces: dict[str, str] = {}
@@ -340,11 +349,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             env=self._env,
             cwd=workspace,
             auth_method=self._auth_method,
-            client_factory=lambda: BandACPClient(
-                profile=self._profile,
-                canonicalize_tool_name=self._canonical_tool_name,
-            ),
+            client_factory=self._runtime_client_factory,
             spawn_process=spawn_agent_process,
+            client_capabilities=self._client_capabilities,
+            use_unstable_protocol=self._use_unstable_protocol,
+            pass_builtin_transport_options=self._pass_builtin_transport_options,
+        )
+
+    def _runtime_client_factory(self) -> ACPCollectingClient:
+        return BandACPClient(
+            profile=self._profile,
+            canonicalize_tool_name=self._canonical_tool_name,
         )
 
     def _workspace(self, room_id: str) -> str:
@@ -435,9 +450,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id=session_id,
                 room_id=room_id,
             ) as emitter:
-                runtime.set_permission_handler(
-                    session_id,
-                    self._make_permission_handler(emitter, room_id),
+                self._install_turn_handlers(
+                    runtime,
+                    emitter=emitter,
+                    room_id=room_id,
+                    session_id=session_id,
                 )
                 prompt_task = asyncio.create_task(
                     runtime.prompt(
@@ -500,6 +517,33 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
         )
 
+    def _install_turn_handlers(
+        self,
+        runtime: ACPRuntime,
+        *,
+        emitter: RoomTurnEmitter,
+        room_id: str,
+        session_id: str,
+    ) -> None:
+        runtime.set_permission_handler(
+            session_id,
+            self._make_permission_handler(emitter, room_id),
+        )
+        elicitation_handler = self._make_elicitation_handler(
+            emitter, room_id, session_id
+        )
+        if elicitation_handler is not None:
+            runtime.set_elicitation_handler(session_id, elicitation_handler)
+
+    def _make_elicitation_handler(
+        self,
+        emitter: RoomTurnEmitter,
+        room_id: str,
+        session_id: str,
+    ) -> ElicitationHandler | None:
+        del emitter, room_id, session_id
+        return None
+
     def _make_permission_handler(
         self,
         emitter: RoomTurnEmitter,
@@ -535,23 +579,36 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if option_id is not None:
                 return allow_permission(option_id)
 
-            # A denied request never runs the tool, so there is no execution
-            # frame to show it happened — post a synthetic tool_call/tool_result
-            # pair as the only record. An approved request grants silently: if
-            # the tool then executes, its own real tool_call/tool_result narrate
-            # it like any other tool (no pair needed).
-            narration = emitter.open_permission(
+            await self._narrate_cancelled_permission(
                 call=call,
                 session_id=session_id,
-                outcome="cancelled",
+                emitter=emitter,
+                narrate=narrate_permission,
             )
-            if narrate_permission is None:
-                await narration
-            else:
-                await narrate_permission(narration)
             return cancel_permission()
 
         return handler
+
+    @staticmethod
+    async def _narrate_cancelled_permission(
+        *,
+        call: ACPToolCall,
+        session_id: str,
+        emitter: RoomTurnEmitter,
+        narrate: PermissionNarrator | ElicitationNarrator | None,
+    ) -> None:
+        """Post a cancelled-permission narration, serialized under the caller's
+        session narrator when one is given (permission and elicitation share
+        this shape; only the wire response each caller returns differs)."""
+        narration = emitter.open_permission(
+            call=call,
+            session_id=session_id,
+            outcome="cancelled",
+        )
+        if narrate is None:
+            await narration
+        else:
+            await narrate(narration)
 
     async def _resolve_permission_option(
         self,
