@@ -185,6 +185,17 @@ class Backends(BaseSettings):
     # cheap and deterministic across runs.
     copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
+    # Kiro CLI over ACP (kiro_acp adapter). Command defaults to `kiro-cli acp`;
+    # override the binary + args via KIRO_COMMAND.
+    kiro_command: str = ""  # KIRO_COMMAND (override the `kiro-cli` binary + args)
+    # Unlike Copilot's CLI, Kiro's ACP mode has no BYOK/provider-swap option --
+    # `kiro-cli login` is browser/device-flow OAuth only, tied to one AWS/Builder
+    # ID account. KIRO_API_KEY (documented by the CLI's own embedded help-doc
+    # index for headless/CI-CD use) is therefore the gate for the *whole* Kiro
+    # matrix, not just one bespoke hosted-auth smoke the way GITHUB_TOKEN is for
+    # Copilot -- unset, every Kiro cell skips-with-reason rather than running.
+    kiro_api_key: str = ""  # KIRO_API_KEY
+
 
 class LLMModels(BaseSettings):
     """Model ids for the agents under test and the judge."""

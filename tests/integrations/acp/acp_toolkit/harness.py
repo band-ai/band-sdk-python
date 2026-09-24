@@ -16,7 +16,7 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
-from band.core.types import PlatformMessage
+from band.core.types import USAGE_METADATA_KEY, PlatformMessage
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
@@ -214,11 +214,14 @@ class Reply:
 
     @property
     def plans(self) -> list[str]:
-        # Task events, minus the adapter's trailing "ACP client session" bookkeeping.
+        # Task events, minus the adapter's trailing "ACP client session"
+        # bookkeeping and any per-turn usage event (see SimpleAdapter.emit_usage)
+        # -- neither is a real ACP plan chunk, though both ride message_type=task.
         return [
             e["content"]
             for e in self._events_of("task")
             if _SESSION_EVENT_MARKER not in (e.get("metadata") or {})
+            and USAGE_METADATA_KEY not in (e.get("metadata") or {})
         ]
 
     @property

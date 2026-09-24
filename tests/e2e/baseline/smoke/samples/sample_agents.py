@@ -128,15 +128,20 @@ COST_MULTI_TURN_AGENT = {
 
 # Adapters excluded from every per-turn-usage gate (the usage smokes and the
 # restart usage split). Keep this registry-derived fan honest: only adapters
-# unable to observe per-turn usage belong here.
+# unable to observe per-turn usage belong here. Every ACP-bridge adapter
+# (copilot_acp, kiro_acp, ...) is deliberately absent: the standard ACP
+# `session/prompt` response carries a `usage` field, which ACPClientAdapter maps
+# onto TurnUsage generically (see ACPRuntime.get_last_usage), so the whole
+# family reports real per-turn usage, not just one vendor.
 USAGE_EXCLUSIONS = (
     ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
     ExcludedAdapter(
         Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
     ),
-    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.CURSOR_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.OMP_ACP, "ACP exposes no per-turn token-usage updates"),
+    # copilot_acp/cursor_acp/omp_acp/kiro_acp all inherit ACPClientAdapter's
+    # SUPPORTED_EMIT = {Emit.USAGE} unchanged (none override it), so all four
+    # report real per-turn usage generically -- none belong here. See the
+    # module docstring above.
 )
 
 

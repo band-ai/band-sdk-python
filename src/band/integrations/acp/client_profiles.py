@@ -283,6 +283,87 @@ class CursorACPClientProfile:
 
 CURSOR_PROFILE_NAME = "cursor"
 
+# Kiro's experimental extension methods (kiro.dev/docs/cli/acp), namespaced like
+# every ACP vendor extension. Confirmed live against `kiro-cli acp` 2.24.0's own
+# embedded ACP schema and doc index (its ACP server refuses to start before
+# `kiro-cli login`/`KIRO_API_KEY`, so the exact wire payloads below are not
+# verified against a live session -- see the class docstring).
+_KIRO_EXTENSION_PREFIX = "_kiro.dev/"
+KIRO_MCP_OAUTH_REQUEST_METHOD = f"{_KIRO_EXTENSION_PREFIX}mcp/oauth_request"
+KIRO_METADATA_METHOD = f"{_KIRO_EXTENSION_PREFIX}metadata"
+
+
+class KiroACPClientProfile:
+    """Kiro CLI-specific ACP extension handling.
+
+    Everything else Kiro emits (``_kiro.dev/commands/*``, ``_kiro.dev/clear/
+    status``, ``_kiro.dev/session/terminate``, ``_kiro.dev/agent/switched``,
+    ...) falls through to the no-op default every profile method already
+    gives for free -- only the two extensions below carry information worth
+    surfacing in the room.
+    """
+
+    async def ext_method(
+        self,
+        method: str,
+        params: dict[str, object],
+    ) -> dict[str, object]:
+        logger.debug("Kiro ACP ext_method: %s, params=%s", method, params)
+
+        if method == KIRO_MCP_OAUTH_REQUEST_METHOD:
+            # No OAuth UI is wired up for a headless Band agent; decline rather
+            # than leave the turn hanging on human interaction it can't get
+            # (Kiro's own GitHub issue #11394: headless ACP cannot complete MCP
+            # OAuth).
+            return {"outcome": "declined"}
+
+        return {}
+
+    async def ext_notification(
+        self,
+        method: str,
+        params: dict[str, object],
+    ) -> list[CollectedChunk]:
+        logger.debug("Kiro ACP ext_notification: %s, params=%s", method, params)
+
+        if method == KIRO_METADATA_METHOD:
+            summary = _describe_kiro_context_usage(params)
+            if summary:
+                return [CollectedChunk(chunk_type=ChunkType.PLAN, content=summary)]
+
+        return []
+
+
+def _describe_kiro_context_usage(params: dict[str, object]) -> str | None:
+    """Render a context-window-usage summary from a ``_kiro.dev/metadata`` payload.
+
+    The exact field names are unconfirmed (see ``KiroACPClientProfile``), so
+    this checks every plausible spelling seen across the standard ACP
+    ``UsageUpdate`` fields (``used``/``size``) and Kiro's own camelCase
+    convention elsewhere in its schema. Any shape that doesn't yield a sane,
+    positive total is dropped rather than guessed at.
+    """
+    used = _first_int(params, "used", "context_window_used", "contextWindowUsed")
+    total = _first_int(params, "size", "context_window_size", "contextWindowSize")
+    if used is None or total is None or total <= 0 or not (0 <= used <= total):
+        return None
+    percent = round((used / total) * 100)
+    return f"[Kiro context window] {used}/{total} tokens ({percent}%)"
+
+
+def _first_int(params: dict[str, object], *keys: str) -> int | None:
+    for key in keys:
+        if key not in params:
+            continue
+        value = params[key]
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return None
+    return None
+
+
+KIRO_PROFILE_NAME = "kiro"
+
 
 def resolve_acp_client_profile(profile_name: str) -> ACPClientProfile | None:
     """Map a configured profile name to a runtime-specific ACP client profile."""
@@ -291,4 +372,6 @@ def resolve_acp_client_profile(profile_name: str) -> ACPClientProfile | None:
         return None
     if normalized == CURSOR_PROFILE_NAME:
         return CursorACPClientProfile()
+    if normalized == KIRO_PROFILE_NAME:
+        return KiroACPClientProfile()
     return None

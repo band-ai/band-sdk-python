@@ -30,6 +30,7 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
+    Usage,
 )
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -85,6 +86,7 @@ class FakeACPAgent:
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
         self.approved: bool | None = None
+        self._usage: Usage | None = None
 
     # -- scripting ---------------------------------------------------------------
 
@@ -104,6 +106,13 @@ class FakeACPAgent:
 
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
+        return self
+
+    def reports_usage(self, usage: Usage) -> FakeACPAgent:
+        """Make every ``session/prompt`` response carry this standard ACP
+        ``usage`` value -- unset (the default) mirrors an agent that never
+        reports it, so ``SimpleAdapter.emit_usage`` stays a no-op."""
+        self._usage = usage
         return self
 
     def knows_session(self, session_id: str) -> FakeACPAgent:
@@ -428,4 +437,4 @@ class FakeACPAgent:
         else:
             for action in self._script:
                 await action(self, session_id)
-        return PromptResponse(stop_reason="end_turn")
+        return PromptResponse(stop_reason="end_turn", usage=self._usage)

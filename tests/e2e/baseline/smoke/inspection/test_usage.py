@@ -8,11 +8,19 @@ usage-capable adapter.
 
 Coverage is registry-derived, not a hand-maintained list: the fan is the whole
 matrix minus the adapters that cannot emit usage — ``CREWAI_FLOW`` (usage lives in
-user-supplied flow internals — N-A), ``CREWAI`` (usage capture deferred: its
-result counter is cumulative-lifetime, not per-turn), and ``COPILOT_ACP`` / ``OMP_ACP``
-(ACP exposes no per-turn token-usage updates). Every other adapter runs, letta
-included (it emits via ``Emit.USAGE`` from the per-room
-``LettaResponse.usage``). Deriving from ``exclude=`` rather than an explicit
+user-supplied flow internals — N-A) and ``CREWAI`` (usage capture deferred: its
+result counter is cumulative-lifetime, not per-turn). Every other adapter runs,
+letta included (it emits via ``Emit.USAGE`` from the per-room
+``LettaResponse.usage``), and every *live* ACP-bridge adapter (copilot_acp,
+cursor_acp, omp_acp) included too: the standard ACP ``session/prompt`` response
+carries a ``usage`` field, which ``ACPClientAdapter`` maps generically (see
+``ACPRuntime.get_last_usage``), not per vendor — so kiro_acp would participate
+the same way, but it's registered ``e2e_pending`` (no paid Kiro subscription —
+see ``tests/e2e/baseline/toolkit/builders.py``) and so runs no cells here either;
+its generic usage mapping is covered instead by the ``FakeACPAgent``-driven
+``test_usage_emitted_from_prompt_response`` in
+``tests/integrations/acp/test_client_adapter_behavior.py``. Deriving from
+``exclude=`` rather than an explicit
 include-list means a newly-registered usage-capable adapter is exercised
 automatically — and a new adapter that *cannot* emit usage fails loudly here
 until it's consciously added to the exclusion, which is the intended signal. The

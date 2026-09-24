@@ -538,10 +538,10 @@ def _build_copilot_acp(
     if "emit" in built_features:
         # memory_features()/contacts_features() request Emit.TOOL_CALLS so tool
         # calls surface as tool_call events for the rest of the matrix, but this
-        # adapter narrates every tool call unconditionally and declares no
-        # SUPPORTED_EMIT (see ACPClientAdapter) -- clamp to what it actually
-        # supports so the shared fixture's intent survives without tripping the
-        # construction-time unsupported-emit check.
+        # adapter narrates every tool call unconditionally and only declares
+        # Emit.USAGE in SUPPORTED_EMIT (see ACPClientAdapter) -- clamp to what
+        # it actually supports so the shared fixture's intent survives without
+        # tripping the construction-time unsupported-emit check.
         built_features["emit"] &= CopilotACPAdapter.SUPPORTED_EMIT
 
     return CopilotACPAdapter(
@@ -649,6 +649,86 @@ def _build_cursor_acp(
         built_features["emit"] &= CursorACPAdapter.SUPPORTED_EMIT
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
+        additional_tools=_custom_tool_defs(tools),
+        **built_features,
+    )
+
+
+def kiro_home_dir(work_dir: str) -> str:
+    """Create and return the ``kiro-home`` subdirectory of ``work_dir``.
+
+    The one place the subdirectory name and its creation live, for whoever
+    flips ``_build_kiro_acp`` back to live (see its ``e2e_pending`` reason).
+    """
+    home = os.path.join(work_dir, "kiro-home")
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
+def kiro_acp_env(s: BaselineSettings, kiro_home: str) -> dict[str, str]:
+    """Environment for a hermetic ``kiro-cli acp`` spawn.
+
+    ``KIRO_API_KEY`` carries auth — kiro-cli has no BYOK provider swap, unlike
+    Copilot (see ``Dep.KIRO_CLI``). ``KIRO_HOME`` (see ``kiro_home_dir``)
+    isolates login/session state to a fresh directory per cell: stray
+    host-side session state or trust decisions must not steer the turn under
+    test, and a fresh home also guarantees ``session/load`` misses (a
+    session/load *hit* is exercised only by the bespoke native-resume smoke,
+    which reuses one ``KIRO_HOME`` on purpose).
+    """
+    return {
+        "KIRO_HOME": kiro_home,
+        "KIRO_API_KEY": s.backends.kiro_api_key,
+    }
+
+
+@adapter(
+    Adapter.KIRO_ACP,
+    requires=[Dep.KIRO_CLI],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+)
+def _build_kiro_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.kiro_acp import (  # noqa: PLC0415 -- isolates the kiro_acp extra from the other frameworks this file builds
+        KiroACPAdapter,
+        KiroACPAdapterConfig,
+    )
+
+    # stdio spawn of `kiro-cli acp` co-located with the SDK, so Band tools reach
+    # Kiro over the loopback MCP server (inject_band_tools default True).
+    # `runs_tool_loop=False` mirrors codex/opencode/copilot_acp: tool execution
+    # happens out-of-process, so the custom-tool round trip needs its own live
+    # proof before flipping this.
+    #
+    # Fully hermetic per-cell sandbox, mirroring copilot_acp's: a fresh temp cwd
+    # (Kiro discovers project config from its working directory) and a fresh
+    # KIRO_HOME. Dep.KIRO_CLI already gates on KIRO_API_KEY being set.
+    # KIRO_COMMAND overrides the binary + args.
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-kiro-acp-")
+
+    config_kwargs: dict[str, Any] = {
+        "custom_section": prompt or "",
+        "workspace_for_room": create_room_workspace_resolver(sandbox),
+        "env": kiro_acp_env(s, kiro_home_dir(sandbox)),
+    }
+    if s.backends.kiro_command.strip():
+        config_kwargs["command"] = tuple(s.backends.kiro_command.split())
+
+    built_features = feature_kwargs(features)
+    if "emit" in built_features:
+        # See _build_copilot_acp's matching clamp: this adapter narrates every
+        # tool call unconditionally and only declares Emit.USAGE in
+        # SUPPORTED_EMIT (see ACPClientAdapter).
+        built_features["emit"] &= KiroACPAdapter.SUPPORTED_EMIT
+
+    return KiroACPAdapter(
+        config=KiroACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         **built_features,
     )

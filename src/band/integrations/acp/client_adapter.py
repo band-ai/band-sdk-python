@@ -38,6 +38,7 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
+    TurnUsage,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
@@ -214,7 +215,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    # Tool/thought/plan narration rides RoomTurnEmitter unconditionally (it is
+    # inherent ACP protocol behavior, not an opt-in instrumentation seam), so
+    # TOOL_CALLS/THOUGHTS/TASK_EVENTS stay outside this set. USAGE is real: the
+    # standard `session/prompt` response carries a `usage` field (see
+    # ACPRuntime.get_last_usage), so every ACP vendor can report it generically.
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
@@ -477,6 +483,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                         f"ACP turn timed out after {self._turn_timeout_s}s"
                     ) from None
                 await prompt_task
+                await self.emit_usage(tools, self._turn_usage(runtime, session_id))
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -488,6 +495,25 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await self.on_cleanup(room_id)
             await tools.send_failure(_to_agent_failure(e))
             raise
+
+    @staticmethod
+    def _turn_usage(runtime: ACPRuntime, session_id: str) -> TurnUsage:
+        """Map the turn's ``session/prompt`` response usage onto ``TurnUsage``.
+
+        ACP's ``Usage`` reports ``thoughtTokens`` disjointly from
+        ``outputTokens`` (like codex/opencode's reasoning tokens), so it is
+        folded in per ``TurnUsage``'s convention. ``get_last_usage`` returns
+        ``None`` for an agent that never reports usage; ``from_object`` turns
+        that into an empty (unemitted) ``TurnUsage``.
+        """
+        return TurnUsage.from_object(
+            runtime.get_last_usage(session_id),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cached_read_tokens",
+            cache_write="cached_write_tokens",
+            reasoning="thought_tokens",
+        )
 
     async def _handle_turn_timeout(
         self,

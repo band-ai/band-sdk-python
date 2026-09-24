@@ -18,6 +18,7 @@ from acp.schema import (
     LoadSessionResponse,
     NewSessionResponse,
     SetSessionConfigOptionResponse,
+    Usage,
 )
 
 from band.integrations.acp.client_profiles import (
@@ -827,6 +828,11 @@ class ACPRuntime:
         self._agent_mcp_transport: MCPTransportKind = "http"
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
+        # The standard ACP `session/prompt` response's `usage` field (total/input/
+        # output/thought/cached tokens for that one call) -- overwritten on every
+        # `prompt()`, read by the caller once the turn completes. Keyed by session
+        # so concurrent sessions on one runtime never cross-report.
+        self._last_usage: dict[str, Usage | None] = {}
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -1009,13 +1015,25 @@ class ACPRuntime:
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
         try:
-            await conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+            response = await conn.prompt(
+                session_id=session_id, prompt=[text_block(prompt_text)]
+            )
+            self._last_usage[session_id] = getattr(response, "usage", None)
             if self._client is not None:
                 await self._client.flush(session_id)
         finally:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
         return self.get_collected_chunks(session_id)
+
+    def get_last_usage(self, session_id: str) -> Usage | None:
+        """The most recent ``session/prompt`` response's ``usage`` for a session.
+
+        ``None`` for an agent that never reports it (an optional ACP field) or
+        before any prompt has completed -- the caller (``ACPClientAdapter``)
+        treats either the same way: skip emission for that turn.
+        """
+        return self._last_usage.get(session_id)
 
     async def cancel_turn(self, session_id: str) -> None:
         """Tell the agent to stop a timed-out room's prompt."""

@@ -157,6 +157,7 @@ class Dep(Enum):
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
+    KIRO_CLI = "kiro_cli"  # the `kiro-cli` CLI on PATH, authenticated via KIRO_API_KEY
 
 
 @dataclass(frozen=True)
@@ -258,6 +259,22 @@ def _cursor_cli_available(settings: BaselineSettings) -> bool:
     )
 
 
+def _kiro_cli_available(settings: BaselineSettings) -> bool:
+    """The Kiro CLI is on PATH *and* ``KIRO_API_KEY`` is set.
+
+    Unlike Copilot (BYOK swaps out its own hosted auth for a plain Anthropic
+    key) Kiro's ACP mode has no provider-swap option -- `kiro-cli login` is
+    browser/device-flow OAuth only, tied to one AWS/Builder ID account. So the
+    binary alone can't make a matrix cell runnable the way it does for Codex/
+    Copilot/OpenCode: this dep folds in the credential too, and the whole Kiro
+    surface skips-with-reason without one rather than failing loud on every
+    cell.
+    """
+    return _cli_on_path(settings.backends.kiro_command, "kiro-cli") and bool(
+        settings.backends.kiro_api_key
+    )
+
+
 def _codex_cwd_available(settings: BaselineSettings) -> bool:
     """``CODEX_CWD`` is an existing, explicitly-disposable dir outside the repo.
 
@@ -346,6 +363,12 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OMP: DepSpec(
         _omp_available,
         f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
+        lane=Lane.BACKENDS,
+    ),
+    Dep.KIRO_CLI: DepSpec(
+        _kiro_cli_available,
+        "Kiro CLI not found on PATH, or KIRO_API_KEY not set "
+        "(kiro-cli login has no non-interactive/BYOK option)",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(
