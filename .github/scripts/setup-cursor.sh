@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 # Install Cursor CLI for the Cursor ACP baseline backend.
+#
+# Unlike codex/copilot's required job-level keys, CURSOR_API_KEY is optional --
+# Dep.CURSOR_CLI (tests/e2e/baseline/toolkit/deps.py) is designed to skip the
+# Cursor cells cleanly when it's unset. Skip the install the same way instead
+# of hard-failing, so a missing secret doesn't take the codex/opencode/copilot_acp
+# cells in this lane down with it.
 set -euo pipefail
 
-: "${CURSOR_API_KEY:?CURSOR_API_KEY is required for Cursor ACP E2E auth}"
+if [[ -z "${CURSOR_API_KEY:-}" ]]; then
+  echo "CURSOR_API_KEY not set -- skipping Cursor CLI install; Dep.CURSOR_CLI will skip the Cursor cells."
+  exit 0
+fi
 
 if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
   powershell -NoProfile -Command "irm https://cursor.com/install -UseBasicParsing | iex"

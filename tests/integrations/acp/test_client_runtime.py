@@ -22,7 +22,7 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
     tcp_spawn_process,
 )
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ChunkType, CollectedChunk
 
 
 class TestSelectAllowOptionId:
@@ -109,6 +109,33 @@ class TestACPCollectingClientProfiles:
         assert [chunk.chunk_type for chunk in chunks] == ["plan", "plan"]
         assert "[x] Read code" in chunks[0].content
         assert "Refactor the module" in chunks[1].content
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_tolerates_a_profile_without_extension_session_id(
+        self,
+    ) -> None:
+        """A custom ACPClientProfile written before extension_session_id was
+        added to the protocol has no such attribute; a session-less
+        notification must not raise AttributeError reading it."""
+
+        class LegacyProfile:
+            async def ext_method(
+                self, method: str, params: dict[str, object]
+            ) -> dict[str, object]:
+                del method, params
+                return {}
+
+            async def ext_notification(
+                self, method: str, params: dict[str, object]
+            ) -> list[CollectedChunk]:
+                del method, params
+                return [CollectedChunk(chunk_type=ChunkType.TEXT, content="hi")]
+
+        client = ACPCollectingClient(profile=LegacyProfile())  # type: ignore[arg-type]
+
+        await client.ext_notification("cursor/task", {"description": "d"})
+
+        assert client.get_collected_chunks() == []
 
 
 class TestACPCollectingClientCoalescing:

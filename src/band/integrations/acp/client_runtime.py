@@ -652,7 +652,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     async def ext_notification(self, method: str, params: dict[str, object]) -> None:
         session_id = str(params.get("sessionId") or params.get("session_id") or "")
         if not session_id:
-            session_id = self._profile.extension_session_id or ""
+            # A profile written against the pre-extension_session_id
+            # ACPClientProfile protocol has no such attribute at all.
+            session_id = getattr(self._profile, "extension_session_id", None) or ""
         if not session_id:
             return
 

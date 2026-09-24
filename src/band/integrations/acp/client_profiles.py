@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 from band.integrations.acp.types import ChunkType, CollectedChunk
@@ -91,9 +91,44 @@ class CursorACPClientProfile:
         logger.debug("Cursor ACP extension method: %s", method)
         if method not in {CURSOR_ASK_QUESTION_METHOD, CURSOR_CREATE_PLAN_METHOD}:
             return {}
-        if self._resolve_method is None:
+        if self._resolve_method is not None:
+            return await self._resolve_method(method, params)
+        # No resolver means this profile is standalone (e.g. the generic ACP
+        # bridge), with no adapter-owned room to relay a decision to --
+        # answer unattended rather than cancelling every request outright.
+        if method == CURSOR_ASK_QUESTION_METHOD:
+            return self._auto_answer_question(params)
+        return {"outcome": {"outcome": "accepted"}}
+
+    @staticmethod
+    def _auto_answer_question(params: dict[str, object]) -> dict[str, object]:
+        """Pick each question's first advertised option, unattended."""
+        questions = params.get("questions")
+        if not isinstance(questions, list):
             return {"outcome": {"outcome": "cancelled"}}
-        return await self._resolve_method(method, params)
+        answers: list[dict[str, object]] = []
+        for question in questions:
+            if not isinstance(question, Mapping):
+                continue
+            question_id, options = question.get("id"), question.get("options")
+            if not isinstance(question_id, str) or not isinstance(options, list):
+                continue
+            first_option_id = next(
+                (
+                    option_id
+                    for option in options
+                    if isinstance(option, Mapping)
+                    and isinstance((option_id := option.get("id")), str)
+                ),
+                None,
+            )
+            if first_option_id is not None:
+                answers.append(
+                    {"questionId": question_id, "selectedOptionIds": [first_option_id]}
+                )
+        if not answers:
+            return {"outcome": {"outcome": "cancelled"}}
+        return {"outcome": {"outcome": "answered", "answers": answers}}
 
     async def ext_notification(
         self,
@@ -116,8 +151,15 @@ class CursorACPClientProfile:
     def _todo_chunks(self, params: dict[str, object]) -> list[CollectedChunk]:
         """Apply Cursor's replace-or-merge todo update and render its state."""
         todos = params.get("todos")
-        session_id = self._session_id
-        if not isinstance(todos, list) or session_id is None:
+        # The bound session covers the adapter-integrated path (a turn binds
+        # its session before Cursor can notify); standalone use (e.g. the
+        # generic ACP bridge) never binds one, so fall back to the
+        # notification's own id -- the same precedence ACPCollectingClient
+        # already uses to route this chunk to a transcript.
+        session_id = (
+            params.get("sessionId") or params.get("session_id") or self._session_id
+        )
+        if not isinstance(todos, list) or not isinstance(session_id, str):
             return []
         updates = {
             todo_id: (content, status)

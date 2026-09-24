@@ -1587,13 +1587,52 @@ class TestACPCollectingClientCursorProfileExtensions:
         assert result["outcome"]["outcome"] == "answered"
 
     @pytest.mark.asyncio
-    async def test_ext_method_without_decision_bridge_cancels(self) -> None:
-        """A bare profile must not silently choose a user-facing answer."""
+    async def test_ext_method_without_decision_bridge_cancels_when_unanswerable(
+        self,
+    ) -> None:
+        """A bare profile (e.g. the generic ACP bridge) has nothing to pick
+        from an empty question list, and must still cancel rather than
+        fabricate an answer."""
         client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         result = await client.ext_method("cursor/ask_question", {"questions": []})
 
         assert result == {"outcome": {"outcome": "cancelled"}}
+
+    @pytest.mark.asyncio
+    async def test_ext_method_without_decision_bridge_auto_answers_unattended(
+        self,
+    ) -> None:
+        """Regression: resolve_acp_client_profile("cursor") (the generic ACP
+        bridge's factory) has no room to relay a decision to and no resolver
+        -- it must answer unattended (main's prior behavior) rather than
+        cancelling every real question and plan outright."""
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
+
+        ask_result = await client.ext_method(
+            "cursor/ask_question",
+            {
+                "questions": [
+                    {
+                        "id": "q1",
+                        "prompt": "Choose",
+                        "options": [
+                            {"id": "a", "label": "A"},
+                            {"id": "b", "label": "B"},
+                        ],
+                    }
+                ],
+            },
+        )
+        plan_result = await client.ext_method("cursor/create_plan", {"plan": "stuff"})
+
+        assert ask_result == {
+            "outcome": {
+                "outcome": "answered",
+                "answers": [{"questionId": "q1", "selectedOptionIds": ["a"]}],
+            }
+        }
+        assert plan_result == {"outcome": {"outcome": "accepted"}}
 
     @pytest.mark.asyncio
     async def test_ext_method_cursor_create_plan(self) -> None:
@@ -1710,8 +1749,10 @@ class TestACPCollectingClientCursorProfileExtensions:
         assert chunks[0].content == "[Cursor generated image] A logo → /tmp/logo.png"
 
     @pytest.mark.asyncio
-    async def test_ext_notification_without_bound_session_is_noop(self) -> None:
-        """Profiles without a current Cursor turn cannot route notifications."""
+    async def test_ext_notification_without_bound_session_or_own_id_is_noop(
+        self,
+    ) -> None:
+        """Nothing identifies which session's todos these are."""
         client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         await client.ext_notification(
@@ -1723,6 +1764,30 @@ class TestACPCollectingClientCursorProfileExtensions:
         )
 
         assert client.get_collected_chunks() == []
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_todos_use_their_own_session_id_unbound(
+        self,
+    ) -> None:
+        """Regression: the bridge path (resolve_acp_client_profile("cursor"))
+        never calls bind_session, so a notification that carries its own
+        sessionId must still render -- not fall silent because self._session_id
+        is None. ACPCollectingClient.ext_notification already resolves the
+        SAME precedence for chunk routing; the profile's own todo state must
+        match it."""
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
+
+        await client.ext_notification(
+            "cursor/update_todos",
+            {
+                "sessionId": "bridge-session",
+                "todos": [{"id": "test", "content": "Test", "status": "pending"}],
+                "merge": False,
+            },
+        )
+
+        chunks = client.get_collected_chunks("bridge-session")
+        assert chunks[-1].content == "- [ ] Test"
 
 
 class TestACPClientAdapterDeadConnectionRecovery:

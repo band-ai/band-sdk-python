@@ -574,6 +574,12 @@ def _build_cursor_acp(
         "api_key": s.backends.cursor_api_key,
         "custom_section": prompt or "",
         "cwd": sandbox,
+        # Nothing in the baseline matrix answers /cursor prompts, so a
+        # decision request must resolve on its own or the cell stalls for
+        # decision_timeout_s and then fails or denies.
+        "approval_mode": "auto_accept",
+        "question_mode": "auto_first",
+        "plan_mode": "auto_accept",
     }
     if s.backends.cursor_command.strip():
         config_kwargs["command"] = tuple(s.backends.cursor_command.split())

@@ -61,6 +61,11 @@ class CursorACPAdapterConfig:
     question_mode: QuestionMode = "manual"
     plan_mode: PlanMode = "manual"
     decision_timeout_s: float = 300.0
+    # A manual decision wait runs inside the turn, bounded by turn_timeout_s
+    # (see ACPClientAdapter.on_message) -- default headroom above
+    # decision_timeout_s so a decision can't be silently truncated by the
+    # turn deadline before its own timeout fires.
+    turn_timeout_s: float = 900.0
     max_pending_decisions: int = 10
     decision_authorized_senders: frozenset[str] | None = None
 
@@ -72,6 +77,7 @@ class CursorTurn:
     room_id: str
     tools: AgentToolsProtocol
     requester_id: str | None
+    release: asyncio.Future[None]
     session_id: str | None = None
 
 
@@ -121,6 +127,7 @@ class CursorACPAdapter(ACPClientAdapter):
             mcp_servers=config.mcp_servers,
             resolve_session_config=config.resolve_session_config,
             resolve_permission=self._resolve_cursor_permission,
+            turn_timeout_s=config.turn_timeout_s,
             **features,
         )
 
@@ -132,6 +139,8 @@ class CursorACPAdapter(ACPClientAdapter):
             raise ValueError("set either api_key or auth_token, not both")
         if config.decision_timeout_s <= 0:
             raise ValueError("decision_timeout_s must be greater than zero")
+        if config.decision_timeout_s >= config.turn_timeout_s:
+            raise ValueError("decision_timeout_s must be less than turn_timeout_s")
         if config.max_pending_decisions <= 0:
             raise ValueError("max_pending_decisions must be greater than zero")
 
@@ -159,26 +168,75 @@ class CursorACPAdapter(ACPClientAdapter):
         if await self._handle_control_message(msg, tools, room_id):
             return
 
-        async with self._turn_lock:
-            self._active_turn = CursorTurn(
+        # ext_method routing needs _turn_lock held for the whole turn (only
+        # one room's session_id is bound on the shared _cursor_profile at a
+        # time), but a decision reply for THIS room must never queue behind
+        # it -- _handle_control_message above already bypasses the lock
+        # unconditionally. So the turn body runs detached: on_message
+        # returns the moment a decision opens (or immediately, if none ever
+        # does), releasing the room's message queue for that reply while the
+        # lock, and the turn, keep going in _run_turn.
+        await self._turn_lock.acquire()
+        release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        turn = CursorTurn(
+            room_id=room_id,
+            tools=tools,
+            requester_id=msg.sender_id,
+            release=release,
+        )
+        self._active_turn = turn
+        turn_task = asyncio.create_task(
+            self._run_turn(
+                turn,
+                msg,
+                tools,
+                history,
+                participants_msg,
+                contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
-                tools=tools,
-                requester_id=msg.sender_id,
             )
-            try:
-                await super().on_message(
-                    msg,
-                    tools,
-                    history,
-                    participants_msg,
-                    contacts_msg,
-                    is_session_bootstrap=is_session_bootstrap,
-                    room_id=room_id,
-                )
-            finally:
-                self._cursor_profile.bind_session(None)
+        )
+        self._background_tasks.add(turn_task)
+        turn_task.add_done_callback(self._on_background_task_done)
+        done, _ = await asyncio.wait(
+            {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if turn_task in done:
+            # No decision ever opened -- surface completion/failure exactly
+            # as before this turn body ran detached.
+            await turn_task
+
+    async def _run_turn(
+        self,
+        turn: CursorTurn,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: ACPClientSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        try:
+            await super().on_message(
+                msg,
+                tools,
+                history,
+                participants_msg,
+                contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
+                room_id=room_id,
+            )
+        finally:
+            self._cursor_profile.bind_session(None)
+            if self._active_turn is turn:
                 self._active_turn = None
-                self._cancel_room_decisions(room_id)
+            self._cancel_room_decisions(room_id)
+            if not turn.release.done():
+                turn.release.set_result(None)
+            self._turn_lock.release()
 
     async def _get_or_create_session(
         self,
@@ -197,6 +255,9 @@ class CursorACPAdapter(ACPClientAdapter):
 
     async def on_cleanup(self, room_id: str) -> None:
         session_id = self._room_to_session.get(room_id)
+        # Wakes any decision _run_turn is parked on; the task itself keeps
+        # running detached and winds down on its own (via _on_background_task_done)
+        # once the runtime this stops out from under it closes the connection.
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id)
         if session_id is not None:
@@ -334,6 +395,12 @@ class CursorACPAdapter(ACPClientAdapter):
             except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
                 logger.warning("Could not deliver Cursor %s decision prompt", kind)
                 return None
+            finally:
+                # Release on_message here, not only in _run_turn's finally --
+                # the room needs its queue back the instant a decision is
+                # outstanding, whether or not the prompt itself landed.
+                if not turn.release.done():
+                    turn.release.set_result(None)
             try:
                 return await asyncio.wait_for(
                     future, timeout=self._config.decision_timeout_s
@@ -358,33 +425,41 @@ class CursorACPAdapter(ACPClientAdapter):
         words = strip_leading_mentions(msg.content).strip().split()
         if not words or words[0].lower() != "/cursor":
             return False
+        mentions = [msg.sender_id]
         if len(words) == 1 or words[1].lower() == "decisions":
-            await self._list_decisions(tools, room_id)
+            await self._list_decisions(tools, room_id, mentions=mentions)
             return True
         if len(words) < 3:
             await tools.send_message(
-                "Use `/cursor decisions` to list pending Cursor decisions."
+                "Use `/cursor decisions` to list pending Cursor decisions.",
+                mentions=mentions,
             )
             return True
         action, token = words[1].lower(), words[2]
         pending = self._pending_decisions.get(token)
         if pending is None or pending.room_id != room_id:
-            await tools.send_message(f"Cursor decision `{token}` is not pending.")
+            await tools.send_message(
+                f"Cursor decision `{token}` is not pending.", mentions=mentions
+            )
             return True
         if not self._is_authorized(msg.sender_id):
             await tools.send_message(
-                "You are not authorized to resolve Cursor decisions."
+                "You are not authorized to resolve Cursor decisions.",
+                mentions=mentions,
             )
             return True
         result = self._command_result(action, words[3:], pending)
         if result is _INVALID_DECISION:
             await tools.send_message(
-                f"That command is not valid for Cursor {pending.kind} decision `{token}`."
+                f"That command is not valid for Cursor {pending.kind} decision `{token}`.",
+                mentions=mentions,
             )
             return True
         if not pending.future.done():
             pending.future.set_result(result)
-        await tools.send_message(f"Cursor {pending.kind} decision `{token}` resolved.")
+        await tools.send_message(
+            f"Cursor {pending.kind} decision `{token}` resolved.", mentions=mentions
+        )
         return True
 
     def _command_result(
@@ -460,12 +535,18 @@ class CursorACPAdapter(ACPClientAdapter):
     @staticmethod
     def _question_details(
         params: dict[str, object],
-    ) -> dict[str, tuple[str | None, tuple[tuple[str, str], ...]]]:
-        """Project the valid question IDs, prompts, and labeled options once."""
+    ) -> dict[str, tuple[str, tuple[tuple[str, str], ...]]]:
+        """Project the valid question IDs, prompts, and labeled options once.
+
+        Every entry here is required for a complete ``/cursor answer`` (see
+        ``_answer_result``), so each gets a displayable prompt -- falling
+        back to its id -- rather than being silently absent from the summary
+        while still being required.
+        """
         questions = params.get("questions")
         if not isinstance(questions, list):
             return {}
-        details: dict[str, tuple[str | None, tuple[tuple[str, str], ...]]] = {}
+        details: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {}
         for question in questions:
             if not isinstance(question, Mapping):
                 continue
@@ -486,7 +567,7 @@ class CursorACPAdapter(ACPClientAdapter):
             if option_details:
                 prompt = question.get("prompt")
                 details[question_id] = (
-                    prompt if isinstance(prompt, str) else None,
+                    prompt if isinstance(prompt, str) and prompt else question_id,
                     option_details,
                 )
         return details
@@ -512,7 +593,6 @@ class CursorACPAdapter(ACPClientAdapter):
             for question_id, (prompt, options) in CursorACPAdapter._question_details(
                 params
             ).items()
-            if prompt is not None
         )
 
     @staticmethod
@@ -562,14 +642,16 @@ class CursorACPAdapter(ACPClientAdapter):
                 pending.future.set_result(None)
         self._pending_decisions.clear()
 
-    async def _list_decisions(self, tools: AgentToolsProtocol, room_id: str) -> None:
+    async def _list_decisions(
+        self, tools: AgentToolsProtocol, room_id: str, *, mentions: list[str]
+    ) -> None:
         pending = [
             f"`{token}` ({decision.kind})"
             for token, decision in self._pending_decisions.items()
             if decision.room_id == room_id
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")
-        await tools.send_message(content)
+        await tools.send_message(content, mentions=mentions)
 
 
 __all__ = [
