@@ -263,12 +263,14 @@ def _kiro_cli_available(settings: BaselineSettings) -> bool:
     """The Kiro CLI is on PATH *and* ``KIRO_API_KEY`` is set.
 
     Unlike Copilot (BYOK swaps out its own hosted auth for a plain Anthropic
-    key) Kiro's ACP mode has no provider-swap option -- `kiro-cli login` is
-    browser/device-flow OAuth only, tied to one AWS/Builder ID account. So the
-    binary alone can't make a matrix cell runnable the way it does for Codex/
-    Copilot/OpenCode: this dep folds in the credential too, and the whole Kiro
-    surface skips-with-reason without one rather than failing loud on every
-    cell.
+    key), Kiro's ACP mode has no provider-swap option -- `kiro-cli login` is
+    browser/device-flow OAuth only, and `KIRO_API_KEY` requires a paid Kiro
+    subscription this org has decided not to purchase (see the kiro_acp
+    registration's `e2e_pending` reason in toolkit/builders.py). Because of
+    that, the whole Kiro surface is registered `e2e_pending` rather than left
+    to fail loud on every shared-matrix cell -- this predicate only matters if
+    someone deliberately re-includes the pending adapter locally
+    (`specs(include_pending=True)`) with a personal key.
     """
     return _cli_on_path(settings.backends.kiro_command, "kiro-cli") and bool(
         settings.backends.kiro_api_key

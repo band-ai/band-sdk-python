@@ -186,14 +186,13 @@ class Backends(BaseSettings):
     copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
     # Kiro CLI over ACP (kiro_acp adapter). Command defaults to `kiro-cli acp`;
-    # override the binary + args via KIRO_COMMAND.
+    # override the binary + args via KIRO_COMMAND. The adapter is registered
+    # `e2e_pending` (see tests/e2e/baseline/toolkit/builders.py) -- KIRO_API_KEY
+    # requires a paid Kiro subscription this org has decided not to purchase,
+    # and kiro-cli has no BYOK/provider-swap route around it (unlike Copilot's
+    # CLI). These two settings only matter for someone deliberately re-including
+    # the pending adapter locally with a personal key.
     kiro_command: str = ""  # KIRO_COMMAND (override the `kiro-cli` binary + args)
-    # Unlike Copilot's CLI, Kiro's ACP mode has no BYOK/provider-swap option --
-    # `kiro-cli login` is browser/device-flow OAuth only, tied to one AWS/Builder
-    # ID account. KIRO_API_KEY (documented by the CLI's own embedded help-doc
-    # index for headless/CI-CD use) is therefore the gate for the *whole* Kiro
-    # matrix, not just one bespoke hosted-auth smoke the way GITHUB_TOKEN is for
-    # Copilot -- unset, every Kiro cell skips-with-reason rather than running.
     kiro_api_key: str = ""  # KIRO_API_KEY
 
 

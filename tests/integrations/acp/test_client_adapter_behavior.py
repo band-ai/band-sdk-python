@@ -27,6 +27,7 @@ from band.integrations.acp.client_adapter import (
     NEW_MESSAGE_MARKER_PREFIX,
     SYSTEM_UPDATE_PREFIX,
 )
+from band.integrations.acp.client_profiles import KiroACPClientProfile
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
@@ -875,3 +876,41 @@ async def test_replay_after_midrun_respawn() -> None:
     assert prompt.rstrip().endswith("What is my favorite color?"), (
         "the live message must come last so the model answers it, not the transcript"
     )
+
+
+class TestKiroACPClientProfileOverTheWire:
+    """Kiro's ``_kiro.dev/*`` extension handling, driven over a REAL ACP
+    connection rather than calling ``KiroACPClientProfile`` directly (see
+    ``test_client_adapter.py::TestACPCollectingClientKiroProfileExtensions``
+    for the isolated profile-object coverage). Proves the profile is actually
+    wired into a live turn when it's the adapter's active profile — no real
+    ``kiro-cli`` binary or ``KIRO_API_KEY`` required, standing in for the live
+    E2E coverage this org has no paid Kiro subscription to run (see
+    ``docs/acp.md``'s Kiro section).
+    """
+
+    @pytest.mark.asyncio
+    async def test_mcp_oauth_request_is_declined_over_the_wire(
+        self, fake_agent
+    ) -> None:
+        fake_agent.will_call_ext_method(
+            "_kiro.dev/mcp/oauth_request", {"url": "https://example.com"}
+        ).will_say("done")
+
+        async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
+            await session.send("do work")
+
+        assert fake_agent.ext_method_results == [{"outcome": "declined"}]
+
+    @pytest.mark.asyncio
+    async def test_metadata_notification_posts_context_window_plan_over_the_wire(
+        self, fake_agent
+    ) -> None:
+        fake_agent.will_send_ext_notification(
+            "_kiro.dev/metadata", {"used": 4200, "size": 128000}
+        ).will_say("done")
+
+        async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
+            reply = await session.send("do work")
+
+        assert reply.plans == ["[Kiro context window] 4200/128000 tokens (3%)"]

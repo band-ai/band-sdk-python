@@ -687,6 +687,23 @@ def kiro_acp_env(s: BaselineSettings, kiro_home: str) -> dict[str, str]:
     requires=[Dep.KIRO_CLI],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
+    # KIRO_API_KEY requires a paid Kiro Pro/Pro+/Pro Max/Power subscription
+    # (https://kiro.dev/docs/cli/headless/); this org has decided not to buy
+    # one, and kiro-cli has no BYOK/provider-swap route around it (verified:
+    # zero BYOK support in kiro-cli, and it's still an open, unimplemented
+    # community feature request upstream — see docs/acp.md's Kiro section).
+    # So unlike every other pending case, this isn't "not CI-wired yet" — it's
+    # structurally unrunnable without a purchase this org isn't making. Still
+    # registered (discovery guards require it) and still covered by
+    # KiroACPAdapter's unit tests plus the FakeACPAgent-driven wire tests in
+    # tests/integrations/acp/test_client_adapter_behavior.py, which exercise
+    # KiroACPClientProfile through a real ACP connection without needing a
+    # kiro-cli binary or key. Flip back to live if the subscription decision
+    # ever changes.
+    e2e_pending=(
+        "KIRO_API_KEY needs a paid Kiro subscription this org has decided "
+        "not to purchase; no BYOK route exists around it (see docs/acp.md)"
+    ),
 )
 def _build_kiro_acp(
     s: BaselineSettings,
@@ -709,7 +726,10 @@ def _build_kiro_acp(
     # Fully hermetic per-cell sandbox, mirroring copilot_acp's: a fresh temp cwd
     # (Kiro discovers project config from its working directory) and a fresh
     # KIRO_HOME. Dep.KIRO_CLI already gates on KIRO_API_KEY being set.
-    # KIRO_COMMAND overrides the binary + args.
+    # KIRO_COMMAND overrides the binary + args. This builder is e2e_pending
+    # (see the decorator above), so it never runs in the shared matrix today —
+    # kept correct for whoever flips it live, and directly callable with a
+    # personal key via specs(include_pending=True) / build_adapter().
     sandbox = tempfile.mkdtemp(prefix="band-e2e-kiro-acp-")
 
     config_kwargs: dict[str, Any] = {

@@ -314,11 +314,14 @@ async def test_file_round_trip_across_files_adapters(
 # separate tests.baseline.adapter.Adapter enum, a different registry). Differs
 # from that set by: -crewai_flow (its E2E builder is a hardcoded echo flow with
 # no Band tool loop, so there's no tool call for this to drive), +copilot_acp,
-# +cursor_acp, +omp_acp, +kiro_acp, and +letta (the ACP bridges wrap/share the
-# same MCP engine as opencode, so the unit-level set excludes them as having
-# no probe of their own, but the E2E matrix gives each a real live cell).
-# parlant isn't in Adapter at all -- confirmed unsupportable, no matrix cell
-# either way.
+# +cursor_acp, +omp_acp, and +letta (the ACP bridges wrap/share the same
+# already-fixed MCP engine as opencode, so the unit-level set excludes them
+# as having no probe of their own, but the E2E matrix gives each a real live
+# cell). kiro_acp shares that same MCP-engine fix too, but is e2e_pending (no
+# paid Kiro subscription -- see tests/e2e/baseline/toolkit/builders.py), so
+# @per_adapter would run it no cells anyway; listing it here would be
+# silently inert. parlant isn't in Adapter at all -- confirmed unsupportable,
+# no matrix cell either way.
 # test_image_passthrough_adapters_matches_unit_level_set below asserts this
 # relationship instead of leaving it to this comment alone.
 IMAGE_PASSTHROUGH_ADAPTERS = (
@@ -333,7 +336,6 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,
     Adapter.OMP_ACP,
-    Adapter.KIRO_ACP,
     Adapter.CODEX,
     Adapter.PYDANTIC_AI,
     Adapter.CREWAI,
