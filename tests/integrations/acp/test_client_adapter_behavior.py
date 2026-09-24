@@ -914,3 +914,112 @@ class TestKiroACPClientProfileOverTheWire:
             reply = await session.send("do work")
 
         assert reply.plans == ["[Kiro context window] 4200/128000 tokens (3%)"]
+
+
+class TestKiroMultiStageSessionRecall:
+    """Two REAL, sequential adapter lifecycles standing in for a `kiro-cli`
+    process restart -- the exact shape of the two live E2E tests deleted for
+    lack of a paid Kiro subscription (``test_kiro_acp_recall_via_room_replay_
+    when_session_load_misses`` / ``test_kiro_acp_recall_via_native_session_
+    load``, formerly in tests/e2e/baseline/smoke/adapters/test_kiro_acp.py).
+
+    Unlike the single-turn, hand-seeded-history tests above (e.g.
+    ``test_no_replay_when_remote_session_loads``), each test here runs a
+    genuine phase-1 turn through one adapter instance, tears it down, then
+    starts a SECOND adapter instance against the SAME ``FakeACPAgent`` for
+    phase 2 -- so the session id phase 2 resumes (or fails to resume) is
+    whatever phase 1 actually produced, not a hardcoded string. What a real
+    `KIRO_HOME` would persist across a restart is modeled by whether
+    ``agent.knows_session(...)`` was told about phase 1's session before
+    phase 2 starts.
+    """
+
+    @pytest.mark.asyncio
+    async def test_recalls_via_native_session_load_across_a_restart(self) -> None:
+        """A session/load HIT: phase 2 resumes phase 1's exact session and
+        recalls a fact only Kiro's own remote state holds -- no room replay."""
+        agent = FakeACPAgent(supports_session_load=True)
+        tracking_marker = "MARKER-7421"
+        agent_fact = "the sky is blue"
+
+        agent.will_say(f"Logged {tracking_marker}: {agent_fact}")
+        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session1:
+            await session1.send(
+                f"Log a note with tracking marker {tracking_marker} and state a fact.",
+                bootstrap=True,
+            )
+            first_session_id = session1.session_id("room-1")
+
+        # What a persisted KIRO_HOME would carry across the restart: the
+        # fake agent now "remembers" the session a real one's on-disk state
+        # would too.
+        agent.knows_session(first_session_id)
+        agent.will_say(f"{agent_fact}, tracked as {tracking_marker}")
+        history = ACPClientSessionState(room_to_session={"room-1": first_session_id})
+        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session2:
+            reply = await session2.send(
+                "What did you log earlier?", bootstrap=True, history=history
+            )
+            second_session_id = session2.session_id("room-1")
+
+        assert agent.session_load_requests == [first_session_id], (
+            "phase 2 must attempt to resume the exact session phase 1 created"
+        )
+        assert second_session_id == first_session_id, (
+            "a session/load hit must resume the same id, not mint a fresh one"
+        )
+        assert REPLAY_HEADER_LINE not in agent.prompt_texts()[-1], (
+            "a native resume must not also replay the room transcript on top"
+        )
+        assert any(agent_fact in text for text in reply.texts), (
+            f"expected the recalled fact {agent_fact!r} in {reply.texts!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_recalls_via_room_replay_when_session_load_misses_across_a_restart(
+        self,
+    ) -> None:
+        """A session/load MISS: phase 2 has no persisted state for phase 1's
+        session (a fresh KIRO_HOME after restart), so Band's own room-replay
+        fallback is the only way phase 2 recalls what phase 1 said."""
+        agent = FakeACPAgent(supports_session_load=True)
+        tracking_marker = "MARKER-9182"
+        agent_fact = "the sky is blue"
+
+        agent.will_say(f"Logged {tracking_marker}: {agent_fact}")
+        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session1:
+            await session1.send(
+                f"Log a note with tracking marker {tracking_marker} and state a fact.",
+                bootstrap=True,
+            )
+            first_session_id = session1.session_id("room-1")
+
+        # No agent.knows_session(...): a fresh KIRO_HOME after restart means
+        # session/load genuinely misses, same as the deleted live test's
+        # fresh-KIRO_HOME-per-phase setup.
+        agent.will_say(f"{agent_fact}, tracked as {tracking_marker}")
+        history = rehydration_history(
+            f"[Peer]: Log a note with tracking marker {tracking_marker} and "
+            "state a fact.",
+            f"[Fake Agent]: Logged {tracking_marker}: {agent_fact}",
+            session=first_session_id,
+        )
+        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session2:
+            reply = await session2.send(
+                "What did you log earlier?", bootstrap=True, history=history
+            )
+            second_session_id = session2.session_id("room-1")
+
+        assert agent.session_load_requests == [first_session_id], (
+            "phase 2 must attempt to resume the exact session phase 1 created"
+        )
+        assert second_session_id != first_session_id, (
+            "a session/load miss must fall back to a fresh session"
+        )
+        prompt = agent.prompt_texts()[-1]
+        assert REPLAY_HEADER_LINE in prompt and tracking_marker in prompt, (
+            "the miss must fall back to replaying phase 1's transcript"
+        )
+        assert any(agent_fact in text for text in reply.texts), (
+            f"expected the recalled fact {agent_fact!r} in {reply.texts!r}"
+        )

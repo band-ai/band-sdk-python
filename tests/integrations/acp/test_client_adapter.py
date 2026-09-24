@@ -2331,6 +2331,56 @@ class TestACPCollectingClientKiroProfileExtensions:
 
         assert client.get_collected_chunks() == []
 
+    @pytest.mark.asyncio
+    async def test_ext_notification_kiro_metadata_reads_snake_case_alias_keys(
+        self,
+    ) -> None:
+        """The exact field spelling is unconfirmed against a live session (no
+        paid Kiro subscription -- see docs/acp.md); both plausible shapes
+        must resolve to the same summary."""
+        client = ACPCollectingClient(profile=KiroACPClientProfile())
+
+        await client.ext_notification(
+            "_kiro.dev/metadata",
+            {
+                "sessionId": "sess-1",
+                "context_window_used": 10,
+                "context_window_size": 100,
+            },
+        )
+
+        chunks = client.get_collected_chunks("sess-1")
+        assert len(chunks) == 1
+        assert "10/100 tokens (10%)" in chunks[0].content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "usage",
+        [
+            pytest.param({"used": -1, "size": 100}, id="negative_used"),
+            pytest.param({"used": 0.5, "size": 100}, id="fractional_used"),
+            pytest.param({"used": 150, "size": 100}, id="used_exceeds_total"),
+            pytest.param({"used": 10, "size": 0}, id="zero_total"),
+            pytest.param({"used": 10, "size": -5}, id="negative_total"),
+            pytest.param({"used": float("nan"), "size": 100}, id="nan_used"),
+            pytest.param({"used": float("inf"), "size": 100}, id="infinite_used"),
+            pytest.param({"used": True, "size": 100}, id="bool_used"),
+        ],
+    )
+    async def test_ext_notification_kiro_metadata_ignores_malformed_usage(
+        self, usage: dict[str, object]
+    ) -> None:
+        """Out-of-range or wrong-typed values drop silently rather than posting
+        a nonsensical plan chunk (mirrors kiro-acp-adapter.test.ts's coverage
+        of the TS sibling's equivalent parsing)."""
+        client = ACPCollectingClient(profile=KiroACPClientProfile())
+
+        await client.ext_notification(
+            "_kiro.dev/metadata", {"sessionId": "sess-1", **usage}
+        )
+
+        assert client.get_collected_chunks("sess-1") == []
+
 
 class TestResolveACPClientProfile:
     """Tests for the profile-name -> ACPClientProfile lookup."""
