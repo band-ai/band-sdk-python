@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from band.integrations.acp.router import AgentRouter
     from band.integrations.acp.server import ACPServer, run_acp_server
     from band.integrations.acp.server_adapter import BandACPServerAdapter
+    from band.integrations.acp.session_config import ACPConfigRequest
     from band.integrations.acp.types import (
         ACPSessionState,
         CollectedChunk,
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ACPClientAdapter",
     "ACPClientSessionState",
+    "ACPConfigRequest",
     "ACPPushHandler",
     "ACPServer",
     "ACPSessionState",
@@ -79,6 +81,7 @@ __all__ = [
 
 _IMPORT_MAP: dict[str, tuple[str, str]] = {
     "ACPClientAdapter": ("band.integrations.acp.client_adapter", "ACPClientAdapter"),
+    "ACPConfigRequest": ("band.integrations.acp.session_config", "ACPConfigRequest"),
     "ACPClientSessionState": (
         "band.integrations.acp.client_types",
         "ACPClientSessionState",

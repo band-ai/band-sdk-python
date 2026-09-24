@@ -21,6 +21,7 @@ from band.adapters.copilot_acp import (
 )
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_profiles import NoopACPClientProfile
+from band.integrations.acp.session_config import ACPConfigRequest
 
 
 class TestCopilotACPAdapterConstruction:
@@ -110,6 +111,17 @@ class TestCopilotACPAdapterConstruction:
         tool = (EchoInput, _echo)
         adapter = CopilotACPAdapter(additional_tools=[tool])
         assert adapter._custom_tools == [tool]
+
+    def test_session_config_resolver_is_forwarded(self) -> None:
+        async def resolver(request: ACPConfigRequest) -> dict[str, str]:
+            del request
+            return {"reasoning_effort": "high"}
+
+        adapter = CopilotACPAdapter(
+            CopilotACPAdapterConfig(resolve_session_config=resolver)
+        )
+
+        assert adapter._resolve_session_config is resolver
 
 
 class TestCopilotACPAdapterTcpTransport:
