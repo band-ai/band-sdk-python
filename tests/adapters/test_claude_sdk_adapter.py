@@ -350,6 +350,23 @@ class TestOnStarted:
             assert sdk_options.fallback_model == "sonnet"
 
     @pytest.mark.asyncio
+    async def test_effort_is_forwarded(self):
+        """effort= should land in ClaudeAgentOptions.effort."""
+        adapter = ClaudeSDKAdapter(effort="xhigh")
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.effort == "xhigh"
+
+    @pytest.mark.asyncio
     async def test_approval_hook_matches_native_tools_only(self):
         """Manual approval must not intercept the adapter's own MCP tools."""
         adapter = ClaudeSDKAdapter(approval_mode="manual")

@@ -774,6 +774,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if room_id in self._room_to_session:
                 return self._room_to_session[room_id], False
             initializer = self._session_initializers.get(room_id)
+            if (
+                initializer is not None
+                and initializer.task.done()
+                and (
+                    initializer.task.cancelled()
+                    or initializer.task.exception() is not None
+                )
+            ):
+                self._session_initializers.pop(room_id)
+                initializer = None
             if initializer is None:
                 initializer = SessionInitializer(
                     task=asyncio.create_task(
@@ -851,12 +861,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             return None
 
-        await self._configure_session(
-            runtime,
-            room_id,
-            session_id,
-            session_config_options(loaded),
-        )
+        try:
+            await self._configure_session(
+                runtime,
+                room_id,
+                session_id,
+                session_config_options(loaded),
+            )
+        except BaseException:
+            await self._close_fresh_session(runtime, session_id)
+            raise
         await self._record_session(room_id, session_id)
         logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
         return session_id
@@ -985,10 +999,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if self._resolve_session_config is None:
             return
 
-        if not config_options:
-            return
-
-        catalog = tuple(config_options)
+        catalog = tuple(config_options or ())
         try:
             selections = await self._resolve_session_config(
                 ACPConfigRequest(
@@ -1026,17 +1037,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         error: ACPConfigError,
     ) -> None:
         logger.warning("ACP session configuration failed: %s", error)
-        await tools.send_event(
-            content=f"ACP session configuration failed: {error}",
-            message_type="error",
-            metadata={
-                "acp_error": str(error),
-                "acp_session_config": {
+        await tools.send_failure(
+            AgentFailure(
+                _PROVIDER,
+                f"ACP session configuration failed: {error}",
+                "acp_session_config",
+                {
                     "session_id": error.session_id,
                     "option_id": error.option_id,
                     "selected_value": error.selected_value,
                 },
-            },
+            )
         )
 
     def _claim_session_bootstrap(self, session_id: str) -> bool:
