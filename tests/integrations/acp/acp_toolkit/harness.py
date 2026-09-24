@@ -27,6 +27,10 @@ from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
 
 
+def _is_usage_event(event: dict[str, Any]) -> bool:
+    return USAGE_METADATA_KEY in (event.get("metadata") or {})
+
+
 @dataclass(frozen=True)
 class RoomActivity:
     """One room write, retained in the order the adapter made it."""
@@ -221,7 +225,16 @@ class Reply:
             e["content"]
             for e in self._events_of("task")
             if _SESSION_EVENT_MARKER not in (e.get("metadata") or {})
-            and USAGE_METADATA_KEY not in (e.get("metadata") or {})
+            and not _is_usage_event(e)
+        ]
+
+    @property
+    def usage(self) -> list[dict[str, Any]]:
+        """Per-turn token-usage payloads (see ``SimpleAdapter.emit_usage``), in order."""
+        return [
+            e["metadata"][USAGE_METADATA_KEY]
+            for e in self._events_of("task")
+            if _is_usage_event(e)
         ]
 
     @property

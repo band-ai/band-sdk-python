@@ -21,7 +21,7 @@ from acp import RequestError
 from acp.schema import Usage
 from pydantic import BaseModel
 
-from band.core.types import USAGE_METADATA_KEY, Capability
+from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
@@ -345,10 +345,6 @@ async def test_plan_relayed_as_task_event(fake_agent) -> None:
     assert "step one" in reply.plans[0] and "step two" in reply.plans[0]
 
 
-def usage_events(reply) -> list[dict]:
-    return [e for e in reply.events if USAGE_METADATA_KEY in (e.get("metadata") or {})]
-
-
 @pytest.mark.asyncio
 async def test_usage_emitted_from_prompt_response(fake_agent) -> None:
     """A standard ACP ``session/prompt`` response's ``usage`` becomes a usage event.
@@ -363,16 +359,17 @@ async def test_usage_emitted_from_prompt_response(fake_agent) -> None:
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("do work")
 
-    events = usage_events(reply)
-    assert len(events) == 1
     # thought_tokens folds into output_tokens: ACP reports it disjointly, like
     # codex/opencode's reasoning tokens (see TurnUsage._build's convention).
-    assert events[0]["metadata"][USAGE_METADATA_KEY] == {
-        "input_tokens": 10,
-        "output_tokens": 25,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-    }
+    # Equality against the full list also pins the record count to exactly one.
+    assert reply.usage == [
+        {
+            "input_tokens": 10,
+            "output_tokens": 25,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -383,7 +380,7 @@ async def test_no_usage_event_when_agent_does_not_report_it(fake_agent) -> None:
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("do work")
 
-    assert usage_events(reply) == []
+    assert reply.usage == []
 
 
 @pytest.mark.asyncio
