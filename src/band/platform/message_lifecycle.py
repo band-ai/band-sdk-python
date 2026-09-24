@@ -14,6 +14,7 @@ from band_rest.core.api_error import ApiError
 from band_rest.types.chat_message_metadata import ChatMessageMetadata
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.core.types import metadata_to_dict
 from band.runtime.types import PlatformMessage
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def _message_metadata(metadata: ChatMessageMetadata | None) -> dict[str, object]:
     """Normalize a Fern-typed message metadata into the plain dict PlatformMessage carries."""
-    return metadata.model_dump(exclude_none=True) if metadata else {}
+    return metadata_to_dict(metadata, exclude_none=True)
 
 
 class MessageLifecycle:

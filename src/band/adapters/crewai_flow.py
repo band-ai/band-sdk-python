@@ -56,6 +56,7 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
+    metadata_to_dict,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -104,18 +105,8 @@ class CrewAIFlowStateSource(Protocol):
 
 
 def _metadata_dict(item: dict[str, Any]) -> dict[str, Any]:
-    """An item's ``metadata`` as a plain dict, regardless of source.
-
-    ``AgentTools.fetch_room_context`` items carry it as the Fern-typed
-    ``ChatMessageMetadata`` model (``extra="allow"``); events from
-    ``AgentInput.history`` already carry a plain dict.
-    """
-    metadata = item.get("metadata")
-    if isinstance(metadata, dict):
-        return metadata
-    if isinstance(metadata, BaseModel):
-        return metadata.model_dump(exclude_none=True)
-    return {}
+    """An item's ``metadata`` field as a plain dict."""
+    return metadata_to_dict(item.get("metadata"), exclude_none=True)
 
 
 class RoomCacheEntry:

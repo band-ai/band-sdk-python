@@ -505,7 +505,7 @@ wheels = [
 
 [[package]]
 name = "band-client-rest"
-version = "0.0.38"
+version = "0.0.40"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -513,9 +513,9 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/e2/6c35fa5f0087dd2555db57bd2e780d81560d5ef5c33792e7b50213f957b2/band_client_rest-0.0.38.tar.gz", hash = "sha256:03b648aa5a6d79fb8343b5c51b2fd1e10c6d9b97a47f6d4981eae5c4e832037d", size = 148815, upload-time = "2026-09-17T14:06:22.525Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/92/fd56b20f1a416e6c616775365cb2228f41ccafc7f54a905e909bac764cb6/band_client_rest-0.0.40.tar.gz", hash = "sha256:4866bce38f03fa8137cf35bb01e4cd550c4b874fd56a3960b8809dd657cdb29e", size = 148885, upload-time = "2026-09-22T14:26:03.224Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/68/71311c3529d176c1daf773b996e7687e28d055a7a1469350ef770e4fd0ff/band_client_rest-0.0.38-py3-none-any.whl", hash = "sha256:d1418a950b5ce95ceef6889b2f801ea3baecce7bfb88b6626b8d4b7130ba5641", size = 328692, upload-time = "2026-09-17T14:06:21.179Z" },
+    { url = "https://files.pythonhosted.org/packages/07/d5/fb42f53472ba77eb86cd264b52fe13ec3777200059cacf1d2a5bb139258d/band_client_rest-0.0.40-py3-none-any.whl", hash = "sha256:49ac08e47b04f7c50a14387b999505f69a84adc8831e4d9629784f7ae9f8c5d5", size = 328751, upload-time = "2026-09-22T14:26:02.032Z" },
 ]
 
 [[package]]
@@ -534,7 +534,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "band-client-rest", specifier = "==0.0.38" },
+    { name = "band-client-rest", specifier = "==0.0.40" },
     { name = "band-sdk", editable = "." },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1,<2" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
@@ -795,7 +795,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0,<1" },
     { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0,<1" },
     { name = "async-lru", specifier = ">=2.3.0" },
-    { name = "band-client-rest", specifier = "==0.0.38" },
+    { name = "band-client-rest", specifier = "==0.0.40" },
     { name = "band-sdk-core", specifier = "==2.5.0" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },

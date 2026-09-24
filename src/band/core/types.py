@@ -320,6 +320,29 @@ USAGE_EVENT_TYPE: MessageType = MessageType.TASK
 USAGE_METADATA_KEY: str = "band_usage"
 
 
+def metadata_to_dict(metadata: object, *, exclude_none: bool = False) -> dict[str, Any]:
+    """Normalize message/event metadata to a plain dict, whether it arrived as
+    a dict or a Pydantic model (e.g. the Fern client's frozen, ``.get()``-less
+    ``ChatMessageMetadata``, or the websocket ``MessageMetadata``).
+
+    ``exclude_none`` defaults to ``False`` (a bare ``model_dump()``) for read
+    paths that only ever ``.get()`` a specific key, where an explicit-``None``
+    vs. absent distinction never matters. Every call site that *constructs* a
+    ``PlatformMessage.metadata`` field (``_message_metadata``,
+    ``DefaultPreprocessor``) opts into ``exclude_none=True``, so that field
+    has one consistent shape — free of ``None``-valued housekeeping keys —
+    regardless of whether the message came from REST or the websocket."""
+    if isinstance(metadata, dict):
+        return metadata
+
+    model_dump = getattr(metadata, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(exclude_none=exclude_none)
+        return dumped if isinstance(dumped, dict) else {}
+
+    return {}
+
+
 def is_usage_event(metadata: object) -> bool:
     """Whether an event's ``metadata`` marks it as a usage record (see
     ``SimpleAdapter.emit_usage``).
@@ -330,7 +353,7 @@ def is_usage_event(metadata: object) -> bool:
     for "is this a usage event", so a new consumer has one guard to reuse instead
     of re-deriving the ``band_usage`` check. It would be retired if usage ever
     became a first-class ``usage`` message_type."""
-    return isinstance(metadata, Mapping) and USAGE_METADATA_KEY in metadata
+    return USAGE_METADATA_KEY in metadata_to_dict(metadata)
 
 
 @dataclass(frozen=True)
