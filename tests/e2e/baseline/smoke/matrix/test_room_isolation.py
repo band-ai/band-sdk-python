@@ -18,13 +18,13 @@ reliably refuse to repeat a credential-shaped value, an unrelated false failure.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
-    REPLY_PROMPT,
     REMEMBER,
+    REPLY_PROMPT,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory

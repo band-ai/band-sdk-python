@@ -15,11 +15,9 @@ prompt so the only action they take is the requested tool call.
 
 from __future__ import annotations
 
-
 import pytest
 
 from band.core.types import MessageType
-
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
@@ -27,10 +25,9 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     emit_thoughts_instruction,
     unique_marker,
 )
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
 
 EVENT_TYPES = [MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 

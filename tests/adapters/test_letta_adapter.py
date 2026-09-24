@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,8 +22,12 @@ from band.adapters.letta import (
     RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import Emit
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
     default_enforcement,
     make_assistant_message,
@@ -35,7 +40,6 @@ from tests.adapters.lettakit import (
     make_tool_call_message,
     make_tool_return_message,
 )
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Initialization
@@ -149,6 +153,43 @@ class TestLettaAdapterOnMessagePerRoom:
         assert tools.messages_sent[0]["content"] == "I'll help you!"
 
     @pytest.mark.asyncio
+    async def test_send_message_failure_is_not_reported_as_provider_failure(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """The Letta agent answered fine; the room POST is what failed. That
+        must not surface as a Letta AgentFailure -- deliver_reply's
+        DeliveryFailedError must be recognized and left unreported here."""
+        adapter, mock_client = adapter_with_client
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_assistant_message("I'll help you!")
+        )
+
+        tools = FakeAgentTools()
+
+        async def _raise(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("platform rejected the message")
+
+        tools.send_message = _raise  # type: ignore[method-assign]
+
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_skip_auto_relay_when_send_message_used(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -198,6 +239,53 @@ class TestLettaAdapterOnMessagePerRoom:
         msg = make_platform_message()
         history = LettaSessionState()
 
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert "timed out" in failures[0]["message"]
+        assert failures[0]["provider"] == "letta"
+        assert failures[0]["code"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_slow_delivery_is_not_misreported_as_provider_timeout(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """turn_timeout_s bounds only the Letta round-trip. A room POST that
+        is merely slow (not the Letta call) must not be misreported as a
+        Letta provider timeout -- it must be given time to complete."""
+        adapter, mock_client = adapter_with_client
+        adapter.config.turn_timeout_s = 0.05
+
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        # The Letta call itself responds instantly, well inside turn_timeout_s.
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_assistant_message("I'll help you!")
+        )
+
+        tools = FakeAgentTools()
+        real_send_message = tools.send_message
+
+        async def _slow_send_message(*args: Any, **kwargs: Any) -> Any:
+            # Longer than turn_timeout_s: only the provider call may race it.
+            await asyncio.sleep(0.15)
+            return await real_send_message(*args, **kwargs)
+
+        tools.send_message = _slow_send_message  # type: ignore[method-assign]
+
+        msg = make_platform_message()
+        history = LettaSessionState()
+
         await adapter.on_message(
             msg,
             tools,
@@ -208,9 +296,88 @@ class TestLettaAdapterOnMessagePerRoom:
             room_id="room-1",
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert "timed out" in error_events[0]["content"]
+        assert len(tools.messages_sent) == 1
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
+    async def test_send_event_timeout_is_not_misreported_as_provider_timeout(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A TimeoutError from tool-event reporting (send_event) -- not the
+        Letta round-trip itself -- must fall through to the generic failure
+        path, never be mislabeled as a Letta provider timeout. (send_failure
+        itself best-effort-swallows the same broken channel here, same as
+        production, so the room never receives a failure event either way --
+        what this guards is which branch is taken/logged.)"""
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.tool_ids = []
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        # The Letta round-trip itself returns instantly -- well inside
+        # turn_timeout_s -- so any TimeoutError must come from elsewhere.
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message("band_lookup_peers", "{}"),
+            make_tool_return_message("band_lookup_peers", '{"peers": []}'),
+        )
+
+        tools = FakeAgentTools()
+        tools.send_event_error = TimeoutError("event POST hiccup")
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        with (
+            caplog.at_level(logging.ERROR, logger="band.adapters.letta"),
+            pytest.raises(TimeoutError),
+        ):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert not any("timed out" in r.message for r in caplog.records)
+        assert any("Error during Letta turn" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_reports_and_propagates(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """A bare exception from the Letta client (not a timeout, not a
+        delivery failure) must still surface via the generic fallback."""
+        adapter, mock_client = adapter_with_client
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+        mock_client.agents.messages.create.side_effect = ConnectionError(
+            "letta connection reset"
+        )
+
+        tools = FakeAgentTools()
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        with pytest.raises(ConnectionError, match="letta connection reset"):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        failure = reported_failures(tools)[0]
+        assert failure["provider"] == "letta"
+        assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "letta connection reset" not in failure["message"]
 
     @pytest.mark.asyncio
     async def test_participants_and_contacts_injected(
@@ -282,19 +449,21 @@ class TestLettaAdapterOnMessagePerRoom:
         msg = make_platform_message()
         history = LettaSessionState()
 
-        await adapter.on_message(
-            msg,
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert "not initialized" in error_events[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert "not initialized" in failures[0]["message"]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -860,7 +1029,7 @@ class TestRejoinContext:
         adapter._mcp.tool_ids = []
         adapter._mcp.server_id = "mcp-server-1"
 
-        last_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        last_time = datetime.now(UTC) - timedelta(hours=2)
         adapter._rooms["room-1"] = RoomContext(
             agent_id="agent-1",
             last_interaction=last_time,
@@ -1043,31 +1212,31 @@ class TestMemoryConsolidation:
 
 class TestFormatTimeAgo:
     def test_seconds(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(seconds=30)
+        dt = datetime.now(UTC) - timedelta(seconds=30)
         assert "30s" == LettaAdapter._format_time_ago(dt)
 
     def test_minutes(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(minutes=5)
+        dt = datetime.now(UTC) - timedelta(minutes=5)
         assert "5m" == LettaAdapter._format_time_ago(dt)
 
     def test_hours(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(hours=3)
+        dt = datetime.now(UTC) - timedelta(hours=3)
         assert "3h" == LettaAdapter._format_time_ago(dt)
 
     def test_one_hour(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(hours=1)
+        dt = datetime.now(UTC) - timedelta(hours=1)
         assert "1 hour" == LettaAdapter._format_time_ago(dt)
 
     def test_days(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(days=5)
+        dt = datetime.now(UTC) - timedelta(days=5)
         assert "5d" == LettaAdapter._format_time_ago(dt)
 
     def test_one_day(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(days=1)
+        dt = datetime.now(UTC) - timedelta(days=1)
         assert "1 day" == LettaAdapter._format_time_ago(dt)
 
     def test_naive_datetime_treated_as_utc(self) -> None:
-        dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
+        dt = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10)
         result = LettaAdapter._format_time_ago(dt)
         assert "10m" == result
 
@@ -1232,20 +1401,22 @@ class TestAutoRelayDisabled:
         )
 
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            LettaSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         assert len(tools.messages_sent) == 0
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert "band_send_message" in error_events[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert "band_send_message" in failures[0]["message"]
 
     @pytest.mark.asyncio
     async def test_disabled_relay_quiet_when_send_tool_used(self) -> None:
@@ -1273,7 +1444,7 @@ class TestAutoRelayDisabled:
         )
 
         assert len(tools.messages_sent) == 0
-        assert not [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert not reported_failures(tools)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1326,6 +1497,37 @@ class TestColdBootSeeding:
         assert adapter._rooms["room-1"].pending_seed == []
 
     @pytest.mark.asyncio
+    async def test_reported_turn_consumes_delivered_seed(self) -> None:
+        """A completed provider call consumes its seed before response handling."""
+        adapter = LettaAdapter(config=LettaAdapterConfig(auto_relay=False))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test prompt"
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._mcp.tool_ids = []
+        room_ctx = RoomContext(
+            agent_id="agent-1", pending_seed=["[Alice]: Earlier context"]
+        )
+        adapter._rooms["room-1"] = room_ctx
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_assistant_message("The response was not sent through the tool.")
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                FakeAgentTools(),
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert room_ctx.pending_seed == []
+        assert room_ctx.last_interaction is not None
+
+    @pytest.mark.asyncio
     async def test_failed_first_turn_preserves_pending_seed(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -1339,15 +1541,16 @@ class TestColdBootSeeding:
             replay_messages=["[Alice]: The secret word is kumquat."]
         )
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(content="what was the secret word?"),
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(content="what was the secret word?"),
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         assert adapter._rooms["room-1"].pending_seed == [
             "[Alice]: The secret word is kumquat."

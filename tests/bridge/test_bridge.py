@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
 from bridge_core.bridge import AgentRunner, BandBridge
 from bridge_core.config import BridgeConfig, ReconnectConfig
 from bridge_core.forwarder import Forwarder
-from band.runtime.types import PlatformMessage
+
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -18,9 +18,9 @@ from band.platform.event import (
     RoomDeletedEvent,
     RoomRemovedEvent,
 )
+from band.runtime.types import PlatformMessage
 
 from .conftest import FakeForwarder, make_http_agent, make_link_mock
-
 
 # ---------------------------------------------------------------------------
 # Event helpers
@@ -344,7 +344,7 @@ def _make_platform_message(
         sender_name="Someone",
         message_type="user",
         metadata={},
-        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
 

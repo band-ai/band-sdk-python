@@ -16,7 +16,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from band_mcp import shared as shared_mod
 from band_mcp.config import Config
 from band_mcp.shared import (
@@ -24,8 +23,9 @@ from band_mcp.shared import (
     StandaloneResolver,
     build_standalone_resolver,
 )
+
 from band.core.exceptions import BandToolError
-from band.runtime.tools import ToolDefinition, SendMessageInput, GetParticipantsInput
+from band.runtime.tools import GetParticipantsInput, SendMessageInput, ToolDefinition
 from band.testing.fake_tools import FakeAgentTools
 from tests.mcp.conftest import FakeHumanTools
 
@@ -105,13 +105,15 @@ async def test_invoke_human_dispatches_to_singleton():
 async def test_invoke_human_raises_and_warns_when_unavailable(caplog):
     resolver = StandaloneResolver(human_tools=None)
 
-    with caplog.at_level(logging.WARNING, logger="band_mcp.shared"):
-        with pytest.raises(RuntimeError, match="human tools not available"):
-            await resolver.invoke(
-                _definition("band_get_my_profile", "get_my_profile", surface="human"),
-                None,
-                {},
-            )
+    with (
+        caplog.at_level(logging.WARNING, logger="band_mcp.shared"),
+        pytest.raises(RuntimeError, match="human tools not available"),
+    ):
+        await resolver.invoke(
+            _definition("band_get_my_profile", "get_my_profile", surface="human"),
+            None,
+            {},
+        )
     assert any("human tools not available" in r.message for r in caplog.records)
 
 
@@ -286,13 +288,13 @@ async def test_invoke_agent_survives_its_own_cache_entry_evicted_mid_flight(
     result = await send_task
 
     room_a_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
-    assert result == room_a_tools.messages_sent[0]
+    assert result.id == room_a_tools.messages_sent[0]["id"]
 
     release.set()
     result = await send_task
 
     room_a_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
-    assert result == room_a_tools.messages_sent[0]
+    assert result.id == room_a_tools.messages_sent[0]["id"]
 
 
 async def test_get_agent_tools_accepts_none_cache_key_with_sdk_room_sentinel(
@@ -391,7 +393,7 @@ async def test_invoke_send_message_refreshes_participants_first():
 
     assert fake_agent_tools.call_order == ["get_participants", "send_message"]
     fake_agent_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
-    assert result == fake_agent_tools.messages_sent[0]
+    assert result.id == fake_agent_tools.messages_sent[0]["id"]
 
 
 async def test_invoke_send_message_discards_cache_entry_on_refresh_failure():
@@ -414,8 +416,22 @@ async def test_invoke_send_message_error_enriched_with_available_handles():
     fake_agent_tools = BareBandToolErrorAgentTools(
         room_id="room_A",
         participants=[
-            {"id": "user-1", "name": "Alice", "handle": "@alice"},
-            {"id": "self", "name": "Self", "handle": "@self"},
+            {
+                "id": "user-1",
+                "name": "Alice",
+                "handle": "@alice",
+                "role": "member",
+                "status": "active",
+                "type": "User",
+            },
+            {
+                "id": "self",
+                "name": "Self",
+                "handle": "@self",
+                "role": "member",
+                "status": "active",
+                "type": "Agent",
+            },
         ],
         agent_id="self",
     )

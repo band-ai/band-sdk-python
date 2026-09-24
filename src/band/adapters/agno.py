@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agno.media import Image
 from agno.tools.function import ToolResult
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.converters.agno import AgnoHistoryConverter, AgnoMessages
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -25,7 +27,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -111,7 +112,7 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
                         decode_image_block(block) for block in result["content"]
                     )
                 ]
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 # A malformed or future-extended image block (see
                 # is_mcp_content_result's docstring) must degrade to the
                 # adapter's usual error string, not raise uncaught out of
@@ -465,18 +466,18 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         :meth:`_run_streamed`), matching the other adapters' live reporting.
         Otherwise it runs non-streaming, exactly as before.
         """
-        agent = self._agent
-        if agent is None:
-            raise RuntimeError("AgnoAdapter was used before on_started()")
-        session_id = self._session_id_factory(room_id)
-        logger.debug(
-            "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
-            room_id,
-            msg_id,
-            len(messages),
-            session_id,
-        )
         try:
+            agent = self._agent
+            if agent is None:
+                raise RuntimeError("AgnoAdapter was used before on_started()")
+            session_id = self._session_id_factory(room_id)
+            logger.debug(
+                "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
+                room_id,
+                msg_id,
+                len(messages),
+                session_id,
+            )
             with _bind_room_tools(tools):
                 if Emit.TOOL_CALLS in self.features.emit:
                     response = await self._run_streamed(
@@ -494,22 +495,19 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             # the turn as failed rather than as a silent empty reply.
             if response is not None and response.status == RunStatus.error:
                 raise AgnoRunError(_error_summary(response.content))
-        except Exception:
+        except Exception as e:
             # Keep the user-facing payload generic; the full traceback is in the
             # agent log via logger.exception. Exception text can include DB
-            # strings, paths, and tokens that must not surface in chat.
+            # strings, paths, and tokens that must not surface in chat. Only
+            # the coarse RunStatus.error code -- never response.content -- is
+            # safe to attach.
             logger.exception(
                 "Room %s msg %s: error running Agno agent", room_id, msg_id
             )
-            try:
-                await tools.send_event(
-                    content="Internal error while processing message; see agent logs.",
-                    message_type="error",
-                )
-            except Exception:
-                logger.exception(
-                    "Room %s msg %s: failed to report error event", room_id, msg_id
-                )
+            code = RunStatus.error.value if isinstance(e, AgnoRunError) else None
+            await tools.send_failure(
+                AgentFailure("agno", GENERIC_PROVIDER_FAILURE_MESSAGE, code)
+            )
             raise
 
         if response is None:
@@ -732,7 +730,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
         try:
             await tools.send_event(content=text, message_type="thought")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s msg %s: failed to report thought: %s", room_id, msg_id, e
             )
@@ -798,7 +796,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             await tools.send_event(
                 content=json.dumps(payload), message_type=message_type
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s msg %s: failed to report %s %s: %s",
                 room_id,

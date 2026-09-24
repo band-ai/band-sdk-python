@@ -25,7 +25,7 @@ to_observed = conductor.to_observed
 PM, DEV, ARCH = "pm-id", "dev-id", "arch-id"
 
 
-_STAMP = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+_STAMP = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 def make_message(
@@ -102,9 +102,7 @@ def test_to_observed_projects_all_breaker_inputs() -> None:
         "projection must carry the classified sender"
     )
     assert obs.mentions_architect is True, "projection must carry the handoff signal"
-    assert (
-        obs.timestamp == dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp()
-    ), (
+    assert obs.timestamp == dt.datetime(2026, 1, 1, tzinfo=dt.UTC).timestamp(), (
         "projection must use the message's own timestamp so the breaker's clock is the room's clock"
     )
 

@@ -9,17 +9,22 @@ import logging
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import httpx
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConnectionError
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -62,6 +67,8 @@ from band.runtime.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "opencode"
 
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
@@ -493,16 +500,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             raise
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
-            await tools.send_event(
-                self._format_http_error(exc),
-                "error",
+            await tools.send_failure(
+                AgentFailure(
+                    _PROVIDER,
+                    self._format_http_error(exc),
+                    str(exc.response.status_code),
+                )
             )
+            raise
         except Exception:
             logger.exception("Unexpected OpenCode adapter failure in room %s", room_id)
-            await tools.send_event(
-                "OpenCode failed while processing the message.",
-                "error",
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
+            raise
 
     async def on_cleanup(self, room_id: str) -> None:
         room_state: RoomState | None = None
@@ -679,7 +690,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             if mcp_backend is not None and client is not None:
                 try:
                     await client.disconnect_mcp_server(self._mcp_server_name)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.debug(
                         "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
                         self._mcp_server_name,
@@ -923,7 +934,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
         try:
             await self._await_turn(room_state, turn_future)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "OpenCode turn timed out for room %s (session=%s)",
                 room_id,
@@ -931,9 +942,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
             await self._abort_session(room_state, "timed-out")
             if room_state.tools:
-                await room_state.tools.send_event(
-                    "OpenCode timed out before completing the turn.",
-                    "error",
+                await room_state.tools.send_failure(
+                    AgentFailure(
+                        _PROVIDER,
+                        "OpenCode timed out before completing the turn.",
+                        FAILURE_CODE_TIMEOUT,
+                    )
                 )
             # Tokens spent before the timeout were still spent — emit them, same
             # as the success path (best-effort; no-op if none captured).
@@ -1020,7 +1034,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     asyncio.shield(turn_future), max(deadline() - loop.time(), 0.0)
                 )
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Genuinely out of compute budget with nobody deliberating.
                 if not approvals.awaiting_human() and deadline() <= loop.time():
                     raise
@@ -1072,7 +1086,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if room_state.tools is None or not room_state.session_id:
             return
 
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         # Best-effort bookkeeping: a transient post failure must not abort the
         # turn before the model runs (the outer on_message handler would catch
         # it and drop the user's message). Leave persisted_session_id unset on
@@ -1127,8 +1141,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     text, mentions=room_state.pending_mentions
                 )
             elif room_state.last_error_message:
-                await room_state.tools.send_event(
-                    room_state.last_error_message, "error"
+                await room_state.tools.send_failure(
+                    AgentFailure(_PROVIDER, room_state.last_error_message)
                 )
             elif not replied:
                 await room_state.tools.send_message(

@@ -12,6 +12,11 @@ from typing import Literal, Protocol, cast
 from acp import connect_to_agent, spawn_agent_process, text_block
 from acp.exceptions import RequestError
 from acp.interfaces import Client
+from acp.schema import (
+    LoadSessionResponse,
+    NewSessionResponse,
+    SetSessionConfigOptionResponse,
+)
 
 from band.integrations.acp.client_profiles import (
     ACPClientProfile,
@@ -220,7 +225,9 @@ class ACPConnectionProtocol(Protocol):
 
     async def authenticate(self, *, method_id: str) -> object: ...
 
-    async def new_session(self, *, cwd: str, mcp_servers: list[object]) -> object: ...
+    async def new_session(
+        self, *, cwd: str, mcp_servers: list[object]
+    ) -> NewSessionResponse: ...
 
     async def load_session(
         self,
@@ -228,9 +235,21 @@ class ACPConnectionProtocol(Protocol):
         cwd: str,
         session_id: str,
         mcp_servers: list[object],
-    ) -> object: ...
+    ) -> LoadSessionResponse | None: ...
 
     async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
+
+    async def set_config_option(
+        self,
+        *,
+        config_id: str,
+        session_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse | None: ...
+
+    async def close_session(self, session_id: str) -> object: ...
+
+    async def cancel(self, session_id: str) -> None: ...
 
 
 class ACPSpawnContextProtocol(Protocol):
@@ -239,12 +258,6 @@ class ACPSpawnContextProtocol(Protocol):
     async def __aenter__(self) -> tuple[ACPConnectionProtocol, object]: ...
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> object: ...
-
-
-class ACPNewSessionProtocol(Protocol):
-    """Protocol for ACP session creation responses."""
-
-    session_id: str
 
 
 class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optional methods treated as abstract by pyrefly
@@ -684,12 +697,14 @@ class ACPRuntime:
         *,
         command: list[str],
         env: dict[str, str] | None = None,
+        cwd: str | None = None,
         auth_method: str | None = None,
         client_factory: Callable[[], ACPCollectingClient] | None = None,
         spawn_process: Callable[..., object] | None = None,
     ) -> None:
         self._command = list(command)
         self._env = env
+        self._cwd = cwd
         self._auth_method = auth_method
         self._client_factory = client_factory or ACPCollectingClient
         self._spawn_process = spawn_process or spawn_agent_process
@@ -702,6 +717,7 @@ class ACPRuntime:
         self._stop_lock = asyncio.Lock()
         self._agent_mcp_transport: MCPTransportKind = "http"
         self._agent_supports_session_load = False
+        self._agent_supports_session_close = False
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -720,6 +736,7 @@ class ACPRuntime:
                 # injected spawn_process closure) and receives no positional args.
                 *self._command,
                 env=self._env,
+                cwd=self._cwd,
                 transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
             ),
         )
@@ -729,6 +746,9 @@ class ACPRuntime:
             init_response = await self._conn.initialize(protocol_version=1)
             self._agent_mcp_transport = self._select_mcp_transport(init_response)
             self._agent_supports_session_load = self._select_session_load(init_response)
+            self._agent_supports_session_close = self._select_session_close(
+                init_response
+            )
             if self._auth_method:
                 await self._conn.authenticate(method_id=self._auth_method)
                 logger.info("Authenticated with method: %s", self._auth_method)
@@ -749,7 +769,7 @@ class ACPRuntime:
         async with self._stop_lock:
             if self._conn is None:
                 if self._ctx is None and can_respawn:
-                    await self.start(respawn=True)
+                    await self.start(respawn=False)
                 else:
                     raise RuntimeError(
                         "ACP client not initialized. Call on_started first."
@@ -762,12 +782,17 @@ class ACPRuntime:
         return conn
 
     async def create_session(self, *, cwd: str, mcp_servers: list[object]) -> str:
+        session = await self.create_session_response(cwd=cwd, mcp_servers=mcp_servers)
+        return session.session_id
+
+    async def create_session_response(
+        self, *, cwd: str, mcp_servers: list[object]
+    ) -> NewSessionResponse:
         conn = await self.ensure_connection(can_respawn=False)
-        session = cast(
-            ACPNewSessionProtocol,
+        return cast(
+            NewSessionResponse,
             await conn.new_session(cwd=cwd, mcp_servers=mcp_servers),
         )
-        return session.session_id
 
     async def load_session(
         self,
@@ -776,16 +801,31 @@ class ACPRuntime:
         session_id: str,
         mcp_servers: list[object],
     ) -> bool:
+        return (
+            await self.load_session_response(
+                cwd=cwd,
+                session_id=session_id,
+                mcp_servers=mcp_servers,
+            )
+        ) is not None
+
+    async def load_session_response(
+        self,
+        *,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[object],
+    ) -> LoadSessionResponse | None:
         """Load a persisted ACP session when the connected agent supports it.
 
         ACP session IDs are meaningful only to the agent process that owns them.
         A successful ``session/load`` is therefore the boundary where a persisted ID
         becomes usable on this connection. An unsupported, unavailable, slow, or
-        erroring load returns ``False`` so callers can create a fresh session
+        erroring load returns ``None`` so callers can create a fresh session
         without blocking a turn.
         """
         if not self._agent_supports_session_load:
-            return False
+            return None
 
         conn = await self.ensure_connection(can_respawn=False)
         try:
@@ -803,7 +843,7 @@ class ACPRuntime:
                 session_id,
                 ACP_SESSION_LOAD_TIMEOUT_SECONDS,
             )
-            return False
+            return None
         except RequestError as error:
             # Any load failure is equally recoverable: the caller falls back to
             # a fresh session (with history replay) rather than letting a remote
@@ -816,8 +856,30 @@ class ACPRuntime:
                     session_id,
                     error,
                 )
-            return False
-        return response is not None
+            return None
+        return response
+
+    async def set_config_option(
+        self,
+        *,
+        session_id: str,
+        config_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse | None:
+        """Set one advertised select option and return the refreshed catalog."""
+        conn = await self.ensure_connection(can_respawn=False)
+        return await conn.set_config_option(
+            session_id=session_id,
+            config_id=config_id,
+            value=value,
+        )
+
+    async def close_session(self, session_id: str) -> None:
+        """Close a session when the agent advertised lifecycle support."""
+        if not self._agent_supports_session_close:
+            return
+        conn = await self.ensure_connection(can_respawn=False)
+        await conn.close_session(session_id)
 
     async def prompt(
         self,
@@ -837,6 +899,11 @@ class ACPRuntime:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
         return self.get_collected_chunks(session_id)
+
+    async def cancel_turn(self, session_id: str) -> None:
+        """Tell the agent to stop a timed-out room's prompt."""
+        conn = await self.ensure_connection(can_respawn=False)
+        await conn.cancel(session_id)
 
     def reset_session(self, session_id: str) -> None:
         if self._client is not None:
@@ -867,6 +934,11 @@ class ACPRuntime:
         """
         return self._client
 
+    @property
+    def agent_mcp_transport(self) -> MCPTransportKind:
+        """The MCP transport the connected agent negotiated during ``start()``."""
+        return self._agent_mcp_transport
+
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         async with self._stop_lock:
@@ -875,6 +947,7 @@ class ACPRuntime:
             self._conn = None
             self._client = None
             self._agent_supports_session_load = False
+            self._agent_supports_session_close = False
         if ctx is None:
             return
         try:
@@ -894,6 +967,7 @@ class ACPRuntime:
         self._ctx = None
         self._conn = None
         self._agent_supports_session_load = False
+        self._agent_supports_session_close = False
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> MCPTransportKind:
@@ -911,6 +985,12 @@ class ACPRuntime:
     def _select_session_load(init_response: object) -> bool:
         capabilities = getattr(init_response, "agent_capabilities", None)
         return getattr(capabilities, "load_session", False) is True
+
+    @staticmethod
+    def _select_session_close(init_response: object) -> bool:
+        capabilities = getattr(init_response, "agent_capabilities", None)
+        session_capabilities = getattr(capabilities, "session_capabilities", None)
+        return getattr(session_capabilities, "close", None) is not None
 
     @staticmethod
     def _is_missing_session_error(error: RequestError) -> bool:

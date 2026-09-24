@@ -14,7 +14,6 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-
 from band_mcp.config import (
     Config,
     ConfigError,

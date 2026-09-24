@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
@@ -426,7 +426,7 @@ class TestCursor:
         """The shape of the loss: a quiet tick on a machine whose clock ran
         ahead, then a message committing with an earlier platform timestamp.
         A locally minted cursor filtered it out of every later read."""
-        clock = Clock(datetime(2026, 1, 2, tzinfo=timezone.utc))
+        clock = Clock(datetime(2026, 1, 2, tzinfo=UTC))
         live = room(
             [message("m-1", "2026-01-01T00:00:01Z")],
             [message("m-1", "2026-01-01T00:00:01Z")],

@@ -9,6 +9,7 @@ import warnings
 from typing import Any, ClassVar, cast
 
 import httpx
+from band_sdk_core import AgentFailure
 from pydantic import ValidationError
 from typing_extensions import Unpack
 
@@ -23,8 +24,9 @@ except ImportError as e:
         "Or: uv add google-genai"
     ) from e
 
+from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -35,7 +37,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -53,6 +54,8 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER = "gemini"
+
 
 def _image_function_response_parts(
     result: dict[str, Any],
@@ -69,6 +72,18 @@ def _image_function_response_parts(
             )
         )
     return parts
+
+
+def _to_agent_failure(e: Exception) -> AgentFailure:
+    """Parse a turn-ending exception into the shared provider-failure shape.
+
+    ``ServerError`` carries an HTTP status and message that a plain
+    exception's text alone does not.
+    """
+    if isinstance(e, ServerError):
+        status = e.status if e.status is None else str(e.status)
+        return AgentFailure(_PROVIDER, str(e), status, e.message)
+    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -240,18 +255,20 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         try:
             while True:
                 if tool_rounds >= self.max_tool_rounds:
-                    raise RuntimeError(
+                    message = (
                         f"Exceeded max tool rounds ({self.max_tool_rounds}) "
                         f"in room {room_id}"
                     )
+                    await tools.send_failure(AgentFailure(_PROVIDER, message))
+                    raise RuntimeError(message)
 
                 try:
                     response = await self._call_gemini(
                         contents=self._message_history[room_id], tools=gemini_tools
                     )
                 except Exception as e:
-                    logger.exception("Error calling Gemini: %s", e)
-                    await self._report_error(tools, str(e))
+                    logger.exception("Error calling Gemini")
+                    await tools.send_failure(_to_agent_failure(e))
                     raise
 
                 turn_usage = turn_usage + self._usage_from_response(response)
@@ -530,7 +547,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_call event: %s", e)
 
             response_parts: list[types.FunctionResponsePart] | None = None
@@ -558,8 +575,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             except Exception as e:
                 result_str = f"Error: {e}"
                 is_error = True
-                logger.exception("Tool %s failed: %s", tool_name, e)
-
+                logger.exception("Tool %s failed", tool_name)
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
@@ -573,7 +589,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_result event: %s", e)
 
             response_payload = (
@@ -591,10 +607,3 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             )
 
         return tool_response_parts
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
-            logger.warning("Failed to send error event: %s", e)

@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
+
+from band_sdk_core import AgentFailure
+
+from band.core.content import has_visible_content
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
     from band.client.rest import (
+        ChatParticipant,
         GetChatTaskHistoryResponse,
         ListAgentContactRequestsResponse,
         ListAgentContactsResponse,
@@ -23,9 +31,80 @@ if TYPE_CHECKING:
     from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
-    from band.runtime.tools import ToolCallOutcome
+    from band.runtime.tools import (
+        ParticipantAddResult,
+        ParticipantRemoveResult,
+        ToolCallOutcome,
+    )
 
 T = TypeVar("T")
+
+# Shared ``AgentFailure.code`` value for a stalled/unresponsive provider turn,
+# so every adapter's timeout branch reports the same code instead of each
+# retyping the literal.
+FAILURE_CODE_TIMEOUT = "timeout"
+
+# Shared generic message for a caught provider exception whose text must not
+# reach the room (it can embed DB strings, paths, or tokens) -- the full
+# detail goes to the agent log via logger.exception instead.
+GENERIC_PROVIDER_FAILURE_MESSAGE = (
+    "Internal error while processing message; see agent logs."
+)
+
+
+class TurnResultAlreadyReported(Exception):
+    """A terminal turn failure that a nested handler already reported via
+    ``send_failure``. An adapter's outer ``except`` re-raises this without
+    reporting the same failure a second time."""
+
+
+def to_failure_event(failure: AgentFailure) -> tuple[str, dict[str, Any]]:
+    """Shared shape every ``send_failure`` implementation posts as an `error` event.
+
+    A provider message can arrive blank (``Exception()`` and ``str("")`` both
+    reach here empty). The platform rejects a blank chat event, so an
+    unguarded blank message would make the failure vanish from the room
+    entirely. The fallback string is part of the TS/Python parity contract —
+    it must match ``toFailureEvent``'s exactly.
+    """
+    content = (
+        failure.message.strip()
+        if has_visible_content(failure.message)
+        else f"{failure.provider} failed without an error message."
+    )
+    return content, {"failure": failure.to_dict()}
+
+
+async def send_event_safe(
+    tools: AgentToolsProtocol,
+    content: str,
+    message_type: str,
+    metadata: dict[str, Any] | None = None,
+    *,
+    log_label: str | None = None,
+    log_level: int = logging.WARNING,
+) -> bool:
+    """Send a best-effort platform event, logging instead of raising on failure.
+
+    For events whose loss is tolerable (a thought, a lifecycle/task marker),
+    unlike a ``send_message`` call a caller depends on as a control signal.
+    Returns whether the event was actually accepted, so a caller that only
+    wants to update its own bookkeeping once delivery is confirmed (e.g.
+    marking a session id persisted) can act on it.
+    """
+    try:
+        await tools.send_event(
+            content=content, message_type=message_type, metadata=metadata
+        )
+    except Exception:
+        logger.log(
+            log_level,
+            "Failed to send %s event",
+            log_label or message_type,
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 @runtime_checkable
@@ -79,11 +158,23 @@ class AgentToolsProtocol(Protocol):
         """Send an event (tool_call, tool_result, thought, error, task)."""
         ...
 
-    async def add_participant(self, identifier: str, role: str = "member") -> Any:
+    async def send_failure(self, failure: AgentFailure) -> Any:
+        """Report a provider-originated failure as a structured `error` event.
+
+        Best-effort: swallows its own reporting failure rather than raising,
+        so a caller reporting a failure never has that report replaced by an
+        unrelated exception. Unlike ``send_event``, whose raising callers
+        depend on it as a control signal.
+        """
+        ...
+
+    async def add_participant(
+        self, identifier: str, role: str = "member"
+    ) -> ParticipantAddResult:
         """Add a participant to the current room by handle, name, or ID."""
         ...
 
-    async def remove_participant(self, identifier: str) -> Any:
+    async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
         """Remove a participant from the current room by handle, name, or ID."""
         ...
 
@@ -97,7 +188,7 @@ class AgentToolsProtocol(Protocol):
         """True if this instance is bound to the contact hub room."""
         ...
 
-    async def get_participants(self) -> Any:
+    async def get_participants(self) -> list[ChatParticipant]:
         """Get participants in the current room."""
         ...
 
@@ -151,13 +242,13 @@ class AgentToolsProtocol(Protocol):
         format: str,
         *,
         capabilities: frozenset[Capability] | None = None,
-    ) -> list[dict[str, Any]] | list["ToolParam"]:
+    ) -> list[dict[str, Any]] | list[ToolParam]:
         """Get tool schemas in provider-specific format (openai/anthropic)."""
         ...
 
     def get_anthropic_tool_schemas(
         self, *, capabilities: frozenset[Capability] | None = None
-    ) -> list["ToolParam"]:
+    ) -> list[ToolParam]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         ...
 
@@ -262,10 +353,10 @@ class AgentToolsProtocol(Protocol):
     # Task board tools
     async def list_tasks(
         self,
-        state: "TaskListState | None" = None,
+        state: TaskListState | None = None,
         cursor: str | None = None,
         limit: int | None = None,
-    ) -> "ListChatTasksResponse":
+    ) -> ListChatTasksResponse:
         """List the shared tasks on this room's task board, in the Fern
         response envelope."""
         ...
@@ -286,12 +377,12 @@ class AgentToolsProtocol(Protocol):
     async def update_task(
         self,
         id: str,
-        status: "TaskAssignmentStatus | None" = None,
+        status: TaskAssignmentStatus | None = None,
         active_form: str | None = None,
         comment: str | None = None,
         subject: str | None = None,
         detail: str | None = None,
-        state: "TaskLifecycleState | None" = None,
+        state: TaskLifecycleState | None = None,
     ) -> Any:
         """Update a task's status, active_form, comment, subject, detail, or
         lifecycle state."""
@@ -299,7 +390,7 @@ class AgentToolsProtocol(Protocol):
 
     async def get_task_history(
         self, id: str, cursor: str | None = None, limit: int | None = None
-    ) -> "GetChatTaskHistoryResponse":
+    ) -> GetChatTaskHistoryResponse:
         """The append-only history of one task, in the Fern response envelope."""
         ...
 
@@ -332,7 +423,7 @@ class FrameworkAdapter(Protocol):
     SDK ships built-in adapters for LangGraph, Anthropic, etc.
     """
 
-    async def on_event(self, inp: "AgentInput") -> None:
+    async def on_event(self, inp: AgentInput) -> None:
         """
         Process a user/system message.
 
@@ -382,10 +473,10 @@ class Preprocessor(Protocol):
 
     async def process(
         self,
-        ctx: "ExecutionContext",
-        event: "PlatformEvent",
+        ctx: ExecutionContext,
+        event: PlatformEvent,
         agent_id: str,
-    ) -> "AgentInput | None":
+    ) -> AgentInput | None:
         """
         Process platform event into AgentInput.
 

@@ -12,17 +12,17 @@ from typing import Any, Literal
 
 # Import payload models from streaming client
 from band.client.streaming import (
-    MessageCreatedPayload,
-    WebSocketDisconnectReason,
-    RoomAddedPayload,
-    RoomRemovedPayload,
-    RoomDeletedPayload,
-    ParticipantAddedPayload,
-    ParticipantRemovedPayload,
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
+    MessageCreatedPayload,
+    ParticipantAddedPayload,
+    ParticipantRemovedPayload,
+    RoomAddedPayload,
+    RoomDeletedPayload,
+    RoomRemovedPayload,
+    WebSocketDisconnectReason,
 )
 
 

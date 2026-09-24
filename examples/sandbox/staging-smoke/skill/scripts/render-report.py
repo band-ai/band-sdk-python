@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 
 import root  # noqa: F401  (bootstraps sys.path as a side effect)
-
 import state
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")

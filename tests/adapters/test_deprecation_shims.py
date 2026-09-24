@@ -33,9 +33,11 @@ class TestSelectiveRenameShims:
 
     def test_anthropic_anthropic_api_key_resolves_to_provider_key(self) -> None:
 
-        with patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls:
-            with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
-                AnthropicAdapter(anthropic_api_key="sk-old-key")
+        with (
+            patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls,
+            pytest.warns(DeprecationWarning, match="anthropic_api_key"),
+        ):
+            AnthropicAdapter(anthropic_api_key="sk-old-key")
         mock_cls.assert_called_once_with(api_key="sk-old-key")
 
     def test_anthropic_api_key_warns(self) -> None:
@@ -47,11 +49,11 @@ class TestSelectiveRenameShims:
 
     def test_anthropic_api_key_resolves_to_provider_key(self) -> None:
 
-        with patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls:
-            with pytest.warns(
-                DeprecationWarning, match="api_key.*deprecated.*provider_key"
-            ):
-                AnthropicAdapter(api_key="sk-test-key")
+        with (
+            patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls,
+            pytest.warns(DeprecationWarning, match="api_key.*deprecated.*provider_key"),
+        ):
+            AnthropicAdapter(api_key="sk-test-key")
         mock_cls.assert_called_once_with(api_key="sk-test-key")
 
     def test_anthropic_custom_section_warns(self) -> None:

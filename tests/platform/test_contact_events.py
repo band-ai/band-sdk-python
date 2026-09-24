@@ -1,17 +1,17 @@
 """Unit tests for contact event types and pattern matching."""
 
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
     WireEvent,
 )
 from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
     ContactAddedEvent,
     ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
     PlatformEvent,
 )
 

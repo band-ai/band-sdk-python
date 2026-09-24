@@ -11,11 +11,12 @@ import asyncio
 import logging
 
 import pytest
-
 from band_rest import ChatMessageRequest, ChatRoomRequest
 from band_rest.core.api_error import ApiError
 from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
+)
+from band_rest.types import (
     ParticipantRequest,
 )
 
@@ -102,7 +103,7 @@ class TestWebSocketNotifications:
             try:
                 await asyncio.wait_for(message_received.wait(), timeout=5.0)
                 logger.info("Agent 1's WebSocket received the message!")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("Timeout waiting for WebSocket message")
 
         # Verify Agent 1 received the message
@@ -205,7 +206,7 @@ class TestWebSocketNotifications:
             try:
                 await asyncio.wait_for(room_added.wait(), timeout=5.0)
                 logger.info("WebSocket received the room_added event!")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("Timeout waiting for room_added event")
 
         # Verify we received the room event

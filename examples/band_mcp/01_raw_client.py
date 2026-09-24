@@ -57,10 +57,12 @@ async def open_session(
 ) -> AsyncIterator[ClientSession]:
     """Spawn band-mcp over stdio and yield an initialized ClientSession."""
     server = _server_params(agent_key, base_url, room_id=room_id)
-    async with stdio_client(server) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    async with (
+        stdio_client(server) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        yield session
 
 
 async def create_room(agent_key: str, base_url: str) -> str:

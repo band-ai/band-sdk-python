@@ -20,9 +20,9 @@ Run with:
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,

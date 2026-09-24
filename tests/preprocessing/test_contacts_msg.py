@@ -1,12 +1,12 @@
 """Tests for contacts_msg in preprocessing."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-from band.platform.event import MessageEvent
 from band.client.streaming import MessageCreatedPayload, MessageMetadata
+from band.platform.event import MessageEvent
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 
@@ -42,8 +42,8 @@ def sample_message_event():
             sender_name="Alice",
             chat_room_id="room-123",
             metadata=MessageMetadata(mentions=[], status="sent"),
-            inserted_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            inserted_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
         ),
         raw={},
     )

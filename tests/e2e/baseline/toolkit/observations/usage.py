@@ -35,7 +35,6 @@ from datetime import datetime
 from band_rest import ChatMessage
 
 from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
-
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)

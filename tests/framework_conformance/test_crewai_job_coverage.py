@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.framework_conformance import venv_job_coverage as vjc
 from tests.framework_configs.sentinel import StrictnessSettings
+from tests.framework_conformance import venv_job_coverage as vjc
 from tests.paths import REPO_ROOT
 
 # Import names of the distributions only `dev-crewai` installs. Kept as a map so

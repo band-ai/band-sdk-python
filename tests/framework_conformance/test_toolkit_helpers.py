@@ -26,8 +26,8 @@ import pytest
 from pydantic import BaseModel
 
 from band.client.streaming import MessageCreatedPayload
-
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.deps import _is_letta_cloud
 from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import (
     MAX_MENTIONED_LABEL_LEN,
@@ -40,7 +40,6 @@ from tests.e2e.baseline.toolkit.provisioning import (
     run_id_len,
     running_members,
 )
-from tests.e2e.baseline.toolkit.deps import _is_letta_cloud
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 

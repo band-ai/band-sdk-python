@@ -98,7 +98,7 @@ class EmitToolCallsReporter:
                 ),
                 message_type="tool_call",
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
             logger.warning("Failed to send tool_call event: %s", e)
 
     async def report_result(
@@ -121,7 +121,7 @@ class EmitToolCallsReporter:
                 ),
                 message_type="tool_result",
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
             logger.warning("Failed to send tool_result event: %s", e)
 
 

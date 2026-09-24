@@ -87,7 +87,9 @@ async def main(args: argparse.Namespace | None = None) -> None:
     # here would break every venv that doesn't install the `acp` extra.
     from band.integrations.acp.push_handler import ACPPushHandler  # noqa: PLC0415
     from band.integrations.acp.server import ACPServer, run_acp_server  # noqa: PLC0415
-    from band.integrations.acp.server_adapter import BandACPServerAdapter  # noqa: PLC0415
+    from band.integrations.acp.server_adapter import (  # noqa: PLC0415
+        BandACPServerAdapter,
+    )
 
     adapter = BandACPServerAdapter()
 

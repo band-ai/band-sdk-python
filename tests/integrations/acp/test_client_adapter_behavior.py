@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from acp import RequestError
 from pydantic import BaseModel
 
 from band.core.types import Capability
@@ -27,9 +28,7 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
-
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
-from acp import RequestError
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -800,12 +799,16 @@ async def test_replay_after_midrun_respawn() -> None:
         {
             "id": "m1",
             "message_type": "text",
+            "sender_id": "user-marco",
+            "sender_type": "User",
             "sender_name": "Marco",
             "content": "My favorite color is blue.",
         },
         {
             "id": "m2",
             "message_type": "text",
+            "sender_id": "fake-agent",
+            "sender_type": "Agent",
             "sender_name": "Fake Agent",
             "content": "I noted your favorite color.",
         },
@@ -813,7 +816,9 @@ async def test_replay_after_midrun_respawn() -> None:
 
     async with acp_adapter(agent) as session:
         await session.send("My favorite color is blue.", bootstrap=True)
-        crashed = await session.send("anything")  # prompt raises -> adapter stop()
+        with pytest.raises(RequestError):
+            await session.send("anything")  # prompt raises -> adapter stop()
+        crashed = session.last_reply
         reply = await session.send(
             "What is my favorite color?", room_context=transcript
         )

@@ -68,7 +68,6 @@ import logging
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 from band import Agent, configure_logging
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 

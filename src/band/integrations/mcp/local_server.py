@@ -17,6 +17,7 @@ import random
 import socket
 from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from typing import Self
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
@@ -131,7 +132,7 @@ class LocalMCPServer:
         self._socket: socket.socket | None = None
         self._port: int | None = None
 
-    async def __aenter__(self) -> LocalMCPServer:
+    async def __aenter__(self) -> Self:
         await self.start()
         return self
 

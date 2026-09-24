@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock
 from band.platform.link import BandLink
 from band.runtime.presence import RoomPresence
 from band.testing import fake_phoenix_server
-
 from tests.runtime.conftest import chat_row
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from tests.baseline.registry import (
-    AdapterSupport,
     SUPPORT,
+    AdapterSupport,
     assert_support_is_complete,
 )
 

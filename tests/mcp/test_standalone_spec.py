@@ -14,6 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from band_mcp import server as server_mod
+from band_mcp.config import Config, ConfigError, ToolGroup
+from band_mcp.server import standalone_spec
+from band_mcp.shared import StandaloneResolver
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from band.integrations.mcp.engine import build_engine
@@ -28,10 +32,6 @@ from band.runtime.tools import (
     iter_tool_definitions,
 )
 from band.testing.fake_tools import FakeAgentTools
-from band_mcp import server as server_mod
-from band_mcp.config import Config, ConfigError, ToolGroup
-from band_mcp.server import standalone_spec
-from band_mcp.shared import StandaloneResolver
 
 
 def _spec_names(config: Config) -> set[str]:

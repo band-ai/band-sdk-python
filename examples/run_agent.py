@@ -29,8 +29,7 @@ Usage:
     uv run python examples/run_agent.py --example crewai
     uv run python examples/run_agent.py --example crewai --streaming  # Show tool calls
     uv run python examples/run_agent.py --example codex
-    uv run python examples/run_agent.py --example codex --agent darter --codex-transport stdio
-    uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
+    uv run python examples/run_agent.py --example codex --agent darter
     uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000  # A2A bridge
     uv run python examples/run_agent.py --example a2a_gateway              # A2A Gateway (exposes peers)
     uv run python examples/run_agent.py --example a2a_gateway --gateway-port 8080  # Custom port
@@ -94,15 +93,14 @@ def build_contact_config(
 
         async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
             """Auto-approve all contact requests."""
-            if isinstance(event, ContactRequestReceivedEvent):
-                if event.payload:
-                    logger.info(
-                        "Auto-approving contact request from %s",
-                        event.payload.from_handle,
-                    )
-                    await tools.respond_contact_request(
-                        "approve", request_id=event.payload.id
-                    )
+            if isinstance(event, ContactRequestReceivedEvent) and event.payload:
+                logger.info(
+                    "Auto-approving contact request from %s",
+                    event.payload.from_handle,
+                )
+                await tools.respond_contact_request(
+                    "approve", request_id=event.payload.id
+                )
 
         return ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
@@ -222,10 +220,16 @@ async def run_langgraph_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the LangGraph agent."""
-    from langchain_openai import ChatOpenAI  # noqa: PLC0415 -- only load the langgraph extra when this example is the one selected to run
-    from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415 -- only load the langgraph extra when this example is the one selected to run
+    from langchain_openai import (  # noqa: PLC0415 -- only load the langgraph extra when this example is the one selected to run
+        ChatOpenAI,
+    )
+    from langgraph.checkpoint.memory import (  # noqa: PLC0415 -- only load the langgraph extra when this example is the one selected to run
+        InMemorySaver,
+    )
 
-    from band.adapters import LangGraphAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        LangGraphAdapter,
+    )
 
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model="gpt-5.4-mini"),
@@ -252,7 +256,9 @@ async def run_pydantic_ai_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Pydantic AI agent."""
-    from band.adapters import PydanticAIAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     # Augment custom_section for contact modes
     section = custom_section
@@ -303,7 +309,9 @@ async def run_anthropic_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Anthropic SDK agent."""
-    from band.adapters import AnthropicAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        AnthropicAdapter,
+    )
 
     adapter = AnthropicAdapter(
         model=model,
@@ -342,7 +350,9 @@ async def run_claude_sdk_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Claude Agent SDK agent."""
-    from band.adapters import ClaudeSDKAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        ClaudeSDKAdapter,
+    )
 
     adapter = ClaudeSDKAdapter(
         model=model,
@@ -385,7 +395,9 @@ async def run_parlant_agent(
     """Run the Parlant agent."""
     import parlant.sdk as p  # noqa: PLC0415 -- only load the parlant extra when this example is the one selected to run
 
-    from band.adapters import ParlantAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        ParlantAdapter,
+    )
 
     # Parlant chooses its model via the NLP service, not a model string;
     # the OpenAI service reads OPENAI_API_KEY. Its adapter has no emit kinds
@@ -418,7 +430,9 @@ async def run_crewai_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the CrewAI agent."""
-    from band.adapters import CrewAIAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        CrewAIAdapter,
+    )
 
     adapter = CrewAIAdapter(
         model=model,
@@ -443,7 +457,6 @@ async def run_codex_agent(
     api_key: str,
     custom_section: str,
     codex_transport: str,
-    codex_ws_url: str,
     codex_model: str | None,
     codex_personality: str,
     codex_approval_policy: str,
@@ -455,20 +468,26 @@ async def run_codex_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Codex app-server adapter."""
-    from band.adapters import CodexAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
-    from band.adapters.codex import CodexAdapterConfig  # noqa: PLC0415 -- only load the codex extra when this example is the one selected to run
+    from band import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        create_room_workspace_resolver,
+    )
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        CodexAdapter,
+    )
+    from band.adapters.codex import (  # noqa: PLC0415 -- only load the codex extra when this example is the one selected to run
+        CodexAdapterConfig,
+    )
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
-            cwd=codex_cwd,
+            workspace_for_room=create_room_workspace_resolver(codex_cwd),
             model=codex_model,
             personality=codex_personality,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             approval_policy=codex_approval_policy,
             approval_mode=codex_approval_mode,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             sandbox=codex_sandbox,
             reasoning_effort=codex_reasoning_effort,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
-            codex_ws_url=codex_ws_url,
             custom_section=custom_section,
             include_base_instructions=True,
             emit_turn_task_markers=codex_turn_task_markers,
@@ -479,7 +498,7 @@ async def run_codex_agent(
     )
 
     logger.info(
-        "Starting Codex agent (transport=%s, model=%s, cwd=%s)",
+        "Starting Codex agent (transport=%s, model=%s, workspace_root=%s)",
         codex_transport,
         codex_model or "auto",
         codex_cwd,
@@ -507,7 +526,9 @@ async def run_pydantic_ai_contacts_agent(
     - "reject bob"
     - "add john as a contact"
     """
-    from band.adapters import PydanticAIAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     adapter = PydanticAIAdapter(
         model=model,
@@ -538,18 +559,17 @@ async def run_contacts_auto_agent(
     - Auto-approve logic for contact requests
     - broadcast_changes=True to notify all rooms of contact updates
     """
-    from band.adapters import PydanticAIAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
-    async def auto_approve(event: "ContactEvent", tools: "ContactTools") -> None:
+    async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
         """Auto-approve all contact requests."""
-        if isinstance(event, ContactRequestReceivedEvent):
-            if event.payload:
-                logger.info(
-                    "Auto-approving contact request from %s", event.payload.from_handle
-                )
-                await tools.respond_contact_request(
-                    "approve", request_id=event.payload.id
-                )
+        if isinstance(event, ContactRequestReceivedEvent) and event.payload:
+            logger.info(
+                "Auto-approving contact request from %s", event.payload.from_handle
+            )
+            await tools.respond_contact_request("approve", request_id=event.payload.id)
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.CALLBACK,
@@ -590,7 +610,9 @@ async def run_contacts_hub_agent(
     - Agent can reason about requests and respond using tools
     - broadcast_changes=True to notify all rooms of outcomes
     """
-    from band.adapters import PydanticAIAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.HUB_ROOM,
@@ -643,7 +665,9 @@ async def run_contacts_broadcast_agent(
     - broadcast_changes=True for awareness in all rooms
     - User can manually manage contacts via chat commands
     """
-    from band.adapters import PydanticAIAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        PydanticAIAdapter,
+    )
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.DISABLED,  # No auto-handling
@@ -683,7 +707,9 @@ async def run_a2a_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the A2A bridge agent."""
-    from band.adapters import A2AAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        A2AAdapter,
+    )
 
     # Enable debug logging for A2A adapter to trace context_id and rehydration
     if enable_debug:
@@ -717,7 +743,9 @@ async def run_a2a_gateway_agent(
     as A2A endpoints. Remote A2A agents can call these peers via standard
     A2A protocol.
     """
-    from band.adapters import A2AGatewayAdapter  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+    from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        A2AGatewayAdapter,
+    )
 
     # Enable debug logging for gateway adapter
     if enable_debug:
@@ -772,7 +800,6 @@ Examples:
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
   uv run python examples/run_agent.py --example codex --agent darter      # Run Codex as darter agent
   uv run python examples/run_agent.py --example codex --codex-transport stdio
-  uv run python examples/run_agent.py --example codex --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
   uv run python examples/run_agent.py --example a2a                       # A2A bridge (default: localhost:10000)
   uv run python examples/run_agent.py --example a2a --debug               # A2A with debug logging (context_id tracing)
   uv run python examples/run_agent.py --example a2a --a2a-url http://remote:8080  # A2A with custom URL
@@ -856,14 +883,9 @@ Examples:
     )
     parser.add_argument(
         "--codex-transport",
-        choices=["stdio", "ws"],
+        choices=["stdio"],
         default="stdio",
         help="Codex transport mode (default: stdio)",
-    )
-    parser.add_argument(
-        "--codex-ws-url",
-        default=os.getenv("CODEX_WS_URL", "ws://127.0.0.1:8765"),
-        help="Codex WebSocket URL when --codex-transport=ws",
     )
     parser.add_argument(
         "--codex-role",
@@ -884,7 +906,7 @@ Examples:
     parser.add_argument(
         "--codex-cwd",
         default=os.getcwd(),
-        help="Working directory given to Codex app-server (default: current directory)",
+        help="Root directory for per-room Codex workspaces (default: current directory)",
     )
     parser.add_argument(
         "--codex-reasoning-effort",
@@ -969,7 +991,7 @@ Examples:
     # Load agent credentials
     try:
         agent_id, api_key = load_agent_config(args.agent)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         parser.error(f"Failed to load agent config '{args.agent}': {e}")
 
     logger.info("Agent: %s (%s)", args.agent, agent_id)
@@ -1102,7 +1124,6 @@ Examples:
                 api_key=api_key,
                 custom_section=codex_custom,
                 codex_transport=args.codex_transport,
-                codex_ws_url=args.codex_ws_url,
                 codex_model=args.codex_model,
                 codex_personality=args.codex_personality,
                 codex_approval_policy=args.codex_approval_policy,

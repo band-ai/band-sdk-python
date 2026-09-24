@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -33,7 +33,7 @@ def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessa
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -139,7 +139,7 @@ class _FakeCodexClient:
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         if not self._events:
-            raise asyncio.TimeoutError()
+            raise TimeoutError()
         return self._events.popleft()
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
@@ -159,6 +159,23 @@ class _FakeCodexClient:
 
     async def close(self) -> None:
         return None
+
+
+def patch_codex_client(adapter: CodexAdapter, client: _FakeCodexClient) -> None:
+    def _build(_config: CodexAdapterConfig) -> _FakeCodexClient:
+        return client
+
+    adapter._build_client = _build  # type: ignore[method-assign]
+
+
+def make_codex_adapter(
+    client: _FakeCodexClient,
+    config: CodexAdapterConfig | None = None,
+    **kwargs: Any,
+) -> CodexAdapter:
+    adapter = CodexAdapter(config=config or CodexAdapterConfig(), **kwargs)
+    patch_codex_client(adapter, client)
+    return adapter
 
 
 def _notify(method: str, params: dict[str, Any]) -> RpcEvent:
@@ -199,10 +216,7 @@ async def test_on_event_uses_converter_history_to_resume_thread() -> None:
             )
         ]
     )
-    adapter = CodexAdapter(
-        config=CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _cfg: fake_client,
-    )
+    adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
     await adapter.on_started("Codex Agent", "Integration test agent")
 
     raw_history = [
@@ -212,7 +226,7 @@ async def test_on_event_uses_converter_history_to_resume_thread() -> None:
             "metadata": {
                 "codex_thread_id": "thr-history",
                 "codex_room_id": "room-1",
-                "codex_created_at": datetime.now(timezone.utc).isoformat(),
+                "codex_created_at": datetime.now(UTC).isoformat(),
             },
         }
     ]
@@ -255,13 +269,9 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
             ),
         ]
     )
-    adapter = CodexAdapter(
-        config=CodexAdapterConfig(
-            transport="ws",
-            approval_mode="manual",
-            approval_wait_timeout_s=30.0,
-        ),
-        client_factory=lambda _cfg: fake_client,
+    adapter = make_codex_adapter(
+        fake_client,
+        config=CodexAdapterConfig(approval_mode="manual", approval_wait_timeout_s=30.0),
     )
     await adapter.on_started("Codex Agent", "Integration test agent")
 
@@ -319,10 +329,7 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
             )
         ]
     )
-    adapter_first = CodexAdapter(
-        config=CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _cfg: fake_client_first,
-    )
+    adapter_first = make_codex_adapter(fake_client_first, config=CodexAdapterConfig())
     await adapter_first.on_started("Codex Agent", "Integration test agent")
     await adapter_first.on_event(
         _agent_input(
@@ -351,10 +358,7 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
             )
         ]
     )
-    adapter_second = CodexAdapter(
-        config=CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _cfg: fake_client_second,
-    )
+    adapter_second = make_codex_adapter(fake_client_second, config=CodexAdapterConfig())
     await adapter_second.on_started("Codex Agent", "Integration test agent")
     await adapter_second.on_event(
         _agent_input(
@@ -392,10 +396,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
             )
         ]
     )
-    adapter_first = CodexAdapter(
-        config=CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _cfg: fake_client_first,
-    )
+    adapter_first = make_codex_adapter(fake_client_first, config=CodexAdapterConfig())
     await adapter_first.on_started("Codex Agent", "Integration test agent")
     await adapter_first.on_event(
         _agent_input(
@@ -441,10 +442,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
         ],
         resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
     )
-    adapter_second = CodexAdapter(
-        config=CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _cfg: fake_client_second,
-    )
+    adapter_second = make_codex_adapter(fake_client_second, config=CodexAdapterConfig())
     await adapter_second.on_started("Codex Agent", "Integration test agent")
     await adapter_second.on_event(
         _agent_input(
@@ -541,10 +539,8 @@ async def test_item_completed_forwards_internal_operations() -> None:
             ),
         ]
     )
-    adapter = CodexAdapter(
-        config=CodexAdapterConfig(transport="ws"),
-        client_factory=lambda _cfg: fake_client,
-        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
+    adapter = make_codex_adapter(
+        fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS | Emit.THOUGHTS
     )
     await adapter.on_started("Codex Agent", "Integration test agent")
     await adapter.on_event(

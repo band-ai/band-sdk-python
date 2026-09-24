@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from band.integrations.a2a.gateway.server import GatewayServer as GatewayServer
     from band.integrations.a2a.gateway.types import (
         GatewaySessionState as GatewaySessionState,
+    )
+    from band.integrations.a2a.gateway.types import (
         PendingA2ATask as PendingA2ATask,
     )
 

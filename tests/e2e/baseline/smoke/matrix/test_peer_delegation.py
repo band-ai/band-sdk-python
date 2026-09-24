@@ -21,9 +21,9 @@ concurrent triage are already covered by ``test_multi_agent_collaboration``.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     REMEMBER,

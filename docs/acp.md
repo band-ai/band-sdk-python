@@ -12,7 +12,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
 
 **Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
-**Client**: Band room message -> `ACPClientAdapter` -> stdio subprocess **or** TCP connection (Codex, Claude Code, Cursor, GitHub Copilot, etc.)
+**Client**: Band room message -> `ACPClientAdapter` -> its room-owned stdio subprocess (Codex, Claude Code, Cursor, GitHub Copilot, etc.)
 
 ## Key Files
 
@@ -20,8 +20,8 @@ Two-layer pattern (mirrors A2A Gateway):
 |------|---------|
 | `src/band/integrations/acp/server.py` | `ACPServer` — handles ACP JSON-RPC methods, does not subclass `acp.Agent`; `run_acp_server` — runs it with `use_unstable_protocol` (required for `session/fork`, `session/resume`, `session/close`) |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
-| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
-| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a room-owned ACP agent over stdio |
+| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (room-owned stdio lifecycle) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink) |
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
@@ -99,6 +99,33 @@ Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copil
 
 Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
 
+## Dynamic model and reasoning configuration (Client Adapter)
+
+Remote ACP agents can advertise a live `configOptions` catalog for each session. Pass
+an async `resolve_session_config` callback to choose from the agent's actual select
+options; this supports model lists, reasoning effort, and future provider-specific
+selectors without a Band-maintained vocabulary.
+
+The behavior is owned by `ACPClientAdapter`, so every transport and profile gets it:
+stdio, TCP, custom transports, and `CopilotACPAdapter` through its
+`CopilotACPAdapterConfig.resolve_session_config` field. The in-process ACP test
+harness implements the same wire method, keeping the protocol path proven without
+provider-specific test doubles.
+
+[`examples/acp/clients/generic.py`](../examples/acp/clients/generic.py) is a
+runnable bridge example. Leave `ACP_MODEL` and `ACP_REASONING_EFFORT` unset to
+log each session's advertised values, then set one to an exact advertised value.
+The example ignores unavailable values and makes only one selection per new
+session: selecting a model can replace the effort catalog.
+
+The callback is called once after each new or restored session is established and
+before its first prompt. Selections apply in mapping order. Each successful
+`session/set_config_option` response replaces the catalog used to validate the next
+selection, because choosing a model can change the available reasoning levels. An
+invalid selection, rejection, timeout, or malformed `session/set_config_option`
+response fails that room turn visibly instead of silently falling back to a different
+setting.
+
 ## Optional Dependency
 
 ```toml
@@ -108,21 +135,16 @@ acp = ["agent-client-protocol"]
 
 Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 
-## Client transports (stdio / TCP)
+## Client workspace isolation
 
-`ACPClientAdapter` selects a transport at construction; both flow through `ACPRuntime`'s
-injectable `spawn_process` seam, so the runtime and downstream code are transport-agnostic.
-
-- **stdio** (default): pass `command=[...]` to spawn the agent as a subprocess
-  (`acp.spawn_agent_process`).
-- **TCP**: pass `host=` + `port=` to connect to an already-running ACP server
-  (`tcp_spawn_process` → `asyncio.open_connection` → `acp.connect_to_agent`). Use for an
-  ACP agent in a remote/containerized environment.
-- Exactly one of `{command, (host, port)}` is required (validated in `__init__`).
-- Advanced: inject a custom `spawn_process` (e.g. `docker exec -i … copilot --acp`, ssh,
-  or a fake in tests). Tests inject a fake through this seam rather than patching module
-  globals (see `tests/integrations/acp/conftest.py::FakeSpawn` / the `make_acp_transport`
-  fixture).
+`ACPClientAdapter` creates an isolated `./.band-workspaces/<room-id>` directory for
+each Band room by default. Pass `workspace_for_room` only to select a different
+absolute workspace policy. It lazily starts one stdio agent process per room and
+stops that process when the room is cleaned up. TCP and custom transport injection are
+rejected because they cannot prove that a remote process belongs to only one room.
+The assigned working directory is not an operating-system sandbox; configure the agent's
+sandbox policy separately when that boundary is required. A custom resolver must assign a
+different workspace to every live room, and the adapter requires a non-empty stdio command.
 
 ## GitHub Copilot CLI backend
 
@@ -140,11 +162,8 @@ with a single turn; it reads `GITHUB_TOKEN` and skips when unset. Excluded from
 framework-conformance as a bridge.
 
 - stdio example: `examples/acp/clients/copilot.py`.
-- Copilot-in-a-container over TCP + Band tools via a `band-mcp` (SSE) server:
-  `examples/acp/copilot_docker/compose/` (separate services) and
-  `examples/acp/copilot_docker/colocated/` (single container). Both use
-  `inject_band_tools=False` + an explicit `mcp_servers` SSE URL, since a remote Copilot
-  can't reach the SDK host's loopback `LocalMCPServer`.
+- Remote Copilot ACP over TCP is not supported by this adapter because one remote
+  process cannot be proven to be owned by one Band room.
 - Copilot in a Docker **microVM sandbox** ([`sbx`](https://docs.docker.com/ai/sandboxes/))
   over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
   isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary

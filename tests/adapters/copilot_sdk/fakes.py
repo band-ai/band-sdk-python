@@ -8,7 +8,7 @@ test double.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -45,7 +45,7 @@ def make_platform_message(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -128,7 +128,7 @@ class FakeCopilotSession:
         # raise (there is no non-fatal error path).
         for data in self.turn_events:
             if isinstance(data, SessionErrorData):
-                raise Exception(f"Session error: {data.message}")
+                raise RuntimeError(f"Session error: {data.message}")
         if self.reply_content is None:
             return None
         return SimpleNamespace(data=SimpleNamespace(content=self.reply_content))
@@ -147,10 +147,12 @@ class FakeCopilotClient:
         self,
         *,
         resume_error: Exception | None = None,
+        create_error: Exception | None = None,
         reply_content: str | None = "Hello from Copilot",
         turn_events: list[Any] | None = None,
     ):
         self.resume_error = resume_error
+        self.create_error = create_error
         self.reply_content = reply_content
         self.turn_events = turn_events or []
         self.started = False
@@ -168,6 +170,8 @@ class FakeCopilotClient:
     async def create_session(
         self, *, session_id: str | None = None, **kwargs: Any
     ) -> Any:
+        if self.create_error:
+            raise self.create_error
         session = FakeCopilotSession(
             session_id,
             kwargs,

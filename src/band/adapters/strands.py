@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, cast
 
-import httpx
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel
 
 try:
@@ -31,10 +31,14 @@ except ImportError as error:
         "Install with: uv add band-sdk[strands]"
     ) from error
 
-from band_rest.core.api_error import ApiError
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.converters.strands import StrandsHistoryConverter, StrandsMessages
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -46,7 +50,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.strands import StrandsHistoryConverter, StrandsMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -56,8 +59,8 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
-    ToolDefinition,
     ToolCallOutcome,
+    ToolDefinition,
     band_tool_errored,
     decode_image_block,
     get_band_tool_category,
@@ -72,6 +75,8 @@ from band.runtime.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "strands"
 
 
 def _format_tool_output(value: object) -> str:
@@ -103,7 +108,7 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
                         }
                     }
                 )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             # A malformed or future-extended image block (see
             # is_mcp_content_result's docstring) must degrade to the
             # adapter's normal failure result, not raise uncaught out of
@@ -259,7 +264,7 @@ class CustomToolBridge(StrandsToolBridge):
             result = await execute_custom_tool(
                 self._tool_def, dict(tool_use["input"] or {})
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             yield _tool_result(
                 tool_use,
                 value=f"Error executing tool '{self.tool_name}': {error}",
@@ -389,7 +394,7 @@ class BandTurnHooks(HookProvider):
                 content=json.dumps(payload, default=str),
                 message_type=message_type,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, error)
 
 
@@ -525,12 +530,20 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         hooks: BandTurnHooks,
     ) -> None:
         """Run the framework loop while preserving transcript and usage on failure."""
-        agent = self._build_agent(history, tools, hooks)
+        agent: Agent | None = None
         try:
+            agent = self._build_agent(history, tools, hooks)
             await agent.invoke_async(message)
+        except Exception:
+            logger.exception("Room %s: Strands turn failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
         finally:
-            self._message_history[room_id] = agent.messages
-            await self.emit_usage(tools, self._usage_from_agent(agent))
+            if agent is not None:
+                self._message_history[room_id] = agent.messages
+                await self.emit_usage(tools, self._usage_from_agent(agent))
 
     async def on_message(
         self,
@@ -570,7 +583,12 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             hooks=hooks,
         )
         if not hooks.terminal_fired:
-            await self._report_error(tools, missing_reply_error("Strands"))
+            logger.warning(
+                "Room %s: Strands turn produced nothing for the room", room_id
+            )
+            detail = missing_reply_error("Strands")
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
+            raise TurnResultAlreadyReported(detail)
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,
@@ -582,7 +600,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         """Map Strands' accumulated turn usage into the SDK value object."""
         try:
             usage = dict(agent.event_loop_metrics.accumulated_usage)
-        except Exception:  # pragma: no cover - usage reporting is best-effort
+        except Exception:  # pragma: no cover - usage reporting is best-effort  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return TurnUsage()
         return TurnUsage.from_mapping(
             usage,
@@ -591,16 +609,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             cache_read="cacheReadInputTokens",
             cache_write="cacheWriteInputTokens",
         )
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Post a best-effort room-visible adapter error."""
-        try:
-            await tools.send_event(
-                content=f"Error: {error}",
-                message_type=MessageType.ERROR,
-            )
-        except (ApiError, httpx.HTTPError) as report_error:
-            logger.warning("Failed to send error event: %s", report_error)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Discard the transcript when Band removes the adapter from a room."""

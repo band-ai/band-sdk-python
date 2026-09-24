@@ -23,7 +23,6 @@ from band_rest import ChatMessage
 from band.converters.parsing import parse_tool_result
 from band.core.types import MessageType
 from band.runtime.tools import MEMORY_TOOL_NAMES
-
 from tests.e2e.baseline.toolkit.observations.assertions import assert_nonempty
 from tests.e2e.baseline.toolkit.observations.matching import named_subset
 from tests.e2e.baseline.toolkit.user_ops import UserOps

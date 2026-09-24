@@ -20,9 +20,9 @@ with no removal), so it overlaps only slightly.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     invite_and_message_instruction,
     remove_participant_instruction,

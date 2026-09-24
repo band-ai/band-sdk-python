@@ -32,7 +32,9 @@ except ImportError:
 @pytest.mark.asyncio
 class TestCapabilityGatingEndToEnd:
     async def test_anthropic_adapter_renders_memory_section_when_enabled(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(capabilities={Capability.MEMORY})
         await adapter.on_started("test-agent", "A test agent")
@@ -41,7 +43,9 @@ class TestCapabilityGatingEndToEnd:
         assert "band_store_memory" in adapter._system_prompt
 
     async def test_anthropic_adapter_omits_memory_section_when_disabled(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter()
         await adapter.on_started("test-agent", "A test agent")
@@ -51,7 +55,9 @@ class TestCapabilityGatingEndToEnd:
     async def test_anthropic_adapter_renders_contacts_section_when_enabled(
         self,
     ) -> None:
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(capabilities={Capability.CONTACTS})
         await adapter.on_started("test-agent", "A test agent")
@@ -61,7 +67,9 @@ class TestCapabilityGatingEndToEnd:
     async def test_anthropic_adapter_renders_both_sections_when_both_enabled(
         self,
     ) -> None:
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(
             capabilities={Capability.MEMORY, Capability.CONTACTS}
@@ -72,7 +80,9 @@ class TestCapabilityGatingEndToEnd:
         assert "## Contact Management Tools" in adapter._system_prompt
 
     async def test_gemini_adapter_renders_memory_section_when_enabled(self) -> None:
-        from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file tests
+        from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file tests
+            GeminiAdapter,
+        )
 
         adapter = GeminiAdapter(capabilities={Capability.MEMORY})
         await adapter.on_started("test-agent", "A test agent")
@@ -81,7 +91,9 @@ class TestCapabilityGatingEndToEnd:
 
     async def test_langgraph_adapter_renders_memory_section_when_enabled(self) -> None:
 
-        from band.adapters.langgraph import LangGraphAdapter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file tests
+        from band.adapters.langgraph import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file tests
+            LangGraphAdapter,
+        )
 
         adapter = LangGraphAdapter(
             llm=MagicMock(),
@@ -103,7 +115,9 @@ class TestCapabilityGatingEndToEnd:
         if not os.environ.get("OPENAI_API_KEY"):
             pytest.skip("PydanticAIAdapter requires OPENAI_API_KEY to start")
 
-        from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file tests
+        from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file tests
+            PydanticAIAdapter,
+        )
 
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
@@ -120,7 +134,9 @@ class TestCapabilityGatingEndToEnd:
     async def test_anthropic_adapter_with_no_features_omits_capability_sections(
         self,
     ) -> None:
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter()
         await adapter.on_started("test-agent", "A test agent")
@@ -194,7 +210,9 @@ class TestCapabilityGatingEndToEnd:
             patch("crewai.LLM"),
         ):
             mock_agent_cls.return_value = MagicMock()
-            from band.adapters.crewai import CrewAIAdapter  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file tests
+            from band.adapters.crewai import (  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file tests
+                CrewAIAdapter,
+            )
 
             adapter = CrewAIAdapter(capabilities={Capability.MEMORY})
             await adapter.on_started("test-agent", "A test agent")
@@ -210,7 +228,9 @@ class TestCapabilityGatingEndToEnd:
             patch("crewai.LLM"),
         ):
             mock_agent_cls.return_value = MagicMock()
-            from band.adapters.crewai import CrewAIAdapter  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file tests
+            from band.adapters.crewai import (  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file tests
+                CrewAIAdapter,
+            )
 
             adapter = CrewAIAdapter()
             await adapter.on_started("test-agent", "A test agent")
@@ -220,7 +240,9 @@ class TestCapabilityGatingEndToEnd:
 
     async def test_anthropic_include_base_instructions_false_drops_base(self) -> None:
         """include_base_instructions=False renders identity without base instructions."""
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(
             prompt="Focus on Python.",
@@ -240,7 +262,9 @@ class TestCapabilityGatingEndToEnd:
         self,
     ) -> None:
         """Capability sections render independently of include_base_instructions."""
-        from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+        from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
+            AnthropicAdapter,
+        )
 
         adapter = AnthropicAdapter(
             include_base_instructions=False,
@@ -256,7 +280,9 @@ class TestCapabilityGatingEndToEnd:
 
     async def test_gemini_include_base_instructions_false_drops_base(self) -> None:
         """GeminiAdapter honors include_base_instructions=False end-to-end."""
-        from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file tests
+        from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file tests
+            GeminiAdapter,
+        )
 
         adapter = GeminiAdapter(
             prompt="Focus on Python.",

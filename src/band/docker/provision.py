@@ -562,7 +562,7 @@ async def _ensure_agent_registered(
             ),
             timeout=args.timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         outcome, orphaned_id = await _check_registration_after_timeout(
             api_key=api_key, rest_url=rest_url, agent_name=agent_name
         )
@@ -644,7 +644,7 @@ def main() -> None:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except Exception as e:
-        logger.exception("Unexpected error: %s", e)
+        logger.exception("Unexpected error")
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
 

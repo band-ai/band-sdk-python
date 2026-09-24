@@ -41,7 +41,6 @@ from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 from band.core.types import Capability
 
-
 logger = logging.getLogger(__name__)
 
 

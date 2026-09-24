@@ -5,23 +5,23 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
-    MessageEvent,
-)
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
+)
+from band.platform.event import (
+    ContactAddedEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
+    MessageEvent,
 )
 from band.runtime.contact_handler import (
-    ContactEventHandler,
     HUB_ROOM_SYSTEM_PROMPT,
     MAX_DEDUP_CACHE_SIZE,
+    ContactEventHandler,
 )
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy

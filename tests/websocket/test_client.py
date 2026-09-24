@@ -12,11 +12,13 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
+import band_sdk_core
 import pytest
+from band_sdk_core import DeadReason, SessionState
 from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
@@ -24,25 +26,22 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-import band_sdk_core
-from band_sdk_core import DeadReason, SessionState
-
-from band.credentials import PROXY_MANAGED_API_KEY
 import band.client.streaming.wire as wire_module
 from band.client.streaming import (
     DeliveryStatus,
     MessageCreatedPayload,
-    SupersedePayload,
-    WebSocketDisconnectReason,
-    WebSocketUpgradeError,
-    WireEvent,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
+    SupersedePayload,
     WebSocketClient,
+    WebSocketDisconnectReason,
+    WebSocketUpgradeError,
+    WireEvent,
 )
+from band.credentials import PROXY_MANAGED_API_KEY
 from tests.websocket.conftest import SUCCEEDS, fast_session_policy
 
 # Shared valid payload used by multiple tests
@@ -112,11 +111,10 @@ async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(caplog
     tracer = TracerProvider().get_tracer("test")
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
-    with caplog.at_level(logging.ERROR):
-        with tracer.start_as_current_span("probe") as span:
-            span_context = span.get_span_context()
-            # Missing required fields -- a genuine band_sdk_core rejection.
-            received = await dispatch(client, "message_created", {"id": "msg-123"})
+    with caplog.at_level(logging.ERROR), tracer.start_as_current_span("probe") as span:
+        span_context = span.get_span_context()
+        # Missing required fields -- a genuine band_sdk_core rejection.
+        received = await dispatch(client, "message_created", {"id": "msg-123"})
 
     assert received is None
     record = next(
@@ -214,7 +212,7 @@ async def test_supersede_event_records_terminal_reason_and_disables_reconnect():
 
     class MockMessage:
         event = "supersede"
-        payload = {
+        payload: ClassVar[dict[str, Any]] = {
             "reason": "session.already_connected",
             "message": "This connection has been superseded by a newer session for this agent.",
             "retryable": False,
@@ -618,7 +616,6 @@ async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
 
     async def slow_probe(websocket_url):
         await asyncio.sleep(probe_delay_s)
-        return None
 
     monkeypatch.setattr(
         "band.client.streaming.client.probe_upgrade_error",
@@ -758,9 +755,11 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
     the `x-api-key` handshake header on the real upgrade (alongside vsn and
     agent_id). The header is what the sandbox proxy substitutes and the platform
     authenticates off (with precedence); the query is retained for back-compat."""
-    async with upgrade_peer() as (ws_url, upgrade):
-        async with WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"):
-            params, headers = await asyncio.wait_for(upgrade, timeout=5)
+    async with (
+        upgrade_peer() as (ws_url, upgrade),
+        WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"),
+    ):
+        params, headers = await asyncio.wait_for(upgrade, timeout=5)
 
     assert params["api_key"] == [PROXY_MANAGED_API_KEY]
     assert params["agent_id"] == ["agent-xyz"]
@@ -1011,7 +1010,7 @@ async def test_join_room_participants_channel_allows_omitted_room_deleted_handle
 
     class MockMessage:
         event = "room_deleted"
-        payload = {"id": "room-123"}
+        payload: ClassVar[dict[str, Any]] = {"id": "room-123"}
 
     await message_handler(MockMessage())
 
@@ -1042,7 +1041,7 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
 
     class MockMessage:
         event = "room_deleted"
-        payload = {"id": "room-123"}
+        payload: ClassVar[dict[str, Any]] = {"id": "room-123"}
 
     await message_handler(MockMessage())
 
@@ -1133,7 +1132,7 @@ async def test_skips_unknown_event_without_handler(caplog):
 
     class MockMessage:
         event = "unknown_event"
-        payload = {"data": "test"}
+        payload: ClassVar[dict[str, Any]] = {"data": "test"}
 
     with caplog.at_level(logging.WARNING):
         await client._handle_events(MockMessage(), {})
@@ -1149,7 +1148,7 @@ async def test_event_created_without_handler_logs_at_debug_not_warning(caplog):
 
     class MockMessage:
         event = "event_created"
-        payload = {"data": "test"}
+        payload: ClassVar[dict[str, Any]] = {"data": "test"}
 
     with caplog.at_level(logging.DEBUG, logger="band.client.streaming.client"):
         await client._handle_events(MockMessage(), {})
@@ -1324,15 +1323,17 @@ async def test_watchdog_ack_keeps_connection_alive_across_heartbeat_cycles():
     cycle, so the connection survives well past a single dead_threshold_s
     window without the watchdog ever tripping."""
     policy = fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
-    async with phoenix_peer() as (ws_url, connected):
-        async with WebSocketClient(
+    async with (
+        phoenix_peer() as (ws_url, connected),
+        WebSocketClient(
             ws_url, "test-key", "agent-123", session_policy=policy
-        ) as client:
-            await asyncio.wait_for(connected, timeout=5)
-            await asyncio.sleep(1.0)
-            assert client.client is not None
-            assert client.client.connection is not None
-            assert client.client.connection.close_code is None
+        ) as client,
+    ):
+        await asyncio.wait_for(connected, timeout=5)
+        await asyncio.sleep(1.0)
+        assert client.client is not None
+        assert client.client.connection is not None
+        assert client.client.connection.close_code is None
 
 
 async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
@@ -1345,18 +1346,20 @@ async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
     async def on_reconnect() -> None:
         reconnected.set()
 
-    async with phoenix_peer(ack_heartbeats=False) as (ws_url, connected):
-        async with WebSocketClient(
+    async with (
+        phoenix_peer(ack_heartbeats=False) as (ws_url, connected),
+        WebSocketClient(
             ws_url,
             "test-key",
             "agent-123",
             on_reconnect=on_reconnect,
             session_policy=policy,
-        ):
-            await asyncio.wait_for(connected, timeout=5)
-            start = asyncio.get_running_loop().time()
-            await asyncio.wait_for(reconnected.wait(), timeout=5)
-            elapsed = asyncio.get_running_loop().time() - start
+        ),
+    ):
+        await asyncio.wait_for(connected, timeout=5)
+        start = asyncio.get_running_loop().time()
+        await asyncio.wait_for(reconnected.wait(), timeout=5)
+        elapsed = asyncio.get_running_loop().time() - start
 
     assert elapsed >= policy.dead_threshold_s * 0.5
 

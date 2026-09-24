@@ -15,7 +15,8 @@ exposed by the ``letta_client`` SDK, hence the raw ``httpx`` calls here.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Annotated, Any, Callable, cast
-from pydantic import Field, create_model
-from langchain_core.tools import BaseTool, InjectedToolArg, tool
+from collections.abc import Callable
+from typing import Annotated, Any, cast
+
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool, InjectedToolArg, tool
 from langgraph.pregel import Pregel
+from pydantic import Field, create_model
 
 logger = logging.getLogger(__name__)
 

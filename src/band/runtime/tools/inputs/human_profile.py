@@ -15,7 +15,7 @@ class GetMyProfileInput(BaseModel):
     Returns your profile information including name, email, role, etc.
     """
 
-    pass  # No parameters required.
+    # No parameters required.
 
 
 class UpdateMyProfileInput(BaseModel):

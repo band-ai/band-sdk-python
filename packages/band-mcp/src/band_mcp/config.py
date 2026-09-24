@@ -21,9 +21,10 @@ credential/scope/tools plumbing is new.
 from __future__ import annotations
 
 import difflib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Literal, Mapping, Sequence, TypedDict
+from typing import Literal, TypedDict
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

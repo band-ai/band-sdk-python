@@ -21,9 +21,9 @@ the *prompt effect* and *coexistence* on top.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     custom_prompt_with_marker,
     unique_marker,

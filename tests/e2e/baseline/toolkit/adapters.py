@@ -53,9 +53,7 @@ from typing import Any
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.custom_tools import CustomToolDef
-from tests.baseline.adapter import Adapter, NON_AGENT_ADAPTERS, discovered_agent_ids
-from tests.e2e.baseline.toolkit.tools import ToolSpec
-
+from tests.baseline.adapter import NON_AGENT_ADAPTERS, Adapter, discovered_agent_ids
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.deps import (
     DEFAULT_LANE,
@@ -63,11 +61,12 @@ from tests.e2e.baseline.toolkit.deps import (
     Lane,
     dep_lane,
 )
+from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 __all__ = [
+    "NON_AGENT_ADAPTERS",
     "Adapter",
     "AdapterSpec",
-    "NON_AGENT_ADAPTERS",
     "adapter",
     "adapter_lane",
     "assert_registry_covers_discovered",
@@ -304,4 +303,4 @@ def build_adapter(
 # what keeps the ``adapters`` <-> ``builders`` cycle resolvable. Nothing here uses the
 # module object; the import exists only to populate ``_REGISTRY`` before ``specs`` /
 # ``build_adapter`` are called.
-from tests.e2e.baseline.toolkit import builders as _builders  # noqa: E402,F401
+from tests.e2e.baseline.toolkit import builders as _builders  # noqa: F401

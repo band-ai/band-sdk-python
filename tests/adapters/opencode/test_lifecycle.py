@@ -7,29 +7,26 @@ from contextlib import suppress
 from typing import Any
 from unittest.mock import patch
 
-
 from band.adapters.opencode import OpencodeAdapter
 from band.core.types import (
     Emit,
     TurnUsage,
 )
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools
-from tests.adapters.usage_events import recorded_usage_payloads
-
-
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
-    make_fake_mcp_backend_factory,
     event_message_updated,
     event_session_idle,
     event_text_part,
+    make_fake_mcp_backend_factory,
     make_platform_message,
     run_single_turn,
     tools_protocol,
     wait_for,
 )
+from tests.adapters.usage_events import recorded_usage_payloads
 
 
 async def test_watch_task_drains_the_turn_that_started_it() -> None:
@@ -259,7 +256,7 @@ async def test_concurrent_message_rejected(make_adapter, tools) -> None:
     )
 
     # Second message should get rejected with "still processing" error
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("still processing" in e["content"].lower() for e in error_events)
     assert len(fake_client.prompt_calls) == 1
 

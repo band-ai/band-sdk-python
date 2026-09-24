@@ -21,8 +21,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
-
 from settings import OpenCodeExampleSettings
+
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Emit

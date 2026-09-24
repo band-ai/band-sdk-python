@@ -236,9 +236,8 @@ def test_trace_context_scope_resets_after_normal_exit() -> None:
 
 
 def test_trace_context_scope_resets_after_the_wrapped_code_raises() -> None:
-    with pytest.raises(RuntimeError, match="boom"):
-        with trace_context_scope():
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), trace_context_scope():
+        raise RuntimeError("boom")
     assert TRACE_CONTEXT.get() is None
 
 

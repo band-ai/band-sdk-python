@@ -12,14 +12,19 @@ import asyncio
 import logging
 import warnings
 from contextvars import ContextVar
-from typing import ClassVar, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
-from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.integrations.crewai import (
     CrewAIToolContext,
     EmitToolCallsReporter,
@@ -35,6 +40,8 @@ if TYPE_CHECKING:
     from crewai.tools import BaseTool
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "crewai"
 
 
 # Context variable for thread-safe room context access.
@@ -78,9 +85,15 @@ def _silence_lite_agent_error_panel() -> None:
     """
     try:
         # event_listener is imported for its side effect: registering the handlers.
-        from crewai.events import crewai_event_bus  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
-        from crewai.events.event_listener import event_listener  # noqa: F401, PLC0415 -- crewai extra, absent from the standard dev venv
-        from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        from crewai.events import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            crewai_event_bus,
+        )
+        from crewai.events.event_listener import (  # noqa: F401, PLC0415 -- crewai extra, absent from the standard dev venv
+            event_listener,
+        )
+        from crewai.events.types.agent_events import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            LiteAgentExecutionErrorEvent,
+        )
 
         handlers = crewai_event_bus._sync_handlers.get(
             LiteAgentExecutionErrorEvent, frozenset()
@@ -192,8 +205,12 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Initialize CrewAI agent after metadata is fetched."""
         try:
-            from crewai import Agent as CrewAIAgent  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
-            from crewai import LLM  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            from crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+                LLM,
+            )
+            from crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+                Agent as CrewAIAgent,
+            )
         except ImportError as e:
             raise ImportError(
                 "crewai is required for CrewAI adapter.\n"
@@ -295,9 +312,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         logger.debug("Handling message %s in room %s", msg.id, room_id)
 
         if not self._crewai_agent:
-            raise RuntimeError(
-                "CrewAI agent not initialized - ensure on_started() was called"
-            )
+            message = "CrewAI agent not initialized - ensure on_started() was called"
+            await tools.send_failure(AgentFailure(_PROVIDER, message))
+            raise RuntimeError(message)
 
         # Set context variable for tool access (thread-safe room context).
         # Wrap in try/finally immediately to ensure cleanup even if code
@@ -410,13 +427,16 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             )
 
         except Exception as e:
-            # An empty response is benign only once some tool ran this turn --
-            # otherwise the model's very first call came back empty, which is
+            # An empty response is benign only once some tool ran this turn.
+            # Reaching here with no tool activity means the first-call retry
+            # also came back empty (or this was a different failure), which is
             # indistinguishable from a genuine provider failure and must keep
             # failing the delivery so the platform retries it.
             if not (_is_empty_llm_response(e) and reply_tracker.any_tool_ran):
-                logger.error("Error processing message: %s", e, exc_info=True)
-                await self._report_error(tools, str(e))
+                logger.exception("Error processing message")
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
                 raise
             # Keep the exception text: it is the only record that CrewAI raised,
             # and this turn is no longer marked failed for the runtime to log.
@@ -433,21 +453,23 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             )
 
         if not reply_tracker.did_productive_work:
-            # Warn, not debug: nothing reached the room, and the delivery is
-            # still acked as processed, so this log is the only operator signal.
             logger.warning(
                 "Room %s: CrewAI turn produced nothing for the room", room_id
             )
-            await self._report_error(
-                tools,
-                missing_reply_error(
-                    "CrewAI",
-                    detail=(
-                        "Repeated tool failures may also have exhausted "
-                        f"max_iter={self.max_iter}."
-                    ),
+            detail = missing_reply_error(
+                "CrewAI",
+                detail=(
+                    "Repeated tool failures may also have exhausted "
+                    f"max_iter={self.max_iter}."
                 ),
             )
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
+            if not reply_tracker.any_tool_ran:
+                # Some tool activity (even read-only) means the turn did what it
+                # was asked and correctly had nothing left to say -- report but
+                # don't fail the delivery. Only true silence, no tool call at
+                # all, is a genuine no-response failure worth a retry.
+                raise TurnResultAlreadyReported(detail)
 
         logger.info(
             "Room %s: CrewAI turn over for %s (output=%s chars, history=%s)",
@@ -465,7 +487,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     async def _kickoff_with_empty_response_retry(
         self,
-        agent: "CrewAIAgent",
+        agent: CrewAIAgent,
         prompt: str,
         reply_tracker: ReplyTracker,
         room_id: str,
@@ -504,10 +526,3 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                         retry_exc,
                     )
                 raise
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
-            logger.warning("Failed to send error event: %s", e)

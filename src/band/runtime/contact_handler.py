@@ -15,8 +15,9 @@ import asyncio
 import logging
 import uuid
 from collections import OrderedDict
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from band.client.rest import (
     DEFAULT_REQUEST_OPTIONS,
@@ -25,21 +26,21 @@ from band.client.rest import (
 )
 from band.client.streaming import MessageCreatedPayload, MessageMetadata
 from band.platform.event import (
+    ContactAddedEvent,
     ContactEvent,
+    ContactRemovedEvent,
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
     MessageEvent,
 )
 from band.platform.posting import post_event
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import (
-    ContactEventConfig,
-    ContactEventStrategy,
-    SYNTHETIC_SENDER_TYPE,
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     SYNTHETIC_CONTACT_EVENTS_SENDER_NAME,
+    SYNTHETIC_SENDER_TYPE,
+    ContactEventConfig,
+    ContactEventStrategy,
     normalize_handle,
 )
 
@@ -104,7 +105,7 @@ class ContactEventHandler:
     def __init__(
         self,
         config: ContactEventConfig,
-        link: "BandLink",
+        link: BandLink,
         on_broadcast: Callable[[str], None] | None = None,
         on_hub_event: HubEventCallback | None = None,
         on_hub_init: HubInitCallback | None = None,
@@ -258,9 +259,9 @@ class ContactEventHandler:
             await self._config.on_event(event, self.contact_tools)
             logger.debug("Contact event callback completed successfully")
             return True
-        except Exception as e:
+        except Exception:
             # Log error but don't re-raise - we don't want to break the event loop
-            logger.error("Contact event callback failed: %s", e, exc_info=True)
+            logger.exception("Contact event callback failed")
             return False
 
     async def _handle_hub_room(self, event: ContactEvent) -> bool:
@@ -289,7 +290,7 @@ class ContactEventHandler:
             # Use a short timeout since hub room should be ready by now
             try:
                 await asyncio.wait_for(self._hub_room_ready.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "Hub room not ready after 5s, proceeding anyway (may fail)"
                 )
@@ -310,7 +311,7 @@ class ContactEventHandler:
             event_type = self._get_event_type(event)
 
             # Create synthetic MessageEvent for queue injection
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             message_event = MessageEvent(
                 type="message_created",
                 room_id=hub_id,
@@ -341,10 +342,8 @@ class ContactEventHandler:
             logger.debug("Contact event injected to hub room successfully")
             return True
 
-        except Exception as e:
-            logger.error(
-                "Failed to inject contact event to hub room: %s", e, exc_info=True
-            )
+        except Exception:
+            logger.exception("Failed to inject contact event to hub room")
             return False
 
     async def _post_task_event(
@@ -371,7 +370,7 @@ class ContactEventHandler:
                 ),
             )
             logger.debug("Task event posted to hub room: %s", event_type)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             # Log but don't fail - the queue injection is the important part
             logger.warning("Failed to post task event to hub room: %s", e)
 
@@ -652,7 +651,7 @@ class ContactEventHandler:
             logger.debug("Request not found in API: %s", request_id)
             return None
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to fetch request details from API: %s", e)
             return None
 

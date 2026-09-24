@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from band_sdk_core import SessionPolicy
 
 SUCCEEDS = object()

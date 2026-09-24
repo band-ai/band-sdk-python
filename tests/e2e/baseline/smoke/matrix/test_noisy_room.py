@@ -28,9 +28,9 @@ a credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory

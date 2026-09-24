@@ -294,7 +294,9 @@ import logging.config
 
 from band import LoggingStyle, build_logging_config
 
-config = build_logging_config(style=LoggingStyle.JSON, static_fields={"service": "agent"})
+config = build_logging_config(
+    style=LoggingStyle.JSON, static_fields={"service": "agent"}
+)
 logging.config.dictConfig(config)
 ```
 
@@ -337,9 +339,9 @@ assert adapter.instrument is True
 Set it up in this order:
 
 ```python notest
-with telemetry("my-service") as otel:      # 1. your providers + trace-context injection
-    LogSettings().for_application().configure()   # 2. Band's logging
-    otel.attach_log_handler()                     # 3. your OTEL log handler
+with telemetry("my-service") as otel:  # 1. your providers + trace-context injection
+    LogSettings().for_application().configure()  # 2. Band's logging
+    otel.attach_log_handler()  # 3. your OTEL log handler
 ```
 
 Step 3 comes last because Band applies its configuration with
@@ -451,7 +453,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
 | Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
 | Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
-| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | [docs](docs/adapters/managed-host-adapters.md) | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
 | Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
@@ -460,7 +462,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
 | Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
+| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/managed-host-adapters.md) | [examples](examples/opencode/)       |
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 

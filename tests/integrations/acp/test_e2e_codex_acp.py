@@ -18,11 +18,19 @@ import json
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
+from acp import spawn_agent_process
+from acp.exceptions import RequestError
+from acp.schema import (
+    HttpMcpServer,
+    SessionConfigOptionSelect,
+    SetSessionConfigOptionResponse,
+)
 from pydantic import BaseModel
 
 from band.integrations.acp.client_profiles import NoopACPClientProfile
@@ -34,6 +42,11 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import BandACPClient
+from band.integrations.acp.session_config import (
+    SessionConfigOption,
+    apply_session_config_selections,
+    flatten_select_options,
+)
 from band.integrations.acp.types import CollectedChunk
 from band.integrations.mcp.engine import (
     MCPToolRegistration,
@@ -41,11 +54,8 @@ from band.integrations.mcp.engine import (
 )
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
-from tests.toolkit.timeouts import backstop_timeout
-from acp import spawn_agent_process
-from acp.schema import HttpMcpServer
 from tests.runtime.conftest import make_participant
-from acp.exceptions import RequestError
+from tests.toolkit.timeouts import backstop_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +66,30 @@ def called_tool(tool_calls: list[CollectedChunk], tool_name: str) -> bool:
         chunk.metadata.get("raw_input", {}).get("tool") == tool_name
         for chunk in tool_calls
     )
+
+
+def non_current_config_selection(
+    config_options: Sequence[SessionConfigOption],
+    option_id: str,
+) -> dict[str, str]:
+    """Choose one advertised non-current value from one live catalog entry."""
+    catalog = {option.id: option for option in config_options}
+    option = catalog.get(option_id)
+    assert isinstance(option, SessionConfigOptionSelect), (
+        f"codex-acp did not advertise selectable {option_id!r} configuration"
+    )
+    selected_value = next(
+        (
+            entry.value
+            for entry in flatten_select_options(option.options)
+            if entry.value != option.current_value
+        ),
+        None,
+    )
+    assert selected_value is not None, (
+        f"codex-acp did not advertise an alternative {option_id!r} value"
+    )
+    return {option_id: selected_value}
 
 
 # These are real E2E tests: each spawns `codex-acp` as a
@@ -72,6 +106,7 @@ _E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
 _CODEX_ACP_COMMAND = shutil.which("codex-acp")
 _INIT_TIMEOUT = 30
 _PROMPT_TIMEOUT = 120
+_DYNAMIC_CONFIG_OPTION_IDS = ("model", "reasoning_effort")
 pytestmark = [
     pytest.mark.skipif(
         not _E2E_ENABLED,
@@ -216,6 +251,72 @@ async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
     valid_types = {"text", "thought", "tool_call", "tool_result", "plan"}
     seen_types = {chunk.chunk_type for chunk in chunks}
     assert seen_types <= valid_types, f"Unexpected chunk types: {seen_types}"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize("option_id", _DYNAMIC_CONFIG_OPTION_IDS)
+async def test_codex_acp_dynamic_configuration_survives_two_turns(
+    acp_runtime: ACPRuntime,
+    option_id: str,
+) -> None:
+    """Apply live catalog selections before proving the configured session continues."""
+    assert acp_runtime.client is not None
+    session = await asyncio.wait_for(
+        acp_runtime.create_session_response(cwd="/tmp", mcp_servers=[]),
+        timeout=_INIT_TIMEOUT,
+    )
+    config_options = session.config_options
+    assert config_options is not None
+
+    async def set_option(
+        session_id: str,
+        option_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse | None:
+        return await acp_runtime.set_config_option(
+            session_id=session_id,
+            config_id=option_id,
+            value=value,
+        )
+
+    await apply_session_config_selections(
+        session_id=session.session_id,
+        config_options=config_options,
+        selections=non_current_config_selection(config_options, option_id),
+        set_option=set_option,
+    )
+
+    marker = f"acp-config-{uuid4().hex}"
+    acp_runtime.reset_session(session.session_id)
+    first_turn = await asyncio.wait_for(
+        acp_runtime.prompt(
+            session_id=session.session_id,
+            prompt_text=(
+                f"Remember this exact reference for a later question: {marker}. "
+                "Reply with the reference."
+            ),
+        ),
+        timeout=_PROMPT_TIMEOUT,
+    )
+    assert first_turn
+    assert marker in acp_runtime.client.get_collected_text(session.session_id)
+
+    confirmation = f"acp-confirm-{uuid4().hex}"
+    acp_runtime.reset_session(session.session_id)
+    second_turn = await asyncio.wait_for(
+        acp_runtime.prompt(
+            session_id=session.session_id,
+            prompt_text=(
+                "Reply with the exact reference from my previous message and this "
+                f"new confirmation: {confirmation}."
+            ),
+        ),
+        timeout=_PROMPT_TIMEOUT,
+    )
+    assert second_turn
+    second_text = acp_runtime.client.get_collected_text(session.session_id)
+    assert marker in second_text
+    assert confirmation in second_text
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -459,5 +560,5 @@ async def test_spawn_process_safety(acp_client: BandACPClient) -> None:
     """Should handle __aenter__ failure gracefully for bad command."""
 
     ctx = spawn_agent_process(acp_client, "nonexistent-acp-command-12345")
-    with pytest.raises(Exception):
+    with pytest.raises(FileNotFoundError):
         await ctx.__aenter__()

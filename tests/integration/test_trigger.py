@@ -15,16 +15,15 @@ import argparse
 import logging
 
 import pytest
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import ParticipantRequest
 
 from band.cli.trigger import (
     _format_api_error,
     find_peer_by_handle,
     run,
 )
-from band_rest import AsyncRestClient, ChatRoomRequest
-from band_rest.core.api_error import ApiError
-from band_rest.types import ParticipantRequest
-
 from tests.conftest_integration import (
     AgentInfo,
     get_api_key,

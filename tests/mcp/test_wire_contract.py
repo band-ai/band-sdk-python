@@ -23,6 +23,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, get_args, get_origin
 
+from band_mcp.config import Config, Scope, ToolGroup
+from band_mcp.server import standalone_spec
+from band_mcp.shared import build_standalone_resolver
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel
@@ -49,9 +52,6 @@ from band.runtime.tools import (
     ListSentContactRequestsInput,
     RespondContactRequestInput,
 )
-from band_mcp.config import Config, Scope, ToolGroup
-from band_mcp.server import standalone_spec
-from band_mcp.shared import build_standalone_resolver
 from tests.mcp.conftest import advertised_schemas
 
 # The JSON Schema keys that decide whether a real call is accepted or

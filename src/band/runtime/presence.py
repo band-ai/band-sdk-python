@@ -9,23 +9,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from band_sdk_core import RoomMembership, RoomRoster
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.platform.event import (
+    ContactAddedEvent,
+    ContactEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
+    PlatformEvent,
+    ReconnectedEvent,
     RoomAddedEvent,
     RoomDeletedEvent,
     RoomRemovedEvent,
-    ReconnectedEvent,
-    PlatformEvent,
     WebSocketDisconnectedEvent,
-    ContactEvent,
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
 )
 from band.platform.link import BandLink
 from band.runtime.tools import iter_chat_pages
@@ -178,8 +179,8 @@ class RoomPresence:
                 await self._on_platform_event(event)
         except asyncio.CancelledError:
             logger.debug("Event consumer task cancelled")
-        except Exception as e:
-            logger.error("Error in event consumer: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Error in event consumer")
 
     async def stop(self) -> None:
         """
@@ -313,7 +314,7 @@ class RoomPresence:
         try:
             try:
                 rooms_from_api = await self._list_existing_rooms()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning("Failed to sync rooms after reconnect: %s", e)
                 return
 
@@ -365,7 +366,7 @@ class RoomPresence:
         crash whatever join/leave sequence triggered it."""
         try:
             await self.link.unsubscribe_room(room_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             logger.warning(
                 "Failed to unsubscribe room %s during %s: %s", room_id, context, e
             )
@@ -523,7 +524,7 @@ class RoomPresence:
                 except asyncio.CancelledError:
                     await self._unsubscribe_room(room_id, context=context)
                     raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning(
                     "Failed to subscribe to room %s during %s: %s", room_id, context, e
                 )
@@ -627,5 +628,5 @@ class RoomPresence:
         try:
             rooms_to_join = await self._list_existing_rooms()
             await self._subscribe_rooms(rooms_to_join, context="startup")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             logger.warning("Failed to subscribe to existing rooms: %s", e)
