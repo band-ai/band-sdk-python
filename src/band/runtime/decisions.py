@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeVar
 from uuid import uuid4
@@ -46,11 +46,35 @@ class DecisionRegistry(Generic[T]):
         return len(self._entries)
 
     def get(self, token: str) -> T | None:
+        """The payload at ``token``, claimed or not -- like ``dict.get``.
+
+        Claimed-ness is a separate question (``entries()`` exposes it); a
+        caller that must not act on an already-claimed entry uses
+        ``try_claim`` instead, which is the one gate that actually enforces
+        that.
+        """
         entry = self._entries.get(token)
-        return None if entry is None or entry.claimed else entry.payload
+        return None if entry is None else entry.payload
+
+    def __contains__(self, token: object) -> bool:
+        return token in self._entries
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._entries)
 
     def tokens(self) -> list[str]:
         return list(self._entries)
+
+    def values(self) -> list[T]:
+        return [entry.payload for entry in self._entries.values()]
+
+    def entries(self) -> list[DecisionEntry[T]]:
+        """Snapshot of every current entry, claimed or not.
+
+        For the aggregate queries a caller can't get from ``get``/``tokens``
+        alone -- e.g. "is anything still unclaimed".
+        """
+        return list(self._entries.values())
 
     def register(self, payload: T, *, key: str | None = None) -> str | None:
         """Insert a new entry, keyed by ``key`` or a minted token.

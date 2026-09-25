@@ -64,15 +64,46 @@ class TestRegisterClaimForget:
         registry: DecisionRegistry[_Ask] = DecisionRegistry()
         assert registry.try_claim("nope") is None
 
-    def test_get_is_none_once_claimed(self) -> None:
-        """A claimed-but-not-yet-forgotten entry is mid-resolution, not a
-        fresh pending ask -- callers must not treat it as still awaiting a
-        reply."""
+    def test_get_still_returns_the_payload_once_claimed(self) -> None:
+        """``get`` is a plain lookup, like ``dict.get`` -- claimed-ness is a
+        separate question (``entries()``/``try_claim``), not something
+        ``get`` silently filters on."""
         registry: DecisionRegistry[_Ask] = DecisionRegistry()
         token = registry.register(_Ask("a"))
         assert token is not None
         registry.try_claim(token)
-        assert registry.get(token) is None
+        assert registry.get(token) == _Ask("a")
+
+    def test_contains_reflects_presence_regardless_of_claimed_status(self) -> None:
+        registry: DecisionRegistry[_Ask] = DecisionRegistry()
+        token = registry.register(_Ask("a"))
+        assert token is not None
+        assert token in registry
+        registry.try_claim(token)
+        assert token in registry
+        registry.forget(token)
+        assert token not in registry
+
+    def test_iter_yields_tokens(self) -> None:
+        registry: DecisionRegistry[_Ask] = DecisionRegistry()
+        registry.register(_Ask("a"), key="a")
+        registry.register(_Ask("b"), key="b")
+        assert set(registry) == {"a", "b"}
+
+    def test_values_returns_payloads(self) -> None:
+        registry: DecisionRegistry[_Ask] = DecisionRegistry()
+        registry.register(_Ask("a"), key="a")
+        registry.register(_Ask("b"), key="b")
+        assert sorted(registry.values(), key=lambda ask: ask.name) == [
+            _Ask("a"),
+            _Ask("b"),
+        ]
+
+    def test_falsy_when_empty(self) -> None:
+        registry: DecisionRegistry[_Ask] = DecisionRegistry()
+        assert not registry
+        registry.register(_Ask("a"))
+        assert registry
 
     def test_forget_drops_the_entry(self) -> None:
         registry: DecisionRegistry[_Ask] = DecisionRegistry()
@@ -85,6 +116,14 @@ class TestRegisterClaimForget:
     def test_forget_an_unknown_token_is_a_no_op(self) -> None:
         registry: DecisionRegistry[_Ask] = DecisionRegistry()
         registry.forget("nope")  # must not raise
+
+    def test_entries_reports_claimed_status_per_entry(self) -> None:
+        registry: DecisionRegistry[_Ask] = DecisionRegistry()
+        registry.register(_Ask("a"), key="a")
+        registry.register(_Ask("b"), key="b")
+        registry.try_claim("a")
+        claimed = {entry.token: entry.claimed for entry in registry.entries()}
+        assert claimed == {"a": True, "b": False}
 
 
 class TestSupersede:
@@ -115,7 +154,7 @@ class TestSupersede:
         registry.try_claim("req-1")
         result = registry.register(_Ask("second"), key="req-1")
         assert result is None
-        assert registry.get("req-1") is None  # the original stays claimed, not replaced
+        assert registry.get("req-1") == _Ask("first")  # unreplaced, not displaced
 
 
 class TestTimeout:

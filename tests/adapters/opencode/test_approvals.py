@@ -541,7 +541,7 @@ async def test_redelivered_permission_while_reply_in_flight_is_ignored() -> None
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="req-1", permission="bash")
     )
-    pending_before = approvals._permissions["req-1"]
+    pending_before = approvals._permissions.get("req-1")
     notifications_before = len(tools.messages_sent)
 
     reply_task = asyncio.create_task(
@@ -555,7 +555,7 @@ async def test_redelivered_permission_while_reply_in_flight_is_ignored() -> None
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="req-1", permission="bash")
     )
-    assert approvals._permissions["req-1"] is pending_before
+    assert approvals._permissions.get("req-1") is pending_before
     assert len(tools.messages_sent) == notifications_before
 
     client.allow_reply.set()
@@ -574,7 +574,7 @@ async def test_redelivered_question_while_reply_in_flight_is_ignored() -> None:
     await approvals.on_question_asked(
         OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
     )
-    pending_before = approvals._questions["q-1"]
+    pending_before = approvals._questions.get("q-1")
     notifications_before = len(tools.messages_sent)
 
     reply_task = asyncio.create_task(approvals.try_handle_reply("Alice", "user-1"))
@@ -586,7 +586,7 @@ async def test_redelivered_question_while_reply_in_flight_is_ignored() -> None:
     await approvals.on_question_asked(
         OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
     )
-    assert approvals._questions["q-1"] is pending_before
+    assert approvals._questions.get("q-1") is pending_before
     assert len(tools.messages_sent) == notifications_before
 
     client.allow_reply.set()
@@ -1249,7 +1249,8 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="perm-1", permission="bash")
     )
-    timer = approvals._permissions["perm-1"].timeout_task
+    entry = next(e for e in approvals._permissions.entries() if e.token == "perm-1")
+    timer = entry.timeout_task
     assert timer is not None and not timer.done()
 
     # The client is gone by the time the human replies — a teardown or a serve
