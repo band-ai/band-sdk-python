@@ -89,7 +89,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     is_marked_terminal,
 )
-from band.runtime.decisions import ClaimOutcome, DecisionRegistry, Timeout
+from band.runtime.decisions import DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -161,12 +161,6 @@ _LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
 # Claude Code's native tools.
 _NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}).+"
 
-# A pending approval's future, force-resolved by eviction or room teardown
-# rather than a genuine /decline reply — distinct from the "decline" string
-# _handle_approval_command sets, since only that path posts a room-visible
-# notice for the specific call it declines (see _record_notified_decline).
-_FORCED_DECLINE = "forced_decline"
-
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
     r"""(?x)
@@ -224,15 +218,27 @@ async def _pre_tool_use_continue_hook(
     }
 
 
+@dataclass(frozen=True)
+class ApprovalReply:
+    """A room member's ``/approve`` or ``/decline`` for one pending approval."""
+
+    decision: ApprovalDecision
+    sender_id: str
+
+
 @dataclass
 class PendingApproval:
-    """A tool-use approval request waiting for a chat-room decision."""
+    """A tool-use approval request waiting for a chat-room decision.
+
+    ``future`` resolves to ``None`` when eviction or room teardown forces a
+    decline without any reply.
+    """
 
     tool_name: str
     tool_input: dict[str, Any]
     summary: str
     created_at: datetime
-    future: asyncio.Future[str]
+    future: asyncio.Future[ApprovalReply | None]
     requester: dict[str, str]
 
 
@@ -1168,7 +1174,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         Single source of truth for the three call sites that can determine a
         decline was actually delivered (auto_decline, manual /decline, manual
         timeout) — deliberately not called for a forced resolution (approval
-        eviction, room teardown; see _FORCED_DECLINE), which never posts a
+        eviction, room teardown; a ``None`` reply), which never posts a
         notice for the specific call it force-declines.
         """
         self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
@@ -1491,14 +1497,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # Store pending approval (evict oldest if capacity exceeded)
         registry = self._pending_approvals.setdefault(
-            room_id,
-            DecisionRegistry(
-                max_pending=self.max_pending_approvals_per_room,
-                authorized_senders=self.approval_authorized_senders,
-            ),
+            room_id, self._new_approval_registry()
         )
         if (evicted := registry.evict_oldest()) is not None:
-            evicted.payload.future.set_result(_FORCED_DECLINE)
+            evicted.payload.future.set_result(None)
             logger.warning(
                 "Room %s: Evicted oldest pending approval %s (capacity %s)",
                 room_id,
@@ -1547,15 +1549,34 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 return await self._apply_approval_timeout(
                     tools, room_id, token, mention, tool_use_id
                 )
-            case "accept":
-                return PermissionResultAllow()
-            case "decline" if tool_use_id:
-                # Only a genuine "decline" (a human replying via
-                # _handle_approval_command, which posts its own notice)
-                # implies delivery. A forced resolution — eviction or room
-                # teardown, _FORCED_DECLINE — never posts one, so must not
-                # count.
-                self._record_notified_decline(room_id, tool_use_id)
+            case ApprovalReply():
+                return await self._apply_approval_reply(
+                    tools, room_id, token, decision, tool_use_id
+                )
+        # Forced by eviction or room teardown: no notice names this call.
+        return PermissionResultDeny(message="User declined tool use")
+
+    async def _apply_approval_reply(
+        self,
+        tools: AgentToolsProtocol | None,
+        room_id: str,
+        token: str,
+        reply: ApprovalReply,
+        tool_use_id: str | None,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        notified = False
+        if tools:
+            notified = await self._send_best_effort(
+                tools,
+                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=reply.decision),
+                [reply.sender_id],
+                room_id=room_id,
+                failure_note=f"Failed to send approval resolution notice for token {token}",
+            )
+        if reply.decision == "accept":
+            return PermissionResultAllow()
+        if notified and tool_use_id:
+            self._record_notified_decline(room_id, tool_use_id)
         return PermissionResultDeny(message="User declined tool use")
 
     async def _apply_approval_timeout(
@@ -1621,23 +1642,32 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # This is a reference to the live registry for the room (or a
         # throwaway empty one if none exists).  Safe because the event loop
         # is single-threaded, so no concurrent mutation can occur mid-handler.
-        pending = self._pending_approvals.get(room_id) or DecisionRegistry()
+        pending = self._pending_approvals.get(room_id) or self._new_approval_registry()
         mention: list[str] = [sender["id"]]
 
         # --- /approvals: list pending ---
         if command == "approvals":
-            if not pending:
+            if not (open_entries := pending.unclaimed()):
                 await tools.send_message("No pending approvals.", mentions=mention)
                 return
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
-            for token, item in pending.items():
-                age_s = int((now - item.created_at).total_seconds())
-                lines.append(f"- `{token}`: {item.summary} ({age_s}s ago)")
+            for entry in open_entries:
+                age_s = int((now - entry.payload.created_at).total_seconds())
+                lines.append(
+                    f"- `{entry.token}`: {entry.payload.summary} ({age_s}s ago)"
+                )
             await tools.send_message("\n".join(lines), mentions=mention)
             return
 
         # --- /approve [token] | /decline [token] ---
+        if not pending.is_authorized(sender["id"]):
+            await tools.send_message(
+                "You are not authorized to approve or decline tool use.",
+                mentions=mention,
+            )
+            return
+
         token = args.strip() if args else ""
         selected: PendingApproval | None = None
 
@@ -1663,37 +1693,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             return
 
-        match pending.claim_reply(token, sender["id"]):
-            case ClaimOutcome.UNAUTHORIZED:
-                await tools.send_message(
-                    "You are not authorized to approve or decline tool use.",
-                    mentions=mention,
-                )
-                return
-            case ClaimOutcome.NOT_PENDING:
-                await tools.send_message(
-                    f"Approval `{token}` is no longer pending.", mentions=mention
-                )
-                return
+        if pending.try_claim(token) is None:
+            await tools.send_message(
+                f"Approval `{token}` is no longer pending.", mentions=mention
+            )
+            return
 
+        # Resolved with no await after the claim: the waiting asker posts the
+        # "resolved" notice, so a stalled send can never strand a claimed ask.
         decision: ApprovalDecision = "accept" if command == "approve" else "decline"
-        notified = await self._send_best_effort(
-            tools,
-            APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision),
-            mention,
-            room_id=room_id,
-            failure_note=f"Failed to send approval resolution notice for token {token}",
-        )
-
-        # A failed notice for a decline must not claim delivery --
-        # _FORCED_DECLINE is the existing "declined with no notice" sentinel
-        # (matches eviction/teardown above), which _resolve_manual_approval's
-        # decision_raw == "decline" check correctly treats as not implying
-        # the missing-reply guard is covered. An accept has no such guard to
-        # protect, so it always resolves as a genuine accept regardless of
-        # notice delivery.
-        resolved = decision if (notified or decision == "accept") else _FORCED_DECLINE
-        selected.future.set_result(resolved)
+        selected.future.set_result(ApprovalReply(decision, sender["id"]))
 
     async def _handle_status_command(
         self,
@@ -1706,7 +1715,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             self._session_manager.get_session_count() if self._session_manager else 0
         )
         session_id = self._session_ids.get(room_id, "—")
-        pending_count = len(self._pending_approvals.get(room_id, {}))
+        registry = self._pending_approvals.get(room_id)
+        pending_count = len(registry.unclaimed()) if registry else 0
 
         lines = [
             "**Claude SDK Status**",
@@ -1760,6 +1770,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._approval_seq[room_id] = seq
         return f"a-{seq}"
 
+    def _new_approval_registry(self) -> DecisionRegistry[PendingApproval]:
+        return DecisionRegistry(
+            max_pending=self.max_pending_approvals_per_room,
+            authorized_senders=self.approval_authorized_senders,
+        )
+
     def _clear_pending_approval(self, room_id: str, token: str) -> None:
         """Remove a single pending approval from a room."""
         registry = self._pending_approvals.get(room_id)
@@ -1775,5 +1791,5 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if registry is None:
             return
         for entry in registry.cancel_all():
-            entry.payload.future.set_result(_FORCED_DECLINE)
+            entry.payload.future.set_result(None)
         # Keep the seq counter to avoid token collisions with suspended coroutines

@@ -5778,6 +5778,56 @@ class TestManualApprovalRaces:
         assert decision == "decline"  # approval_timeout_decision, not the reply
         assert reply == "No pending approvals to resolve."
 
+    @pytest.mark.asyncio
+    async def test_a_reply_for_an_already_claimed_token_is_told_not_pending(
+        self,
+    ) -> None:
+        """A claim that got there first owns the approval: a second reply is
+        told it's no longer pending and cannot override the first answer."""
+        tools = FakeAgentTools()
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=5
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        msg = make_platform_message(room_id="room-1")
+        params = {"approvalId": "approval-xyz", "command": "rm -rf /"}
+        pending_task = asyncio.create_task(
+            adapter._resolve_manual_approval(
+                tools=tools,
+                msg=msg,
+                room_id="room-1",
+                event=_event_request(
+                    1, "item/commandExecution/requestApproval", params
+                ),
+                summary="rm -rf /",
+                params=params,
+            )
+        )
+        async with asyncio.timeout(1):
+            while "approval-xyz" not in adapter._pending_approvals.get("room-1", {}):
+                await asyncio.sleep(0)
+
+        registry = adapter._pending_approvals["room-1"]
+        assert registry.try_claim("approval-xyz") is not None
+        registry["approval-xyz"].future.set_result("decline")
+
+        handled = await adapter._handle_approval_command(
+            tools=tools,
+            msg=msg,
+            room_id="room-1",
+            command="approve",
+            args="approval-xyz",
+        )
+
+        assert handled is True
+        assert tools.messages_sent[-1]["content"] == (
+            "Approval `approval-xyz` is no longer pending."
+        )
+        assert await pending_task == "decline"
+
 
 class TestTokenUsageCounterMonotonicity:
     """CodexTokenUsage protection against non-monotonic cumulative updates."""

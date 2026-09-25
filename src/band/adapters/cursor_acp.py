@@ -635,7 +635,7 @@ class CursorACPAdapter(ACPClientAdapter):
     ) -> None:
         pending = [
             f"`{entry.token}` ({entry.payload.kind})"
-            for entry in self._pending_decisions.entries()
+            for entry in self._pending_decisions.unclaimed()
             if entry.payload.room_id == room_id
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")

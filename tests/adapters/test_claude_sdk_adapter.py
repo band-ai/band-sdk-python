@@ -31,12 +31,12 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_AVAILABLE,
     _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
-    _FORCED_DECLINE,
     _NATIVE_TOOL_MATCHER,
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
     BAND_MEMORY_TOOLS,
     BAND_TASK_TOOLS,
+    ApprovalReply,
     ClaudeSDKAdapter,
     PendingApproval,
     TurnResultAlreadyReported,
@@ -130,9 +130,11 @@ def register_pending_approval(
     summary: str | None = None,
     created_at: datetime | None = None,
     requester: dict[str, str] | None = None,
-) -> asyncio.Future[str]:
+) -> asyncio.Future[ApprovalReply | None]:
     """Register one pending approval on adapter, returning its future."""
-    future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    future: asyncio.Future[ApprovalReply | None] = (
+        asyncio.get_running_loop().create_future()
+    )
     registry = adapter._pending_approvals.setdefault(
         room_id,
         DecisionRegistry(
@@ -152,6 +154,37 @@ def register_pending_approval(
         key=token,
     )
     return future
+
+
+async def wait_for_pending_approval(
+    adapter: ClaudeSDKAdapter, room_id: str = "room-1"
+) -> None:
+    """Yield until a real ``can_use_tool`` call has registered its approval."""
+    async with asyncio.timeout(1):
+        while not adapter._pending_approvals.get(room_id):
+            await asyncio.sleep(0)
+
+
+async def reply_to_approval(
+    adapter: ClaudeSDKAdapter,
+    tools: MagicMock,
+    command: str,
+    sender: dict[str, str],
+    *,
+    room_id: str = "room-1",
+    tool_use_id: str | None = None,
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Run one manual approval through a room reply; return the tool decision."""
+    pending_task = asyncio.create_task(
+        adapter._make_can_use_tool(room_id)(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id=tool_use_id)
+        )
+    )
+    await wait_for_pending_approval(adapter, room_id)
+    await adapter._handle_approval_command(
+        tools=tools, room_id=room_id, command=command, args="a-1", sender=sender
+    )
+    return await pending_task
 
 
 def _result_message(
@@ -2106,6 +2139,81 @@ class TestTurnFailureSurfacing:
         assert len(errors) == 1
         assert _MISSING_REPLY_TEXT in errors[0]
 
+    def _declined_reply_turn(self) -> MagicMock:
+        return self._client_yielding(
+            AssistantMessage(
+                content=[
+                    ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})
+                ],
+                model=_ANY_MODEL,
+            ),
+            UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="tool-1", content="denied", is_error=True
+                    )
+                ]
+            ),
+            _result_message(
+                is_error=False,
+                permission_denials=[_denial("tool-1", _SEND_MESSAGE_MCP_NAME)],
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_delivered_manual_decline_notice_explains_the_turn(self, mock_tools):
+        """A room /decline whose "resolved" notice reached the room already
+        explains the declined reply, so no missing-reply error follows."""
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5.0)
+        adapter._room_tools["room-123"] = mock_tools
+
+        decision = await reply_to_approval(
+            adapter,
+            mock_tools,
+            "decline",
+            {"id": "u1", "name": "Bob"},
+            room_id="room-123",
+            tool_use_id="tool-1",
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        await adapter._process_response(
+            self._declined_reply_turn(), "room-123", mock_tools
+        )
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_undelivered_manual_decline_notice_still_reports_missing_reply(
+        self, mock_tools
+    ):
+        """A room /decline whose "resolved" notice failed to send explained
+        nothing, so the missing-reply guard must still fire."""
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5.0)
+        mock_tools.send_message = AsyncMock(
+            side_effect=[{"status": "sent"}, RuntimeError("network down")]
+        )
+        adapter._room_tools["room-123"] = mock_tools
+
+        decision = await reply_to_approval(
+            adapter,
+            mock_tools,
+            "decline",
+            {"id": "u1", "name": "Bob"},
+            room_id="room-123",
+            tool_use_id="tool-1",
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(
+                self._declined_reply_turn(), "room-123", mock_tools
+            )
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
 
 # ======================================================================
 # Chat-based approval flow tests
@@ -2305,7 +2413,7 @@ class TestApprovalCommandHandling:
             sender=sender,
         )
         assert future.done()
-        assert future.result() == "accept"
+        assert future.result() == ApprovalReply("accept", sender["id"])
 
     @pytest.mark.asyncio
     async def test_decline_resolves_future(
@@ -2321,46 +2429,65 @@ class TestApprovalCommandHandling:
             sender=sender,
         )
         assert future.done()
-        assert future.result() == "decline"
-
-    @pytest.mark.asyncio
-    async def test_decline_resolution_notice_failure_does_not_claim_delivery(
-        self, adapter_with_approval, mock_tools, sender
-    ):
-        """When the '/decline resolved as **decline**' notice itself fails to
-        send, the future must resolve to _FORCED_DECLINE, not plain
-        "decline" — otherwise _resolve_manual_approval's decision_raw ==
-        "decline" check would wrongly treat the tool call as having been
-        explained to the room and suppress the missing-reply guard."""
-        future = register_pending_approval(adapter_with_approval)
-        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
-        await adapter_with_approval._handle_approval_command(
-            tools=mock_tools,
-            room_id="room-1",
-            command="decline",
-            args="a-1",
-            sender=sender,
-        )
-        assert future.done()
-        assert future.result() == _FORCED_DECLINE
+        assert future.result() == ApprovalReply("decline", sender["id"])
 
     @pytest.mark.asyncio
     async def test_approve_resolution_notice_failure_still_accepts(
-        self, adapter_with_approval, mock_tools, sender
+        self, mock_tools, sender
     ):
         """An approve's confirmation notice is best-effort: a failed send must
         not turn an approved tool call into a decline."""
-        future = register_pending_approval(adapter_with_approval)
-        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
-        await adapter_with_approval._handle_approval_command(
-            tools=mock_tools,
-            room_id="room-1",
-            command="approve",
-            args="a-1",
-            sender=sender,
+        mock_tools.send_message = AsyncMock(
+            side_effect=[{"status": "sent"}, RuntimeError("network down")]
         )
-        assert future.done()
-        assert future.result() == "accept"
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5)
+        adapter._room_tools["room-1"] = mock_tools
+
+        decision = await reply_to_approval(adapter, mock_tools, "approve", sender)
+
+        assert isinstance(decision, PermissionResultAllow)
+
+    @pytest.mark.asyncio
+    async def test_a_reply_cancelled_mid_handling_still_resolves_the_approval(
+        self, mock_tools, sender
+    ):
+        """Cancelling the room loop while it handles a reply must not strand
+        the approval it claimed: the waiting tool call still gets the answer
+        rather than hanging past its own deadline."""
+        release_resolved_notice = asyncio.Event()
+
+        async def _send_message(
+            content: str, mentions: object = None
+        ) -> dict[str, str]:
+            if "resolved" in content:
+                await release_resolved_notice.wait()
+            return {"status": "sent"}
+
+        mock_tools.send_message = AsyncMock(side_effect=_send_message)
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5)
+        adapter._room_tools["room-1"] = mock_tools
+        pending_task = asyncio.create_task(
+            adapter._make_can_use_tool("room-1")(
+                _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+            )
+        )
+        await wait_for_pending_approval(adapter)
+
+        command_task = asyncio.create_task(
+            adapter._handle_approval_command(
+                tools=mock_tools,
+                room_id="room-1",
+                command="approve",
+                args="a-1",
+                sender=sender,
+            )
+        )
+        await asyncio.sleep(0.01)
+        command_task.cancel()
+        release_resolved_notice.set()
+
+        decision = await asyncio.wait_for(pending_task, timeout=1)
+        assert isinstance(decision, PermissionResultAllow)
 
     @pytest.mark.asyncio
     async def test_approve_single_pending_no_token(
@@ -2375,7 +2502,7 @@ class TestApprovalCommandHandling:
             args="",
             sender=sender,
         )
-        assert future.result() == "accept"
+        assert future.result() == ApprovalReply("accept", sender["id"])
 
     @pytest.mark.asyncio
     async def test_approve_multiple_pending_no_token(
@@ -2557,7 +2684,7 @@ class TestApprovalAuthorization:
             sender=authorized_sender,
         )
         assert future.done()
-        assert future.result() == "accept"
+        assert future.result() == ApprovalReply("accept", authorized_sender["id"])
 
     @pytest.mark.asyncio
     async def test_unauthorized_sender_rejected(self, mock_tools, unauthorized_sender):
@@ -2576,6 +2703,33 @@ class TestApprovalAuthorization:
         assert not future.done()  # Future should NOT be resolved
         msg = mock_tools.send_message.call_args[0][0]
         assert "not authorized" in msg.lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("args", ["", "a-9"], ids=["no-token", "unknown-token"])
+    @pytest.mark.parametrize("pending_count", [0, 2])
+    async def test_unauthorized_sender_is_refused_before_token_lookup(
+        self, mock_tools, unauthorized_sender, args, pending_count
+    ):
+        """However the command names its approval, an unauthorized sender is
+        refused rather than guided toward a token to retry with."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="manual",
+            approval_authorized_senders={"admin-1"},
+        )
+        futures = [
+            register_pending_approval(adapter, token=f"a-{n}")
+            for n in range(1, pending_count + 1)
+        ]
+        await adapter._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="decline",
+            args=args,
+            sender=unauthorized_sender,
+        )
+        msg = mock_tools.send_message.call_args[0][0]
+        assert msg == "You are not authorized to approve or decline tool use."
+        assert not any(future.done() for future in futures)
 
     @pytest.mark.asyncio
     async def test_unauthorized_sender_can_list_approvals(
@@ -2609,7 +2763,7 @@ class TestApprovalAuthorization:
             sender=sender,
         )
         assert future.done()
-        assert future.result() == "accept"
+        assert future.result() == ApprovalReply("accept", sender["id"])
 
 
 class TestCanUseToolCallback:
@@ -2689,7 +2843,7 @@ class TestCanUseToolCallback:
             pending = adapter._pending_approvals.get("room-1", {})
             for item in pending.values():
                 if not item.future.done():
-                    item.future.set_result("accept")
+                    item.future.set_result(ApprovalReply("accept", "u1"))
 
         asyncio.get_running_loop().create_task(approve_soon())
 
@@ -2792,7 +2946,7 @@ class TestOnMessageCommandInterception:
         # Should not have called get_or_create_session (no query sent)
         mock_manager.get_or_create_session.assert_not_awaited()
         # Future should be resolved
-        assert future.result() == "accept"
+        assert future.result() == ApprovalReply("accept", "user-1")
 
     @pytest.mark.asyncio
     async def test_status_command_intercepted(self, mock_tools):
@@ -3040,7 +3194,7 @@ class TestApprovalCleanup:
         await adapter.on_cleanup("room-1")
 
         assert future.done()
-        assert future.result() == _FORCED_DECLINE
+        assert future.result() is None
         assert "room-1" not in adapter._pending_approvals
 
     @pytest.mark.asyncio
@@ -3056,8 +3210,8 @@ class TestApprovalCleanup:
 
         await adapter.cleanup_all()
 
-        assert f1.result() == _FORCED_DECLINE
-        assert f2.result() == _FORCED_DECLINE
+        assert f1.result() is None
+        assert f2.result() is None
         assert len(adapter._pending_approvals) == 0
 
 
@@ -3090,7 +3244,7 @@ class TestPendingApprovalEviction:
 
         # Old future should have been evicted and declined
         assert old_future.done()
-        assert old_future.result() == _FORCED_DECLINE
+        assert old_future.result() is None
 
     @pytest.mark.asyncio
     async def test_evicted_approval_is_not_recorded_as_notified(self, mock_tools):

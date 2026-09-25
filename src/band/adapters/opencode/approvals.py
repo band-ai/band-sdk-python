@@ -195,10 +195,7 @@ class RoomApprovals:
         An ask counts as parked until it's claimed -- claiming always cancels
         its expiry timer, so "still parked" and "still unclaimed" coincide.
         """
-        return any(
-            not entry.claimed
-            for entry in (*self._permissions.entries(), *self._questions.entries())
-        )
+        return bool(self._permissions.unclaimed() or self._questions.unclaimed())
 
     async def wait_until_idle(self) -> None:
         """Block until no manual ask is awaiting a human reply."""
@@ -562,8 +559,7 @@ class RoomApprovals:
         Returns whether this method aborted the session, so a caller with its
         own unconditional abort afterward can skip a redundant one.
         """
-        pending_entries = (*self._permissions.entries(), *self._questions.entries())
-        was_pending = any(not entry.claimed for entry in pending_entries)
+        was_pending = self._parked_on_human()
         self.cancel()
         if was_pending:
             logger.info(

@@ -27,7 +27,7 @@ class TimeoutRecorder:
 
 
 def unclaimed_names(registry: DecisionRegistry[Ask]) -> list[str]:
-    return [entry.payload.name for entry in registry.entries() if not entry.claimed]
+    return [entry.payload.name for entry in registry.unclaimed()]
 
 
 class TestMapping:
@@ -177,6 +177,15 @@ class TestEviction:
         assert evicted is not None and evicted.payload.name == "oldest"
         assert list(registry) == ["claimed", "newest"]
         assert recorder.expired == []
+
+    async def test_at_capacity_with_every_entry_claimed_evicts_nothing(self) -> None:
+        registry: DecisionRegistry[Ask] = DecisionRegistry(max_pending=2)
+        for name in ("a", "b"):
+            registry.register(Ask(name), key=name)
+            registry.try_claim(name)
+
+        assert registry.evict_oldest() is None
+        assert list(registry) == ["a", "b"]
 
 
 class TestCancelAll:

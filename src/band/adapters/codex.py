@@ -2897,7 +2897,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 f"- sandbox: {self._effective_sandbox(room_id) or 'default'}\n"
                 f"- reasoning_effort: {self.config.reasoning_effort or 'default'}\n"
                 f"- reasoning_summary: {self.config.reasoning_summary or 'default'}\n"
-                f"- pending_approvals: {len(self._pending_approvals.get(room_id, {}))}\n"
+                f"- pending_approvals: {self._open_approval_count(room_id)}\n"
                 f"- session_approvals: {session_approvals}\n"
                 f"- token_usage: {usage_line}\n"
                 f"- turn_task_markers: {self.config.emit_turn_task_markers}"
@@ -3161,14 +3161,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         pending = self._pending_approvals.get(room_id) or DecisionRegistry()
 
         if command == "approvals":
-            if not pending:
+            if not (open_entries := pending.unclaimed()):
                 await deliver_reply(tools, "No pending approvals.", mentions=mention)
                 return True
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
-            for token, item in pending.items():
-                age_s = int((now - item.created_at).total_seconds())
-                lines.append(f"- {token}: {item.summary} ({age_s}s)")
+            for entry in open_entries:
+                age_s = int((now - entry.payload.created_at).total_seconds())
+                lines.append(f"- {entry.token}: {entry.payload.summary} ({age_s}s)")
             await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
@@ -3616,6 +3616,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if isinstance(value, str) and value:
                 return value
         return f"req-{request_id}"
+
+    def _open_approval_count(self, room_id: str) -> int:
+        registry = self._pending_approvals.get(room_id)
+        return len(registry.unclaimed()) if registry else 0
 
     def _clear_pending_approval(self, room_id: str, token: str) -> None:
         registry = self._pending_approvals.get(room_id)
