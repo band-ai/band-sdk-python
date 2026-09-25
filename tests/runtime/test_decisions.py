@@ -317,52 +317,116 @@ class TestCancelAll:
 
 
 class TestAwaitDecision:
+    """``await_decision`` owns only the wait/timeout/claim step -- the
+    caller has already registered (and evicted if needed) before calling
+    it, same as a real adapter would."""
+
     async def test_returns_the_result_a_claim_resolves_it_with(self) -> None:
         registry: DecisionRegistry[_FutureAsk] = DecisionRegistry()
         payload = _FutureAsk()
+        token = registry.register(payload)
+        assert token is not None
 
         async def _resolve_soon() -> None:
             await asyncio.sleep(0.01)
+            registry.try_claim(token)
             payload.future.set_result("approved")
 
         asyncio.create_task(_resolve_soon())
         result = await await_decision(
-            registry, payload, timeout_s=1.0, forced_value="declined"
+            registry, token, payload.future, timeout_s=1.0, forced_value="declined"
         )
         assert result == "approved"
 
     async def test_forces_the_value_on_timeout(self) -> None:
         registry: DecisionRegistry[_FutureAsk] = DecisionRegistry()
         payload = _FutureAsk()
+        token = registry.register(payload)
+        assert token is not None
         result = await await_decision(
-            registry, payload, timeout_s=0.01, forced_value="declined"
+            registry, token, payload.future, timeout_s=0.01, forced_value="declined"
         )
         assert result == "declined"
+        # asyncio.wait_for already cancelled the future itself on timeout --
+        # forced_value reaches the caller as this function's return, not by
+        # being written onto a future nothing can still read.
+        assert payload.future.cancelled()
+
+    async def test_on_timeout_fires_only_on_a_genuine_timeout(self) -> None:
+        registry: DecisionRegistry[_FutureAsk] = DecisionRegistry()
+        payload = _FutureAsk()
+        token = registry.register(payload)
+        assert token is not None
+        fired = False
+
+        async def _on_timeout() -> None:
+            nonlocal fired
+            fired = True
+
+        await await_decision(
+            registry,
+            token,
+            payload.future,
+            timeout_s=0.01,
+            forced_value="declined",
+            on_timeout=_on_timeout,
+        )
+        assert fired is True
 
     async def test_forgets_the_token_after_resolving(self) -> None:
         registry: DecisionRegistry[_FutureAsk] = DecisionRegistry()
         payload = _FutureAsk()
+        token = registry.register(payload)
+        assert token is not None
         payload.future.set_result("approved")
-        await await_decision(registry, payload, timeout_s=1.0, forced_value="declined")
+        await await_decision(
+            registry, token, payload.future, timeout_s=1.0, forced_value="declined"
+        )
         assert len(registry) == 0
 
     async def test_forgets_the_token_after_timing_out(self) -> None:
         registry: DecisionRegistry[_FutureAsk] = DecisionRegistry()
         payload = _FutureAsk()
-        await await_decision(registry, payload, timeout_s=0.01, forced_value="declined")
+        token = registry.register(payload)
+        assert token is not None
+        await await_decision(
+            registry, token, payload.future, timeout_s=0.01, forced_value="declined"
+        )
         assert len(registry) == 0
 
     async def test_eviction_forces_the_evicted_entrys_future(self) -> None:
+        """The realistic caller pattern: register, evict-and-resolve if at
+        capacity, then await_decision for the wait itself."""
         registry: DecisionRegistry[_FutureAsk] = DecisionRegistry(max_pending=1)
         first = _FutureAsk()
-        second = _FutureAsk()
-
+        first_token = registry.register(first)
+        assert first_token is not None
         first_task = asyncio.create_task(
-            await_decision(registry, first, timeout_s=1.0, forced_value="declined")
+            await_decision(
+                registry,
+                first_token,
+                first.future,
+                timeout_s=1.0,
+                forced_value="declined",
+            )
         )
-        await asyncio.sleep(0)  # let the first registration land
+        await asyncio.sleep(0)  # let the first registration/wait land
+
+        second = _FutureAsk()
+        evicted = registry.evict_oldest()
+        assert evicted is not None
+        if not evicted.payload.future.done():
+            evicted.payload.future.set_result("declined")
+        second_token = registry.register(second)
+        assert second_token is not None
         second_task = asyncio.create_task(
-            await_decision(registry, second, timeout_s=1.0, forced_value="declined")
+            await_decision(
+                registry,
+                second_token,
+                second.future,
+                timeout_s=1.0,
+                forced_value="declined",
+            )
         )
         await asyncio.sleep(0)
         second.future.set_result("approved")
@@ -378,9 +442,13 @@ class TestAwaitDecision:
         must find nothing left to claim."""
         registry: DecisionRegistry[_FutureAsk] = DecisionRegistry()
         payload = _FutureAsk()
+        token = registry.register(payload)
+        assert token is not None
 
-        await await_decision(registry, payload, timeout_s=0.01, forced_value="declined")
+        await await_decision(
+            registry, token, payload.future, timeout_s=0.01, forced_value="declined"
+        )
 
         # A reply handler that looked the token up before the timeout
         # branch's finally ran would try this next -- it must get nothing.
-        assert registry.try_claim("whatever-token-it-had") is None
+        assert registry.try_claim(token) is None

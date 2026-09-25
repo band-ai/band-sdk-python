@@ -577,7 +577,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert result is None
-        assert adapter._pending_decisions == {}
+        assert len(adapter._pending_decisions) == 0
 
     @pytest.mark.asyncio
     async def test_timeout_notice_failure_still_cancels_the_decision(self) -> None:
@@ -592,7 +592,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert result is None
-        assert adapter._pending_decisions == {}
+        assert len(adapter._pending_decisions) == 0
 
     @pytest.mark.asyncio
     async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
@@ -635,6 +635,46 @@ class TestCursorACPAdapterDecisions:
         assert reply == f"Cursor decision `{token}` is not pending."
 
     @pytest.mark.asyncio
+    async def test_a_reply_for_an_already_claimed_token_is_told_not_pending(
+        self,
+    ) -> None:
+        """The second claim-guard gap the shared registry closes: nothing in
+        the original code stopped _handle_control_message from resolving a
+        token something else (a timeout, in production) had already claimed
+        a moment earlier -- only the timeout-notice-send window above was
+        guarded. Simulate that by claiming the token directly before the
+        room command arrives: the command must report "not pending", never
+        touch the future, and never say "resolved"."""
+        tools = _DecisionTools()
+        adapter = CursorACPAdapter()
+        turn = _turn("room-1", tools, "user-1", "session-1")
+
+        pending_task = asyncio.create_task(
+            adapter._wait_for_decision(kind="plan", turn=turn, prompt="Plan {token}")
+        )
+        await tools.prompt_sent.wait()
+        token = next(iter(adapter._pending_decisions))
+
+        claimed = adapter._pending_decisions.try_claim(token)
+        assert claimed is not None
+
+        handled = await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(content=f"/cursor accept {token}", sender_id="user-1"),
+            ),
+            tools,
+            "room-1",
+        )
+
+        assert handled is True
+        assert tools.messages[-1] == f"Cursor decision `{token}` is not pending."
+        assert not claimed.future.done()
+
+        claimed.future.set_result(None)
+        assert await pending_task is None
+
+    @pytest.mark.asyncio
     async def test_room_cleanup_cancels_only_its_pending_decision(self) -> None:
         first_tools = _DecisionTools()
         second_tools = _DecisionTools()
@@ -657,8 +697,8 @@ class TestCursorACPAdapterDecisions:
             first_tools.prompt_sent.wait(), second_tools.prompt_sent.wait()
         )
         tokens = {
-            decision.room_id: token
-            for token, decision in adapter._pending_decisions.items()
+            entry.payload.room_id: entry.token
+            for entry in adapter._pending_decisions.entries()
         }
 
         await adapter.on_cleanup("room-1")

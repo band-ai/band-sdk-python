@@ -14,7 +14,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -172,47 +172,46 @@ class DecisionRegistry(Generic[T]):
         return matched
 
 
-class HasFuture(Protocol):
-    future: asyncio.Future[Any]
-
-
-FutureT = TypeVar("FutureT", bound=HasFuture)
-
-
 async def await_decision(
-    registry: DecisionRegistry[FutureT],
-    payload: FutureT,
+    registry: DecisionRegistry[Any],
+    token: str,
+    future: asyncio.Future[R],
     *,
-    key: str | None = None,
     timeout_s: float,
     forced_value: R,
+    on_timeout: Callable[[], Awaitable[None]] | None = None,
 ) -> R:
-    """The shared shape for an asker that blocks on ``payload.future``.
+    """The shared shape for an asker that blocks on a ``Future``.
 
-    Registers ``payload`` -- evicting the oldest unclaimed entry into
-    ``forced_value`` first, if at capacity -- then waits up to ``timeout_s``
-    for ``payload.future``, forcing ``forced_value`` onto it through the same
-    ``try_claim`` gate a room reply must win against, so a reply racing the
-    timeout can never resolve a decision that has already timed out. Always
-    forgets the token on the way out.
+    Waits up to ``timeout_s`` for ``future``, forcing ``forced_value`` onto
+    it through the same ``try_claim`` gate a room reply must win against.
+    ``on_timeout`` fires only when this call itself wins that race -- not
+    when a reply claimed the entry first, in which case the reply's own
+    result is returned instead, exactly as if this call had never timed out.
+    Always forgets ``token`` on the way out.
+
+    Registering the payload, evicting the oldest entry if at capacity, and
+    whatever must happen between registering and waiting (posting the room
+    prompt, typically) are the caller's job, before calling this -- this
+    function only owns the wait/timeout/claim step, not the whole lifecycle.
+
+    ``asyncio.wait_for`` cancels ``future`` the instant it raises
+    ``TimeoutError``, so this never tries to read a result back off it --
+    only whether ``try_claim`` still won is used, to decide whether to
+    notify/log (a reply that claimed it first already has its own outcome
+    to report, and doesn't need a second, contradictory one from here).
     """
-    evicted = registry.evict_oldest()
-    if evicted is not None and not evicted.payload.future.done():
-        evicted.payload.future.set_result(forced_value)
-    token = registry.register(payload, key=key)
     try:
-        return await asyncio.wait_for(payload.future, timeout=timeout_s)
+        return await asyncio.wait_for(future, timeout=timeout_s)
     except TimeoutError:
-        if (
-            token is not None
-            and registry.try_claim(token) is not None
-            and not payload.future.done()
-        ):
-            payload.future.set_result(forced_value)
+        if registry.try_claim(token) is not None:
+            if not future.done():
+                future.set_result(forced_value)
+            if on_timeout is not None:
+                await on_timeout()
         return forced_value
     finally:
-        if token is not None:
-            registry.forget(token)
+        registry.forget(token)
 
 
 def _cancel_timeout(entry: DecisionEntry[Any]) -> None:
