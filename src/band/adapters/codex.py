@@ -102,7 +102,6 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
-_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
 # Codex-local slash commands, which surface their outcome in the room themselves.
@@ -193,7 +192,7 @@ class SetReasoningInput(BaseModel):
 
     effort: str | None = Field(
         default=None,
-        description="Reasoning effort level: none, minimal, low, medium, high, or xhigh. Omit to keep current.",
+        description="Reasoning effort level supported by the current model (for example low, medium, or high). Omit to keep current.",
     )
     summary: str | None = Field(
         default=None,
@@ -324,9 +323,9 @@ class CodexAdapterConfig(BaseSettings):
 
     transport: TransportKind = "stdio"
     model: str | None = None
-    reasoning_effort: (
-        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
-    ) = None
+    # Not validated here: the supported efforts vary by model and Codex CLI
+    # version (model/list reports them), and the backend rejects unknown ones.
+    reasoning_effort: str | None = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = Field(default=None, exclude=True)
@@ -596,11 +595,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 raise RuntimeError("_handle_set_reasoning must run under _rpc_lock")
             parts: list[str] = []
             if inp.effort is not None:
-                if inp.effort not in _REASONING_EFFORTS:
-                    return (
-                        f"Invalid reasoning effort '{inp.effort}'. "
-                        f"Valid: {', '.join(sorted(_REASONING_EFFORTS))}."
-                    )
                 adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
             if inp.summary is not None:
@@ -2954,15 +2948,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
-                    f"Use `/reasoning <{'|'.join(sorted(_REASONING_EFFORTS))}>` to override.",
-                    mentions=mention,
-                )
-                return True
-            if effort_arg not in _REASONING_EFFORTS:
-                await deliver_reply(
-                    tools,
-                    f"Invalid reasoning effort `{effort_arg}`. "
-                    f"Valid values: {', '.join(sorted(_REASONING_EFFORTS))}.",
+                    f"{await self._supported_efforts_hint()}"
+                    "Use `/reasoning <effort>` to override.",
                     mentions=mention,
                 )
                 return True
@@ -3636,3 +3623,40 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 continue
             models.append(model_id)
         return models
+
+    @staticmethod
+    def _supported_efforts(result: dict[str, Any], model_id: str) -> list[str]:
+        data = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(data, list):
+            return []
+        entry = next(
+            (e for e in data if isinstance(e, dict) and e.get("id") == model_id),
+            None,
+        )
+        efforts = entry.get("supportedReasoningEfforts") if entry else None
+        if not isinstance(efforts, list):
+            return []
+        return [
+            effort["reasoningEffort"]
+            for effort in efforts
+            if isinstance(effort, dict)
+            and isinstance(effort.get("reasoningEffort"), str)
+        ]
+
+    async def _supported_efforts_hint(self) -> str:
+        """Name the efforts the room's model supports, as the Codex CLI reports them."""
+        if self._client is None:
+            raise RuntimeError("Codex client not initialized")
+        model_id = self._selected_model or await self._select_model()
+        try:
+            result = await self._client.request("model/list", {})
+        except Exception:
+            logger.warning(
+                "model/list failed; omitting supported reasoning efforts",
+                exc_info=True,
+            )
+            return ""
+        efforts = self._supported_efforts(result, model_id)
+        if not efforts:
+            return ""
+        return f"`{model_id}` supports: {', '.join(efforts)}. "
