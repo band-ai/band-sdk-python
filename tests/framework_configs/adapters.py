@@ -781,11 +781,8 @@ def _build_gemini_config() -> AdapterConfig:
 # acp uses the ACP protocol (Agent Client Protocol) with a similar non-standard
 # lifecycle (ACP JSON-RPC over stdio), so it is also excluded.
 # copilot_acp, cursor_acp, kiro_acp, and omp_acp are thin ACPClientAdapter
-# subclasses. They share the excluded acp bridge's lifecycle and converter and
-# add no model/LLM contract of their own, so they are excluded for the same
-# reason as acp. Each (except kiro_acp, which has no paid Kiro subscription to
-# run live -- see its e2e_pending registration) is exercised live via the
-# baseline matrix (backends lane), not the framework-conformance matrix.
+# subclasses. They share the excluded acp bridge's lifecycle and converter, so the
+# baseline matrix covers them instead (kiro_acp is e2e_pending).
 # slack is a transport bridge that *wraps* an inner framework adapter (the brain)
 # and adds Slack ingress/egress; it has no model/LLM contract of its own, so it
 # cannot share the framework-adapter conformance tests (same rationale as a2a/acp).

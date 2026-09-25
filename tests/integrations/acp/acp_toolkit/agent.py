@@ -87,7 +87,6 @@ class FakeACPAgent:
         self.closed_sessions: list[str] = []
         self.approved: bool | None = None
         self._usage: Usage | None = None
-        self.ext_method_results: list[dict[str, Any]] = []
 
     # -- scripting ---------------------------------------------------------------
 
@@ -107,18 +106,6 @@ class FakeACPAgent:
 
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
-        return self
-
-    def reset_script(self) -> FakeACPAgent:
-        """Clear every scripted action so far.
-
-        A multi-stage test simulating a restart across two adapter
-        lifecycles shares one agent, but each phase's script should run
-        independently -- otherwise phase 2's prompt would replay phase 1's
-        actions too, since ``_script`` accumulates across every ``will_*``
-        call for the object's lifetime.
-        """
-        self._script = []
         return self
 
     def reports_usage(self, usage: Usage) -> FakeACPAgent:
@@ -257,22 +244,6 @@ class FakeACPAgent:
                 arguments=arguments,
             )
             await a.emit(sid, update_tool_call(tool_call_id, raw_output=result))
-
-        self._script.append(_action)
-        return self
-
-    def will_call_ext_method(self, method: str, params: dict[str, Any]) -> FakeACPAgent:
-        """Send a client-bound extension request and record its response.
-
-        Exercises a client profile's ``ext_method`` handling (e.g. Kiro's
-        ``_kiro.dev/mcp/oauth_request``) over a real ACP connection, not just
-        by calling the profile object directly.
-        """
-
-        async def _action(a: FakeACPAgent, sid: str) -> None:
-            a.ext_method_results.append(
-                await a._conn_for(sid).ext_method(method, params)
-            )
 
         self._script.append(_action)
         return self

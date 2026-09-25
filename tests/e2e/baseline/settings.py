@@ -185,13 +185,8 @@ class Backends(BaseSettings):
     # cheap and deterministic across runs.
     copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
-    # Kiro CLI over ACP (kiro_acp adapter). Command defaults to `kiro-cli acp`;
-    # override the binary + args via KIRO_COMMAND. The adapter is registered
-    # `e2e_pending` (see tests/e2e/baseline/toolkit/builders.py) -- KIRO_API_KEY
-    # requires a paid Kiro subscription this org has decided not to purchase,
-    # and kiro-cli has no BYOK/provider-swap route around it (unlike Copilot's
-    # CLI). These two settings only matter for someone deliberately re-including
-    # the pending adapter locally with a personal key.
+    # Kiro CLI over ACP (kiro_acp, e2e_pending): only read when running the
+    # pending adapter locally with a personal key.
     kiro_command: str = ""  # KIRO_COMMAND (override the `kiro-cli` binary + args)
     kiro_api_key: str = ""  # KIRO_API_KEY
 

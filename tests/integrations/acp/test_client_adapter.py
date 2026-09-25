@@ -21,17 +21,16 @@ from acp.schema import (
 from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability
-from band.integrations.acp import client_adapter
+from band.integrations.acp import client_adapter, client_profiles
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPPermissionRequest,
     _resolve_launcher,
 )
 from band.integrations.acp.client_profiles import (
-    KIRO_MCP_OAUTH_REQUEST_METHOD,
-    KIRO_METADATA_METHOD,
     CursorACPClientProfile,
     KiroACPClientProfile,
+    KiroExtension,
     resolve_acp_client_profile,
 )
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -2274,173 +2273,68 @@ class TestTurnRepliedInRoom:
 
 
 class TestACPCollectingClientKiroProfileExtensions:
-    """Tests for Kiro-specific extension handling via ACP client profiles."""
+    """Kiro's ``_kiro.dev/*`` notifications, as handled by ``KiroACPClientProfile``."""
 
     @pytest.mark.asyncio
-    async def test_ext_method_kiro_mcp_oauth_request_declines(self) -> None:
-        """No OAuth UI is wired up; decline rather than hang the turn."""
-        client = ACPCollectingClient(profile=KiroACPClientProfile())
-
-        result = await client.ext_method(
-            KIRO_MCP_OAUTH_REQUEST_METHOD, {"url": "https://example.com"}
-        )
-
-        assert result == {"outcome": "declined"}
-
-    @pytest.mark.asyncio
-    async def test_ext_method_unknown_returns_empty(self) -> None:
-        client = ACPCollectingClient(profile=KiroACPClientProfile())
-
-        result = await client.ext_method("unknown/method", {})
-
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_ext_notification_kiro_metadata_context_usage(self) -> None:
-        """A recognized context-window-usage payload surfaces as a plan chunk."""
-        client = ACPCollectingClient(profile=KiroACPClientProfile())
-
-        await client.ext_notification(
-            KIRO_METADATA_METHOD,
-            {"sessionId": "sess-1", "used": 4200, "size": 128000},
-        )
-
-        chunks = client.get_collected_chunks("sess-1")
-        assert len(chunks) == 1
-        assert chunks[0].chunk_type == "plan"
-        assert "4200/128000" in chunks[0].content
-
-    @pytest.mark.asyncio
-    async def test_ext_notification_kiro_metadata_context_usage_as_whole_number_floats(
-        self,
+    async def test_mcp_oauth_request_warns_and_posts_nothing(
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A JSON payload can deserialize a whole-number token count as a
-        float (e.g. 4200.0) rather than an int -- this must resolve the same
-        as the int-typed case, not drop silently."""
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
-        await client.ext_notification(
-            KIRO_METADATA_METHOD,
-            {"sessionId": "sess-1", "used": 4200.0, "size": 8000},
-        )
+        with caplog.at_level(logging.DEBUG, logger=client_profiles.__name__):
+            await client.ext_notification(
+                KiroExtension.MCP_OAUTH_REQUEST,
+                {"sessionId": "sess-1", "url": "https://example.com"},
+            )
 
-        chunks = client.get_collected_chunks("sess-1")
-        assert len(chunks) == 1
-        assert "4200/8000 tokens (52%)" in chunks[0].content
-
-    @pytest.mark.asyncio
-    async def test_ext_notification_kiro_metadata_unrecognized_shape_is_dropped(
-        self,
-    ) -> None:
-        """An unrecognized payload shape drops silently (Kiro's own docs mark
-        these extensions experimental and versioned)."""
-        client = ACPCollectingClient(profile=KiroACPClientProfile())
-
-        await client.ext_notification(
-            KIRO_METADATA_METHOD,
-            {"sessionId": "sess-1", "chars_of_code_changed": 12},
-        )
-
+        (record,) = caplog.records
+        assert record.levelno == logging.WARNING
         assert client.get_collected_chunks("sess-1") == []
 
     @pytest.mark.asyncio
-    async def test_ext_notification_no_session_id_is_noop(self) -> None:
-        client = ACPCollectingClient(profile=KiroACPClientProfile())
-
-        await client.ext_notification(KIRO_METADATA_METHOD, {"used": 1, "size": 2})
-
-        assert client.get_collected_chunks() == []
-
-    @pytest.mark.asyncio
-    async def test_ext_notification_kiro_metadata_reads_snake_case_alias_keys(
-        self,
-    ) -> None:
-        """The exact field spelling is unconfirmed against a live session (no
-        paid Kiro subscription -- see docs/acp.md); both plausible shapes
-        must resolve to the same summary."""
+    async def test_metadata_context_usage_posts_a_plan_chunk(self) -> None:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         await client.ext_notification(
-            KIRO_METADATA_METHOD,
-            {
-                "sessionId": "sess-1",
-                "context_window_used": 10,
-                "context_window_size": 100,
-            },
+            KiroExtension.METADATA,
+            {"sessionId": "sess-1", "contextUsagePercentage": 42.4},
         )
 
-        chunks = client.get_collected_chunks("sess-1")
-        assert len(chunks) == 1
-        assert "10/100 tokens (10%)" in chunks[0].content
-
-    @pytest.mark.asyncio
-    async def test_ext_notification_kiro_metadata_falls_through_a_malformed_higher_priority_key(
-        self,
-    ) -> None:
-        """A present-but-wrong-typed higher-priority key (``used``) must not
-        block a valid alternate spelling (``context_window_used``) from
-        resolving the summary -- both are unconfirmed spellings (see the
-        snake_case test above), so a bad value in one must not shadow a good
-        value in another."""
-        client = ACPCollectingClient(profile=KiroACPClientProfile())
-
-        await client.ext_notification(
-            KIRO_METADATA_METHOD,
-            {
-                "sessionId": "sess-1",
-                "used": "not-a-number",
-                "context_window_used": 4200,
-                "size": 8000,
-            },
-        )
-
-        chunks = client.get_collected_chunks("sess-1")
-        assert len(chunks) == 1
-        assert "4200/8000 tokens (52%)" in chunks[0].content
+        assert [
+            (c.chunk_type, c.content) for c in client.get_collected_chunks("sess-1")
+        ] == [("plan", "[Kiro context window] 42% used")]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "usage",
-        [
-            pytest.param({"used": -1, "size": 100}, id="negative_used"),
-            pytest.param({"used": 0.5, "size": 100}, id="fractional_used"),
-            pytest.param({"used": 150, "size": 100}, id="used_exceeds_total"),
-            pytest.param({"used": 10, "size": 0}, id="zero_total"),
-            pytest.param({"used": 10, "size": -5}, id="negative_total"),
-            pytest.param({"used": float("nan"), "size": 100}, id="nan_used"),
-            pytest.param({"used": float("inf"), "size": 100}, id="infinite_used"),
-            pytest.param({"used": True, "size": 100}, id="bool_used"),
-        ],
+        "percent",
+        [-1, 100.5, "42", True, float("nan"), None],
+        ids=["negative", "over_100", "string", "bool", "nan", "missing"],
     )
-    async def test_ext_notification_kiro_metadata_ignores_malformed_usage(
-        self, usage: dict[str, object]
+    async def test_metadata_without_a_valid_percentage_posts_nothing(
+        self, percent: object
     ) -> None:
-        """Out-of-range or wrong-typed values drop silently rather than posting
-        a nonsensical plan chunk (mirrors kiro-acp-adapter.test.ts's coverage
-        of the TS sibling's equivalent parsing)."""
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         await client.ext_notification(
-            KIRO_METADATA_METHOD, {"sessionId": "sess-1", **usage}
+            KiroExtension.METADATA,
+            {"sessionId": "sess-1", "contextUsagePercentage": percent},
         )
 
         assert client.get_collected_chunks("sess-1") == []
 
 
 class TestResolveACPClientProfile:
-    """Tests for the profile-name -> ACPClientProfile lookup."""
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("kiro", KiroACPClientProfile),
+            (" Kiro ", KiroACPClientProfile),
+            ("cursor", CursorACPClientProfile),
+        ],
+    )
+    def test_resolves_known_profiles(self, name: str, expected: type) -> None:
+        assert isinstance(resolve_acp_client_profile(name), expected)
 
-    def test_resolves_kiro(self) -> None:
-        assert isinstance(resolve_acp_client_profile("kiro"), KiroACPClientProfile)
-
-    def test_resolves_kiro_case_and_whitespace_insensitive(self) -> None:
-        assert isinstance(resolve_acp_client_profile(" Kiro "), KiroACPClientProfile)
-
-    def test_resolves_cursor(self) -> None:
-        assert isinstance(resolve_acp_client_profile("cursor"), CursorACPClientProfile)
-
-    def test_unknown_profile_returns_none(self) -> None:
-        assert resolve_acp_client_profile("unknown") is None
-
-    def test_empty_profile_returns_none(self) -> None:
-        assert resolve_acp_client_profile("") is None
+    @pytest.mark.parametrize("name", ["unknown", ""])
+    def test_unknown_or_empty_resolves_to_none(self, name: str) -> None:
+        assert resolve_acp_client_profile(name) is None

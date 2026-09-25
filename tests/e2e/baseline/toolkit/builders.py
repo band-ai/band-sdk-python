@@ -663,53 +663,15 @@ def _build_cursor_acp(
     )
 
 
-def kiro_home_dir(work_dir: str) -> str:
-    """Create and return the ``kiro-home`` subdirectory of ``work_dir``.
-
-    For whoever flips ``_build_kiro_acp`` back to live (see its
-    ``e2e_pending`` reason).
-    """
-    return _ensure_subdir(work_dir, "kiro-home")
-
-
-def kiro_acp_env(s: BaselineSettings, kiro_home: str) -> dict[str, str]:
-    """Environment for a hermetic ``kiro-cli acp`` spawn.
-
-    ``KIRO_API_KEY`` carries auth — kiro-cli has no BYOK provider swap, unlike
-    Copilot (see ``Dep.KIRO_CLI``). ``KIRO_HOME`` (see ``kiro_home_dir``)
-    isolates login/session state to a fresh directory per cell: stray
-    host-side session state or trust decisions must not steer the turn under
-    test, and a fresh home also guarantees ``session/load`` misses (a
-    session/load *hit* is exercised only by the bespoke native-resume smoke,
-    which reuses one ``KIRO_HOME`` on purpose).
-    """
-    return {
-        "KIRO_HOME": kiro_home,
-        "KIRO_API_KEY": s.backends.kiro_api_key,
-    }
-
-
 @adapter(
     Adapter.KIRO_ACP,
     requires=[Dep.KIRO_CLI],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
-    # KIRO_API_KEY requires a paid Kiro Pro/Pro+/Pro Max/Power subscription
-    # (https://kiro.dev/docs/cli/headless/); this org has decided not to buy
-    # one, and kiro-cli has no BYOK/provider-swap route around it (verified:
-    # zero BYOK support in kiro-cli, and it's still an open, unimplemented
-    # community feature request upstream — see docs/acp.md's Kiro section).
-    # So unlike every other pending case, this isn't "not CI-wired yet" — it's
-    # structurally unrunnable without a purchase this org isn't making. Still
-    # registered (discovery guards require it) and still covered by
-    # KiroACPAdapter's unit tests plus the FakeACPAgent-driven wire tests in
-    # tests/integrations/acp/test_client_adapter_behavior.py, which exercise
-    # KiroACPClientProfile through a real ACP connection without needing a
-    # kiro-cli binary or key. Flip back to live if the subscription decision
-    # ever changes.
     e2e_pending=(
-        "KIRO_API_KEY needs a paid Kiro subscription this org has decided "
-        "not to purchase; no BYOK route exists around it (see docs/acp.md)"
+        "headless KIRO_API_KEY auth needs a paid Kiro subscription this org has "
+        "decided not to purchase, and kiro-cli has no BYOK route around it "
+        "(see docs/acp.md)"
     ),
 )
 def _build_kiro_acp(
@@ -724,25 +686,17 @@ def _build_kiro_acp(
         KiroACPAdapterConfig,
     )
 
-    # stdio spawn of `kiro-cli acp` co-located with the SDK, so Band tools reach
-    # Kiro over the loopback MCP server (inject_band_tools default True).
-    # `runs_tool_loop=False` mirrors codex/opencode/copilot_acp: tool execution
-    # happens out-of-process, so the custom-tool round trip needs its own live
-    # proof before flipping this.
-    #
-    # Fully hermetic per-cell sandbox, mirroring copilot_acp's: a fresh temp cwd
-    # (Kiro discovers project config from its working directory) and a fresh
-    # KIRO_HOME. Dep.KIRO_CLI already gates on KIRO_API_KEY being set.
-    # KIRO_COMMAND overrides the binary + args. This builder is e2e_pending
-    # (see the decorator above), so it never runs in the shared matrix today —
-    # kept correct for whoever flips it live, and directly callable with a
-    # personal key via specs(include_pending=True) / build_adapter().
+    # Hermetic per cell like copilot_acp: a fresh cwd (Kiro reads project config
+    # from it) and a fresh KIRO_HOME (no stray host session/trust state).
     sandbox = tempfile.mkdtemp(prefix="band-e2e-kiro-acp-")
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
         "workspace_for_room": create_room_workspace_resolver(sandbox),
-        "env": kiro_acp_env(s, kiro_home_dir(sandbox)),
+        "env": {
+            "KIRO_HOME": _ensure_subdir(sandbox, "kiro-home"),
+            "KIRO_API_KEY": s.backends.kiro_api_key,
+        },
     }
     if s.backends.kiro_command.strip():
         config_kwargs["command"] = tuple(s.backends.kiro_command.split())

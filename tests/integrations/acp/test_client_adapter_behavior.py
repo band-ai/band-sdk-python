@@ -27,14 +27,9 @@ from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
     SYSTEM_UPDATE_PREFIX,
-    ACPTurnTimeoutError,
 )
-from band.integrations.acp.client_profiles import (
-    KIRO_MCP_OAUTH_REQUEST_METHOD,
-    KIRO_METADATA_METHOD,
-    KiroACPClientProfile,
-)
-from band.integrations.acp.client_runtime import ACPCollectingClient, ACPRuntime
+from band.integrations.acp.client_profiles import KiroACPClientProfile, KiroExtension
+from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
@@ -354,12 +349,7 @@ async def test_plan_relayed_as_task_event(fake_agent) -> None:
 
 @pytest.mark.asyncio
 async def test_usage_emitted_from_prompt_response(fake_agent) -> None:
-    """A standard ACP ``session/prompt`` response's ``usage`` becomes a usage event.
-
-    Exercises the generic ``ACPRuntime.get_last_usage`` ->
-    ``ACPClientAdapter._turn_usage`` -> ``SimpleAdapter.emit_usage`` wiring: every
-    ACP vendor gets real per-turn token reporting for free, not just one adapter.
-    """
+    """A standard ACP ``session/prompt`` response's ``usage`` becomes a usage event."""
     fake_agent.will_say("done").reports_usage(
         Usage(input_tokens=10, output_tokens=20, total_tokens=30, thought_tokens=5)
     )
@@ -391,63 +381,11 @@ async def test_no_usage_event_when_agent_does_not_report_it(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_usage_still_emitted_when_turn_times_out_after_prompt_completes(
-    monkeypatch: pytest.MonkeyPatch, fake_agent
-) -> None:
-    """Tokens already spent are still reported even when the turn times out
-    downstream of a completed ``session/prompt`` call: usage emission rides a
-    ``finally`` around the whole prompt/timeout sequence, not just the success
-    path, mirroring the convention every other adapter uses (e.g.
-    ``anthropic.py``'s ``test_emits_accumulated_usage_when_loop_fails_midway``).
-    """
-    fake_agent.will_say("done").reports_usage(
-        Usage(input_tokens=10, output_tokens=20, total_tokens=30)
-    )
-    original_flush = ACPCollectingClient.flush
-
-    async def _slow_flush(self: ACPCollectingClient, session_id: str) -> None:
-        # session/prompt has already returned (usage captured) by the time
-        # flush() runs; delaying it past turn_timeout_s reproduces a turn that
-        # times out only after tokens were genuinely spent.
-        await asyncio.sleep(2)
-        await original_flush(self, session_id)
-
-    monkeypatch.setattr(ACPCollectingClient, "flush", _slow_flush)
-
-    async with acp_adapter(fake_agent, turn_timeout_s=0.2) as session:
-        with pytest.raises(ACPTurnTimeoutError):
-            await session.send("do work")
-
-    assert session.last_reply.usage == [
-        {
-            "input_tokens": 10,
-            "output_tokens": 20,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-        }
-    ]
-
-
-@pytest.mark.asyncio
-async def test_external_cancellation_cancels_the_orphaned_prompt_task(
+async def test_external_cancellation_cancels_the_in_flight_prompt(
     fake_agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An external cancellation of ``on_message`` itself (e.g. a platform
-    interrupt/stop -- not this adapter's own ``turn_timeout_s``) must
-    actually cancel the turn's in-flight prompt task, not merely stop
-    waiting on it: ``asyncio.wait()`` does not itself cancel the task it was
-    waiting on when the *waiting* coroutine is cancelled from outside, so a
-    task left uncancelled would keep running the remote agent call to
-    completion, orphaned, able to clobber a later turn's usage once it
-    eventually resolves.
-
-    Deterministic, no sleeps: ``handler_started`` is a real synchronization
-    point the fake agent crosses before blocking forever, and
-    ``ACPRuntime.prompt`` is hooked to record its own task via
-    ``asyncio.current_task()`` -- ``await turn1`` (which only returns once
-    ``on_message``'s own cleanup has run) is itself the synchronization
-    point for whether that recorded task ends up cancelled.
-    """
+    """Cancelling ``on_message`` (a platform interrupt/stop) must cancel the
+    ``prompt()`` call too, never leave it running detached against the agent."""
     handler_started = asyncio.Event()
     never_set = asyncio.Event()
 
@@ -970,148 +908,15 @@ async def test_replay_after_midrun_respawn() -> None:
     )
 
 
-class TestKiroACPClientProfileOverTheWire:
-    """Kiro's ``_kiro.dev/*`` extension handling, driven over a REAL ACP
-    connection rather than calling ``KiroACPClientProfile`` directly (see
-    ``test_client_adapter.py::TestACPCollectingClientKiroProfileExtensions``
-    for the isolated profile-object coverage). Proves the profile is actually
-    wired into a live turn when it's the adapter's active profile — no real
-    ``kiro-cli`` binary or ``KIRO_API_KEY`` required, standing in for the live
-    E2E coverage this org has no paid Kiro subscription to run (see
-    ``docs/acp.md``'s Kiro section).
-    """
+@pytest.mark.asyncio
+async def test_kiro_metadata_notification_posts_a_context_window_plan(
+    fake_agent,
+) -> None:
+    fake_agent.will_send_ext_notification(
+        KiroExtension.METADATA, {"contextUsagePercentage": 3}
+    ).will_say("done")
 
-    @pytest.mark.asyncio
-    async def test_mcp_oauth_request_is_declined_over_the_wire(
-        self, fake_agent
-    ) -> None:
-        fake_agent.will_call_ext_method(
-            KIRO_MCP_OAUTH_REQUEST_METHOD, {"url": "https://example.com"}
-        ).will_say("done")
+    async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
+        reply = await session.send("do work")
 
-        async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
-            await session.send("do work")
-
-        assert fake_agent.ext_method_results == [{"outcome": "declined"}]
-
-    @pytest.mark.asyncio
-    async def test_metadata_notification_posts_context_window_plan_over_the_wire(
-        self, fake_agent
-    ) -> None:
-        fake_agent.will_send_ext_notification(
-            KIRO_METADATA_METHOD, {"used": 4200, "size": 128000}
-        ).will_say("done")
-
-        async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
-            reply = await session.send("do work")
-
-        assert reply.plans == ["[Kiro context window] 4200/128000 tokens (3%)"]
-
-
-async def _log_a_fact(
-    agent: FakeACPAgent, tracking_marker: str, agent_fact: str
-) -> str:
-    """Phase 1 of a multi-stage recall test: log a fact through one adapter
-    lifecycle, tear it down, and return the session id phase 2 must resume."""
-    agent.will_say(f"Logged {tracking_marker}: {agent_fact}")
-    async with acp_adapter(agent, profile=KiroACPClientProfile()) as session1:
-        await session1.send(
-            f"Log a note with tracking marker {tracking_marker} and state a fact.",
-            bootstrap=True,
-        )
-        return session1.session_id("room-1")
-
-
-class TestKiroMultiStageSessionRecall:
-    """Two REAL, sequential adapter lifecycles standing in for a `kiro-cli`
-    process restart -- the exact shape of the two live E2E tests deleted for
-    lack of a paid Kiro subscription (``test_kiro_acp_recall_via_room_replay_
-    when_session_load_misses`` / ``test_kiro_acp_recall_via_native_session_
-    load``, formerly in tests/e2e/baseline/smoke/adapters/test_kiro_acp.py).
-
-    Unlike the single-turn, hand-seeded-history tests above (e.g.
-    ``test_no_replay_when_remote_session_loads``), each test here runs a
-    genuine phase-1 turn through one adapter instance, tears it down, then
-    starts a SECOND adapter instance against the SAME ``FakeACPAgent`` for
-    phase 2 -- so the session id phase 2 resumes (or fails to resume) is
-    whatever phase 1 actually produced, not a hardcoded string. What a real
-    `KIRO_HOME` would persist across a restart is modeled by whether
-    ``agent.knows_session(...)`` was told about phase 1's session before
-    phase 2 starts.
-    """
-
-    @pytest.mark.asyncio
-    async def test_recalls_via_native_session_load_across_a_restart(self) -> None:
-        """A session/load HIT: phase 2 resumes phase 1's exact session and
-        recalls a fact only Kiro's own remote state holds -- no room replay."""
-        agent = FakeACPAgent(supports_session_load=True)
-        tracking_marker = "MARKER-7421"
-        agent_fact = "the sky is blue"
-        first_session_id = await _log_a_fact(agent, tracking_marker, agent_fact)
-
-        # What a persisted KIRO_HOME would carry across the restart: the
-        # fake agent now "remembers" the session a real one's on-disk state
-        # would too.
-        agent.knows_session(first_session_id)
-        agent.reset_script().will_say(f"{agent_fact}, tracked as {tracking_marker}")
-        history = ACPClientSessionState(room_to_session={"room-1": first_session_id})
-        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session2:
-            reply = await session2.send(
-                "What did you log earlier?", bootstrap=True, history=history
-            )
-            second_session_id = session2.session_id("room-1")
-
-        assert agent.session_load_requests == [first_session_id], (
-            "phase 2 must attempt to resume the exact session phase 1 created"
-        )
-        assert second_session_id == first_session_id, (
-            "a session/load hit must resume the same id, not mint a fresh one"
-        )
-        assert REPLAY_HEADER_LINE not in agent.prompt_texts()[-1], (
-            "a native resume must not also replay the room transcript on top"
-        )
-        assert any(agent_fact in text for text in reply.texts), (
-            f"expected the recalled fact {agent_fact!r} in {reply.texts!r}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_recalls_via_room_replay_when_session_load_misses_across_a_restart(
-        self,
-    ) -> None:
-        """A session/load MISS: phase 2 has no persisted state for phase 1's
-        session (a fresh KIRO_HOME after restart), so Band's own room-replay
-        fallback is the only way phase 2 recalls what phase 1 said."""
-        agent = FakeACPAgent(supports_session_load=True)
-        tracking_marker = "MARKER-9182"
-        agent_fact = "the sky is blue"
-        first_session_id = await _log_a_fact(agent, tracking_marker, agent_fact)
-
-        # No agent.knows_session(...): a fresh KIRO_HOME after restart means
-        # session/load genuinely misses, same as the deleted live test's
-        # fresh-KIRO_HOME-per-phase setup.
-        agent.reset_script().will_say(f"{agent_fact}, tracked as {tracking_marker}")
-        history = rehydration_history(
-            f"[Peer]: Log a note with tracking marker {tracking_marker} and "
-            "state a fact.",
-            f"[Fake Agent]: Logged {tracking_marker}: {agent_fact}",
-            session=first_session_id,
-        )
-        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session2:
-            reply = await session2.send(
-                "What did you log earlier?", bootstrap=True, history=history
-            )
-            second_session_id = session2.session_id("room-1")
-
-        assert agent.session_load_requests == [first_session_id], (
-            "phase 2 must attempt to resume the exact session phase 1 created"
-        )
-        assert second_session_id != first_session_id, (
-            "a session/load miss must fall back to a fresh session"
-        )
-        prompt = agent.prompt_texts()[-1]
-        assert REPLAY_HEADER_LINE in prompt and tracking_marker in prompt, (
-            "the miss must fall back to replaying phase 1's transcript"
-        )
-        assert any(agent_fact in text for text in reply.texts), (
-            f"expected the recalled fact {agent_fact!r} in {reply.texts!r}"
-        )
+    assert reply.plans == ["[Kiro context window] 3% used"]

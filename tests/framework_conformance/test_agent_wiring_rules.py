@@ -241,15 +241,8 @@ def test_peer_must_be_a_live_adapter() -> None:
 # isn't CI-wired yet: it keeps the adapter's CI lane defined while running zero
 # matrix cells, which must never become a quiet way to dodge E2E. Adding an
 # adapter here requires editing this allowlist (naming it, deliberately, in
-# review) and a follow-up that takes its lane live.
-#
-# kiro_acp is the one deliberate exception to "short-lived": KIRO_API_KEY
-# requires a paid Kiro subscription this org has decided not to purchase, and
-# kiro-cli has no BYOK route around it (see its e2e_pending reason in
-# tests/e2e/baseline/toolkit/builders.py) -- there is no live-lane follow-up
-# pending, only a standing decision that non-live coverage (unit tests +
-# tests/integrations/acp/test_client_adapter_behavior.py's FakeACPAgent-driven
-# wire tests) is what's available. Revisit if that subscription decision changes.
+# review) and a follow-up that takes its lane live. kiro_acp is a standing
+# exception with no follow-up; its e2e_pending reason says why.
 EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({"kiro_acp"})
 
 

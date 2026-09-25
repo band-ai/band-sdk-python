@@ -6,7 +6,7 @@ import asyncio
 import logging
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
 from uuid import uuid4
@@ -19,6 +19,7 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     SseMcpServer,
+    Usage,
 )
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
@@ -215,11 +216,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
-    # Tool/thought/plan narration rides RoomTurnEmitter unconditionally (it is
-    # inherent ACP protocol behavior, not an opt-in instrumentation seam), so
-    # TOOL_CALLS/THOUGHTS/TASK_EVENTS stay outside this set. USAGE is real: the
-    # standard `session/prompt` response carries a `usage` field (see
-    # ACPRuntime.get_last_usage), so every ACP vendor can report it generically.
+    # Tool/thought/plan narration is inherent to ACP and always posted by
+    # RoomTurnEmitter, so only USAGE (from `session/prompt`'s response) is opt-out.
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
@@ -462,55 +460,24 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     room_id=room_id,
                     session_id=session_id,
                 )
-                turn_token = runtime.begin_turn(session_id)
-                prompt_task = asyncio.create_task(
-                    runtime.prompt(
-                        session_id=session_id,
-                        prompt_text=prompt_text,
-                        on_chunk=emitter.emit,
-                        turn_token=turn_token,
-                    )
-                )
+                deadline = asyncio.timeout(self._turn_timeout_s)
                 try:
-                    done, _ = await asyncio.wait(
-                        {prompt_task}, timeout=self._turn_timeout_s
-                    )
-                    if not done:
-                        prompt_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await prompt_task
-                        await self._handle_turn_timeout(
-                            runtime, room_id=room_id, session_id=session_id, tools=tools
+                    async with deadline:
+                        result = await runtime.prompt(
+                            session_id=session_id,
+                            prompt_text=prompt_text,
+                            on_chunk=emitter.emit,
                         )
-                        raise ACPTurnTimeoutError(
-                            f"ACP turn timed out after {self._turn_timeout_s}s"
-                        ) from None
-                    await prompt_task
-                finally:
-                    # An external cancellation (platform interrupt/stop, the
-                    # cycle watchdog) can land right here, inside the
-                    # asyncio.wait above, before either branch of the try
-                    # runs its own prompt_task cancel -- asyncio.wait() does
-                    # not itself cancel a member task when the wait is
-                    # cancelled, so prompt_task would otherwise keep running
-                    # orphaned. Disown it before cancelling: if its
-                    # conn.prompt() RPC still resolves later, its usage write
-                    # is discarded instead of clobbering a subsequent turn's.
-                    # A different, still-legitimate turn on the same session
-                    # (e.g. a genuinely concurrent on_message call under a
-                    # host with no per-room serialization) keeps its own
-                    # token and is unaffected.
-                    if not prompt_task.done():
-                        runtime.disown(session_id, turn_token)
-                        prompt_task.cancel()
-                        with suppress(BaseException):
-                            await prompt_task
-                    # Whatever usage runtime.prompt() captured before the turn's
-                    # outcome was decided -- success, timeout, or another failure
-                    # downstream of a completed session/prompt call -- tokens
-                    # already spent are still reported, mirroring the finally-based
-                    # convention every other adapter uses (e.g. anthropic.py).
-                    await self.emit_usage(tools, self._turn_usage(runtime, session_id))
+                except TimeoutError:
+                    if not deadline.expired():
+                        raise
+                    await self._handle_turn_timeout(
+                        runtime, room_id=room_id, session_id=session_id, tools=tools
+                    )
+                    raise ACPTurnTimeoutError(
+                        f"ACP turn timed out after {self._turn_timeout_s}s"
+                    ) from None
+                await self.emit_usage(tools, self._turn_usage(result.usage))
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -524,29 +491,14 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             raise
 
     @staticmethod
-    def _turn_usage(runtime: ACPRuntime, session_id: str) -> TurnUsage:
-        """Map the turn's ``session/prompt`` response usage onto ``TurnUsage``.
+    def _turn_usage(usage: Usage | None) -> TurnUsage:
+        """Map ACP's ``Usage`` onto ``TurnUsage``, folding in the disjoint ``thoughtTokens``.
 
-        ACP's ``Usage`` reports ``thoughtTokens`` disjointly from
-        ``outputTokens`` (like codex/opencode's reasoning tokens), so it is
-        folded in per ``TurnUsage``'s convention. ``get_last_usage`` returns
-        ``None`` for an agent that never reports usage; ``from_object`` turns
-        that into an empty (unemitted) ``TurnUsage``.
-
-        This forwards each turn's ``Usage`` raw, with no delta/subtraction
-        logic: the ACP spec's own field docs disagree on scope
-        (``Usage.total_tokens`` etc. say "across session"/"across all turns",
-        but ``PromptResponse.usage`` -- the only field of this type in the
-        spec, still marked **UNSTABLE** -- says "for this turn"). A vendor
-        that reports a running total rather than a per-turn delta would be
-        misreported here. copilot_acp/cursor_acp/omp_acp run live in the
-        ``backends`` CI lane and are covered by
-        ``test_usage_not_cumulative_across_turns``, which would catch that in
-        practice; kiro_acp has no live lane (``e2e_pending``) and so has no
-        equivalent guard -- see docs/acp.md's Kiro section.
+        Forwarded raw: ``PromptResponse.usage`` is documented as per-turn (see
+        docs/acp.md, "Per-turn usage").
         """
         return TurnUsage.from_object(
-            runtime.get_last_usage(session_id),
+            usage,
             input="input_tokens",
             output="output_tokens",
             cache_read="cached_read_tokens",

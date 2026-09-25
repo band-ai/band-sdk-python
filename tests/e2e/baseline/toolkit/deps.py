@@ -260,8 +260,7 @@ def _cursor_cli_available(settings: BaselineSettings) -> bool:
 
 
 def _kiro_cli_available(settings: BaselineSettings) -> bool:
-    """The Kiro CLI is on PATH *and* ``KIRO_API_KEY`` is set (see the
-    kiro_acp registration's ``e2e_pending`` reason in toolkit/builders.py)."""
+    """The Kiro CLI is on PATH *and* ``KIRO_API_KEY`` is set."""
     return _cli_on_path(settings.backends.kiro_command, "kiro-cli") and bool(
         settings.backends.kiro_api_key
     )
@@ -359,8 +358,7 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.KIRO_CLI: DepSpec(
         _kiro_cli_available,
-        "Kiro CLI not found on PATH, or KIRO_API_KEY not set "
-        "(kiro-cli login has no non-interactive/BYOK option)",
+        "Kiro CLI not found on PATH, or KIRO_API_KEY not set",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(

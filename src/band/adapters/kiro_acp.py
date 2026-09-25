@@ -1,34 +1,18 @@
 """AWS Kiro CLI adapter over ACP.
 
-``KiroACPAdapter`` drives Kiro CLI's ACP server through the generic
-:class:`~band.integrations.acp.client_adapter.ACPClientAdapter`. Kiro speaks
-standard ACP (``initialize``/``session/new``/``session/prompt``/``session/
-load``) plus a handful of experimental ``_kiro.dev/*`` extension methods,
-handled by :class:`~band.integrations.acp.client_profiles.KiroACPClientProfile`.
+``KiroACPAdapter`` spawns ``kiro-cli acp`` (stdio only -- Kiro documents no
+remote/``--port`` mode) through the generic
+:class:`~band.integrations.acp.client_adapter.ACPClientAdapter`, with
+:class:`~band.integrations.acp.client_profiles.KiroACPClientProfile` handling
+Kiro's ``_kiro.dev/*`` extensions.
 
-* **stdio** (the only supported transport): spawn ``kiro-cli acp`` as a
-  room-owned subprocess on this host. Kiro's ACP mode has no documented
-  remote/``--port`` option the way Copilot's does, so there is no TCP branch.
-
-Authentication is ``kiro-cli login`` (AWS Builder ID / Identity Center /
-Google / GitHub social OAuth -- browser or device-flow; there is no
-non-interactive login flag) or the ``KIRO_API_KEY`` env var, documented for
-headless/CI-CD use by the CLI's own embedded help-doc index and read by the
-same process-wide auth module the ACP agent reads its environment from (both
-confirmed live against ``kiro-cli`` 2.24.0). Pass whatever your chosen method
-needs via ``env``; leave it unset to use the CLI's ambient login.
-
-Band tools reach Kiro over MCP the same way as Copilot/Cursor: Kiro's ACP
-schema tracks an ACP-injected ``mcpServers`` entry as a distinct, first-class
-config source alongside its on-disk ``.kiro/settings/mcp.json`` config
-(confirmed by inspecting the installed CLI's own schema), so
-``inject_band_tools=True`` (the default, a loopback HTTP/SSE MCP server)
-needs no Kiro-specific fallback.
+Auth is the CLI's ambient ``kiro-cli login`` or ``KIRO_API_KEY`` passed via
+``env`` for headless use. Band tools reach Kiro through the ACP-injected
+``mcpServers`` entry, like Copilot/Cursor.
 """
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,8 +25,6 @@ from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.workspaces import WorkspaceResolver
 
-logger = logging.getLogger(__name__)
-
 DEFAULT_KIRO_COMMAND: tuple[str, ...] = ("kiro-cli", "acp")
 
 
@@ -52,9 +34,7 @@ class KiroACPAdapterConfig:
 
     command: tuple[str, ...] = DEFAULT_KIRO_COMMAND
     workspace_for_room: WorkspaceResolver | None = None
-    # Arbitrary environment for the spawned CLI: KIRO_API_KEY for headless auth,
-    # KIRO_HOME to isolate login/session state, or any other Kiro CLI env var.
-    # Unset uses the CLI's ambient login.
+    # e.g. KIRO_API_KEY for headless auth or KIRO_HOME to isolate state.
     env: dict[str, str] | None = None
     custom_section: str = ""
     inject_band_tools: bool = True

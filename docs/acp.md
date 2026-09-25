@@ -98,6 +98,15 @@ Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copil
 
 `ACPClientAdapter` supports `Capability.MEMORY` and `Capability.CONTACTS`. Only memory tools are gated on the declared capability (an enterprise feature the adapter must opt into); contact tools register unconditionally, matching the adapter's pre-existing default that every caller without `features=` (every ACP example) relies on — declaring `Capability.CONTACTS` only stops the base class's unsupported-capability warning for a caller that does declare it. The registered tool vocabulary (computed once at construction) drives tool-name canonicalization too. `render_system_prompt` carries the matching capability sections.
 
+## Per-turn usage (Client Adapter)
+
+`ACPClientAdapter` reports `Emit.USAGE` from the `session/prompt` response's
+`usage` field, for every ACP vendor. It forwards that value as-is: the (still
+unstable) spec documents `PromptResponse.usage` as per-turn, though the `Usage`
+field docs say "across session". A vendor reporting running totals would be
+over-counted. The live `test_usage_not_cumulative_across_turns` guards the
+backends that run in CI; `kiro_acp` has no live lane, so nothing guards it.
+
 ## Permission pairing (Client Adapter)
 
 Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
@@ -216,59 +225,26 @@ fresh `PI_CODING_AGENT_DIR`. Excluded from framework-conformance as a bridge.
 ## AWS Kiro CLI backend
 
 `KiroACPAdapter` (`src/band/adapters/kiro_acp.py`) drives `kiro-cli acp` through
-`ACPClientAdapter`, stdio only — Kiro's ACP mode has no documented remote/`--port`
-option the way Copilot's does. `KiroACPClientProfile`
-(`src/band/integrations/acp/client_profiles.py`) handles Kiro's experimental
-`_kiro.dev/*` extension methods: declines `_kiro.dev/mcp/oauth_request` (no OAuth UI
-is wired up for a headless agent) and renders `_kiro.dev/metadata`'s context-window
-usage as a room-visible plan chunk when the payload matches a recognized shape,
-dropping it otherwise (Kiro's own docs mark these extensions experimental and
-versioned).
+`ACPClientAdapter`, stdio only (Kiro documents no remote/`--port` mode).
+`KiroACPClientProfile` handles two of Kiro's experimental `_kiro.dev/*`
+notifications ([kiro.dev/docs/cli/acp](https://kiro.dev/docs/cli/acp)):
 
-Auth is `kiro-cli login` (AWS Builder ID / Identity Center / Google / GitHub social
-OAuth — browser or device-flow only, no non-interactive flag) or the documented
-`KIRO_API_KEY` env var for headless/CI-CD use; pass it via the config `env`, unset to
-use the ambient login. `KIRO_API_KEY` requires a paid Kiro Pro/Pro+/Pro Max/Power
-subscription (https://kiro.dev/docs/cli/headless/) — free-tier auth (AWS Builder ID /
-Google / GitHub) is interactive-only and cannot authenticate headless. Unlike
-Copilot, Kiro also has no BYOK/provider-swap to route around this (verified against
-`kiro-cli`'s own binary and the TS sibling's adapter/tests/examples; it remains an
-open, unimplemented feature request upstream).
+- `_kiro.dev/metadata`: its `contextUsagePercentage` is posted as a room-visible
+  plan chunk (`[Kiro context window] 42% used`); any other payload is ignored.
+- `_kiro.dev/mcp/oauth_request`: logged as a warning. A headless agent can't
+  complete an MCP server's OAuth, so that server's tools stay unavailable.
 
-**No live E2E coverage**: this org has decided not to purchase a Kiro subscription,
-so the baseline matrix builder (`_build_kiro_acp` in
-`tests/e2e/baseline/toolkit/builders.py`) is registered `e2e_pending` — it keeps the
-adapter discoverable and placed in the `backends` CI lane, but runs zero live matrix
-cells (unlike Copilot's BYOK fallback, there's no hermetic cell this adapter can ever
-run without a paid key). The best available coverage without one:
+The field name comes from the `kiro-cli` 2.24 binary, not a live session.
 
-- Unit tests: `tests/adapters/test_kiro_acp_adapter.py` (construction/config) and
-  `tests/integrations/acp/test_client_adapter.py`'s
-  `TestACPCollectingClientKiroProfileExtensions` / `TestResolveACPClientProfile`
-  (the `KiroACPClientProfile` object in isolation, including malformed/out-of-range
-  usage-payload edge cases).
-- Wire-level tests: `tests/integrations/acp/test_client_adapter_behavior.py`'s
-  `TestKiroACPClientProfileOverTheWire` drives `KiroACPClientProfile` through a real
-  ACP connection to a scripted `FakeACPAgent` (a real socketpair, real JSON-RPC
-  framing — only the LLM and the `kiro-cli` binary are faked), proving the
-  `_kiro.dev/mcp/oauth_request` decline and `_kiro.dev/metadata` context-window
-  notification are actually wired end-to-end when Kiro is the active profile.
-  `TestKiroMultiStageSessionRecall` goes further: two real, sequential adapter
-  lifecycles against the same `FakeACPAgent` (simulating a `kiro-cli` restart),
-  proving both the native `session/load` resume path and the room-replay fallback
-  path — the same two scenarios the deleted live E2E smoke covered.
-- Excluded from framework-conformance as a bridge (shares `ACPClientAdapter`'s MCP
-  engine fix, so it has no separate probe of its own).
+Auth is the ambient `kiro-cli login` (interactive only) or `KIRO_API_KEY` in the
+config `env` for headless use. `KIRO_API_KEY` requires a paid Kiro subscription
+([kiro.dev/docs/cli/headless](https://kiro.dev/docs/cli/headless/)), and Kiro has
+no bring-your-own-key provider option to route around it.
 
-None of this proves `kiro-cli acp`'s real wire behavior (session/load semantics,
-genuine tool-call shapes, actual auth handshake) — only that Band's side of the
-bridge is correct against the ACP protocol as documented. Revisit `e2e_pending` if
-the subscription decision changes; `tests/e2e/baseline/smoke/adapters/test_kiro_acp.py`
-existed at one point with the same two recall scenarios copilot_acp's live smoke
-covers (room-replay fallback and native `session/load` resume) and can be restored
-from history as a starting point.
-
-**Known residual risk — per-turn usage may be misreported if Kiro reports
-cumulative totals**: see `ACPClientAdapter._turn_usage`'s docstring for why,
-and why kiro_acp specifically (unlike the other live ACP vendors) has no
-guard against it.
+**No live E2E coverage.** This org has decided not to buy a Kiro subscription, so
+the baseline builder is registered `e2e_pending`: it stays placed in the
+`backends` lane but runs no matrix cells. Coverage is the adapter/profile unit
+tests plus a `FakeACPAgent` wire test in
+`tests/integrations/acp/test_client_adapter_behavior.py`. They prove Band's side of
+the bridge, not `kiro-cli`'s real wire behavior. Revisit if the subscription
+decision changes.

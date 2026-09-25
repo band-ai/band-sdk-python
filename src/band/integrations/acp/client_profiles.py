@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from enum import StrEnum
+from typing import Protocol, TypeGuard
 
 from band.integrations.acp.types import ChunkType, CollectedChunk
 
@@ -283,106 +284,57 @@ class CursorACPClientProfile:
 
 CURSOR_PROFILE_NAME = "cursor"
 
-# Kiro's experimental extension methods (kiro.dev/docs/cli/acp), namespaced like
-# every ACP vendor extension. Confirmed live against `kiro-cli acp` 2.24.0's own
-# embedded ACP schema and doc index (its ACP server refuses to start before
-# `kiro-cli login`/`KIRO_API_KEY`, so the exact wire payloads below are not
-# verified against a live session -- see the class docstring).
-_KIRO_EXTENSION_PREFIX = "_kiro.dev/"
-KIRO_MCP_OAUTH_REQUEST_METHOD = f"{_KIRO_EXTENSION_PREFIX}mcp/oauth_request"
-KIRO_METADATA_METHOD = f"{_KIRO_EXTENSION_PREFIX}metadata"
+
+class KiroExtension(StrEnum):
+    """Kiro's experimental agent-to-client notifications (https://kiro.dev/docs/cli/acp)."""
+
+    MCP_OAUTH_REQUEST = "_kiro.dev/mcp/oauth_request"
+    METADATA = "_kiro.dev/metadata"
 
 
-class KiroACPClientProfile:
-    """Kiro CLI-specific ACP extension handling.
-
-    Everything else Kiro emits (``_kiro.dev/commands/*``, ``_kiro.dev/clear/
-    status``, ``_kiro.dev/session/terminate``, ``_kiro.dev/agent/switched``,
-    ...) falls through to the no-op default every profile method already
-    gives for free -- only the two extensions below carry information worth
-    surfacing in the room.
-    """
-
-    @property
-    def extension_session_id(self) -> None:
-        return None
-
-    async def ext_method(
-        self,
-        method: str,
-        params: dict[str, object],
-    ) -> dict[str, object]:
-        logger.debug("Kiro ACP ext_method: %s", method)
-
-        if method == KIRO_MCP_OAUTH_REQUEST_METHOD:
-            # No OAuth UI is wired up for a headless Band agent; decline rather
-            # than leave the turn hanging on human interaction it can't get
-            # (Kiro's own GitHub issue #11394: headless ACP cannot complete MCP
-            # OAuth).
-            logger.info("Declining Kiro MCP OAuth request -- no headless UI available")
-            return {"outcome": "declined"}
-
-        return {}
+class KiroACPClientProfile(NoopACPClientProfile):
+    """Kiro CLI-specific ACP extension handling; other ``_kiro.dev/*`` traffic is ignored."""
 
     async def ext_notification(
         self,
         method: str,
         params: dict[str, object],
     ) -> list[CollectedChunk]:
-        logger.debug("Kiro ACP ext_notification: %s", method)
-
-        if method == KIRO_METADATA_METHOD:
-            summary = _describe_kiro_context_usage(params)
-            if summary:
-                return [CollectedChunk(chunk_type=ChunkType.PLAN, content=summary)]
-
+        match method:
+            case KiroExtension.MCP_OAUTH_REQUEST:
+                logger.warning(
+                    "A Kiro MCP server requires OAuth, which a headless agent "
+                    "cannot complete; its tools stay unavailable"
+                )
+            case KiroExtension.METADATA:
+                percent = params.get("contextUsagePercentage")
+                if _is_percentage(percent):
+                    return [
+                        CollectedChunk(
+                            chunk_type=ChunkType.PLAN,
+                            content=f"[Kiro context window] {round(percent)}% used",
+                        )
+                    ]
         return []
 
 
-def _describe_kiro_context_usage(params: dict[str, object]) -> str | None:
-    """Render a context-window-usage summary from a ``_kiro.dev/metadata`` payload.
-
-    The exact field names are unconfirmed (see ``KiroACPClientProfile``), so
-    this checks every plausible spelling seen across the standard ACP
-    ``UsageUpdate`` fields (``used``/``size``) and Kiro's own camelCase
-    convention elsewhere in its schema. Any shape that doesn't yield a sane,
-    positive total is dropped rather than guessed at.
-    """
-    used = _first_int(params, "used", "context_window_used", "contextWindowUsed")
-    total = _first_int(params, "size", "context_window_size", "contextWindowSize")
-    if used is None or total is None or total <= 0 or not (0 <= used <= total):
-        return None
-    percent = round((used / total) * 100)
-    return f"[Kiro context window] {used}/{total} tokens ({percent}%)"
-
-
-def _first_int(params: dict[str, object], *keys: str) -> int | None:
-    for key in keys:
-        if key not in params:
-            continue
-        value = params[key]
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            return value
-        # A JSON payload's whole-number token counts can deserialize as
-        # float (e.g. 4200.0) rather than int -- accept a float only when
-        # it's a whole number; a genuinely fractional value is still bad data.
-        if isinstance(value, float) and value.is_integer():
-            return int(value)
-    return None
+def _is_percentage(value: object) -> TypeGuard[int | float]:
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and 0 <= value <= 100
+    )
 
 
 KIRO_PROFILE_NAME = "kiro"
 
+_PROFILE_FACTORIES: dict[str, Callable[[], ACPClientProfile]] = {
+    CURSOR_PROFILE_NAME: CursorACPClientProfile,
+    KIRO_PROFILE_NAME: KiroACPClientProfile,
+}
+
 
 def resolve_acp_client_profile(profile_name: str) -> ACPClientProfile | None:
     """Map a configured profile name to a runtime-specific ACP client profile."""
-    normalized = profile_name.strip().lower()
-    if not normalized:
-        return None
-    if normalized == CURSOR_PROFILE_NAME:
-        return CursorACPClientProfile()
-    if normalized == KIRO_PROFILE_NAME:
-        return KiroACPClientProfile()
-    return None
+    factory = _PROFILE_FACTORIES.get(profile_name.strip().lower())
+    return factory() if factory else None
