@@ -2943,13 +2943,25 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
         if command == "reasoning":
             effort_arg = args.strip().lower()
+            model_id, efforts = await self._current_model_efforts()
+            supported = ", ".join(efforts)
             if not effort_arg:
+                hint = f"`{model_id}` supports: {supported}. " if efforts else ""
                 await deliver_reply(
                     tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
-                    f"{await self._supported_efforts_hint()}"
-                    "Use `/reasoning <effort>` to override.",
+                    f"{hint}Use `/reasoning <effort>` to override.",
+                    mentions=mention,
+                )
+                return True
+            # A person's typo would otherwise fail every later turn; the
+            # setreasoning tool can't check this because it runs mid-turn.
+            if efforts and effort_arg not in efforts:
+                await deliver_reply(
+                    tools,
+                    f"`{model_id}` doesn't support reasoning effort `{effort_arg}`. "
+                    f"Supported: {supported}.",
                     mentions=mention,
                 )
                 return True
@@ -3643,8 +3655,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             and isinstance(effort.get("reasoningEffort"), str)
         ]
 
-    async def _supported_efforts_hint(self) -> str:
-        """Name the efforts the room's model supports, as the Codex CLI reports them."""
+    async def _current_model_efforts(self) -> tuple[str, list[str]]:
+        """The room's model and the efforts Codex reports for it (empty if unknown)."""
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         model_id = self._selected_model or await self._select_model()
@@ -3652,11 +3664,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             result = await self._client.request("model/list", {})
         except Exception:
             logger.warning(
-                "model/list failed; omitting supported reasoning efforts",
+                "model/list failed; supported reasoning efforts are unknown",
                 exc_info=True,
             )
-            return ""
-        efforts = self._supported_efforts(result, model_id)
-        if not efforts:
-            return ""
-        return f"`{model_id}` supports: {', '.join(efforts)}. "
+            return model_id, []
+        return model_id, self._supported_efforts(result, model_id)

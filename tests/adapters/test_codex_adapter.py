@@ -96,6 +96,23 @@ class ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
+# model/list as codex-cli reports it: per-model efforts, including ones newer
+# than the SDK ever knew about.
+_LIVE_EFFORTS_MODEL_LIST: dict[str, Any] = {
+    "data": [
+        {
+            "id": "gpt-6-sol",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "low"},
+                {"reasoningEffort": "max"},
+                {"reasoningEffort": "ultra"},
+            ],
+        },
+        {"id": "other", "supportedReasoningEfforts": [{"reasoningEffort": "minimal"}]},
+    ]
+}
+
+
 class FakeCodexClient:
     """Minimal fake transport client for adapter tests."""
 
@@ -1055,24 +1072,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_reasoning_command_lists_efforts_the_model_supports(self) -> None:
-        fake_client = FakeCodexClient(
-            model_list_result={
-                "data": [
-                    {
-                        "id": "gpt-6-sol",
-                        "supportedReasoningEfforts": [
-                            {"reasoningEffort": "low"},
-                            {"reasoningEffort": "max"},
-                            {"reasoningEffort": "ultra"},
-                        ],
-                    },
-                    {
-                        "id": "other",
-                        "supportedReasoningEfforts": [{"reasoningEffort": "minimal"}],
-                    },
-                ]
-            }
-        )
+        fake_client = FakeCodexClient(model_list_result=_LIVE_EFFORTS_MODEL_LIST)
         adapter = make_codex_adapter(
             fake_client, config=CodexAdapterConfig(model="gpt-6-sol")
         )
@@ -1092,6 +1092,44 @@ class TestCodexAdapter:
             "`gpt-6-sol` supports: low, max, ultra."
             in tools.messages_sent[0]["content"]
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("effort", "stored", "reply"),
+        [
+            ("ultra", "ultra", "Reasoning effort set to `ultra`"),
+            (
+                "hgih",
+                None,
+                (
+                    "`gpt-6-sol` doesn't support reasoning effort `hgih`. "
+                    "Supported: low, max, ultra."
+                ),
+            ),
+        ],
+    )
+    async def test_reasoning_command_checks_the_models_live_efforts(
+        self, effort: str, stored: str | None, reply: str
+    ) -> None:
+        """A typo is refused up front instead of failing every later turn."""
+        fake_client = FakeCodexClient(model_list_result=_LIVE_EFFORTS_MODEL_LIST)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-6-sol")
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content=f"/reasoning {effort}"),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert adapter._room_clients["room-1"].reasoning_effort == stored
+        assert len(tools.messages_sent) == 1
+        assert reply in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
     async def test_reasoning_command_still_answers_when_model_list_fails(self) -> None:

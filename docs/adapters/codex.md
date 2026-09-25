@@ -246,7 +246,7 @@ Type `/help` in the room to see the command list. Common commands:
 | `/model` or `/models` | Show the current model. |
 | `/model list` or `/models list` | List available Codex models. |
 | `/model <id>` | Use a model for subsequent turns. |
-| `/reasoning <level>` | Set reasoning effort for subsequent turns. `/reasoning` alone shows the current effort and the efforts the current model supports. |
+| `/reasoning <level>` | Set reasoning effort for subsequent turns. Refuses an effort the current model doesn't list (checked live against Codex's `model/list`). `/reasoning` alone shows the current effort and the efforts the current model supports. |
 | `/approvals` | List pending approvals. |
 | `/approve <id>` | Approve one pending request. |
 | `/approve-session <id>` | Approve this request and future similar requests in the room. |
