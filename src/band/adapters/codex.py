@@ -66,6 +66,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
+from band.runtime.decisions import DecisionRegistry, await_decision
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -479,7 +480,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
-        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
+        self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -2388,19 +2389,23 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             future=loop.create_future(),
             session_key=self._session_approval_key(event.method, params),
         )
-        room_pending = self._pending_approvals.setdefault(room_id, {})
-        if len(room_pending) >= self.config.max_pending_approvals_per_room:
-            oldest_token = min(room_pending, key=lambda t: room_pending[t].created_at)
-            evicted = room_pending.pop(oldest_token)
-            if not evicted.future.done():
-                evicted.future.set_result("decline")
+        registry = self._pending_approvals.setdefault(
+            room_id,
+            DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
+        )
+        evicted = registry.evict_oldest()
+        if evicted is not None:
+            if not evicted.payload.future.done():
+                evicted.payload.future.set_result("decline")
             logger.warning(
                 "Evicted oldest pending approval %s in room %s (limit %s)",
-                oldest_token,
+                evicted.token,
                 room_id,
                 self.config.max_pending_approvals_per_room,
             )
-        room_pending[token] = pending
+        # A redelivered RPC event maps to the same token (see _approval_token),
+        # so this supersedes rather than creating a second parallel entry.
+        registry.register(pending, key=token)
         try:
             approval_msg = (
                 "Approval requested "
@@ -2470,23 +2475,28 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                 )
                 raise
-            decision_raw = await asyncio.wait_for(
+
+            async def _notify_timeout() -> None:
+                try:
+                    await tools.send_message(
+                        f"Approval `{token}` timed out. "
+                        f"Applied `{self.config.approval_timeout_decision}`.",
+                        mentions=mention,
+                    )
+                except Exception:
+                    logger.exception("Failed to send approval timeout notification")
+
+            decision_raw = await await_decision(
+                registry,
+                token,
                 pending.future,
-                timeout=self.config.approval_wait_timeout_s,
+                timeout_s=self.config.approval_wait_timeout_s,
+                forced_value=self.config.approval_timeout_decision,
+                on_timeout=_notify_timeout,
             )
             if decision_raw in {"accept", "acceptForSession"}:
                 return decision_raw  # type: ignore[return-value]
             return "decline"
-        except TimeoutError:
-            timeout_decision = self.config.approval_timeout_decision
-            try:
-                await tools.send_message(
-                    f"Approval `{token}` timed out. Applied `{timeout_decision}`.",
-                    mentions=mention,
-                )
-            except Exception:
-                logger.exception("Failed to send approval timeout notification")
-            return timeout_decision
         finally:
             self._clear_pending_approval(room_id, token)
 
@@ -3154,7 +3164,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         args: str,
     ) -> bool:
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
-        pending = self._pending_approvals.get(room_id, {})
+        pending = self._pending_approvals.get(room_id) or DecisionRegistry()
 
         if command == "approvals":
             if not pending:
@@ -3162,7 +3172,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 return True
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
-            for token, item in list(pending.items()):
+            for token, item in pending.items():
                 age_s = int((now - item.created_at).total_seconds())
                 lines.append(f"- {token}: {item.summary} ({age_s}s)")
             await deliver_reply(tools, "\n".join(lines), mentions=mention)
@@ -3183,7 +3193,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if token:
             selected = pending.get(token)
             if selected is None:
-                available = ", ".join(sorted(pending.keys()))
+                available = ", ".join(sorted(pending.tokens()))
                 await deliver_reply(
                     tools,
                     f"Unknown approval id `{token}`. Pending: {available}",
@@ -3193,7 +3203,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         elif len(pending) == 1:
             token, selected = next(iter(pending.items()))
         else:
-            available = ", ".join(sorted(pending.keys()))
+            available = ", ".join(sorted(pending.tokens()))
             await deliver_reply(
                 tools,
                 "Multiple approvals pending. "
@@ -3220,6 +3230,17 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
+        # A concurrent timeout/eviction may have already claimed this exact
+        # token -- claim here too, before resolving, so at most one of them
+        # ever resolves the future or tells the room it was "resolved".
+        if pending.try_claim(token) is None:
+            await deliver_reply(
+                tools,
+                f"Approval `{token}` is no longer pending.",
+                mentions=mention,
+            )
+            return True
+
         decision_value: ApprovalDecision
         if is_session:
             decision_value = "acceptForSession"
@@ -3227,8 +3248,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             decision_value = "accept"
         else:
             decision_value = "decline"
-        if not selected.future.done():
-            selected.future.set_result(decision_value)
+        selected.future.set_result(decision_value)
 
         # Session-level: register the session key for auto-approval
         if is_session:
@@ -3607,18 +3627,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return f"req-{request_id}"
 
     def _clear_pending_approval(self, room_id: str, token: str) -> None:
-        room_pending = self._pending_approvals.get(room_id)
-        if not room_pending:
+        registry = self._pending_approvals.get(room_id)
+        if registry is None:
             return
-        room_pending.pop(token, None)
-        if not room_pending:
+        registry.forget(token)
+        if len(registry) == 0:
             self._pending_approvals.pop(room_id, None)
 
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
-        room_pending = self._pending_approvals.pop(room_id, {})
-        for item in room_pending.values():
-            if not item.future.done():
-                item.future.set_result("decline")
+        registry = self._pending_approvals.pop(room_id, None)
+        if registry is None:
+            return
+        for entry in registry.cancel_all():
+            if not entry.payload.future.done():
+                entry.payload.future.set_result("decline")
 
     @staticmethod
     def _visible_model_ids(result: dict[str, Any]) -> list[str]:

@@ -37,6 +37,7 @@ from band.integrations.codex.types import (
     parse_plan_steps,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 
@@ -3381,19 +3382,18 @@ class TestHistoryInjection:
         # Manually inject a pending approval for room-1
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "tok-1": type(
-                "_PA",
-                (),
-                {
-                    "request_id": 1,
-                    "method": "item/tool/call",
-                    "summary": "test",
-                    "created_at": datetime.now(UTC),
-                    "future": fut,
-                },
-            )(),
-        }
+        registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
+        registry.register(
+            PendingApproval(
+                request_id=1,
+                method="item/tool/call",
+                summary="test",
+                created_at=datetime.now(UTC),
+                future=fut,
+            ),
+            key="tok-1",
+        )
+        adapter._pending_approvals["room-1"] = registry
         wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
 
@@ -5714,6 +5714,137 @@ class TestSessionApprovalKeying:
         assert "room-1" not in adapter._session_approved
 
 
+class TestManualApprovalRaces:
+    """DecisionRegistry-backed race coverage for _resolve_manual_approval /
+    _handle_approval_command (INT-1542)."""
+
+    @pytest.mark.asyncio
+    async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
+        self,
+    ) -> None:
+        """The same TOCTOU bug class f15c1e01 fixed for Cursor: a room reply
+        landing while the timeout branch's own best-effort notice send is
+        still in flight must not be told "resolved" for a decision that has
+        already timed out."""
+        sending_second_message = asyncio.Event()
+        release_second_message = asyncio.Event()
+        call_count = 0
+
+        class SlowSecondSendTools(FakeAgentTools):
+            async def send_message(
+                self, content: str, mentions: list[dict[str, str]] | None = None
+            ) -> Any:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
+                    sending_second_message.set()
+                    await release_second_message.wait()
+                return await super().send_message(content, mentions)
+
+        tools = SlowSecondSendTools()
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=0.01
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        msg = make_platform_message(room_id="room-1")
+        params = {"approvalId": "approval-xyz", "command": "rm -rf /"}
+
+        pending_task = asyncio.create_task(
+            adapter._resolve_manual_approval(
+                tools=tools,
+                msg=msg,
+                room_id="room-1",
+                event=_event_request(
+                    1, "item/commandExecution/requestApproval", params
+                ),
+                summary="rm -rf /",
+                params=params,
+            )
+        )
+        await sending_second_message.wait()
+
+        handled = await adapter._handle_approval_command(
+            tools=tools,
+            msg=msg,
+            room_id="room-1",
+            command="approve",
+            args="approval-xyz",
+        )
+        reply = tools.messages_sent[-1]["content"]
+        release_second_message.set()
+
+        decision = await pending_task
+        assert handled is True
+        assert decision == "decline"  # approval_timeout_decision, not the reply
+        assert reply == "Approval `approval-xyz` is no longer pending."
+
+    @pytest.mark.asyncio
+    async def test_a_redelivered_approval_id_supersedes_the_pending_entry(
+        self,
+    ) -> None:
+        """A redelivered RPC event (same approvalId) must supersede the
+        existing pending entry rather than creating a second parallel one
+        for what is really the same approval request."""
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=30.0
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        tools = FakeAgentTools()
+        msg = make_platform_message(room_id="room-1")
+        params = {"approvalId": "approval-xyz", "command": "rm -rf /"}
+
+        first_task = asyncio.create_task(
+            adapter._resolve_manual_approval(
+                tools=tools,
+                msg=msg,
+                room_id="room-1",
+                event=_event_request(
+                    1, "item/commandExecution/requestApproval", params
+                ),
+                summary="rm -rf /",
+                params=params,
+            )
+        )
+        await asyncio.sleep(0)
+        registry = adapter._pending_approvals["room-1"]
+        assert registry.tokens() == ["approval-xyz"]
+        first_pending = registry.get("approval-xyz")
+        assert first_pending is not None
+
+        second_task = asyncio.create_task(
+            adapter._resolve_manual_approval(
+                tools=tools,
+                msg=msg,
+                room_id="room-1",
+                event=_event_request(
+                    2, "item/commandExecution/requestApproval", params
+                ),
+                summary="rm -rf /",
+                params=params,
+            )
+        )
+        await asyncio.sleep(0)
+
+        assert len(registry) == 1  # not two parallel entries
+        second_pending = registry.get("approval-xyz")
+        assert second_pending is not None
+        assert second_pending is not first_pending
+        # Supersede cancels the old timer/slot but never resolves its
+        # future -- that entry's own asker is still waiting on it.
+        assert not first_pending.future.done()
+
+        first_pending.future.set_result("decline")
+        second_pending.future.set_result("decline")
+        assert await first_task == "decline"
+        assert await second_task == "decline"
+
+
 class TestTokenUsageCounterMonotonicity:
     """CodexTokenUsage protection against non-monotonic cumulative updates."""
 
@@ -6178,8 +6309,9 @@ class TestCleanupOnCancel:
 
         wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
-        adapter._pending_approvals["room-1"] = {
-            "token-1": PendingApproval(
+        registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
+        registry.register(
+            PendingApproval(
                 request_id=42,
                 method="item/commandExecution/requestApproval",
                 summary="rm -rf /",
@@ -6187,7 +6319,9 @@ class TestCleanupOnCancel:
                 future=approval_future,
                 session_key="cmd:rm -rf /",
             ),
-        }
+            key="token-1",
+        )
+        adapter._pending_approvals["room-1"] = registry
 
         await adapter.on_cleanup("room-1")
 
