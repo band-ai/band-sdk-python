@@ -47,6 +47,7 @@ from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     FILE_TOOL_NAMES,
@@ -132,13 +133,19 @@ def register_pending_approval(
 ) -> asyncio.Future[str]:
     """Register one pending approval on adapter, returning its future."""
     future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-    adapter._pending_approvals.setdefault(room_id, {})[token] = PendingApproval(
-        tool_name=tool_name,
-        tool_input=tool_input if tool_input is not None else {},
-        summary=summary or tool_name,
-        created_at=created_at or datetime.now(UTC),
-        future=future,
-        requester=requester or {"id": "test-user", "name": "Test"},
+    registry = adapter._pending_approvals.setdefault(
+        room_id, DecisionRegistry(max_pending=adapter.max_pending_approvals_per_room)
+    )
+    registry.register(
+        PendingApproval(
+            tool_name=tool_name,
+            tool_input=tool_input if tool_input is not None else {},
+            summary=summary or tool_name,
+            created_at=created_at or datetime.now(UTC),
+            future=future,
+            requester=requester or {"id": "test-user", "name": "Test"},
+        ),
+        key=token,
     )
     return future
 
@@ -2397,6 +2404,85 @@ class TestApprovalCommandHandling:
         msg = mock_tools.send_message.call_args[0][0]
         assert "Unknown" in msg
         assert "a-1" in msg
+
+    @pytest.mark.asyncio
+    async def test_a_reply_for_an_already_claimed_token_is_told_not_pending(
+        self, adapter_with_approval, mock_tools, sender
+    ) -> None:
+        """The claim gate closes a race the original if-not-done check never
+        covered: something else (a timeout, in production) claiming the
+        token a moment before this command arrives. Simulate that by
+        claiming it directly first -- the command must report "no longer
+        pending", never touch the future, and never say "resolved"."""
+        future = register_pending_approval(adapter_with_approval)
+        registry = adapter_with_approval._pending_approvals["room-1"]
+        claimed = registry.try_claim("a-1")
+        assert claimed is not None
+
+        await adapter_with_approval._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="approve",
+            args="a-1",
+            sender=sender,
+        )
+
+        msg = mock_tools.send_message.call_args[0][0]
+        assert msg == "Approval `a-1` is no longer pending."
+        assert not future.done()
+
+    @pytest.mark.asyncio
+    async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
+        self, mock_tools
+    ) -> None:
+        """The same TOCTOU bug class f15c1e01 fixed for Cursor: a room reply
+        landing while the timeout branch's own best-effort notice send is
+        still in flight must not be told "resolved" for a decision that has
+        already timed out."""
+        sending_second_message = asyncio.Event()
+        release_second_message = asyncio.Event()
+        call_count = 0
+
+        async def _send_message(
+            content: str, mentions: object = None
+        ) -> dict[str, str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                sending_second_message.set()
+                await release_second_message.wait()
+            return {"status": "sent"}
+
+        mock_tools.send_message = AsyncMock(side_effect=_send_message)
+
+        adapter = ClaudeSDKAdapter(
+            approval_mode="manual",
+            approval_wait_timeout_s=0.01,
+            approval_timeout_decision="decline",
+        )
+        adapter._room_tools["room-1"] = mock_tools
+        adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
+        callback = adapter._make_can_use_tool("room-1")
+
+        pending_task = asyncio.create_task(
+            callback(_SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext())
+        )
+        await sending_second_message.wait()
+        token = next(iter(adapter._pending_approvals["room-1"]))
+
+        await adapter._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="approve",
+            args=token,
+            sender={"id": "u1", "name": "Bob"},
+        )
+        reply = mock_tools.send_message.call_args_list[-1].args[0]
+        release_second_message.set()
+
+        decision = await pending_task
+        assert isinstance(decision, PermissionResultDeny)
+        assert reply == f"Approval `{token}` is no longer pending."
 
 
 class TestApprovalAuthorization:

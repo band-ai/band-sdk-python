@@ -99,6 +99,12 @@ class TestRegisterClaimForget:
             _Ask("b"),
         ]
 
+    def test_items_returns_token_payload_pairs(self) -> None:
+        registry: DecisionRegistry[_Ask] = DecisionRegistry()
+        registry.register(_Ask("a"), key="a")
+        registry.register(_Ask("b"), key="b")
+        assert dict(registry.items()) == {"a": _Ask("a"), "b": _Ask("b")}
+
     def test_falsy_when_empty(self) -> None:
         registry: DecisionRegistry[_Ask] = DecisionRegistry()
         assert not registry

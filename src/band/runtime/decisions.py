@@ -68,6 +68,9 @@ class DecisionRegistry(Generic[T]):
     def values(self) -> list[T]:
         return [entry.payload for entry in self._entries.values()]
 
+    def items(self) -> list[tuple[str, T]]:
+        return [(entry.token, entry.payload) for entry in self._entries.values()]
+
     def entries(self) -> list[DecisionEntry[T]]:
         """Snapshot of every current entry, claimed or not.
 
