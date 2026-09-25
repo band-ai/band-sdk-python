@@ -6615,7 +6615,7 @@ class TestConfigEnvSourcing:
 class TestReadRoomFileImagePassthrough:
     @pytest.mark.asyncio
     async def test_image_result_becomes_input_image_content_item(self) -> None:
-        class _ImageTools(ToolSchemaFakeTools):
+        class ImageTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(
                 self, tool_name: str, arguments: dict[str, Any]
             ) -> ToolCallOutcome:
@@ -6637,7 +6637,7 @@ class TestReadRoomFileImagePassthrough:
                 _tool_call_request(42, "band_read_room_file", {"file_id": "f1"}),
                 _turn_completed(),
             ],
-            tools=_ImageTools(),
+            tools=ImageTools(),
         )
 
         response_id, response_payload = turn.tool_response
