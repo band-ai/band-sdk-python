@@ -303,6 +303,10 @@ class KiroACPClientProfile:
     surfacing in the room.
     """
 
+    @property
+    def extension_session_id(self) -> None:
+        return None
+
     async def ext_method(
         self,
         method: str,
