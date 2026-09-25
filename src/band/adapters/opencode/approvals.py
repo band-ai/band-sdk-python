@@ -248,6 +248,11 @@ class RoomApprovals:
             self._release_if_idle()
         return payload
 
+    def _forget(self, registry: DecisionRegistry[PendingT], request_id: str) -> None:
+        """Drop an answered ask, releasing the watcher once none are parked."""
+        registry.forget(request_id)
+        self._release_if_idle()
+
     async def on_permission_asked(self, request: OpencodePermissionRequest) -> None:
         if not (request_id := request.id):
             return
@@ -593,7 +598,7 @@ class RoomApprovals:
                 )
         except ApprovalReplyError:
             return False
-        self._permissions.forget(pending.request_id)
+        self._forget(self._permissions, pending.request_id)
         return True
 
     async def _reply_permission(
@@ -614,7 +619,7 @@ class RoomApprovals:
                 await client.reply_question(pending.request_id, answers=answers)
         except ApprovalReplyError:
             return False
-        self._questions.forget(pending.request_id)
+        self._forget(self._questions, pending.request_id)
         return True
 
     async def _reply_question(
@@ -633,7 +638,7 @@ class RoomApprovals:
                 await client.reject_question(pending.request_id)
         except ApprovalReplyError:
             return False
-        self._questions.forget(pending.request_id)
+        self._forget(self._questions, pending.request_id)
         return True
 
     async def _reject_question(self, pending: PendingQuestion) -> bool:
@@ -689,7 +694,6 @@ class RoomApprovals:
             yield client
 
     async def _expire_permission(self, pending: PendingPermission) -> None:
-        self._release_if_idle()
         reply = self._config.approval_timeout_reply
         if await self._send_permission_reply(pending, reply) and (
             tools := self._ports.tools()
@@ -701,7 +705,6 @@ class RoomApprovals:
             )
 
     async def _expire_question(self, pending: PendingQuestion) -> None:
-        self._release_if_idle()
         if await self._send_question_reject(pending) and (tools := self._ports.tools()):
             await tools.send_event(
                 f"OpenCode question `{pending.request_id}` timed out and was rejected.",
