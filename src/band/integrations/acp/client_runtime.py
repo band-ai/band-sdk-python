@@ -1011,13 +1011,14 @@ class ACPRuntime:
         prompt_text: str,
         on_chunk: ChunkSink | None = None,
     ) -> list[CollectedChunk]:
+        # Cleared up front, before anything in this call can fail or be
+        # cancelled -- including ensure_connection itself -- so a turn that
+        # never completes reports no usage rather than a stale value left
+        # over from this session's last completed turn.
+        self._last_usage[session_id] = None
         conn = await self.ensure_connection(can_respawn=False)
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
-        # Cleared up front so a call that never completes (cancelled by a turn
-        # timeout before conn.prompt() returns) reports no usage rather than a
-        # stale value left over from this session's last completed turn.
-        self._last_usage[session_id] = None
         try:
             response = await conn.prompt(
                 session_id=session_id, prompt=[text_block(prompt_text)]

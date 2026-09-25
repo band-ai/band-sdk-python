@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.client.connection import ClientSideConnection
 from acp.exceptions import RequestError
-from acp.schema import ClientCapabilities, DeclineElicitationResponse
+from acp.schema import ClientCapabilities, DeclineElicitationResponse, Usage
 
 from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
@@ -834,6 +834,31 @@ class TestACPRuntime:
         assert chunks == []
         mock_conn.new_session.assert_awaited_once_with(cwd="/tmp", mcp_servers=[])
         mock_conn.prompt.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_get_last_usage_does_not_leak_a_prior_turns_value(self) -> None:
+        """A turn that never reaches ``conn.prompt()`` (here: the connection
+        dropped between turns) must report no usage for that turn, not the
+        previous turn's real value still sitting in ``_last_usage``."""
+        mock_conn = AsyncMock()
+        mock_conn.prompt = AsyncMock(
+            return_value=MagicMock(
+                usage=Usage(input_tokens=10, output_tokens=20, total_tokens=30)
+            )
+        )
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+        runtime._client = ACPCollectingClient()
+        runtime._client._session_chunks["sess-1"] = []
+
+        await runtime.prompt(session_id="sess-1", prompt_text="hello")
+        assert runtime.get_last_usage("sess-1") is not None
+
+        runtime._conn = None  # simulates the connection dropping before the next turn
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await runtime.prompt(session_id="sess-1", prompt_text="again")
+
+        assert runtime.get_last_usage("sess-1") is None
 
     @pytest.mark.asyncio
     async def test_close_session_uses_the_active_connection_when_supported(
