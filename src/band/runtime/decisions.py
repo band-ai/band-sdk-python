@@ -14,19 +14,19 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 
 @dataclass
 class DecisionEntry(Generic[T]):
     token: str
     payload: T
-    created_at: float
     claimed: bool = False
     timeout_task: asyncio.Task[None] | None = None
 
@@ -67,9 +67,7 @@ class DecisionRegistry(Generic[T]):
                     return None
                 _cancel_timeout(existing)
         token = key if key is not None else uuid4().hex[:8]
-        self._entries[token] = DecisionEntry(
-            token=token, payload=payload, created_at=_clock()
-        )
+        self._entries[token] = DecisionEntry(token=token, payload=payload)
         return token
 
     def start_timeout(
@@ -114,7 +112,8 @@ class DecisionRegistry(Generic[T]):
         self._entries.pop(token, None)
 
     def evict_oldest(self) -> DecisionEntry[T] | None:
-        """Pop the oldest *unclaimed* entry once at capacity, else ``None``.
+        """Pop the oldest *unclaimed* entry (by registration order) once at
+        capacity, else ``None``.
 
         Only meaningful when ``max_pending`` is set -- an unbounded registry
         never evicts. Skips an entry already claimed by an in-flight
@@ -149,12 +148,50 @@ class DecisionRegistry(Generic[T]):
         return matched
 
 
-def _clock() -> float:
-    """Loop time, so ordering is immune to wall-clock changes."""
-    return asyncio.get_running_loop().time()
+class HasFuture(Protocol):
+    future: asyncio.Future[Any]
 
 
-def _cancel_timeout(entry: DecisionEntry[object]) -> None:
+FutureT = TypeVar("FutureT", bound=HasFuture)
+
+
+async def await_decision(
+    registry: DecisionRegistry[FutureT],
+    payload: FutureT,
+    *,
+    key: str | None = None,
+    timeout_s: float,
+    forced_value: R,
+) -> R:
+    """The shared shape for an asker that blocks on ``payload.future``.
+
+    Registers ``payload`` -- evicting the oldest unclaimed entry into
+    ``forced_value`` first, if at capacity -- then waits up to ``timeout_s``
+    for ``payload.future``, forcing ``forced_value`` onto it through the same
+    ``try_claim`` gate a room reply must win against, so a reply racing the
+    timeout can never resolve a decision that has already timed out. Always
+    forgets the token on the way out.
+    """
+    evicted = registry.evict_oldest()
+    if evicted is not None and not evicted.payload.future.done():
+        evicted.payload.future.set_result(forced_value)
+    token = registry.register(payload, key=key)
+    try:
+        return await asyncio.wait_for(payload.future, timeout=timeout_s)
+    except TimeoutError:
+        if (
+            token is not None
+            and registry.try_claim(token) is not None
+            and not payload.future.done()
+        ):
+            payload.future.set_result(forced_value)
+        return forced_value
+    finally:
+        if token is not None:
+            registry.forget(token)
+
+
+def _cancel_timeout(entry: DecisionEntry[Any]) -> None:
     if entry.timeout_task and entry.timeout_task is not asyncio.current_task():
         entry.timeout_task.cancel()
         entry.timeout_task = None
