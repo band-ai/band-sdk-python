@@ -21,6 +21,7 @@ from band.core.types import (
 )
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.testing import FakeAgentTools
+from tests.adapters.codexturns import await_released_turn
 
 
 def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessage:
@@ -304,8 +305,7 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
     )
     await asyncio.wait_for(first_turn, timeout=2.0)
     # on_event returned once the room was asked; the turn itself runs on.
-    if (turn := adapter._turn_tasks.get("room-1")) is not None:
-        await asyncio.wait_for(turn, timeout=2.0)
+    await await_released_turn(adapter, "room-1", timeout_s=2.0)
 
     assert (7, {"decision": "accept"}) in fake_client.responses
     assert any(

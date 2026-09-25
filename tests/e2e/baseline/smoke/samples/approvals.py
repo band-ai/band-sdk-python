@@ -10,6 +10,7 @@ enum, so a reworded prompt fails the smoke instead of silently drifting from it.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import string
 from collections.abc import Callable
@@ -69,8 +70,13 @@ from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 from tests.e2e.baseline.toolkit.deps import Dep
+from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 
 SHELL_PROMPT = "Keep responses short. Use your shell tool when asked."
+# Poll cadence for Notice.assert_shown's event read (see its docstring): there's
+# no push channel for non-text events to key a barrier off, so this bounded
+# poll is the least-bad option.
+_EVENT_POLL_INTERVAL_S = 0.5
 
 
 class Outcome(StrEnum):
@@ -121,12 +127,33 @@ class Notice:
             self.text in content for content in contents
         )
 
-    async def assert_shown(self, capture: ReplyCapture, agent_id: str) -> None:
-        shown = (
-            capture.messages
-            if self.message_type == MessageType.TEXT
-            else await capture.events(self.message_type, sender_id=agent_id)
-        )
+    async def assert_shown(
+        self, capture: ReplyCapture, agent_id: str, *, deadline_s: float = 10.0
+    ) -> None:
+        """The notice reached the room: a captured chat message, or (for an event
+        notice) a REST-visible event.
+
+        The event read races the adapter's own send -- e.g. OpenCode's TIMEOUT
+        notice is emitted only after the closing chat reply already unblocked the
+        room (``RoomApprovals._expire_permission`` awaits the permission reply
+        first, the notice event second) -- so a single REST read here can run
+        before the event row exists. Poll instead of trusting one snapshot.
+        """
+        if self.message_type == MessageType.TEXT:
+            capture.messages.assert_contains_any([self.text])
+            return
+
+        async def until_shown() -> Any:
+            while True:
+                shown = await capture.events(self.message_type, sender_id=agent_id)
+                if any(tolerant_match(self.text, item.content) for item in shown):
+                    return shown
+                await asyncio.sleep(_EVENT_POLL_INTERVAL_S)
+
+        try:
+            shown = await asyncio.wait_for(until_shown(), timeout=deadline_s)
+        except TimeoutError:
+            shown = await capture.events(self.message_type, sender_id=agent_id)
         shown.assert_contains_any([self.text])
 
 

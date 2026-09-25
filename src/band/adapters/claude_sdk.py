@@ -67,6 +67,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     Capability,
     Emit,
@@ -127,7 +128,7 @@ _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 # ("thinking.type.enabled is not supported for this model. Use
 # thinking.type.adaptive"), so the run returns an error result with no output.
 # Pinning a known-good model avoids that path; callers can override via `model=`.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # claude_agent_sdk's stdio transport defaults max_buffer_size to 1 MiB and
 # fatally drops the whole CLI connection (not just the one tool call) if a
@@ -136,7 +137,7 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 # inside that message, so an image well under our own advertised cap can
 # already exceed the library's unrelated default. Size the buffer off the
 # same constant instead of a second, driftable number.
-_CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
+CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
 
@@ -178,12 +179,10 @@ _LOCAL_CMDS = frozenset(ClaudeSDKCommand)
 # Claude Code's lookup for deferred tool definitions -- including Band's own, which
 # it must load before it can reply. It only reads definitions, so gating it would
 # make a room approve every lookup before the agent could answer.
-_TOOL_SEARCH = "ToolSearch"
+TOOL_SEARCH = "ToolSearch"
 # Band's MCP tools and ToolSearch are intentionally always available;
 # approval_mode only gates Claude Code's side-effecting native tools.
-_NATIVE_TOOL_MATCHER = (
-    rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(_TOOL_SEARCH)}$).+"
-)
+NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(TOOL_SEARCH)}$).+"
 
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
@@ -284,7 +283,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
+class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionState]):
     """
     Claude Agent SDK adapter using SimpleAdapter pattern.
 
@@ -341,7 +340,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             model: Claude model to use. Pass a full ID (e.g.
                 ``"claude-opus-4-7-20251224"``) or a family alias
                 (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
-                When ``None`` (default), the adapter pins ``_DEFAULT_MODEL``
+                When ``None`` (default), the adapter pins ``DEFAULT_MODEL``
                 rather than letting the npm ``claude`` binary auto-select,
                 which fails under API-key auth (legacy thinking request shape).
             fallback_model: Optional fallback model passed to
@@ -501,18 +500,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # Build SDK options. When the caller doesn't pin a model, default to a
         # known-good one rather than the npm `claude` binary's auto-selection,
-        # which fails under API-key auth (see _DEFAULT_MODEL). fallback_model
+        # which fails under API-key auth (see DEFAULT_MODEL). fallback_model
         # stays None unless explicitly set.
-        resolved_model = self.model or _DEFAULT_MODEL
+        resolved_model = self.model or DEFAULT_MODEL
         sdk_options = ClaudeAgentOptions(
             model=resolved_model,
             fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
-            allowed_tools=[*self._mcp_backend.allowed_tools, _TOOL_SEARCH],
+            allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
             permission_mode=self.permission_mode,
             effort=self.effort,
-            max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
             # Left at the SDK default, setting_sources loads the host's user + project
             # settings (~/.claude and ./.claude): filesystem skills and subagents then
@@ -544,7 +543,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             sdk_options.hooks = {
                 "PreToolUse": [
                     HookMatcher(
-                        matcher=_NATIVE_TOOL_MATCHER,
+                        matcher=NATIVE_TOOL_MATCHER,
                         hooks=[_pre_tool_use_continue_hook],
                     ),
                 ],

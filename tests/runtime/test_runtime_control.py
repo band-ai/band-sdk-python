@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.client.streaming import AgentControlPayload
+from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.event import ReconnectedEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
@@ -191,6 +191,67 @@ class TestStopSurvivesReconnect:
         # same as the idle-timeout and resync-sentinel paths, instead of making
         # a /next call that's guaranteed to come back empty.
         link.get_next_message.assert_not_awaited()
+
+
+class TestOnControlHook:
+    """The runtime's own interrupt()/stop_room() only cancel the task that
+    invoked the handler -- on_control lets an adapter reach work it kept
+    running detached after that task already returned (e.g. a turn parked
+    on a human decision)."""
+
+    @pytest.fixture
+    def runtime_with_hook(self) -> tuple[AgentRuntime, AsyncMock]:
+        on_control = AsyncMock()
+        link = MagicMock()
+        runtime = AgentRuntime(
+            link=link,
+            agent_id="agent-123",
+            on_execute=AsyncMock(),
+            on_control=on_control,
+        )
+        return runtime, on_control
+
+    async def test_interrupt_fires_on_control_even_with_no_active_cycle(
+        self, runtime_with_hook
+    ) -> None:
+        """The exact bug: a released/detached turn leaves no active cycle task
+        for interrupt() to cancel, but the adapter must still be told."""
+        runtime, on_control = runtime_with_hook
+        execution = _fake_execution("r1")
+        execution.interrupt.return_value = (
+            False  # nothing for the cycle itself to cancel
+        )
+        runtime.executions = {"r1": execution}
+
+        await runtime.handle_control(_control("interrupt", scope="room", room_id="r1"))
+
+        on_control.assert_awaited_once_with("r1", ControlMode.INTERRUPT)
+
+    async def test_stop_fires_on_control(self, runtime_with_hook) -> None:
+        runtime, on_control = runtime_with_hook
+        execution = _fake_execution("r1")
+        runtime.executions = {"r1": execution}
+
+        await runtime.handle_control(_control("stop", scope="room", room_id="r1"))
+
+        on_control.assert_awaited_once_with("r1", ControlMode.STOP)
+
+    async def test_play_does_not_fire_on_control(self, runtime_with_hook) -> None:
+        """Resuming a room isn't an abort signal; nothing for on_interrupt to do."""
+        runtime, on_control = runtime_with_hook
+        execution = _fake_execution("r1")
+        runtime.executions = {"r1": execution}
+
+        await runtime.handle_control(_control("play", scope="room", room_id="r1"))
+
+        on_control.assert_not_awaited()
+
+    async def test_no_hook_configured_is_a_no_op(self, runtime) -> None:
+        """The default (no on_control passed) must not raise."""
+        execution = _fake_execution("r1")
+        runtime.executions = {"r1": execution}
+
+        await runtime.handle_control(_control("interrupt", scope="room", room_id="r1"))
 
 
 class TestGracefulDegradation:

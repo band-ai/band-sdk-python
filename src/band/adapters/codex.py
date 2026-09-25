@@ -35,6 +35,7 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
     Capability,
@@ -454,6 +455,13 @@ class CodexAdapterConfig(BaseSettings):
     # _rpc_lock can't be held indefinitely if the underlying subprocess or
     # socket is unresponsive.  ``None`` disables the bound (legacy behavior).
     client_close_timeout_s: float | None = 10.0
+    # Upper bound for letting a released, still-running turn wind down on its
+    # own during cleanup (see _settle_turn) before it's force-cancelled.
+    # Deliberately not Optional like client_close_timeout_s above: that
+    # field's "disable the bound" is a legacy allowance for a rarely-slow
+    # transport close, not something a turn possibly stuck on real work
+    # should ever be allowed to defeat.
+    turn_settle_timeout_s: float = 10.0
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
     # ``"full_command"`` (default, more restrictive) — the key is the exact
@@ -494,7 +502,7 @@ class CodexAdapterConfig(BaseSettings):
         return value
 
 
-class CodexAdapter(SimpleAdapter[CodexSessionState]):
+class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
@@ -1051,15 +1059,25 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             task.exception()
 
     async def _settle_turn(self, room_id: str) -> None:
-        """Let the room's detached turn wind down, bounded like a client close.
+        """Let the room's detached turn wind down, then force-cancel it.
 
         Once released, the turn is out of reach of the runtime's cancellation
-        of on_message, and it holds the RPC lock closing the room needs.
+        of on_message, and it holds the RPC lock closing the room needs --
+        so this bound must always apply, unlike client_close_timeout_s's
+        legacy "None disables it" allowance for a separate, rarer stall.
         """
         turn = self._turn_tasks.get(room_id)
         if turn is None:
             return
-        await asyncio.wait({turn}, timeout=self.config.client_close_timeout_s)
+        done, _pending = await asyncio.wait(
+            {turn}, timeout=self.config.turn_settle_timeout_s
+        )
+        if turn not in done:
+            logger.warning(
+                "Room %s: turn still running after %ss; cancelling it",
+                room_id,
+                self.config.turn_settle_timeout_s,
+            )
         await self._cancel_turn(room_id)
 
     async def _cancel_turn(self, room_id: str) -> None:

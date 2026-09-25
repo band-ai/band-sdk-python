@@ -24,6 +24,7 @@ from band.adapters.codex import (
     CodexCommand,
     PendingApproval,
 )
+from band.client.streaming import ControlMode
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -42,6 +43,7 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools, events_of_type, reported_failures
+from tests.adapters.codexturns import await_released_turn
 
 
 def make_platform_message(
@@ -340,13 +342,6 @@ async def _wait_for_pending_approval(
     raise AssertionError(
         f"No pending approval registered for room {room_id!r} within {timeout_s}s"
     )
-
-
-async def _finish_turn(adapter: CodexAdapter, room_id: str) -> None:
-    """Await the room's turn, which outlives an on_message that returned early
-    so the room could answer an approval."""
-    if (turn := adapter._turn_tasks.get(room_id)) is not None:
-        await turn
 
 
 class TestCodexAdapter:
@@ -5149,7 +5144,7 @@ class TestAcceptForSession:
             room_id="room-1",
         )
         await task
-        await _finish_turn(adapter, "room-1")
+        await await_released_turn(adapter, "room-1")
 
         # The decision sent to Codex should be 'acceptForSession'
         accept_responses = [
@@ -5706,7 +5701,7 @@ class TestSessionApprovalKeying:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await _finish_turn(adapter, "room-1")
+        await await_released_turn(adapter, "room-1")
 
         # Manual approval times out and the pending record is cleared,
         # so /approve-session reports no pending approvals rather than
@@ -5779,7 +5774,7 @@ class TestApprovalFromASequentialRoom:
         await self._deliver(adapter, tools, "run tests", is_session_bootstrap=True)
         [token] = adapter._pending_approvals["room-1"]
         await self._deliver(adapter, tools, f"/{CodexCommand.APPROVE} {token}")
-        await _finish_turn(adapter, "room-1")
+        await await_released_turn(adapter, "room-1")
 
         assert client.responses == [(10, {"decision": "accept"})]
 
@@ -5802,8 +5797,34 @@ class TestApprovalFromASequentialRoom:
         await self._deliver(adapter, tools, "and lint too")
 
         assert tools.messages_sent[-1]["content"] == TURN_IN_PROGRESS_MESSAGE
-        assert [m for m, _ in client.requests].count("turn/start") == 1
+        methods = [method for method, _ in client.requests]
+        assert methods.count("turn/start") == 1
         await adapter.on_cleanup("room-1")
+
+    @pytest.mark.asyncio
+    async def test_interrupt_reaches_a_turn_parked_on_a_human(self) -> None:
+        """ExecutionContext.interrupt()/stop_room() only cancel the cycle task
+        that invoked on_message -- once that returns early because the turn
+        released the room, only on_interrupt still reaches the parked turn."""
+        client = FakeCodexClient(
+            events=[
+                _event_request(
+                    10, "item/commandExecution/requestApproval", {"command": "a"}
+                ),
+                _turn_completed(),
+            ]
+        )
+        adapter = await self._parked_adapter(client)
+        tools = ToolSchemaFakeTools()
+
+        await self._deliver(adapter, tools, "run tests", is_session_bootstrap=True)
+        turn = adapter._turn_tasks["room-1"]
+        assert not turn.done()  # on_message returned; the turn is still parked
+
+        await asyncio.wait_for(adapter.on_interrupt("room-1", ControlMode.INTERRUPT), 1)
+
+        assert turn.cancelled()
+        assert "room-1" not in adapter._pending_approvals
 
     @pytest.mark.asyncio
     async def test_cleanup_is_bounded_by_a_released_turn_still_working(
@@ -5831,7 +5852,7 @@ class TestApprovalFromASequentialRoom:
             config=CodexAdapterConfig(
                 approval_mode="manual",
                 approval_wait_timeout_s=30,
-                client_close_timeout_s=0.05,
+                turn_settle_timeout_s=0.05,
             ),
         )
         await adapter.on_started("Agent", "A coding agent")

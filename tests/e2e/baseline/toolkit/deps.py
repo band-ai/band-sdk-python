@@ -266,7 +266,8 @@ def _cursor_logged_in(binary: str) -> bool:
             text=True,
             timeout=30,
         )
-        return json.loads(completed.stdout).get("isAuthenticated") is True
+        parsed = json.loads(completed.stdout)
+        return isinstance(parsed, dict) and parsed.get("isAuthenticated") is True
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return False
 

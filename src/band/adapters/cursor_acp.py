@@ -10,6 +10,7 @@ from typing import Literal
 
 from typing_extensions import Unpack
 
+from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
@@ -318,6 +319,14 @@ class CursorACPAdapter(ACPClientAdapter):
         await super().on_cleanup(room_id)
         if session_id is not None:
             self._cursor_profile.forget_session(session_id)
+
+    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        """A room /stop or interrupt must also reach a turn parked on a
+        decision -- the runtime's own interrupt only cancels the task that
+        already returned once the decision prompt was posted. Matches
+        on_cleanup's choice not to hard-cancel the turn itself: waking its
+        pending decision is enough for it to wind down on its own."""
+        self._cancel_room_decisions(room_id)
 
     async def cleanup_all(self, *, final: bool = True) -> None:
         self._cancel_all_decisions()
