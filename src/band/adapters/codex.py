@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
@@ -103,30 +104,68 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
-_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
 # Codex-local slash commands, which surface their outcome in the room themselves.
 _SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({"setmodel", "setreasoning"})
 
-# Slash commands recognised by _extract_local_command().
-_LOCAL_COMMANDS: frozenset[str] = frozenset(
-    {
-        "help",
-        "status",
-        "model",
-        "models",
-        "reasoning",
-        "approvals",
-        "approve",
-        "approve-session",
-        "decline",
-        "sandbox",
-        "permissions",
-        "threads",
-        "thread",
-        "usage",
-    }
+
+class CodexCommand(StrEnum):
+    """The `/<word>` room commands this adapter handles itself, rather than
+    forwarding to Codex -- the single source for parsing, dispatch, and the
+    command names quoted back in room messages."""
+
+    HELP = "help"
+    STATUS = "status"
+    MODEL = "model"
+    MODELS = "models"
+    REASONING = "reasoning"
+    APPROVALS = "approvals"
+    APPROVE = "approve"
+    APPROVE_SESSION = "approve-session"
+    DECLINE = "decline"
+    SANDBOX = "sandbox"
+    PERMISSIONS = "permissions"
+    THREADS = "threads"
+    THREAD = "thread"
+    USAGE = "usage"
+
+
+# The decision each resolving approval command sends back to Codex.
+_APPROVAL_COMMAND_DECISIONS: dict[CodexCommand, ApprovalDecision] = {
+    CodexCommand.APPROVE: "accept",
+    CodexCommand.APPROVE_SESSION: "acceptForSession",
+    CodexCommand.DECLINE: "decline",
+}
+_APPROVAL_COMMANDS = frozenset({*_APPROVAL_COMMAND_DECISIONS, CodexCommand.APPROVALS})
+# Membership by plain string: Python 3.11's Enum rejects `"word" in CodexCommand`.
+_COMMAND_WORDS = frozenset(CodexCommand)
+
+
+class CodexSubcommand(StrEnum):
+    """Second words of `/model` and `/thread`."""
+
+    LIST = "list"
+    LS = "ls"
+    INFO = "info"
+    ARCHIVE = "archive"
+
+
+_MODEL_LIST_WORDS = frozenset({CodexSubcommand.LIST, CodexSubcommand.LS})
+
+_HELP_TEXT = (
+    "Codex commands: "
+    f"`/{CodexCommand.STATUS}`, `/{CodexCommand.MODEL}`, `/{CodexCommand.MODELS}`, "
+    f"`/{CodexCommand.MODEL} {CodexSubcommand.LIST}`, "
+    f"`/{CodexCommand.MODELS} {CodexSubcommand.LIST}`, `/{CodexCommand.MODEL} <id>`, "
+    f"`/{CodexCommand.REASONING} [{'|'.join(_REASONING_EFFORTS)}]`, "
+    f"`/{CodexCommand.APPROVALS}`, `/{CodexCommand.APPROVE} <id>`, "
+    f"`/{CodexCommand.APPROVE_SESSION} <id>`, `/{CodexCommand.DECLINE} <id>`, "
+    f"`/{CodexCommand.THREADS}`, `/{CodexCommand.THREAD} {CodexSubcommand.INFO}`, "
+    f"`/{CodexCommand.THREAD} {CodexSubcommand.ARCHIVE}`, "
+    f"`/{CodexCommand.SANDBOX} <mode>`, `/{CodexCommand.PERMISSIONS}`, "
+    f"`/{CodexCommand.USAGE}`, `/{CodexCommand.HELP}`."
 )
 
 # Upper bound on cached task titles (room-lifecycle map used to preserve the
@@ -603,7 +642,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 if inp.effort not in _REASONING_EFFORTS:
                     return (
                         f"Invalid reasoning effort '{inp.effort}'. "
-                        f"Valid: {', '.join(sorted(_REASONING_EFFORTS))}."
+                        f"Valid: {', '.join(_REASONING_EFFORTS)}."
                     )
                 adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
@@ -695,12 +734,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._room_client(room_id)
         self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
-        if command is not None and command[0] in {
-            "approve",
-            "approve-session",
-            "decline",
-            "approvals",
-        }:
+        if command is not None and command[0] in _APPROVAL_COMMANDS:
             try:
                 handled = await self._handle_approval_command(
                     tools=tools,
@@ -2421,9 +2455,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             approval_msg = (
                 "Approval requested "
                 f"({summary}). Approval id: `{token}`. "
-                f"Reply `/approve {token}` or `/decline {token}` "
-                f"or `/approve-session {token}` (approve all similar for this session). "
-                "Use `/approvals` to list pending approvals."
+                f"Reply `/{CodexCommand.APPROVE} {token}` or "
+                f"`/{CodexCommand.DECLINE} {token}` or "
+                f"`/{CodexCommand.APPROVE_SESSION} {token}` "
+                "(approve all similar for this session). "
+                f"Use `/{CodexCommand.APPROVALS}` to list pending approvals."
             )
             # Emit enriched metadata as a task event for UI rendering
             if Emit.TASK_EVENTS in self.features.emit:
@@ -2867,25 +2903,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         msg: PlatformMessage,
         history: CodexSessionState,
         room_id: str,
-        command: str,
+        command: CodexCommand,
         args: str,
     ) -> bool:
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
-        if command == "help":
-            await deliver_reply(
-                tools,
-                "Codex commands: "
-                "`/status`, `/model`, `/models`, `/model list`, `/models list`, `/model <id>`, "
-                "`/reasoning [none|minimal|low|medium|high|xhigh]`, "
-                "`/approvals`, `/approve <id>`, `/approve-session <id>`, `/decline <id>`, "
-                "`/threads`, `/thread info`, `/thread archive`, "
-                "`/sandbox <mode>`, `/permissions`, `/usage`, `/help`.",
-                mentions=mention,
-            )
+        if command == CodexCommand.HELP:
+            await deliver_reply(tools, _HELP_TEXT, mentions=mention)
             return True
 
-        if command == "status":
+        if command == CodexCommand.STATUS:
             mapped_thread = self._room_threads.get(room_id) or history.thread_id or None
             usage = (
                 self._token_usage.get(mapped_thread or "") if mapped_thread else None
@@ -2914,7 +2941,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             await deliver_reply(tools, status_text, mentions=mention)
             return True
 
-        if command in {"model", "models"}:
+        if command in {CodexCommand.MODEL, CodexCommand.MODELS}:
             model_arg = args.strip()
             if not model_arg:
                 await deliver_reply(
@@ -2922,12 +2949,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     "Current model: "
                     f"`{self._selected_model or 'unknown'}` "
                     f"(configured: `{self.config.model or 'auto'}`). "
-                    "Use `/model list` to view available models or `/model <id>` to override.",
+                    f"Use `/{CodexCommand.MODEL} {CodexSubcommand.LIST}` to view available "
+                    f"models or `/{CodexCommand.MODEL} <id>` to override.",
                     mentions=mention,
                 )
                 return True
 
-            if model_arg.lower() in {"list", "ls"}:
+            if model_arg.lower() in _MODEL_LIST_WORDS:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
                 result = await self._client.request("model/list", {})
@@ -2960,14 +2988,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        if command == "reasoning":
+        if command == CodexCommand.REASONING:
             effort_arg = args.strip().lower()
             if not effort_arg:
                 await deliver_reply(
                     tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
-                    f"Use `/reasoning <{'|'.join(sorted(_REASONING_EFFORTS))}>` to override.",
+                    f"Use `/{CodexCommand.REASONING} "
+                    f"<{'|'.join(_REASONING_EFFORTS)}>` to override.",
                     mentions=mention,
                 )
                 return True
@@ -2975,7 +3004,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(
                     tools,
                     f"Invalid reasoning effort `{effort_arg}`. "
-                    f"Valid values: {', '.join(sorted(_REASONING_EFFORTS))}.",
+                    f"Valid values: {', '.join(_REASONING_EFFORTS)}.",
                     mentions=mention,
                 )
                 return True
@@ -2988,12 +3017,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return True
 
         # --- Phase 1: /sandbox and /permissions commands ---
-        if command == "sandbox":
+        if command == CodexCommand.SANDBOX:
             if self.config.sandbox_policy is not None:
                 await deliver_reply(
                     tools,
                     "Cannot override sandbox: a `sandbox_policy` is configured. "
-                    "Remove `sandbox_policy` from config to use per-room `/sandbox` overrides.",
+                    "Remove `sandbox_policy` from config to use per-room "
+                    f"`/{CodexCommand.SANDBOX}` overrides.",
                     mentions=mention,
                 )
                 return True
@@ -3003,7 +3033,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(
                     tools,
                     f"Current sandbox: `{effective}`. "
-                    "Use `/sandbox <read-only|workspace-write|danger-full-access>` to change.",
+                    f"Use `/{CodexCommand.SANDBOX} "
+                    "<read-only|workspace-write|danger-full-access>` to change.",
                     mentions=mention,
                 )
                 return True
@@ -3015,7 +3046,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if len(mode_tokens) != 1:
                 await deliver_reply(
                     tools,
-                    "Usage: `/sandbox <read-only|workspace-write|danger-full-access> "
+                    f"Usage: `/{CodexCommand.SANDBOX} "
+                    "<read-only|workspace-write|danger-full-access> "
                     "[--confirm]`.",
                     mentions=mention,
                 )
@@ -3035,7 +3067,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     tools,
                     "Escalating to `danger-full-access` removes all sandbox "
                     "restrictions. Re-run with `--confirm` to proceed:\n"
-                    "`/sandbox danger-full-access --confirm`",
+                    f"`/{CodexCommand.SANDBOX} danger-full-access --confirm`",
                     mentions=mention,
                 )
                 return True
@@ -3054,7 +3086,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        if command == "permissions":
+        if command == CodexCommand.PERMISSIONS:
             session_approved = self._session_approved.get(room_id) or ()
             audit = self._approval_audit.get(room_id, [])
             lines = ["Effective permissions:"]
@@ -3076,9 +3108,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return True
 
         # --- Phase 2: /threads, /thread info, /thread archive ---
-        if command in {"threads", "thread"}:
+        if command in {CodexCommand.THREADS, CodexCommand.THREAD}:
             subcommand = args.strip().lower()
-            if command == "threads" or not subcommand:
+            if command == CodexCommand.THREADS or not subcommand:
                 # List all room->thread mappings
                 if not self._room_threads:
                     await deliver_reply(
@@ -3092,7 +3124,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(tools, "\n".join(lines), mentions=mention)
                 return True
 
-            if subcommand == "info":
+            if subcommand == CodexSubcommand.INFO:
                 mapped_thread = self._room_threads.get(room_id)
                 if not mapped_thread:
                     await deliver_reply(
@@ -3114,7 +3146,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(tools, info_text, mentions=mention)
                 return True
 
-            if subcommand == "archive":
+            if subcommand == CodexSubcommand.ARCHIVE:
                 mapped_thread = self._room_threads.pop(room_id, None)
                 self._prompt_injected_rooms.discard(room_id)
                 self._token_usage.pop(mapped_thread or "", None)
@@ -3131,7 +3163,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return False
 
         # --- Phase 4: /usage command ---
-        if command == "usage":
+        if command == CodexCommand.USAGE:
             mapped_thread = self._room_threads.get(room_id)
             if not mapped_thread:
                 await deliver_reply(
@@ -3163,13 +3195,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
         room_id: str,
-        command: str,
+        command: CodexCommand,
         args: str,
     ) -> bool:
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
         pending = self._pending_approvals.get(room_id) or DecisionRegistry()
 
-        if command == "approvals":
+        if command == CodexCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
                 await deliver_reply(tools, "No pending approvals.", mentions=mention)
                 return True
@@ -3181,7 +3213,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
-        if command not in {"approve", "decline", "approve-session"}:
+        if (decision_value := _APPROVAL_COMMAND_DECISIONS.get(command)) is None:
             return False
 
         if not pending:
@@ -3221,7 +3253,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        is_session = command == "approve-session"
+        is_session = command == CodexCommand.APPROVE_SESSION
         # Session-level approval needs a non-empty key (e.g. a concrete command
         # string) so future requests can match.  Reject early so we never store
         # an empty string in _session_approved or report a misleading
@@ -3231,7 +3263,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 tools,
                 f"Approval `{token}` cannot be resolved as session-level: "
                 "this request has no command signature to match against. "
-                f"Use `/approve {token}` for a one-shot approval instead.",
+                f"Use `/{CodexCommand.APPROVE} {token}` for a one-shot approval instead.",
                 mentions=mention,
             )
             return True
@@ -3244,13 +3276,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        decision_value: ApprovalDecision
-        if is_session:
-            decision_value = "acceptForSession"
-        elif command == "approve":
-            decision_value = "accept"
-        else:
-            decision_value = "decline"
         selected.future.set_result(decision_value)
 
         # Session-level: register the session key for auto-approval
@@ -3258,7 +3283,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._record_session_approval(room_id, selected.session_key)
             await deliver_reply(
                 tools,
-                f"Approval `{token}` resolved as `acceptForSession` (session-level). "
+                f"Approval `{token}` resolved as `{decision_value}` (session-level). "
                 f"Future `{selected.session_key}` requests will be auto-approved.",
                 mentions=mention,
             )
@@ -3599,7 +3624,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return "\n".join(lines)
 
     @staticmethod
-    def _extract_local_command(content: str) -> tuple[str, str] | None:
+    def _extract_local_command(content: str) -> tuple[CodexCommand, str] | None:
         """Return ``(command, args)`` when ``content`` opens with a slash command.
 
         A delivered room message always leads with the platform's ``@handle``
@@ -3616,10 +3641,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Split on any whitespace, so a tab- or newline-separated argument still
         # reaches the command it belongs to.
         parts = stripped.removeprefix("/").split(maxsplit=1)
-        command = parts[0].lower() if parts else ""
-        if command not in _LOCAL_COMMANDS:
+        word = parts[0].lower() if parts else ""
+        if word not in _COMMAND_WORDS:
             return None
-        return command, parts[1].strip() if len(parts) > 1 else ""
+        return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
 
     @staticmethod
     def _approval_token(request_id: int | str, params: dict[str, Any]) -> str:

@@ -20,6 +20,7 @@ from band.adapters.codex import (
     _TOOL_ITEM_TYPES,
     CodexAdapter,
     CodexAdapterConfig,
+    CodexCommand,
     PendingApproval,
 )
 from band.core.protocols import (
@@ -5760,7 +5761,11 @@ class TestManualApprovalRaces:
         await asyncio.wait_for(prompt_in_flight.wait(), 1)
 
         await adapter._handle_approval_command(
-            tools=tools, msg=msg, room_id="room-1", command="approve", args=""
+            tools=tools,
+            msg=msg,
+            room_id="room-1",
+            command=CodexCommand.APPROVE,
+            args="",
         )
         fail_prompt.set()
 
@@ -5870,7 +5875,7 @@ class TestManualApprovalRaces:
             tools=tools,
             msg=msg,
             room_id="room-1",
-            command="approve",
+            command=CodexCommand.APPROVE,
             args="approval-xyz",
         )
         reply = tools.messages_sent[-1]["content"]
@@ -5921,7 +5926,7 @@ class TestManualApprovalRaces:
             tools=tools,
             msg=msg,
             room_id="room-1",
-            command="approve",
+            command=CodexCommand.APPROVE,
             args="approval-xyz",
         )
 
@@ -6646,20 +6651,26 @@ class TestSlashCommandExtraction:
     @pytest.mark.parametrize(
         ("content", "expected"),
         [
-            ("/approve req-1", ("approve", "req-1")),
-            ("@owner/agent-name /approve req-1", ("approve", "req-1")),
+            ("/approve req-1", (CodexCommand.APPROVE, "req-1")),
+            ("@owner/agent-name /approve req-1", (CodexCommand.APPROVE, "req-1")),
             # Every mentioned participant contributes a token to the block.
-            ("@owner/agent-name @owner/other-bot /approve req-1", ("approve", "req-1")),
+            (
+                "@owner/agent-name @owner/other-bot /approve req-1",
+                (CodexCommand.APPROVE, "req-1"),
+            ),
             # Unresolved mentions stay in the platform's normalized @[[uuid]] form.
-            ("@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approvals", ("approvals", "")),
-            ("@team/bot /approve", ("approve", "")),
+            (
+                "@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approvals",
+                (CodexCommand.APPROVALS, ""),
+            ),
+            ("@team/bot /approve", (CodexCommand.APPROVE, "")),
             # Any whitespace separates a command from its argument, not just " ".
-            ("@team/bot /approve\treq-1", ("approve", "req-1")),
-            ("/approve\nreq-1", ("approve", "req-1")),
+            ("@team/bot /approve\treq-1", (CodexCommand.APPROVE, "req-1")),
+            ("/approve\nreq-1", (CodexCommand.APPROVE, "req-1")),
         ],
     )
     def test_command_behind_the_mention_block_is_recognised(
-        self, content: str, expected: tuple[str, str]
+        self, content: str, expected: tuple[CodexCommand, str]
     ) -> None:
         """The delivery mention block must never hide a real command."""
         assert CodexAdapter._extract_local_command(content) == expected

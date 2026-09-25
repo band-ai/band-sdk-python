@@ -1,28 +1,43 @@
 from __future__ import annotations
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKCommand
 
 
 class TestCommandExtraction:
     """Tests for _extract_command()."""
 
     def test_extracts_approve_command(self):
-        assert ClaudeSDKAdapter._extract_command("/approve a-1") == ("approve", "a-1")
+        assert ClaudeSDKAdapter._extract_command("/approve a-1") == (
+            ClaudeSDKCommand.APPROVE,
+            "a-1",
+        )
 
     def test_extracts_decline_command(self):
-        assert ClaudeSDKAdapter._extract_command("/decline a-2") == ("decline", "a-2")
+        assert ClaudeSDKAdapter._extract_command("/decline a-2") == (
+            ClaudeSDKCommand.DECLINE,
+            "a-2",
+        )
 
     def test_extracts_approvals_list(self):
-        assert ClaudeSDKAdapter._extract_command("/approvals") == ("approvals", "")
+        assert ClaudeSDKAdapter._extract_command("/approvals") == (
+            ClaudeSDKCommand.APPROVALS,
+            "",
+        )
 
     def test_extracts_status_command(self):
-        assert ClaudeSDKAdapter._extract_command("/status") == ("status", "")
+        assert ClaudeSDKAdapter._extract_command("/status") == (
+            ClaudeSDKCommand.STATUS,
+            "",
+        )
 
     def test_returns_none_for_normal_message(self):
         assert ClaudeSDKAdapter._extract_command("Hello, agent!") is None
 
     def test_case_insensitive(self):
-        assert ClaudeSDKAdapter._extract_command("/Approve a-1") == ("approve", "a-1")
+        assert ClaudeSDKAdapter._extract_command("/Approve a-1") == (
+            ClaudeSDKCommand.APPROVE,
+            "a-1",
+        )
 
     def test_bare_word_not_matched(self):
         """Bare words like 'approve' without / prefix should not match."""
@@ -34,7 +49,10 @@ class TestCommandExtraction:
 
     def test_command_with_leading_whitespace(self):
         """Leading whitespace should be ignored."""
-        assert ClaudeSDKAdapter._extract_command("  /approve a-1") == ("approve", "a-1")
+        assert ClaudeSDKAdapter._extract_command("  /approve a-1") == (
+            ClaudeSDKCommand.APPROVE,
+            "a-1",
+        )
 
     def test_command_after_leading_mention_block(self):
         """A delivered reply arrives with the platform's ``@handle`` mention
@@ -54,7 +72,10 @@ class TestCommandExtraction:
         )
 
     def test_approve_without_token(self):
-        assert ClaudeSDKAdapter._extract_command("/approve") == ("approve", "")
+        assert ClaudeSDKAdapter._extract_command("/approve") == (
+            ClaudeSDKCommand.APPROVE,
+            "",
+        )
 
     def test_multiple_slashes_not_matched(self):
         """///approve should not be treated as /approve."""

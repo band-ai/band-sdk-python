@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.claude_sdk import ApprovalReply, ClaudeSDKAdapter
+from band.adapters.claude_sdk import ApprovalReply, ClaudeSDKAdapter, ClaudeSDKCommand
 from tests.adapters.claude_sdk.helpers import register_pending_approval
 
 
@@ -27,7 +27,7 @@ class TestApprovalAuthorization:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="a-1",
             sender=authorized_sender,
         )
@@ -44,7 +44,7 @@ class TestApprovalAuthorization:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="a-1",
             sender=unauthorized_sender,
         )
@@ -71,7 +71,7 @@ class TestApprovalAuthorization:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="decline",
+            command=ClaudeSDKCommand.DECLINE,
             args=args,
             sender=unauthorized_sender,
         )
@@ -91,7 +91,7 @@ class TestApprovalAuthorization:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approvals",
+            command=ClaudeSDKCommand.APPROVALS,
             args="",
             sender=unauthorized_sender,
         )
@@ -106,7 +106,7 @@ class TestApprovalAuthorization:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="a-1",
             sender=sender,
         )

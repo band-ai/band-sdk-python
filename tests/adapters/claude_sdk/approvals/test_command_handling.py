@@ -10,7 +10,7 @@ from claude_agent_sdk.types import (
     ToolPermissionContext,
 )
 
-from band.adapters.claude_sdk import ApprovalReply, ClaudeSDKAdapter
+from band.adapters.claude_sdk import ApprovalReply, ClaudeSDKAdapter, ClaudeSDKCommand
 from tests.adapters.claude_sdk.helpers import (
     SEND_MESSAGE_MCP_NAME,
     register_pending_approval,
@@ -36,7 +36,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approvals",
+            command=ClaudeSDKCommand.APPROVALS,
             args="",
             sender=sender,
         )
@@ -54,7 +54,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approvals",
+            command=ClaudeSDKCommand.APPROVALS,
             args="",
             sender=sender,
         )
@@ -71,7 +71,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="a-1",
             sender=sender,
         )
@@ -87,7 +87,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="decline",
+            command=ClaudeSDKCommand.DECLINE,
             args="a-1",
             sender=sender,
         )
@@ -140,7 +140,7 @@ class TestApprovalCommandHandling:
             adapter._handle_approval_command(
                 tools=mock_tools,
                 room_id="room-1",
-                command="approve",
+                command=ClaudeSDKCommand.APPROVE,
                 args="a-1",
                 sender=sender,
             )
@@ -161,7 +161,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="",
             sender=sender,
         )
@@ -177,7 +177,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="",
             sender=sender,
         )
@@ -191,7 +191,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="bad-token",
             sender=sender,
         )
@@ -213,7 +213,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="a-1",
             sender=sender,
         )
@@ -261,7 +261,7 @@ class TestApprovalCommandHandling:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="a-1",
             sender={"id": "u1", "name": "Bob"},
         )
@@ -308,7 +308,7 @@ class TestApprovalCommandHandling:
             adapter._handle_approval_command(
                 tools=mock_tools,
                 room_id="room-1",
-                command="approve",
+                command=ClaudeSDKCommand.APPROVE,
                 args="a-1",
                 sender={"id": "u1", "name": "Bob"},
             )
@@ -351,7 +351,7 @@ class TestApprovalCommandHandling:
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="",
             sender=sender,
         )
@@ -377,7 +377,7 @@ class TestApprovalCommandHandling:
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
-            command="approve",
+            command=ClaudeSDKCommand.APPROVE,
             args="",
             sender=sender,
         )

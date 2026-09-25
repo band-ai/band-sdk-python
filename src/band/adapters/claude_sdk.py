@@ -18,6 +18,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
@@ -146,16 +147,32 @@ ApprovalDecision = Literal["accept", "decline"]
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
 # (e.g. E2E smokes) can anchor on the exact wording instead of re-typing it.
+
+
+class ClaudeSDKCommand(StrEnum):
+    """The `/<word>` room commands handled locally instead of sent to Claude --
+    the single source for parsing, dispatch, and room-facing prompt text."""
+
+    APPROVE = "approve"
+    DECLINE = "decline"
+    APPROVALS = "approvals"
+    STATUS = "status"
+
+
 APPROVAL_REQUESTED_TEMPLATE = (
     "Approval requested ({summary}). Token: `{token}`.\n"
-    "Reply `/approve {token}` or `/decline {token}`.\n"
-    "Use `/approvals` to list pending approvals."
+    f"Reply `/{ClaudeSDKCommand.APPROVE} {{token}}` or "
+    f"`/{ClaudeSDKCommand.DECLINE} {{token}}`.\n"
+    f"Use `/{ClaudeSDKCommand.APPROVALS}` to list pending approvals."
 )
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
 
 # Commands recognised as local (not forwarded to Claude)
-_APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
-_LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
+_APPROVAL_CMDS = frozenset(
+    {ClaudeSDKCommand.APPROVE, ClaudeSDKCommand.DECLINE, ClaudeSDKCommand.APPROVALS}
+)
+# Membership by plain string: Python 3.11's Enum rejects `"word" in ClaudeSDKCommand`.
+_LOCAL_CMDS = frozenset(ClaudeSDKCommand)
 
 # Band's MCP tools are intentionally always available; approval_mode only gates
 # Claude Code's native tools.
@@ -646,7 +663,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                         sender=sender,
                     )
                     return
-                elif cmd == "status":
+                elif cmd == ClaudeSDKCommand.STATUS:
                     await self._handle_status_command(
                         tools=tools,
                         room_id=room_id,
@@ -1453,7 +1470,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self,
         room_id: str,
         summary: str,
-        decision: str,
+        decision: ApprovalDecision,
         *,
         requester: dict[str, str] | None = None,
     ) -> bool:
@@ -1612,7 +1629,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_command(content: str) -> tuple[str, str] | None:
+    def _extract_command(content: str) -> tuple[ClaudeSDKCommand, str] | None:
         """Check if *content* starts with a ``/command``.
 
         Only the first token is considered to avoid false positives from
@@ -1626,16 +1643,15 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if not stripped.startswith("/"):
             return None
         token, _, rest = stripped.partition(" ")
-        clean = token[1:]
-        if clean.lower() in _LOCAL_CMDS:
-            return (clean.lower(), rest.strip())
+        if (word := token[1:].lower()) in _LOCAL_CMDS:
+            return (ClaudeSDKCommand(word), rest.strip())
         return None
 
     async def _handle_approval_command(
         self,
         tools: AgentToolsProtocol,
         room_id: str,
-        command: str,
+        command: ClaudeSDKCommand,
         args: str,
         sender: dict[str, str],
     ) -> None:
@@ -1647,7 +1663,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         mention: list[str] = [sender["id"]]
 
         # --- /approvals: list pending ---
-        if command == "approvals":
+        if command == ClaudeSDKCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
                 await tools.send_message("No pending approvals.", mentions=mention)
                 return
@@ -1702,7 +1718,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # Resolved with no await after the claim: the waiting asker posts the
         # "resolved" notice, so a stalled send can never strand a claimed ask.
-        decision: ApprovalDecision = "accept" if command == "approve" else "decline"
+        decision: ApprovalDecision = (
+            "accept" if command == ClaudeSDKCommand.APPROVE else "decline"
+        )
         selected.future.set_result(ApprovalReply(decision, sender["id"]))
 
     async def _handle_status_command(
