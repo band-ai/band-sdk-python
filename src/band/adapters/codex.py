@@ -595,6 +595,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 raise RuntimeError("_handle_set_reasoning must run under _rpc_lock")
             parts: list[str] = []
             if inp.effort is not None:
+                # Unlike /reasoning, this closure is sync and holds _rpc_lock, so it
+                # can't await a model/list round-trip to check the value live without
+                # risking deadlock -- same reason _handle_set_model never validates
+                # the model. An unsupported effort surfaces on the next turn instead.
                 adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
             if inp.summary is not None:
