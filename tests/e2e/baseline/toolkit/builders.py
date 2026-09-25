@@ -382,6 +382,10 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
     value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
     """
     config_kwargs: dict[str, Any] = {
+        # CodexAdapterConfig reads CODEX_-prefixed env, so the exported CODEX_CWD
+        # would land in its rejected ``cwd`` field; the workspace root is passed
+        # through workspace_for_room instead.
+        "cwd": None,
         "workspace_for_room": create_room_workspace_resolver(s.backends.codex_cwd),
         "custom_section": prompt or "",
     }

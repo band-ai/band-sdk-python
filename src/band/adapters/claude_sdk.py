@@ -166,6 +166,7 @@ APPROVAL_REQUESTED_TEMPLATE = (
     f"Use `/{ClaudeSDKCommand.APPROVALS}` to list pending approvals."
 )
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
+APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Decision: **{decision}**."
 
 # Commands recognised as local (not forwarded to Claude)
 _APPROVAL_CMDS = frozenset(
@@ -174,9 +175,15 @@ _APPROVAL_CMDS = frozenset(
 # Membership by plain string: Python 3.11's Enum rejects `"word" in ClaudeSDKCommand`.
 _LOCAL_CMDS = frozenset(ClaudeSDKCommand)
 
-# Band's MCP tools are intentionally always available; approval_mode only gates
-# Claude Code's native tools.
-_NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}).+"
+# Claude Code's lookup for deferred tool definitions -- including Band's own, which
+# it must load before it can reply. It only reads definitions, so gating it would
+# make a room approve every lookup before the agent could answer.
+_TOOL_SEARCH = "ToolSearch"
+# Band's MCP tools and ToolSearch are intentionally always available;
+# approval_mode only gates Claude Code's side-effecting native tools.
+_NATIVE_TOOL_MATCHER = (
+    rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(_TOOL_SEARCH)}$).+"
+)
 
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
@@ -502,7 +509,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
-            allowed_tools=self._mcp_backend.allowed_tools,
+            allowed_tools=[*self._mcp_backend.allowed_tools, _TOOL_SEARCH],
             permission_mode=self.permission_mode,
             effort=self.effort,
             max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
@@ -1610,7 +1617,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if tools:
             notified = await self._send_best_effort(
                 tools,
-                f"Approval `{token}` timed out. Decision: **{decision}**.",
+                APPROVAL_TIMED_OUT_TEMPLATE.format(token=token, decision=decision),
                 mention,
                 room_id=room_id,
                 failure_note="Failed to send timeout notification",

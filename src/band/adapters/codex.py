@@ -142,6 +142,20 @@ _APPROVAL_COMMANDS = frozenset({*_APPROVAL_COMMAND_DECISIONS, CodexCommand.APPRO
 # Membership by plain string: Python 3.11's Enum rejects `"word" in CodexCommand`.
 _COMMAND_WORDS = frozenset(CodexCommand)
 
+APPROVAL_REQUESTED_TEMPLATE = (
+    "Approval requested ({summary}). Approval id: `{token}`. "
+    f"Reply `/{CodexCommand.APPROVE} {{token}}` or "
+    f"`/{CodexCommand.DECLINE} {{token}}` or "
+    f"`/{CodexCommand.APPROVE_SESSION} {{token}}` "
+    "(approve all similar for this session). "
+    f"Use `/{CodexCommand.APPROVALS}` to list pending approvals."
+)
+APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as `{decision}`."
+APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Applied `{decision}`."
+TURN_IN_PROGRESS_MESSAGE = (
+    "Codex is still processing the previous request in this room."
+)
+
 
 class CodexSubcommand(StrEnum):
     """Second words of `/model` and `/thread`."""
@@ -545,6 +559,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Rooms in on_cleanup: their turns decline approvals instead of
         # parking on a human while holding the _rpc_lock cleanup needs.
         self._closing_rooms: set[str] = set()
+        # A turn runs as a detached task so a manual approval can release
+        # on_message: Band dispatches one message per room at a time, so the
+        # reply that resolves the approval arrives only after on_message returns.
+        self._turn_release: dict[str, asyncio.Future[None]] = {}
+        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -770,6 +789,54 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if handled:
                 return
 
+        running = self._turn_tasks.get(room_id)
+        if running is not None and not running.done():
+            await tools.send_message(
+                TURN_IN_PROGRESS_MESSAGE, mentions=self._sender_mention(msg)
+            )
+            return
+
+        release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._turn_release[room_id] = release
+        turn = asyncio.create_task(
+            self._run_turn(
+                msg=msg,
+                tools=tools,
+                history=history,
+                participants_msg=participants_msg,
+                contacts_msg=contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
+                room_id=room_id,
+                command=command,
+            )
+        )
+        self._turn_tasks[room_id] = turn
+        turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
+        try:
+            await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            await self._cancel_turn(room_id)
+            raise
+        finally:
+            if self._turn_release.get(room_id) is release:
+                del self._turn_release[room_id]
+        if turn.done():
+            # No human was asked: the turn's outcome is on_message's own.
+            await turn
+
+    async def _run_turn(
+        self,
+        *,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        is_session_bootstrap: bool,
+        room_id: str,
+        command: tuple[CodexCommand, str] | None,
+    ) -> None:
+        """Run one turn to completion under this room's RPC lock."""
         async with self._rpc_lock:
             thread_id: str | None = None
             turn_id: str | None = None
@@ -968,6 +1035,43 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
+
+    def _release_turn(self, room_id: str) -> None:
+        """Let on_message return while the room's turn waits on a human."""
+        release = self._turn_release.get(room_id)
+        if release is not None and not release.done():
+            release.set_result(None)
+
+    def _forget_turn(self, room_id: str, task: asyncio.Task[None]) -> None:
+        if self._turn_tasks.get(room_id) is task:
+            del self._turn_tasks[room_id]
+        # A turn that fails after release already reported to the room;
+        # retrieving the exception keeps asyncio from logging it as lost.
+        if not task.cancelled():
+            task.exception()
+
+    async def _settle_turn(self, room_id: str) -> None:
+        """Let the room's detached turn wind down, bounded like a client close.
+
+        Once released, the turn is out of reach of the runtime's cancellation
+        of on_message, and it holds the RPC lock closing the room needs.
+        """
+        turn = self._turn_tasks.get(room_id)
+        if turn is None:
+            return
+        await asyncio.wait({turn}, timeout=self.config.client_close_timeout_s)
+        await self._cancel_turn(room_id)
+
+    async def _cancel_turn(self, room_id: str) -> None:
+        """Cancel and await the room's detached turn, if one is running."""
+        turn = self._turn_tasks.get(room_id)
+        if turn is None or turn.done():
+            return
+        turn.cancel()
+        try:
+            await turn
+        except asyncio.CancelledError:
+            pass
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1339,6 +1443,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             # A turn parked on a human holds _rpc_lock; declining its pending
             # approvals (and any it raises from now on) lets it finish.
             self._clear_pending_approvals_for_room(room_id)
+            await self._settle_turn(room_id)
             await self._close_room(room, room_id)
         finally:
             self._closing_rooms.discard(room_id)
@@ -2083,7 +2188,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if not include_reply:
             return
 
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
 
         if turn_status == "completed":
             if (
@@ -2447,7 +2552,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         summary: str,
         params: dict[str, Any],
     ) -> ApprovalDecision:
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
         token = self._approval_token(event.id, params)
@@ -2474,14 +2579,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
         registry.register(pending, key=token)
         try:
-            approval_msg = (
-                "Approval requested "
-                f"({summary}). Approval id: `{token}`. "
-                f"Reply `/{CodexCommand.APPROVE} {token}` or "
-                f"`/{CodexCommand.DECLINE} {token}` or "
-                f"`/{CodexCommand.APPROVE_SESSION} {token}` "
-                "(approve all similar for this session). "
-                f"Use `/{CodexCommand.APPROVALS}` to list pending approvals."
+            approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
+                summary=summary, token=token
             )
             # Emit enriched metadata as a task event for UI rendering
             if Emit.TASK_EVENTS in self.features.emit:
@@ -2544,6 +2643,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     raise
 
+            self._release_turn(room_id)
             decision = await registry.wait(
                 token, pending.future, timeout_s=self.config.approval_wait_timeout_s
             )
@@ -2552,7 +2652,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             timeout_decision = self.config.approval_timeout_decision
             try:
                 await tools.send_message(
-                    f"Approval `{token}` timed out. Applied `{timeout_decision}`.",
+                    APPROVAL_TIMED_OUT_TEMPLATE.format(
+                        token=token, decision=timeout_decision
+                    ),
                     mentions=mention,
                 )
             except Exception:
@@ -2928,7 +3030,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         command: CodexCommand,
         args: str,
     ) -> bool:
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
 
         if command == CodexCommand.HELP:
             await deliver_reply(tools, _HELP_TEXT, mentions=mention)
@@ -3220,7 +3322,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         command: CodexCommand,
         args: str,
     ) -> bool:
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
         pending = self._pending_approvals.get(room_id) or DecisionRegistry()
 
         if command == CodexCommand.APPROVALS:
@@ -3305,14 +3407,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._record_session_approval(room_id, selected.session_key)
             await deliver_reply(
                 tools,
-                f"Approval `{token}` resolved as `{decision_value}` (session-level). "
-                f"Future `{selected.session_key}` requests will be auto-approved.",
+                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value)
+                + " This session-level approval auto-approves future "
+                f"`{selected.session_key}` requests.",
                 mentions=mention,
             )
         else:
             await deliver_reply(
                 tools,
-                f"Approval `{token}` resolved as `{decision_value}`.",
+                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value),
                 mentions=mention,
             )
         return True
@@ -3626,6 +3729,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if summary and summary != task:
             lines.append(f"Summary: {summary}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _sender_mention(msg: PlatformMessage) -> list[dict[str, str]]:
+        return [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
     @staticmethod
     def _extract_local_command(content: str) -> tuple[CodexCommand, str] | None:

@@ -18,6 +18,7 @@ from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
+    TURN_IN_PROGRESS_MESSAGE,
     CodexAdapter,
     CodexAdapterConfig,
     CodexCommand,
@@ -339,6 +340,13 @@ async def _wait_for_pending_approval(
     raise AssertionError(
         f"No pending approval registered for room {room_id!r} within {timeout_s}s"
     )
+
+
+async def _finish_turn(adapter: CodexAdapter, room_id: str) -> None:
+    """Await the room's turn, which outlives an on_message that returned early
+    so the room could answer an approval."""
+    if (turn := adapter._turn_tasks.get(room_id)) is not None:
+        await turn
 
 
 class TestCodexAdapter:
@@ -5141,6 +5149,7 @@ class TestAcceptForSession:
             room_id="room-1",
         )
         await task
+        await _finish_turn(adapter, "room-1")
 
         # The decision sent to Codex should be 'acceptForSession'
         accept_responses = [
@@ -5697,6 +5706,7 @@ class TestSessionApprovalKeying:
             is_session_bootstrap=True,
             room_id="room-1",
         )
+        await _finish_turn(adapter, "room-1")
 
         # Manual approval times out and the pending record is cleared,
         # so /approve-session reports no pending approvals rather than
@@ -5713,6 +5723,129 @@ class TestSessionApprovalKeying:
         )
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
         assert "room-1" not in adapter._session_approved
+
+
+class TestApprovalFromASequentialRoom:
+    """Band hands a room its messages one at a time, so the reply resolving an
+    approval is delivered only after the asking message's on_message returns."""
+
+    @staticmethod
+    async def _deliver(
+        adapter: CodexAdapter,
+        tools: FakeAgentTools,
+        content: str,
+        *,
+        is_session_bootstrap: bool = False,
+    ) -> None:
+        await asyncio.wait_for(
+            adapter.on_message(
+                make_platform_message(content=content),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=is_session_bootstrap,
+                room_id="room-1",
+            ),
+            1,
+        )
+
+    @staticmethod
+    async def _parked_adapter(client: FakeCodexClient) -> CodexAdapter:
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=30
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_the_reply_delivered_after_the_asking_message_resolves_it(
+        self,
+    ) -> None:
+        client = FakeCodexClient(
+            events=[
+                _event_request(
+                    10, "item/commandExecution/requestApproval", {"command": "a"}
+                ),
+                _turn_completed(),
+            ]
+        )
+        adapter = await self._parked_adapter(client)
+        tools = ToolSchemaFakeTools()
+
+        await self._deliver(adapter, tools, "run tests", is_session_bootstrap=True)
+        [token] = adapter._pending_approvals["room-1"]
+        await self._deliver(adapter, tools, f"/{CodexCommand.APPROVE} {token}")
+        await _finish_turn(adapter, "room-1")
+
+        assert client.responses == [(10, {"decision": "accept"})]
+
+    @pytest.mark.asyncio
+    async def test_a_request_while_a_turn_awaits_a_human_is_turned_away(
+        self,
+    ) -> None:
+        client = FakeCodexClient(
+            events=[
+                _event_request(
+                    10, "item/commandExecution/requestApproval", {"command": "a"}
+                ),
+                _turn_completed(),
+            ]
+        )
+        adapter = await self._parked_adapter(client)
+        tools = ToolSchemaFakeTools()
+
+        await self._deliver(adapter, tools, "run tests", is_session_bootstrap=True)
+        await self._deliver(adapter, tools, "and lint too")
+
+        assert tools.messages_sent[-1]["content"] == TURN_IN_PROGRESS_MESSAGE
+        assert [m for m, _ in client.requests].count("turn/start") == 1
+        await adapter.on_cleanup("room-1")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_is_bounded_by_a_released_turn_still_working(
+        self,
+    ) -> None:
+        """Once released, the runtime can't cancel the turn; cleanup must not
+        wait out Codex work that never ends."""
+
+        class EndlessWorkClient(FakeCodexClient):
+            async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+                if self._events:
+                    return self._events.popleft()
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+        client = EndlessWorkClient(
+            events=[
+                _event_request(
+                    10, "item/commandExecution/requestApproval", {"command": "a"}
+                )
+            ]
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(
+                approval_mode="manual",
+                approval_wait_timeout_s=30,
+                client_close_timeout_s=0.05,
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        tools = ToolSchemaFakeTools()
+
+        await self._deliver(adapter, tools, "run tests", is_session_bootstrap=True)
+        [token] = adapter._pending_approvals["room-1"]
+        await self._deliver(adapter, tools, f"/{CodexCommand.APPROVE} {token}")
+        turn = adapter._turn_tasks["room-1"]
+
+        await asyncio.wait_for(adapter.on_cleanup("room-1"), 1)
+
+        assert turn.cancelled()
+        assert client.closed
 
 
 class TestManualApprovalRaces:

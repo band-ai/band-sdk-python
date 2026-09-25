@@ -46,6 +46,9 @@ _INVALID_DECISION = object()
 DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
 
 
+ROOM_COMMAND = "/cursor"
+
+
 class CursorCommandWord(StrEnum):
     """The `/cursor <word> ...` vocabulary this adapter's room commands accept.
 
@@ -59,6 +62,18 @@ class CursorCommandWord(StrEnum):
     ACCEPT = "accept"
     REJECT = "reject"
     ANSWER = "answer"
+
+
+PERMISSION_REQUESTED_TEMPLATE = (
+    "Cursor needs permission to run `{tool}`. "
+    f"Reply `{ROOM_COMMAND} {CursorCommandWord.SELECT} {{token}} <option-id>` "
+    f"or `{ROOM_COMMAND} {CursorCommandWord.DENY} {{token}}`. "
+    "Available options: {options}"
+)
+DECISION_RESOLVED_TEMPLATE = "Cursor {kind} decision `{token}` resolved."
+DECISION_TIMED_OUT_TEMPLATE = (
+    "Cursor {kind} decision `{token}` timed out and was cancelled."
+)
 
 
 @dataclass(frozen=True)
@@ -326,12 +341,11 @@ class CursorACPAdapter(ACPClientAdapter):
                     kind="permission",
                     turn=turn,
                     choices=choices,
-                    prompt=(
-                        f"Cursor needs permission to run `{request.tool_call.name}`. "
-                        f"Reply `/cursor {CursorCommandWord.SELECT} {{token}} <option-id>` "
-                        f"or `/cursor {CursorCommandWord.DENY} {{token}}`. "
-                        f"Available options: "
-                        f"{', '.join(sorted(choices['permission'])) or 'none'}"
+                    prompt=PERMISSION_REQUESTED_TEMPLATE.format(
+                        tool=request.tool_call.name,
+                        # _wait_for_decision fills the token in once it's minted.
+                        token="{token}",
+                        options=", ".join(sorted(choices["permission"])) or "none",
                     ),
                 )
                 return result if isinstance(result, str) else None
@@ -384,7 +398,7 @@ class CursorACPAdapter(ACPClientAdapter):
                     choices=choices,
                     multi_select=multi_select,
                     prompt=(
-                        f"Cursor needs input. Reply `/cursor {CursorCommandWord.ANSWER} "
+                        f"Cursor needs input. Reply `{ROOM_COMMAND} {CursorCommandWord.ANSWER} "
                         "{token} question-id=option-id[,option-id] ...`. Questions: "
                         + self._question_summary(questions)
                     ),
@@ -411,8 +425,8 @@ class CursorACPAdapter(ACPClientAdapter):
                     turn=turn,
                     prompt=(
                         f"{description} needs approval. Reply "
-                        f"`/cursor {CursorCommandWord.ACCEPT} {{token}}` or "
-                        f"`/cursor {CursorCommandWord.REJECT} {{token}}`."
+                        f"`{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
+                        f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
                     ),
                 )
                 return (
@@ -470,7 +484,7 @@ class CursorACPAdapter(ACPClientAdapter):
     ) -> None:
         try:
             await turn.tools.send_message(
-                f"Cursor {kind} decision `{token}` timed out and was cancelled.",
+                DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
                 mentions=_requester_mentions(turn),
             )
         except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
@@ -480,7 +494,7 @@ class CursorACPAdapter(ACPClientAdapter):
         self, msg: PlatformMessage, tools: AgentToolsProtocol, room_id: str
     ) -> bool:
         words = strip_leading_mentions(msg.content).strip().split()
-        if not words or words[0].lower() != "/cursor":
+        if not words or words[0].lower() != ROOM_COMMAND:
             return False
         mentions = [msg.sender_id]
         if len(words) == 1 or words[1].lower() == CursorCommandWord.DECISIONS:
@@ -488,7 +502,7 @@ class CursorACPAdapter(ACPClientAdapter):
             return True
         if len(words) < 3:
             await tools.send_message(
-                f"Use `/cursor {CursorCommandWord.DECISIONS}` to list pending "
+                f"Use `{ROOM_COMMAND} {CursorCommandWord.DECISIONS}` to list pending "
                 "Cursor decisions.",
                 mentions=mentions,
             )
@@ -513,7 +527,7 @@ class CursorACPAdapter(ACPClientAdapter):
             reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
         else:
             pending.future.set_result(result)
-            reply = f"Cursor {pending.kind} decision `{token}` resolved."
+            reply = DECISION_RESOLVED_TEMPLATE.format(kind=pending.kind, token=token)
         await tools.send_message(reply, mentions=mentions)
         return True
 

@@ -18,6 +18,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeVar
 
 from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
@@ -62,6 +63,22 @@ class ApprovalPorts:
     is_own_band_tool: Callable[[str], bool]
 
 
+class PermissionReplyWord(StrEnum):
+    """The room words that answer a permission ask."""
+
+    APPROVE = "approve"
+    ALWAYS = "always"
+    REJECT = "reject"
+
+
+# Keyed for lookup by the raw room word.
+_PERMISSION_REPLIES: dict[str, ApprovalReply] = {
+    PermissionReplyWord.APPROVE: "once",
+    PermissionReplyWord.ALWAYS: "always",
+    PermissionReplyWord.REJECT: "reject",
+}
+
+
 @dataclass(frozen=True)
 class PermissionCommand:
     """A parsed ``approve``/``always``/``reject`` room reply."""
@@ -91,14 +108,9 @@ def parse_permission_reply(content: str) -> PermissionCommand | None:
         else trailing[0]
     )
 
-    match command:
-        case "approve":
-            return PermissionCommand("once", request_id)
-        case "always":
-            return PermissionCommand("always", request_id)
-        case "reject":
-            return PermissionCommand("reject", request_id)
-    return None
+    if (reply := _PERMISSION_REPLIES.get(command)) is None:
+        return None
+    return PermissionCommand(reply, request_id)
 
 
 def parse_question_answers(
@@ -121,8 +133,16 @@ def parse_question_answers(
 # that renders it, so a consumer that has to recognize these lines (the E2E
 # smoke waiting for a real permission round trip) matches one definition instead
 # of re-typing the sentence.
-APPROVAL_REQUESTED_PREFIX = "OpenCode approval requested for"
+APPROVAL_REQUESTED_TEMPLATE = (
+    "OpenCode approval requested for `{permission}` ({patterns}). Reply with "
+    f"`{PermissionReplyWord.APPROVE} {{request_id}}`, "
+    f"`{PermissionReplyWord.ALWAYS} {{request_id}}`, or "
+    f"`{PermissionReplyWord.REJECT} {{request_id}}`."
+)
 APPROVAL_HANDLED_TEMPLATE = "OpenCode approval `{request_id}` handled with `{reply}`."
+APPROVAL_TIMED_OUT_TEMPLATE = (
+    "OpenCode approval `{request_id}` timed out and was handled with `{reply}`."
+)
 APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
     "OpenCode approval `{request_id}` is no longer pending."
 )
@@ -286,10 +306,10 @@ class RoomApprovals:
         self._park_on_human()
         pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
         await self._notify_room(
-            (
-                f"{APPROVAL_REQUESTED_PREFIX} `{pending.permission}` "
-                f"({pattern_text}). Reply with `approve {request_id}`, "
-                f"`always {request_id}`, or `reject {request_id}`."
+            APPROVAL_REQUESTED_TEMPLATE.format(
+                permission=pending.permission,
+                patterns=pattern_text,
+                request_id=request_id,
             ),
             self._ports.turn_mentions(),
         )
@@ -510,14 +530,15 @@ class RoomApprovals:
         ids = ", ".join(f"`{request_id}`" for request_id in self._permissions)
         return (
             f"Several OpenCode approvals are pending ({ids}). Reply with the "
-            "request id, e.g. `approve <id>`."
+            f"request id, e.g. `{PermissionReplyWord.APPROVE} <id>`."
         )
 
     def _which_question_command_hint(self) -> str:
         ids = ", ".join(f"`{request_id}`" for request_id in self._questions)
         return (
             f"OpenCode is waiting for question answers ({ids}). Reply with your "
-            "answer or `reject <id>` — not `approve`/`always`."
+            f"answer or `{PermissionReplyWord.REJECT} <id>` — not "
+            f"`{PermissionReplyWord.APPROVE}`/`{PermissionReplyWord.ALWAYS}`."
         )
 
     def _which_dual_reject_hint(self) -> str:
@@ -525,7 +546,8 @@ class RoomApprovals:
         question_ids = ", ".join(f"`{request_id}`" for request_id in self._questions)
         return (
             "Both an approval and a question are pending "
-            f"({perm_ids}; {question_ids}). Reply with `reject <id>` naming "
+            f"({perm_ids}; {question_ids}). Reply with "
+            f"`{PermissionReplyWord.REJECT} <id>` naming "
             "which ask to reject."
         )
 
@@ -695,8 +717,9 @@ class RoomApprovals:
             tools := self._ports.tools()
         ):
             await tools.send_event(
-                f"OpenCode approval `{pending.request_id}` timed out and was "
-                f"handled with `{reply}`.",
+                APPROVAL_TIMED_OUT_TEMPLATE.format(
+                    request_id=pending.request_id, reply=reply
+                ),
                 "error",
             )
 
@@ -711,7 +734,7 @@ class RoomApprovals:
 def _is_question_rejection(command: str) -> bool:
     """Whether a room reply rejects a question rather than answering it."""
     tokens = command.split()
-    return bool(tokens) and tokens[0].lstrip("/").lower() == "reject"
+    return bool(tokens) and tokens[0].lstrip("/").lower() == PermissionReplyWord.REJECT
 
 
 def _clock() -> float:

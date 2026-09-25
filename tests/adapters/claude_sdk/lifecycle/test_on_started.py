@@ -168,3 +168,8 @@ class TestOnStarted:
             assert not re.fullmatch(
                 matcher.matcher, f"{MCP_TOOL_PREFIX}band_send_message"
             )
+            # Claude Code loads deferred tool definitions (Band's included)
+            # through ToolSearch; a room must not approve every lookup.
+            assert not re.fullmatch(matcher.matcher, "ToolSearch")
+            assert "ToolSearch" in sdk_options.allowed_tools
+            assert re.fullmatch(matcher.matcher, "ToolSearchX")
