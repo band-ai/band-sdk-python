@@ -319,6 +319,7 @@ class KiroACPClientProfile:
             # than leave the turn hanging on human interaction it can't get
             # (Kiro's own GitHub issue #11394: headless ACP cannot complete MCP
             # OAuth).
+            logger.info("Declining Kiro MCP OAuth request -- no headless UI available")
             return {"outcome": "declined"}
 
         return {}
@@ -360,8 +361,15 @@ def _first_int(params: dict[str, object], *keys: str) -> int | None:
         if key not in params:
             continue
         value = params[key]
-        if isinstance(value, int) and not isinstance(value, bool):
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
             return value
+        # A JSON payload's whole-number token counts can deserialize as
+        # float (e.g. 4200.0) rather than int -- accept a float only when
+        # it's a whole number; a genuinely fractional value is still bad data.
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
     return None
 
 

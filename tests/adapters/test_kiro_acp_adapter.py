@@ -108,6 +108,11 @@ class TestKiroACPAdapterConstruction:
 
         assert adapter._resolve_session_config is resolver
 
+    def test_mcp_servers_forwarded(self) -> None:
+        servers = [{"name": "band", "command": ["band-mcp"]}]
+        adapter = KiroACPAdapter(KiroACPAdapterConfig(mcp_servers=servers))
+        assert adapter._mcp_servers == servers
+
     def test_resolve_permission_is_forwarded(self) -> None:
         # Unlike Cursor (which wires its own internal resolver), Kiro speaks
         # standard ACP session/request_permission the same way Copilot/OMP do,

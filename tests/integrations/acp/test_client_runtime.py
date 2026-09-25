@@ -861,6 +861,50 @@ class TestACPRuntime:
         assert runtime.get_last_usage("sess-1") is None
 
     @pytest.mark.asyncio
+    async def test_get_last_usage_ignores_a_stale_orphaned_turns_late_resolution(
+        self,
+    ) -> None:
+        """A turn whose ``conn.prompt()`` call is still in flight when a second,
+        later turn on the same session starts and completes first (e.g. the
+        first turn's caller was externally cancelled but the RPC itself kept
+        running orphaned) must not clobber the second turn's usage once it
+        eventually resolves."""
+        turn1_may_resolve = asyncio.Event()
+        calls = 0
+
+        async def _prompt(**_kwargs: object) -> MagicMock:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await turn1_may_resolve.wait()
+                return MagicMock(
+                    usage=Usage(input_tokens=999, output_tokens=999, total_tokens=999)
+                )
+            return MagicMock(
+                usage=Usage(input_tokens=42, output_tokens=1, total_tokens=43)
+            )
+
+        mock_conn = AsyncMock()
+        mock_conn.prompt = AsyncMock(side_effect=_prompt)
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+        runtime._client = ACPCollectingClient()
+        runtime._client._session_chunks["sess-1"] = []
+
+        turn1 = asyncio.create_task(
+            runtime.prompt(session_id="sess-1", prompt_text="first")
+        )
+        await asyncio.sleep(0)  # let turn1 reach conn.prompt() and block on the event
+
+        await runtime.prompt(session_id="sess-1", prompt_text="second")
+        assert runtime.get_last_usage("sess-1").input_tokens == 42
+
+        turn1_may_resolve.set()
+        await turn1
+
+        assert runtime.get_last_usage("sess-1").input_tokens == 42
+
+    @pytest.mark.asyncio
     async def test_close_session_uses_the_active_connection_when_supported(
         self,
     ) -> None:

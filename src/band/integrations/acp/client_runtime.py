@@ -748,6 +748,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             # ACPClientProfile protocol has no such attribute at all.
             session_id = getattr(self._profile, "extension_session_id", None) or ""
         if not session_id:
+            logger.debug(
+                "Dropping ext_notification %s: no resolvable session id", method
+            )
             return
 
         chunks = await self._profile.ext_notification(method, params)
@@ -833,6 +836,13 @@ class ACPRuntime:
         # `prompt()`, read by the caller once the turn completes. Keyed by session
         # so concurrent sessions on one runtime never cross-report.
         self._last_usage: dict[str, Usage | None] = {}
+        # A prompt() call whose own turn was externally cancelled (not through
+        # this method's own cancellation) can be orphaned -- the underlying
+        # conn.prompt() RPC keeps running and still resolves later. This
+        # fencing token lets a stale resolution recognize it's no longer the
+        # session's current turn and skip writing _last_usage, instead of
+        # last-write-wins clobbering a newer, still-in-flight turn's usage.
+        self._prompt_generation: dict[str, int] = {}
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -1016,6 +1026,8 @@ class ACPRuntime:
         # never completes reports no usage rather than a stale value left
         # over from this session's last completed turn.
         self._last_usage[session_id] = None
+        generation = self._prompt_generation.get(session_id, 0) + 1
+        self._prompt_generation[session_id] = generation
         conn = await self.ensure_connection(can_respawn=False)
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
@@ -1023,7 +1035,13 @@ class ACPRuntime:
             response = await conn.prompt(
                 session_id=session_id, prompt=[text_block(prompt_text)]
             )
-            self._last_usage[session_id] = getattr(response, "usage", None)
+            if self._prompt_generation.get(session_id) == generation:
+                self._last_usage[session_id] = getattr(response, "usage", None)
+            else:
+                logger.debug(
+                    "Discarding usage from a stale/orphaned turn for session %s",
+                    session_id,
+                )
             if self._client is not None:
                 await self._client.flush(session_id)
         finally:

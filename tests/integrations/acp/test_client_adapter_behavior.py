@@ -409,12 +409,12 @@ async def test_usage_still_emitted_when_turn_times_out_after_prompt_completes(
         # session/prompt has already returned (usage captured) by the time
         # flush() runs; delaying it past turn_timeout_s reproduces a turn that
         # times out only after tokens were genuinely spent.
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(2)
         await original_flush(self, session_id)
 
     monkeypatch.setattr(ACPCollectingClient, "flush", _slow_flush)
 
-    async with acp_adapter(fake_agent, turn_timeout_s=0.05) as session:
+    async with acp_adapter(fake_agent, turn_timeout_s=0.2) as session:
         with pytest.raises(ACPTurnTimeoutError):
             await session.send("do work")
 
@@ -958,6 +958,20 @@ class TestKiroACPClientProfileOverTheWire:
         assert reply.plans == ["[Kiro context window] 4200/128000 tokens (3%)"]
 
 
+async def _log_a_fact(
+    agent: FakeACPAgent, tracking_marker: str, agent_fact: str
+) -> str:
+    """Phase 1 of a multi-stage recall test: log a fact through one adapter
+    lifecycle, tear it down, and return the session id phase 2 must resume."""
+    agent.will_say(f"Logged {tracking_marker}: {agent_fact}")
+    async with acp_adapter(agent, profile=KiroACPClientProfile()) as session1:
+        await session1.send(
+            f"Log a note with tracking marker {tracking_marker} and state a fact.",
+            bootstrap=True,
+        )
+        return session1.session_id("room-1")
+
+
 class TestKiroMultiStageSessionRecall:
     """Two REAL, sequential adapter lifecycles standing in for a `kiro-cli`
     process restart -- the exact shape of the two live E2E tests deleted for
@@ -983,20 +997,13 @@ class TestKiroMultiStageSessionRecall:
         agent = FakeACPAgent(supports_session_load=True)
         tracking_marker = "MARKER-7421"
         agent_fact = "the sky is blue"
-
-        agent.will_say(f"Logged {tracking_marker}: {agent_fact}")
-        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session1:
-            await session1.send(
-                f"Log a note with tracking marker {tracking_marker} and state a fact.",
-                bootstrap=True,
-            )
-            first_session_id = session1.session_id("room-1")
+        first_session_id = await _log_a_fact(agent, tracking_marker, agent_fact)
 
         # What a persisted KIRO_HOME would carry across the restart: the
         # fake agent now "remembers" the session a real one's on-disk state
         # would too.
         agent.knows_session(first_session_id)
-        agent.will_say(f"{agent_fact}, tracked as {tracking_marker}")
+        agent.reset_script().will_say(f"{agent_fact}, tracked as {tracking_marker}")
         history = ACPClientSessionState(room_to_session={"room-1": first_session_id})
         async with acp_adapter(agent, profile=KiroACPClientProfile()) as session2:
             reply = await session2.send(
@@ -1027,19 +1034,12 @@ class TestKiroMultiStageSessionRecall:
         agent = FakeACPAgent(supports_session_load=True)
         tracking_marker = "MARKER-9182"
         agent_fact = "the sky is blue"
-
-        agent.will_say(f"Logged {tracking_marker}: {agent_fact}")
-        async with acp_adapter(agent, profile=KiroACPClientProfile()) as session1:
-            await session1.send(
-                f"Log a note with tracking marker {tracking_marker} and state a fact.",
-                bootstrap=True,
-            )
-            first_session_id = session1.session_id("room-1")
+        first_session_id = await _log_a_fact(agent, tracking_marker, agent_fact)
 
         # No agent.knows_session(...): a fresh KIRO_HOME after restart means
         # session/load genuinely misses, same as the deleted live test's
         # fresh-KIRO_HOME-per-phase setup.
-        agent.will_say(f"{agent_fact}, tracked as {tracking_marker}")
+        agent.reset_script().will_say(f"{agent_fact}, tracked as {tracking_marker}")
         history = rehydration_history(
             f"[Peer]: Log a note with tracking marker {tracking_marker} and "
             "state a fact.",

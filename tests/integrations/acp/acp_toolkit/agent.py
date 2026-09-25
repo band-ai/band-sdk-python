@@ -109,6 +109,18 @@ class FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
         return self
 
+    def reset_script(self) -> FakeACPAgent:
+        """Clear every scripted action so far.
+
+        A multi-stage test simulating a restart across two adapter
+        lifecycles shares one agent, but each phase's script should run
+        independently -- otherwise phase 2's prompt would replay phase 1's
+        actions too, since ``_script`` accumulates across every ``will_*``
+        call for the object's lifetime.
+        """
+        self._script = []
+        return self
+
     def reports_usage(self, usage: Usage) -> FakeACPAgent:
         """Make every ``session/prompt`` response carry this standard ACP
         ``usage`` value -- unset (the default) mirrors an agent that never

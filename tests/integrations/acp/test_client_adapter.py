@@ -2311,6 +2311,24 @@ class TestACPCollectingClientKiroProfileExtensions:
         assert "4200/128000" in chunks[0].content
 
     @pytest.mark.asyncio
+    async def test_ext_notification_kiro_metadata_context_usage_as_whole_number_floats(
+        self,
+    ) -> None:
+        """A JSON payload can deserialize a whole-number token count as a
+        float (e.g. 4200.0) rather than an int -- this must resolve the same
+        as the int-typed case, not drop silently."""
+        client = ACPCollectingClient(profile=KiroACPClientProfile())
+
+        await client.ext_notification(
+            KIRO_METADATA_METHOD,
+            {"sessionId": "sess-1", "used": 4200.0, "size": 8000},
+        )
+
+        chunks = client.get_collected_chunks("sess-1")
+        assert len(chunks) == 1
+        assert "4200/8000 tokens (52%)" in chunks[0].content
+
+    @pytest.mark.asyncio
     async def test_ext_notification_kiro_metadata_unrecognized_shape_is_dropped(
         self,
     ) -> None:

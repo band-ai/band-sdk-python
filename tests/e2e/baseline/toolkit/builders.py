@@ -452,16 +452,21 @@ def _build_opencode(
     )
 
 
+def _ensure_subdir(work_dir: str, name: str) -> str:
+    """Create and return the ``name`` subdirectory of ``work_dir``."""
+    home = os.path.join(work_dir, name)
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
 def copilot_home_dir(work_dir: str) -> str:
     """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
 
-    The one place the subdirectory name and its creation live — the registry
-    builder and the bespoke test configs (``test_copilot_acp.py``) all call
-    this rather than each re-picking the name and an os.path/pathlib API.
+    The one place the subdirectory name lives — the registry builder and the
+    bespoke test configs (``test_copilot_acp.py``) all call this rather than
+    each re-picking the name.
     """
-    home = os.path.join(work_dir, "copilot-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "copilot-home")
 
 
 def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
@@ -561,9 +566,7 @@ def _build_copilot_acp(
 
 def omp_agent_home_dir(work_dir: str) -> str:
     """Create and return the ``pi-coding-agent-home`` subdirectory of ``work_dir``."""
-    home = os.path.join(work_dir, "pi-coding-agent-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "pi-coding-agent-home")
 
 
 def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
@@ -663,12 +666,10 @@ def _build_cursor_acp(
 def kiro_home_dir(work_dir: str) -> str:
     """Create and return the ``kiro-home`` subdirectory of ``work_dir``.
 
-    The one place the subdirectory name and its creation live, for whoever
-    flips ``_build_kiro_acp`` back to live (see its ``e2e_pending`` reason).
+    For whoever flips ``_build_kiro_acp`` back to live (see its
+    ``e2e_pending`` reason).
     """
-    home = os.path.join(work_dir, "kiro-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "kiro-home")
 
 
 def kiro_acp_env(s: BaselineSettings, kiro_home: str) -> dict[str, str]:
