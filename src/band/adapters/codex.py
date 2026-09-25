@@ -154,6 +154,28 @@ class CodexSubcommand(StrEnum):
 
 _MODEL_LIST_WORDS = frozenset({CodexSubcommand.LIST, CodexSubcommand.LS})
 
+
+class CodexSandboxMode(StrEnum):
+    """thread/start's kebab-case ``SandboxMode`` values -- also exactly what
+    ``/sandbox`` accepts."""
+
+    READ_ONLY = "read-only"
+    WORKSPACE_WRITE = "workspace-write"
+    DANGER_FULL_ACCESS = "danger-full-access"
+
+
+# Membership by plain string: Python 3.11's Enum rejects `"word" in CodexSandboxMode`.
+_SANDBOX_MODES = frozenset(CodexSandboxMode)
+# A sandbox kind expressible only as a turn/start sandboxPolicy, not a mode.
+_EXTERNAL_SANDBOX_KEY = "external-sandbox"
+_EXTERNAL_SANDBOX_POLICY_TYPE = "externalSandbox"
+# Config spellings accepted without the dashes, e.g. "readonly".
+_SANDBOX_KEY_ALIASES = {
+    key.replace("-", ""): key for key in (*CodexSandboxMode, _EXTERNAL_SANDBOX_KEY)
+}
+_SANDBOX_CONFIRM_FLAG = "--confirm"
+_SANDBOX_MODE_CHOICES = "|".join(CodexSandboxMode)
+
 _HELP_TEXT = (
     "Codex commands: "
     f"`/{CodexCommand.STATUS}`, `/{CodexCommand.MODEL}`, `/{CodexCommand.MODELS}`, "
@@ -3033,22 +3055,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(
                     tools,
                     f"Current sandbox: `{effective}`. "
-                    f"Use `/{CodexCommand.SANDBOX} "
-                    "<read-only|workspace-write|danger-full-access>` to change.",
+                    f"Use `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}>` to change.",
                     mentions=mention,
                 )
                 return True
             # Parse tokens explicitly so "--confirm-anything-else" is surfaced
             # as an unknown mode instead of silently stripped away.
             tokens = mode_arg.split()
-            confirm_flag = "--confirm" in tokens
-            mode_tokens = [tok for tok in tokens if tok != "--confirm"]
+            confirm_flag = _SANDBOX_CONFIRM_FLAG in tokens
+            mode_tokens = [tok for tok in tokens if tok != _SANDBOX_CONFIRM_FLAG]
             if len(mode_tokens) != 1:
                 await deliver_reply(
                     tools,
-                    f"Usage: `/{CodexCommand.SANDBOX} "
-                    "<read-only|workspace-write|danger-full-access> "
-                    "[--confirm]`.",
+                    f"Usage: `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}> "
+                    f"[{_SANDBOX_CONFIRM_FLAG}]`.",
                     mentions=mention,
                 )
                 return True
@@ -3058,23 +3078,25 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(
                     tools,
                     f"Invalid sandbox mode `{mode_token}`. "
-                    "Valid: read-only, workspace-write, danger-full-access.",
+                    f"Valid: {', '.join(CodexSandboxMode)}.",
                     mentions=mention,
                 )
                 return True
-            if normalized == "danger-full-access" and not confirm_flag:
+            escalating = normalized == CodexSandboxMode.DANGER_FULL_ACCESS
+            if escalating and not confirm_flag:
                 await deliver_reply(
                     tools,
-                    "Escalating to `danger-full-access` removes all sandbox "
-                    "restrictions. Re-run with `--confirm` to proceed:\n"
-                    f"`/{CodexCommand.SANDBOX} danger-full-access --confirm`",
+                    f"Escalating to `{normalized}` removes all sandbox "
+                    f"restrictions. Re-run with `{_SANDBOX_CONFIRM_FLAG}` to proceed:\n"
+                    f"`/{CodexCommand.SANDBOX} {normalized} {_SANDBOX_CONFIRM_FLAG}`",
                     mentions=mention,
                 )
                 return True
-            if normalized == "danger-full-access":
+            if escalating:
                 logger.warning(
-                    "Sandbox escalated to danger-full-access via /sandbox command "
-                    "in room %s by %s",
+                    "Sandbox escalated to %s via /%s command in room %s by %s",
+                    normalized,
+                    CodexCommand.SANDBOX,
                     room_id,
                     msg.sender_name or msg.sender_type or "unknown",
                 )
@@ -3356,7 +3378,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             params["sandbox"] = sandbox_mode
             return
 
-        if self._canonical_sandbox_key(effective) == "external-sandbox":
+        if self._canonical_sandbox_key(effective) == _EXTERNAL_SANDBOX_KEY:
             # externalSandbox is only representable via sandboxPolicy on
             # turn/start; thread/start does not accept it.
             logger.debug(
@@ -3367,18 +3389,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
 
     # Codex app-server has two sandbox fields with different wire formats:
-    #   - thread/start.sandbox: SandboxMode enum, kebab-case strings
-    #     ("read-only", "workspace-write", "danger-full-access").
-    #   - turn/start.sandboxPolicy: SandboxPolicy tagged union, camelCase
-    #     type tags ("readOnly", "workspaceWrite", "dangerFullAccess",
-    #     "externalSandbox").
-    # This mapping bridges the two.  If the Codex protocol renames tags,
-    # update both this mapping and _canonical_sandbox_key's aliases.
-    # Reference: codex-app-server protocol types (thread/start, turn/start).
+    # thread/start.sandbox takes a kebab-case CodexSandboxMode, while
+    # turn/start.sandboxPolicy takes a camelCase SandboxPolicy type tag.
+    # This mapping bridges the two (see codex-app-server protocol types).
     _SANDBOX_MODE_TO_POLICY_TYPE: ClassVar[dict[str, str]] = {
-        "read-only": "readOnly",
-        "workspace-write": "workspaceWrite",
-        "danger-full-access": "dangerFullAccess",
+        CodexSandboxMode.READ_ONLY: "readOnly",
+        CodexSandboxMode.WORKSPACE_WRITE: "workspaceWrite",
+        CodexSandboxMode.DANGER_FULL_ACCESS: "dangerFullAccess",
     }
 
     def _apply_turn_sandbox(
@@ -3402,8 +3419,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 params["sandboxPolicy"] = {"type": policy_type}
             return
 
-        if self._canonical_sandbox_key(effective) == "external-sandbox":
-            params["sandboxPolicy"] = {"type": "externalSandbox"}
+        if self._canonical_sandbox_key(effective) == _EXTERNAL_SANDBOX_KEY:
+            params["sandboxPolicy"] = {"type": _EXTERNAL_SANDBOX_POLICY_TYPE}
             return
 
         logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
@@ -3417,11 +3434,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return self.config.sandbox
 
     @classmethod
-    def _normalize_sandbox_mode(cls, sandbox: str) -> str | None:
+    def _normalize_sandbox_mode(cls, sandbox: str) -> CodexSandboxMode | None:
         key = cls._canonical_sandbox_key(sandbox)
-        if key in {"read-only", "workspace-write", "danger-full-access"}:
-            return key
-        return None
+        return CodexSandboxMode(key) if key in _SANDBOX_MODES else None
 
     @classmethod
     def _normalize_sandbox_policy(
@@ -3436,25 +3451,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         camel = cls._SANDBOX_MODE_TO_POLICY_TYPE.get(key)
         if camel:
             normalized["type"] = camel
-        elif key == "external-sandbox":
-            # externalSandbox is represented only via sandboxPolicy.
-            normalized["type"] = "externalSandbox"
+        elif key == _EXTERNAL_SANDBOX_KEY:
+            normalized["type"] = _EXTERNAL_SANDBOX_POLICY_TYPE
         return normalized
 
     @staticmethod
     def _canonical_sandbox_key(value: str) -> str:
         compact = value.strip().lower().replace("_", "-").replace(" ", "")
-        aliases = {
-            "readonly": "read-only",
-            "read-only": "read-only",
-            "workspacewrite": "workspace-write",
-            "workspace-write": "workspace-write",
-            "dangerfullaccess": "danger-full-access",
-            "danger-full-access": "danger-full-access",
-            "externalsandbox": "external-sandbox",
-            "external-sandbox": "external-sandbox",
-        }
-        return aliases.get(compact, compact)
+        return _SANDBOX_KEY_ALIASES.get(compact, compact)
 
     @staticmethod
     def _extract_turn_error(turn_payload: dict[str, Any]) -> str:
