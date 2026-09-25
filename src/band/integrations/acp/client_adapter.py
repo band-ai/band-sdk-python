@@ -462,11 +462,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     room_id=room_id,
                     session_id=session_id,
                 )
+                turn_token = runtime.begin_turn(session_id)
                 prompt_task = asyncio.create_task(
                     runtime.prompt(
                         session_id=session_id,
                         prompt_text=prompt_text,
                         on_chunk=emitter.emit,
+                        turn_token=turn_token,
                     )
                 )
                 try:
@@ -485,6 +487,24 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                         ) from None
                     await prompt_task
                 finally:
+                    # An external cancellation (platform interrupt/stop, the
+                    # cycle watchdog) can land right here, inside the
+                    # asyncio.wait above, before either branch of the try
+                    # runs its own prompt_task cancel -- asyncio.wait() does
+                    # not itself cancel a member task when the wait is
+                    # cancelled, so prompt_task would otherwise keep running
+                    # orphaned. Disown it before cancelling: if its
+                    # conn.prompt() RPC still resolves later, its usage write
+                    # is discarded instead of clobbering a subsequent turn's.
+                    # A different, still-legitimate turn on the same session
+                    # (e.g. a genuinely concurrent on_message call under a
+                    # host with no per-room serialization) keeps its own
+                    # token and is unaffected.
+                    if not prompt_task.done():
+                        runtime.disown(session_id, turn_token)
+                        prompt_task.cancel()
+                        with suppress(BaseException):
+                            await prompt_task
                     # Whatever usage runtime.prompt() captured before the turn's
                     # outcome was decided -- success, timeout, or another failure
                     # downstream of a completed session/prompt call -- tokens

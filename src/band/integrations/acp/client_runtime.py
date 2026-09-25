@@ -837,12 +837,18 @@ class ACPRuntime:
         # so concurrent sessions on one runtime never cross-report.
         self._last_usage: dict[str, Usage | None] = {}
         # A prompt() call whose own turn was externally cancelled (not through
-        # this method's own cancellation) can be orphaned -- the underlying
-        # conn.prompt() RPC keeps running and still resolves later. This
-        # fencing token lets a stale resolution recognize it's no longer the
-        # session's current turn and skip writing _last_usage, instead of
-        # last-write-wins clobbering a newer, still-in-flight turn's usage.
-        self._prompt_generation: dict[str, int] = {}
+        # this method's own timeout/cancellation) can be orphaned -- the
+        # underlying conn.prompt() RPC keeps running and still resolves
+        # later. Each in-flight call registers its own token here for its
+        # session; the caller marks that *specific* call abandoned via
+        # disown(session_id, token) the moment it stops waiting on it. This
+        # is a set, not a single slot, precisely so that a genuinely
+        # concurrent, never-disowned call on the same session (reachable via
+        # a host with no per-room serialization, e.g. OneShotInvoker) is
+        # unaffected by another call on the same session starting, finishing,
+        # or being disowned -- only an *explicit* disown of its own token
+        # causes a call's usage write to be discarded.
+        self._live_prompt_tokens: dict[str, set[object]] = {}
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -1020,14 +1026,14 @@ class ACPRuntime:
         session_id: str,
         prompt_text: str,
         on_chunk: ChunkSink | None = None,
+        turn_token: object | None = None,
     ) -> list[CollectedChunk]:
         # Cleared up front, before anything in this call can fail or be
         # cancelled -- including ensure_connection itself -- so a turn that
         # never completes reports no usage rather than a stale value left
         # over from this session's last completed turn.
         self._last_usage[session_id] = None
-        generation = self._prompt_generation.get(session_id, 0) + 1
-        self._prompt_generation[session_id] = generation
+        token = turn_token if turn_token is not None else self.begin_turn(session_id)
         conn = await self.ensure_connection(can_respawn=False)
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
@@ -1035,19 +1041,37 @@ class ACPRuntime:
             response = await conn.prompt(
                 session_id=session_id, prompt=[text_block(prompt_text)]
             )
-            if self._prompt_generation.get(session_id) == generation:
+            if token in self._live_prompt_tokens.get(session_id, ()):
                 self._last_usage[session_id] = getattr(response, "usage", None)
             else:
                 logger.debug(
-                    "Discarding usage from a stale/orphaned turn for session %s",
+                    "Discarding usage from a disowned/abandoned turn for session %s",
                     session_id,
                 )
             if self._client is not None:
                 await self._client.flush(session_id)
         finally:
+            self._live_prompt_tokens.get(session_id, set()).discard(token)
             if self._client is not None:
                 self._client.set_sink(session_id, None)
         return self.get_collected_chunks(session_id)
+
+    def begin_turn(self, session_id: str) -> object:
+        """Register a new in-flight ``prompt()`` call for a session and
+        return its token -- pass it to ``prompt(turn_token=...)`` and, if the
+        caller later abandons that specific call, to ``disown()``."""
+        token = object()
+        self._live_prompt_tokens.setdefault(session_id, set()).add(token)
+        return token
+
+    def disown(self, session_id: str, token: object) -> None:
+        """Mark one specific in-flight ``prompt()`` call (identified by the
+        token ``begin_turn()``/``prompt()`` gave the caller) abandoned: if it
+        resolves later anyway, its usage write is discarded rather than
+        applied. A *different*, still-active ``prompt()`` call on the same
+        session (a different token, never disowned) is unaffected.
+        """
+        self._live_prompt_tokens.get(session_id, set()).discard(token)
 
     def get_last_usage(self, session_id: str) -> Usage | None:
         """The most recent ``session/prompt`` response's ``usage`` for a session.

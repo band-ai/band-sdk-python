@@ -34,7 +34,7 @@ from band.integrations.acp.client_profiles import (
     KIRO_METADATA_METHOD,
     KiroACPClientProfile,
 )
-from band.integrations.acp.client_runtime import ACPCollectingClient
+from band.integrations.acp.client_runtime import ACPCollectingClient, ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
@@ -426,6 +426,56 @@ async def test_usage_still_emitted_when_turn_times_out_after_prompt_completes(
             "cache_write_tokens": 0,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_cancels_the_orphaned_prompt_task(
+    fake_agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An external cancellation of ``on_message`` itself (e.g. a platform
+    interrupt/stop -- not this adapter's own ``turn_timeout_s``) must
+    actually cancel the turn's in-flight prompt task, not merely stop
+    waiting on it: ``asyncio.wait()`` does not itself cancel the task it was
+    waiting on when the *waiting* coroutine is cancelled from outside, so a
+    task left uncancelled would keep running the remote agent call to
+    completion, orphaned, able to clobber a later turn's usage once it
+    eventually resolves.
+
+    Deterministic, no sleeps: ``handler_started`` is a real synchronization
+    point the fake agent crosses before blocking forever, and
+    ``ACPRuntime.prompt`` is hooked to record its own task via
+    ``asyncio.current_task()`` -- ``await turn1`` (which only returns once
+    ``on_message``'s own cleanup has run) is itself the synchronization
+    point for whether that recorded task ends up cancelled.
+    """
+    handler_started = asyncio.Event()
+    never_set = asyncio.Event()
+
+    @fake_agent.on_prompt
+    async def _stall(agent: FakeACPAgent, session_id: str) -> None:
+        del agent, session_id
+        handler_started.set()
+        await never_set.wait()
+
+    prompt_tasks: list[asyncio.Task[object]] = []
+    original_prompt = ACPRuntime.prompt
+
+    async def _capturing_prompt(self: ACPRuntime, **kwargs: object) -> object:
+        prompt_tasks.append(asyncio.current_task())
+        return await original_prompt(self, **kwargs)
+
+    monkeypatch.setattr(ACPRuntime, "prompt", _capturing_prompt)
+
+    async with acp_adapter(fake_agent, turn_timeout_s=30) as session:
+        turn1 = asyncio.create_task(session.send("do work"))
+        await handler_started.wait()  # the fake agent is now blocked on never_set
+
+        turn1.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn1
+
+    assert len(prompt_tasks) == 1
+    assert prompt_tasks[0].cancelled()
 
 
 @pytest.mark.asyncio
