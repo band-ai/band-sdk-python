@@ -5805,7 +5805,14 @@ class TestApprovalFromASequentialRoom:
     async def test_interrupt_reaches_a_turn_parked_on_a_human(self) -> None:
         """ExecutionContext.interrupt()/stop_room() only cancel the cycle task
         that invoked on_message -- once that returns early because the turn
-        released the room, only on_interrupt still reaches the parked turn."""
+        released the room, only on_interrupt still reaches the parked turn.
+
+        on_interrupt declines the pending approval and then cancels the turn
+        as a backstop; whether the turn's own decline path wins that race and
+        finishes it, or the cancel does, is an asyncio-scheduling detail (it
+        differs by Python version) -- so this only asserts the invariant that
+        actually matters: the turn stops running either way.
+        """
         client = FakeCodexClient(
             events=[
                 _event_request(
@@ -5823,7 +5830,7 @@ class TestApprovalFromASequentialRoom:
 
         await asyncio.wait_for(adapter.on_interrupt("room-1", ControlMode.INTERRUPT), 1)
 
-        assert turn.cancelled()
+        assert turn.done()  # no longer running undetected, cancelled or not
         assert "room-1" not in adapter._pending_approvals
 
     @pytest.mark.asyncio
