@@ -18,6 +18,7 @@ from acp.schema import (
     DeclineElicitationResponse,
     LoadSessionResponse,
     NewSessionResponse,
+    PromptResponse,
     SetSessionConfigOptionResponse,
     Usage,
 )
@@ -302,7 +303,9 @@ class ACPConnectionProtocol(Protocol):
         mcp_servers: list[object],
     ) -> LoadSessionResponse | None: ...
 
-    async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
+    async def prompt(
+        self, *, session_id: str, prompt: list[object]
+    ) -> PromptResponse: ...
 
     async def set_config_option(
         self,
@@ -1036,7 +1039,7 @@ class ACPRuntime:
                 self._client.set_sink(session_id, None)
         return PromptResult(
             chunks=self.get_collected_chunks(session_id),
-            usage=getattr(response, "usage", None),
+            usage=response.usage,
         )
 
     async def cancel_turn(self, session_id: str) -> None:

@@ -85,6 +85,8 @@ class FakeACPAgent:
         self.permission_responses: list[Any] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
+        self.cancelled_sessions: list[str] = []
+        self.connection_count = 0
         self.approved: bool | None = None
         self._usage: Usage | None = None
 
@@ -277,22 +279,30 @@ class FakeACPAgent:
         *,
         tool_call_id: str = "tc-1",
         title: str | None = None,
-        allow_option_id: str = "allow-1",
+        raw_input: dict[str, Any] | None = None,
+        allow_option_id: str | None = "allow-1",
     ) -> FakeACPAgent:
+        """Ask to run a tool, offering ``allow_option_id`` (``None``: reject only)."""
+        options = [
+            PermissionOption(kind="reject_once", name="Reject", optionId="reject-1")
+        ]
+        if allow_option_id is not None:
+            options.insert(
+                0,
+                PermissionOption(
+                    kind="allow_once", name="Allow", optionId=allow_option_id
+                ),
+            )
+
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
                 sid,
-                ToolCallUpdate(tool_call_id=tool_call_id, title=title),
-                [
-                    PermissionOption(
-                        kind="allow_once", name="Allow", optionId=allow_option_id
-                    ),
-                    PermissionOption(
-                        kind="reject_once", name="Reject", optionId="reject-1"
-                    ),
-                ],
+                ToolCallUpdate(
+                    tool_call_id=tool_call_id, title=title, raw_input=raw_input
+                ),
+                options,
             )
-            a.approved = allow_option_id in str(resp)
+            a.approved = allow_option_id is not None and allow_option_id in str(resp)
 
         self._script.append(_action)
         return self
@@ -360,6 +370,7 @@ class FakeACPAgent:
 
     def on_connect(self, conn: AgentSideConnection) -> None:
         self._current_conn = conn
+        self.connection_count += 1
 
     async def initialize(
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
@@ -424,6 +435,10 @@ class FakeACPAgent:
                 updated.append(option)
         self._config_options = updated
         return SetSessionConfigOptionResponse(config_options=self._config_options)
+
+    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        del kwargs
+        self.cancelled_sessions.append(session_id)
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""
