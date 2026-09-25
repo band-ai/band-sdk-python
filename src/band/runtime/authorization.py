@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Collection
 
 
-def is_sender_authorized(sender_id: str | None, allowed: Collection[str] | None) -> bool:
+def is_sender_authorized(
+    sender_id: str | None, allowed: Collection[str] | None
+) -> bool:
     """Whether ``sender_id`` may resolve a decision gated by ``allowed``.
 
     ``None`` allows anyone. A non-``None`` collection -- including an empty
