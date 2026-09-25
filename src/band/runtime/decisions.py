@@ -1,26 +1,26 @@
-"""Token lifecycle for chat-mediated decisions.
-
-A "decision" is the pattern several adapters need: post something to a room,
-wait for a reply naming a token, with a timeout and a capacity bound. This
-module owns only that lifecycle -- token issuance, the claim guard that lets
-a timeout and a room reply race safely, and eviction. What resolving a
-decision *does* stays adapter-owned: a bare `asyncio.Future` for one adapter,
-a fallible network call for another.
-"""
+"""Chat-mediated decisions: whoever claims a pending ask owns its outcome."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from enum import Enum, StrEnum
+from typing import Any, Generic, Literal, TypeVar, overload
 from uuid import uuid4
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+
+class ClaimOutcome(StrEnum):
+    CLAIMED = "claimed"
+    NOT_PENDING = "not_pending"
+    UNAUTHORIZED = "unauthorized"
+
+
+class Timeout(Enum):
+    TIMED_OUT = "timed_out"
 
 
 @dataclass
@@ -31,68 +31,45 @@ class DecisionEntry(Generic[T]):
     timeout_task: asyncio.Task[None] | None = None
 
 
-class DecisionRegistry(Generic[T]):
-    """One room's (or one adapter's) set of outstanding chat-mediated asks.
+class DecisionRegistry(Mapping[str, T]):
+    """Pending asks by token. ``max_pending=None`` never evicts;
+    ``authorized_senders=None`` lets anyone reply."""
 
-    ``max_pending=None`` (the default) never evicts. A capacity bound is
-    opt-in per instance, not a property of the mechanism itself.
-    """
-
-    def __init__(self, *, max_pending: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        max_pending: int | None = None,
+        authorized_senders: Collection[str] | None = None,
+    ) -> None:
         self._entries: dict[str, DecisionEntry[T]] = {}
         self._max_pending = max_pending
+        self._authorized_senders = authorized_senders
 
-    def __len__(self) -> int:
-        return len(self._entries)
-
-    def get(self, token: str) -> T | None:
-        """The payload at ``token``, claimed or not -- like ``dict.get``.
-
-        Claimed-ness is a separate question (``entries()`` exposes it); a
-        caller that must not act on an already-claimed entry uses
-        ``try_claim`` instead, which is the one gate that actually enforces
-        that.
-        """
-        entry = self._entries.get(token)
-        return None if entry is None else entry.payload
-
-    def __contains__(self, token: object) -> bool:
-        return token in self._entries
+    def __getitem__(self, token: str) -> T:
+        return self._entries[token].payload
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._entries)
 
-    def tokens(self) -> list[str]:
-        return list(self._entries)
-
-    def values(self) -> list[T]:
-        return [entry.payload for entry in self._entries.values()]
-
-    def items(self) -> list[tuple[str, T]]:
-        return [(entry.token, entry.payload) for entry in self._entries.values()]
+    def __len__(self) -> int:
+        return len(self._entries)
 
     def entries(self) -> list[DecisionEntry[T]]:
-        """Snapshot of every current entry, claimed or not.
-
-        For the aggregate queries a caller can't get from ``get``/``tokens``
-        alone -- e.g. "is anything still unclaimed".
-        """
         return list(self._entries.values())
 
-    def register(self, payload: T, *, key: str | None = None) -> str | None:
-        """Insert a new entry, keyed by ``key`` or a minted token.
+    @overload
+    def register(self, payload: T) -> str: ...
 
-        A redelivery under the same ``key`` supersedes the existing entry --
-        cancelling its timer -- unless that entry is already claimed, in
-        which case an in-flight resolution must not be displaced: ``None``
-        is returned and the existing entry is left untouched.
-        """
-        if key is not None:
-            existing = self._entries.get(key)
-            if existing is not None:
-                if existing.claimed:
-                    return None
-                _cancel_timeout(existing)
+    @overload
+    def register(self, payload: T, *, key: str) -> str | None: ...
+
+    def register(self, payload: T, *, key: str | None = None) -> str | None:
+        """Add ``payload`` under ``key`` or a minted token. A redelivered
+        ``key`` replaces its unclaimed predecessor; ``None`` if it's claimed."""
+        if key is not None and (existing := self._entries.get(key)) is not None:
+            if existing.claimed:
+                return None
+            _cancel_timeout(existing)
         token = key if key is not None else uuid4().hex[:8]
         self._entries[token] = DecisionEntry(token=token, payload=payload)
         return token
@@ -100,121 +77,78 @@ class DecisionRegistry(Generic[T]):
     def start_timeout(
         self, token: str, seconds: float, on_timeout: Callable[[T], Awaitable[None]]
     ) -> None:
-        """Schedule a cancelable timeout that claims before firing.
+        if (entry := self._entries.get(token)) is None:
+            return
 
-        A room reply that wins the race against this timer makes ``on_timeout``
-        a no-op -- ``try_claim`` inside the task returns ``None`` and the task
-        exits without invoking it.
-        """
-
-        async def _expire() -> None:
-            try:
-                await asyncio.sleep(seconds)
-            except asyncio.CancelledError:
-                return
-            payload = self.try_claim(token)
-            if payload is not None:
+        async def expire() -> None:
+            await asyncio.sleep(seconds)
+            if (payload := self.try_claim(token)) is not None:
                 await on_timeout(payload)
 
-        entry = self._entries.get(token)
-        if entry is None:
-            return
-        entry.timeout_task = asyncio.create_task(_expire())
+        entry.timeout_task = asyncio.create_task(expire())
 
     def try_claim(self, token: str) -> T | None:
-        """Atomically claim the entry at ``token``, or ``None`` if it is
-        already claimed or was never registered. The one gate every
-        resolution path -- a room reply, a timeout, an eviction, a cancel --
-        must pass through, so at most one of them ever acts on a given token.
-        """
-        entry = self._entries.get(token)
-        if entry is None or entry.claimed:
+        if (entry := self._entries.get(token)) is None or entry.claimed:
             return None
         entry.claimed = True
         _cancel_timeout(entry)
         return entry.payload
 
+    def claim_reply(self, token: str, sender_id: str | None) -> ClaimOutcome:
+        if (
+            self._authorized_senders is not None
+            and sender_id not in self._authorized_senders
+        ):
+            return ClaimOutcome.UNAUTHORIZED
+        if self.try_claim(token) is None:
+            return ClaimOutcome.NOT_PENDING
+        return ClaimOutcome.CLAIMED
+
     def forget(self, token: str) -> None:
-        """Drop a claimed entry once the adapter has finished acting on it."""
         self._entries.pop(token, None)
 
     def evict_oldest(self) -> DecisionEntry[T] | None:
-        """Pop the oldest *unclaimed* entry (by registration order) once at
-        capacity, else ``None``.
-
-        Only meaningful when ``max_pending`` is set -- an unbounded registry
-        never evicts. Skips an entry already claimed by an in-flight
-        resolution: it isn't idle capacity to reclaim, and evicting it out
-        from under that resolution would race it.
-        """
+        """At capacity, remove the oldest unclaimed entry for the caller to resolve."""
         if self._max_pending is None or len(self._entries) < self._max_pending:
             return None
-        for token, entry in self._entries.items():
-            if not entry.claimed:
-                del self._entries[token]
-                _cancel_timeout(entry)
-                return entry
-        return None
+        if (oldest := next(self._unclaimed(), None)) is not None:
+            self._drop(oldest)
+        return oldest
 
     def cancel_all(
         self, predicate: Callable[[T], bool] | None = None
     ) -> list[DecisionEntry[T]]:
-        """Pop and return every entry (optionally filtered by ``predicate``),
-        cancelling their timers. The caller decides what "giving up" means
-        for each returned entry -- this only stops the clock and drops the
-        bookkeeping.
-        """
+        """Remove every matching entry, returning the unclaimed ones for the
+        caller to resolve -- a claimed entry's claimant still resolves it."""
         matched = [
             entry
             for entry in self._entries.values()
             if predicate is None or predicate(entry.payload)
         ]
         for entry in matched:
-            del self._entries[entry.token]
-            _cancel_timeout(entry)
-        return matched
+            self._drop(entry)
+        return [entry for entry in matched if not entry.claimed]
 
+    async def wait(
+        self, token: str, future: asyncio.Future[R], *, timeout_s: float
+    ) -> R | Literal[Timeout.TIMED_OUT]:
+        """The answer to ``token``, or ``TIMED_OUT`` if the timeout claims it
+        first; a reply that claimed it first is always waited for."""
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout_s)
+        except TimeoutError:
+            if self.try_claim(token) is None:
+                return await future
+            return Timeout.TIMED_OUT
+        finally:
+            self.forget(token)
 
-async def await_decision(
-    registry: DecisionRegistry[Any],
-    token: str,
-    future: asyncio.Future[R],
-    *,
-    timeout_s: float,
-    forced_value: R,
-    on_timeout: Callable[[], Awaitable[None]] | None = None,
-) -> R:
-    """The shared shape for an asker that blocks on a ``Future``.
+    def _unclaimed(self) -> Iterator[DecisionEntry[T]]:
+        return (entry for entry in self._entries.values() if not entry.claimed)
 
-    Waits up to ``timeout_s`` for ``future``, forcing ``forced_value`` onto
-    it through the same ``try_claim`` gate a room reply must win against.
-    ``on_timeout`` fires only when this call itself wins that race -- not
-    when a reply claimed the entry first, in which case the reply's own
-    result is returned instead, exactly as if this call had never timed out.
-    Always forgets ``token`` on the way out.
-
-    Registering the payload, evicting the oldest entry if at capacity, and
-    whatever must happen between registering and waiting (posting the room
-    prompt, typically) are the caller's job, before calling this -- this
-    function only owns the wait/timeout/claim step, not the whole lifecycle.
-
-    ``asyncio.wait_for`` cancels ``future`` the instant it raises
-    ``TimeoutError``, so this never tries to read a result back off it --
-    only whether ``try_claim`` still won is used, to decide whether to
-    notify/log (a reply that claimed it first already has its own outcome
-    to report, and doesn't need a second, contradictory one from here).
-    """
-    try:
-        return await asyncio.wait_for(future, timeout=timeout_s)
-    except TimeoutError:
-        if registry.try_claim(token) is not None:
-            if not future.done():
-                future.set_result(forced_value)
-            if on_timeout is not None:
-                await on_timeout()
-        return forced_value
-    finally:
-        registry.forget(token)
+    def _drop(self, entry: DecisionEntry[T]) -> None:
+        del self._entries[entry.token]
+        _cancel_timeout(entry)
 
 
 def _cancel_timeout(entry: DecisionEntry[Any]) -> None:

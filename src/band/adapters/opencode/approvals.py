@@ -80,8 +80,7 @@ def parse_permission_reply(content: str) -> PermissionCommand | None:
     """Map a room reply (``approve <id>`` / ``always <id>`` / ``reject <id>``)
     onto the OpenCode reply vocabulary; ``None`` when it is not one of those
     commands."""
-    tokens = content.split()
-    if not tokens:
+    if not (tokens := content.split()):
         return None
 
     command = tokens[0].lstrip("/").lower()
@@ -140,7 +139,7 @@ def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -
     return "\n".join(prompt_lines)
 
 
-_PendingT = TypeVar("_PendingT", PendingPermission, PendingQuestion)
+PendingT = TypeVar("PendingT", PendingPermission, PendingQuestion)
 
 
 class RoomApprovals:
@@ -238,26 +237,19 @@ class RoomApprovals:
             self._human_wait_started = None
         self._idle.set()
 
-    def _maybe_release_from_human(self) -> None:
-        """Release the watcher if the entry just claimed was the last parked."""
-        if not self._parked_on_human():
-            self._release_from_human()
-
     def _claim(
-        self, registry: DecisionRegistry[_PendingT], request_id: str
-    ) -> _PendingT | None:
+        self, registry: DecisionRegistry[PendingT], request_id: str
+    ) -> PendingT | None:
         """Claim an entry, releasing the human-wait clock if it was the last
         one parked. ``None`` when it's already claimed or gone -- a
         redelivery, or another reply already in flight for it -- either way
         the caller must not touch it."""
-        payload = registry.try_claim(request_id)
-        if payload is not None:
-            self._maybe_release_from_human()
+        if (payload := registry.try_claim(request_id)) is not None:
+            self._release_if_idle()
         return payload
 
     async def on_permission_asked(self, request: OpencodePermissionRequest) -> None:
-        request_id = request.id
-        if not request_id:
+        if not (request_id := request.id):
             return
 
         # The adapter's own band tools are platform plumbing and must never
@@ -302,8 +294,7 @@ class RoomApprovals:
         self._ports.release_turn_wait()
 
     async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
-        request_id = request.id
-        if not request_id:
+        if not (request_id := request.id):
             logger.warning(
                 "Ignoring malformed OpenCode question.asked with no request id "
                 "(request_id=%s room=%s)",
@@ -350,8 +341,7 @@ class RoomApprovals:
         Returns True when the message was a permission/question reply (the
         adapter must then NOT forward it to OpenCode as a prompt).
         """
-        raw = content.strip()
-        if not raw:
+        if not (raw := content.strip()):
             return False
 
         # A command/keyword never *is* an @mention, so skip the whole leading
@@ -411,8 +401,7 @@ class RoomApprovals:
                 )
             return True
 
-        question = self._resolve_question(command)
-        if question is not None:
+        if (question := self._resolve_question(command)) is not None:
             if _is_question_rejection(command):
                 if await self._reject_question(question):
                     await self._notify_room(
@@ -424,8 +413,7 @@ class RoomApprovals:
             # Free text: strip only the delivery mention so an answer that
             # legitimately begins with an @handle (naming a person) survives.
             answer = strip_leading_mentions(raw, only_first=True).strip()
-            answers = parse_question_answers(answer, question)
-            if answers is None:
+            if (answers := parse_question_answers(answer, question)) is None:
                 await self._notify_room(
                     (
                         "OpenCode is waiting for answers. Reply with one line per "
@@ -512,8 +500,7 @@ class RoomApprovals:
         """
         if not self._questions:
             return None
-        named = command.split()[1:] if _is_question_rejection(command) else []
-        if named:
+        if _is_question_rejection(command) and (named := command.split()[1:]):
             return self._questions.get(named[0])
         return next(iter(self._questions.values()))
 
@@ -548,8 +535,7 @@ class RoomApprovals:
         mentions) would otherwise raise here and skip the ``release_turn_wait``
         that unblocks ``on_message``. Log and move on instead.
         """
-        tools = self._ports.tools()
-        if tools is None:
+        if (tools := self._ports.tools()) is None:
             return
         try:
             await tools.send_message(text, mentions=mentions)
@@ -665,13 +651,8 @@ class RoomApprovals:
             self._ports.room_id,
             exc_info=error is not None,
         )
-        # Abandoning a request must stop its expiry timer in the same step:
-        # once popped, the entry is past cancel()'s reach, and a surviving
-        # timer holds this room's state alive until the wait timeout elapses.
-        # abort_session then kills the whole session, so leftover siblings
-        # can never be answered -- cancel() drops them too.
-        self._permissions.cancel_all(lambda pending: pending.request_id == request_id)
-        self._questions.cancel_all(lambda pending: pending.request_id == request_id)
+        # abort_session kills the whole session, so no sibling ask can be
+        # answered either -- drop them all, timers included.
         self.cancel()
         self._ports.fail_turn(message)
         await self._ports.abort_session()
@@ -701,36 +682,31 @@ class RoomApprovals:
     async def _question_reply(
         self, action: str, request_id: str
     ) -> AsyncIterator[OpencodeClientProtocol]:
-        client = self._ports.client()
-        if client is None:
+        if (client := self._ports.client()) is None:
             await self._fail_request(action, request_id)
             raise ApprovalReplyError
         async with self._reply_guard(action, request_id):
             yield client
 
     async def _expire_permission(self, pending: PendingPermission) -> None:
-        self._maybe_release_from_human()
-        if await self._send_permission_reply(
-            pending, self._config.approval_timeout_reply
+        self._release_if_idle()
+        reply = self._config.approval_timeout_reply
+        if await self._send_permission_reply(pending, reply) and (
+            tools := self._ports.tools()
         ):
-            tools = self._ports.tools()
-            if tools:
-                await tools.send_event(
-                    f"OpenCode approval `{pending.request_id}` timed out and was "
-                    f"handled with `{self._config.approval_timeout_reply}`.",
-                    "error",
-                )
+            await tools.send_event(
+                f"OpenCode approval `{pending.request_id}` timed out and was "
+                f"handled with `{reply}`.",
+                "error",
+            )
 
     async def _expire_question(self, pending: PendingQuestion) -> None:
-        self._maybe_release_from_human()
-        if await self._send_question_reject(pending):
-            tools = self._ports.tools()
-            if tools:
-                await tools.send_event(
-                    f"OpenCode question `{pending.request_id}` timed out and was "
-                    "rejected.",
-                    "error",
-                )
+        self._release_if_idle()
+        if await self._send_question_reject(pending) and (tools := self._ports.tools()):
+            await tools.send_event(
+                f"OpenCode question `{pending.request_id}` timed out and was rejected.",
+                "error",
+            )
 
 
 def _is_question_rejection(command: str) -> bool:

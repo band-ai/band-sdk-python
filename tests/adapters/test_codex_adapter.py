@@ -5715,17 +5715,14 @@ class TestSessionApprovalKeying:
 
 
 class TestManualApprovalRaces:
-    """DecisionRegistry-backed race coverage for _resolve_manual_approval /
-    _handle_approval_command (INT-1542)."""
+    """Races between a room reply and the approval wait's own timeout."""
 
     @pytest.mark.asyncio
     async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
         self,
     ) -> None:
-        """The same TOCTOU bug class f15c1e01 fixed for Cursor: a room reply
-        landing while the timeout branch's own best-effort notice send is
-        still in flight must not be told "resolved" for a decision that has
-        already timed out."""
+        """A reply landing while the timeout notice is still being sent must
+        not be told "resolved" for a decision that already timed out."""
         sending_second_message = asyncio.Event()
         release_second_message = asyncio.Event()
         call_count = 0
@@ -5779,70 +5776,7 @@ class TestManualApprovalRaces:
         decision = await pending_task
         assert handled is True
         assert decision == "decline"  # approval_timeout_decision, not the reply
-        assert reply == "Approval `approval-xyz` is no longer pending."
-
-    @pytest.mark.asyncio
-    async def test_a_redelivered_approval_id_supersedes_the_pending_entry(
-        self,
-    ) -> None:
-        """A redelivered RPC event (same approvalId) must supersede the
-        existing pending entry rather than creating a second parallel one
-        for what is really the same approval request."""
-        adapter = make_codex_adapter(
-            FakeCodexClient(events=[]),
-            config=CodexAdapterConfig(
-                approval_mode="manual", approval_wait_timeout_s=30.0
-            ),
-        )
-        await adapter.on_started("Agent", "A coding agent")
-        tools = FakeAgentTools()
-        msg = make_platform_message(room_id="room-1")
-        params = {"approvalId": "approval-xyz", "command": "rm -rf /"}
-
-        first_task = asyncio.create_task(
-            adapter._resolve_manual_approval(
-                tools=tools,
-                msg=msg,
-                room_id="room-1",
-                event=_event_request(
-                    1, "item/commandExecution/requestApproval", params
-                ),
-                summary="rm -rf /",
-                params=params,
-            )
-        )
-        await asyncio.sleep(0)
-        registry = adapter._pending_approvals["room-1"]
-        assert registry.tokens() == ["approval-xyz"]
-        first_pending = registry.get("approval-xyz")
-        assert first_pending is not None
-
-        second_task = asyncio.create_task(
-            adapter._resolve_manual_approval(
-                tools=tools,
-                msg=msg,
-                room_id="room-1",
-                event=_event_request(
-                    2, "item/commandExecution/requestApproval", params
-                ),
-                summary="rm -rf /",
-                params=params,
-            )
-        )
-        await asyncio.sleep(0)
-
-        assert len(registry) == 1  # not two parallel entries
-        second_pending = registry.get("approval-xyz")
-        assert second_pending is not None
-        assert second_pending is not first_pending
-        # Supersede cancels the old timer/slot but never resolves its
-        # future -- that entry's own asker is still waiting on it.
-        assert not first_pending.future.done()
-
-        first_pending.future.set_result("decline")
-        second_pending.future.set_result("decline")
-        assert await first_task == "decline"
-        assert await second_task == "decline"
+        assert reply == "No pending approvals to resolve."
 
 
 class TestTokenUsageCounterMonotonicity:

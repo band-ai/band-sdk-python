@@ -66,7 +66,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.decisions import DecisionRegistry, await_decision
+from band.runtime.decisions import DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -2393,18 +2393,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             room_id,
             DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
         )
-        evicted = registry.evict_oldest()
-        if evicted is not None:
-            if not evicted.payload.future.done():
-                evicted.payload.future.set_result("decline")
+        if (evicted := registry.evict_oldest()) is not None:
+            evicted.payload.future.set_result("decline")
             logger.warning(
                 "Evicted oldest pending approval %s in room %s (limit %s)",
                 evicted.token,
                 room_id,
                 self.config.max_pending_approvals_per_room,
             )
-        # A redelivered RPC event maps to the same token (see _approval_token),
-        # so this supersedes rather than creating a second parallel entry.
         registry.register(pending, key=token)
         try:
             approval_msg = (
@@ -2476,26 +2472,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 raise
 
-            async def _notify_timeout() -> None:
-                try:
-                    await tools.send_message(
-                        f"Approval `{token}` timed out. "
-                        f"Applied `{self.config.approval_timeout_decision}`.",
-                        mentions=mention,
-                    )
-                except Exception:
-                    logger.exception("Failed to send approval timeout notification")
-
-            decision_raw = await await_decision(
-                registry,
-                token,
-                pending.future,
-                timeout_s=self.config.approval_wait_timeout_s,
-                forced_value=self.config.approval_timeout_decision,
-                on_timeout=_notify_timeout,
-            )
-            if decision_raw in {"accept", "acceptForSession"}:
-                return decision_raw  # type: ignore[return-value]
+            match await registry.wait(
+                token, pending.future, timeout_s=self.config.approval_wait_timeout_s
+            ):
+                case Timeout.TIMED_OUT:
+                    timeout_decision = self.config.approval_timeout_decision
+                    try:
+                        await tools.send_message(
+                            f"Approval `{token}` timed out. "
+                            f"Applied `{timeout_decision}`.",
+                            mentions=mention,
+                        )
+                    except Exception:
+                        logger.exception("Failed to send approval timeout notification")
+                    return timeout_decision
+                case "accept":
+                    return "accept"
+                case "acceptForSession":
+                    return "acceptForSession"
             return "decline"
         finally:
             self._clear_pending_approval(room_id, token)
@@ -3193,7 +3187,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if token:
             selected = pending.get(token)
             if selected is None:
-                available = ", ".join(sorted(pending.tokens()))
+                available = ", ".join(sorted(pending))
                 await deliver_reply(
                     tools,
                     f"Unknown approval id `{token}`. Pending: {available}",
@@ -3203,7 +3197,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         elif len(pending) == 1:
             token, selected = next(iter(pending.items()))
         else:
-            available = ", ".join(sorted(pending.tokens()))
+            available = ", ".join(sorted(pending))
             await deliver_reply(
                 tools,
                 "Multiple approvals pending. "
@@ -3230,9 +3224,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        # A concurrent timeout/eviction may have already claimed this exact
-        # token -- claim here too, before resolving, so at most one of them
-        # ever resolves the future or tells the room it was "resolved".
         if pending.try_claim(token) is None:
             await deliver_reply(
                 tools,
@@ -3639,8 +3630,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if registry is None:
             return
         for entry in registry.cancel_all():
-            if not entry.payload.future.done():
-                entry.payload.future.set_result("decline")
+            entry.payload.future.set_result("decline")
 
     @staticmethod
     def _visible_model_ids(result: dict[str, Any]) -> list[str]:
