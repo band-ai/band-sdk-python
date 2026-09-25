@@ -251,7 +251,7 @@ class PendingApproval:
     method: str
     summary: str
     created_at: datetime
-    future: asyncio.Future[str]
+    future: asyncio.Future[ApprovalDecision]
     session_key: str = ""
 
 
@@ -481,6 +481,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
+        # Rooms in on_cleanup: their turns decline approvals instead of
+        # parking on a human while holding the _rpc_lock cleanup needs.
+        self._closing_rooms: set[str] = set()
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -1275,6 +1278,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         self._active_room.set(room_id)
+        self._closing_rooms.add(room_id)
+        try:
+            # A turn parked on a human holds _rpc_lock; declining its pending
+            # approvals (and any it raises from now on) lets it finish.
+            self._clear_pending_approvals_for_room(room_id)
+            await self._close_room(room, room_id)
+        finally:
+            self._closing_rooms.discard(room_id)
+
+    async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:
             thread_id = self._room_threads.pop(room_id, None)
             if thread_id:
@@ -1282,7 +1295,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._prompt_injected_rooms.discard(room_id)
             self._raw_history_by_room.pop(room_id, None)
             self._needs_history_injection.discard(room_id)
-            self._clear_pending_approvals_for_room(room_id)
             self._approval_audit.pop(room_id, None)
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
@@ -1816,6 +1828,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if session_hit:
             decision: ApprovalDecision = "acceptForSession"
             decided_by = "session_policy"
+        elif room_id in self._closing_rooms:
+            decision = "decline"
+            decided_by = "room_cleanup"
         elif self.config.approval_mode == "manual":
             try:
                 decision = await self._resolve_manual_approval(
@@ -2449,48 +2464,42 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             try:
                 await tools.send_message(approval_msg, mentions=mention)
             except Exception:
-                # The room was never notified, so waiting out the full
-                # approval_wait_timeout_s would misreport a Band delivery
-                # hiccup as a genuine human-decision timeout. Report it now,
-                # rather than letting it silently decline with no signal at
-                # all, same as every other failure path in this file. Re-raise
-                # (rather than returning "decline" here) so the caller's own
-                # except-block attributes this to "system_fallback" instead
-                # of crediting/blaming the human sender for a decision they
-                # were never actually notified about.
                 logger.exception(
                     "Failed to notify room %s about pending approval %s",
                     room_id,
                     token,
                 )
-                await tools.send_failure(
-                    AgentFailure(
-                        CODEX_PROVIDER,
-                        "Failed to notify the room about a pending approval "
-                        "request; defaulting to decline.",
-                    )
-                )
-                raise
-
-            match await registry.wait(
-                token, pending.future, timeout_s=self.config.approval_wait_timeout_s
-            ):
-                case Timeout.TIMED_OUT:
-                    timeout_decision = self.config.approval_timeout_decision
-                    try:
-                        await tools.send_message(
-                            f"Approval `{token}` timed out. "
-                            f"Applied `{timeout_decision}`.",
-                            mentions=mention,
+                # A reply that claimed it meanwhile (its id is in the task
+                # event above) owns the answer; wait for it below.
+                if registry.withdraw(token):
+                    # The room was never notified, so waiting out the full
+                    # approval_wait_timeout_s would misreport a Band delivery
+                    # hiccup as a human-decision timeout. Re-raise (rather
+                    # than returning "decline") so the caller attributes it
+                    # to "system_fallback" instead of the human sender.
+                    await tools.send_failure(
+                        AgentFailure(
+                            CODEX_PROVIDER,
+                            "Failed to notify the room about a pending approval "
+                            "request; defaulting to decline.",
                         )
-                    except Exception:
-                        logger.exception("Failed to send approval timeout notification")
-                    return timeout_decision
-                case "accept":
-                    return "accept"
-                case "acceptForSession":
-                    return "acceptForSession"
-            return "decline"
+                    )
+                    raise
+
+            decision = await registry.wait(
+                token, pending.future, timeout_s=self.config.approval_wait_timeout_s
+            )
+            if decision is not Timeout.TIMED_OUT:
+                return decision
+            timeout_decision = self.config.approval_timeout_decision
+            try:
+                await tools.send_message(
+                    f"Approval `{token}` timed out. Applied `{timeout_decision}`.",
+                    mentions=mention,
+                )
+            except Exception:
+                logger.exception("Failed to send approval timeout notification")
+            return timeout_decision
         finally:
             self._clear_pending_approval(room_id, token)
 
@@ -3183,31 +3192,34 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
+        open_ids = sorted(entry.token for entry in pending.unclaimed())
         token = args.strip().split(" ", 1)[0] if args.strip() else ""
-        if token:
-            selected = pending.get(token)
-            if selected is None:
-                available = ", ".join(sorted(pending))
-                await deliver_reply(
-                    tools,
-                    f"Unknown approval id `{token}`. Pending: {available}",
-                    mentions=mention,
-                )
-                return True
-        elif len(pending) == 1:
-            token, selected = next(iter(pending.items()))
-        else:
-            available = ", ".join(sorted(pending))
+        if not token:
+            match open_ids:
+                case []:
+                    await deliver_reply(
+                        tools, "No pending approvals to resolve.", mentions=mention
+                    )
+                    return True
+                case [only]:
+                    token = only
+                case _:
+                    await deliver_reply(
+                        tools,
+                        "Multiple approvals pending. "
+                        f"Use `/{command} <id>`. Pending: {', '.join(open_ids)}",
+                        mentions=mention,
+                    )
+                    return True
+
+        if (selected := pending.get(token)) is None:
             await deliver_reply(
                 tools,
-                "Multiple approvals pending. "
-                f"Use `/{command} <id>`. Pending: {available}",
+                f"Unknown approval id `{token}`. "
+                f"Pending: {', '.join(open_ids) or 'none'}",
                 mentions=mention,
             )
             return True
-
-        if selected is None:
-            raise RuntimeError("No matching pending approval after token lookup")
 
         is_session = command == "approve-session"
         # Session-level approval needs a non-empty key (e.g. a concrete command

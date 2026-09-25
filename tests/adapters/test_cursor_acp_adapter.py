@@ -595,6 +595,50 @@ class TestCursorACPAdapterDecisions:
         assert len(adapter._pending_decisions) == 0
 
     @pytest.mark.asyncio
+    async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
+        self,
+    ) -> None:
+        """`/cursor decisions` lists a token before its prompt lands; a reply
+        claiming it while that send fails owns the answer."""
+        prompt_in_flight, fail_prompt = asyncio.Event(), asyncio.Event()
+
+        class FailingPromptTools(DecisionTools):
+            async def send_message(
+                self,
+                content: str,
+                mentions: list[str] | list[dict[str, str]] | None = None,
+            ) -> object:
+                if content.startswith("Plan "):
+                    prompt_in_flight.set()
+                    await fail_prompt.wait()
+                    raise RuntimeError("network down")
+                return await super().send_message(content, mentions)
+
+        tools = FailingPromptTools()
+        adapter = CursorACPAdapter()
+        turn = _turn("room-1", tools, "user-1", "session-1")
+        pending = asyncio.create_task(
+            adapter._wait_for_decision(kind="plan", turn=turn, prompt="Plan {token}")
+        )
+        await asyncio.wait_for(prompt_in_flight.wait(), 1)
+        token = next(iter(adapter._pending_decisions))
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(content=f"/cursor accept {token}", sender_id="user-1"),
+            ),
+            tools,
+            "room-1",
+        )
+        fail_prompt.set()
+
+        assert await asyncio.wait_for(pending, 1) == {
+            "outcome": {"outcome": "accepted"}
+        }
+        assert tools.messages == [f"Cursor plan decision `{token}` resolved."]
+
+    @pytest.mark.asyncio
     async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
         self,
     ) -> None:

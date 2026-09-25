@@ -5718,6 +5718,109 @@ class TestManualApprovalRaces:
     """Races between a room reply and the approval wait's own timeout."""
 
     @pytest.mark.asyncio
+    async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
+        self,
+    ) -> None:
+        """The approval id is visible in the task event before the prompt
+        send; a reply claiming it while that send fails owns the answer."""
+        prompt_in_flight, fail_prompt = asyncio.Event(), asyncio.Event()
+
+        class FailingPromptTools(FakeAgentTools):
+            async def send_message(
+                self, content: str, mentions: list[dict[str, str]] | None = None
+            ) -> Any:
+                if content.startswith("Approval requested"):
+                    prompt_in_flight.set()
+                    await fail_prompt.wait()
+                    raise RuntimeError("network down")
+                return await super().send_message(content, mentions)
+
+        tools = FailingPromptTools()
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=5
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        msg = make_platform_message(room_id="room-1")
+        params = {"approvalId": "approval-xyz", "command": "npm test"}
+        pending_task = asyncio.create_task(
+            adapter._resolve_manual_approval(
+                tools=tools,
+                msg=msg,
+                room_id="room-1",
+                event=_event_request(
+                    1, "item/commandExecution/requestApproval", params
+                ),
+                summary="npm test",
+                params=params,
+            )
+        )
+        await asyncio.wait_for(prompt_in_flight.wait(), 1)
+
+        await adapter._handle_approval_command(
+            tools=tools, msg=msg, room_id="room-1", command="approve", args=""
+        )
+        fail_prompt.set()
+
+        assert await asyncio.wait_for(pending_task, 1) == "accept"
+        assert events_of_type(tools, "error") == []
+
+    @pytest.mark.asyncio
+    async def test_cleanup_declines_a_turn_parked_on_a_human_instead_of_waiting(
+        self,
+    ) -> None:
+        """A turn waiting on a human holds the room's RPC lock; cleanup must
+        decline its approval (and any it raises afterwards) rather than block
+        for the whole approval timeout."""
+        client = FakeCodexClient(
+            events=[
+                _event_request(
+                    10, "item/commandExecution/requestApproval", {"command": "a"}
+                ),
+                _event_request(
+                    11, "item/commandExecution/requestApproval", {"command": "b"}
+                ),
+                _turn_completed(),
+            ]
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=30
+            ),
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        turn = asyncio.create_task(
+            adapter.on_message(
+                make_platform_message(content="run tests"),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        )
+        await _wait_for_pending_approval(adapter, "room-1")
+
+        await asyncio.wait_for(adapter.on_cleanup("room-1"), 1)
+        await asyncio.wait_for(turn, 1)
+
+        assert client.responses == [
+            (10, {"decision": "decline"}),
+            (11, {"decision": "decline"}),
+        ]
+        prompts = [
+            m
+            for m in tools.messages_sent
+            if m["content"].startswith("Approval requested")
+        ]
+        assert len(prompts) == 1
+
+    @pytest.mark.asyncio
     async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
         self,
     ) -> None:

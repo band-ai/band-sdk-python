@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from uuid import UUID
 
 import pytest
 
-from band.runtime.decisions import ClaimOutcome, DecisionRegistry, Timeout
+from band.runtime.decisions import DecisionRegistry, Timeout
 
 
 @dataclass
@@ -55,6 +56,21 @@ class TestRegister:
     async def test_mints_a_distinct_token_per_unkeyed_registration(self) -> None:
         registry: DecisionRegistry[Ask] = DecisionRegistry()
         assert registry.register(Ask("a")) != registry.register(Ask("b"))
+
+    async def test_a_minted_token_never_overwrites_a_pending_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Minted tokens are short; a random collision must re-mint, not
+        silently replace another pending ask."""
+        draws = iter([UUID(int=1 << 124), UUID(int=1 << 124), UUID(int=2 << 124)])
+        monkeypatch.setattr("band.runtime.decisions.uuid4", lambda: next(draws))
+        registry: DecisionRegistry[Ask] = DecisionRegistry()
+
+        first = registry.register(Ask("a"))
+        second = registry.register(Ask("b"))
+
+        assert first != second
+        assert [registry[first].name, registry[second].name] == ["a", "b"]
 
     async def test_redelivered_key_replaces_the_unclaimed_entry_and_its_timer(
         self,
@@ -110,43 +126,52 @@ class TestClaim:
         await asyncio.sleep(0.03)
 
         assert recorder.expired == ["a"]
-        assert registry.claim_reply(token, "alice") is ClaimOutcome.NOT_PENDING
+        assert registry.try_claim(token) is None
 
 
-class TestClaimReply:
+class TestAuthorization:
     @pytest.mark.parametrize(
-        ("authorized_senders", "sender_id", "outcome"),
+        ("authorized_senders", "sender_id", "authorized"),
         [
-            (None, None, ClaimOutcome.CLAIMED),
-            (None, "anyone", ClaimOutcome.CLAIMED),
-            ({"alice"}, "alice", ClaimOutcome.CLAIMED),
-            ({"alice"}, "mallory", ClaimOutcome.UNAUTHORIZED),
-            ({"alice"}, None, ClaimOutcome.UNAUTHORIZED),
-            (set(), "alice", ClaimOutcome.UNAUTHORIZED),
+            (None, None, True),
+            (None, "anyone", True),
+            ({"alice"}, "alice", True),
+            ({"alice"}, "mallory", False),
+            ({"alice"}, None, False),
+            (set(), "alice", False),
         ],
     )
-    async def test_gates_on_authorized_senders(
+    async def test_none_admits_anyone_and_a_collection_only_its_members(
         self,
         authorized_senders: set[str] | None,
         sender_id: str | None,
-        outcome: ClaimOutcome,
+        authorized: bool,
     ) -> None:
         registry: DecisionRegistry[Ask] = DecisionRegistry(
             authorized_senders=authorized_senders
         )
-        token = registry.register(Ask("a"))
-        assert registry.claim_reply(token, sender_id) is outcome
+        assert registry.is_authorized(sender_id) is authorized
 
-    async def test_an_unauthorized_reply_leaves_the_decision_open(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry(authorized_senders={"alice"})
-        token = registry.register(Ask("a"))
 
-        assert registry.claim_reply(token, "mallory") is ClaimOutcome.UNAUTHORIZED
-        assert registry.claim_reply(token, "alice") is ClaimOutcome.CLAIMED
-
-    async def test_unknown_token_is_not_pending(self) -> None:
+class TestWithdraw:
+    async def test_drops_an_ask_nobody_has_claimed(self) -> None:
         registry: DecisionRegistry[Ask] = DecisionRegistry()
-        assert registry.claim_reply("nope", None) is ClaimOutcome.NOT_PENDING
+        token = registry.register(Ask("a"))
+
+        assert registry.withdraw(token) is True
+        assert token not in registry
+
+    async def test_leaves_a_claimed_ask_to_its_claimant(self) -> None:
+        registry: DecisionRegistry[Ask] = DecisionRegistry()
+        token = registry.register(Ask("a"))
+        registry.try_claim(token)
+
+        assert registry.withdraw(token) is False
+        assert token in registry
+
+    async def test_unknown_token_is_not_withdrawn(self) -> None:
+        registry: DecisionRegistry[Ask] = DecisionRegistry()
+        assert registry.withdraw("nope") is False
 
 
 class TestEviction:
@@ -213,6 +238,31 @@ class TestCancelAll:
 
         assert recorder.expired == []
 
+    async def test_never_interrupts_an_expiry_that_already_claimed_its_ask(
+        self,
+    ) -> None:
+        """The expiry owns an ask it claimed; cancelling everything mid
+        on_timeout (e.g. room teardown during the timeout's reply) must let
+        that reply finish."""
+        registry: DecisionRegistry[Ask] = DecisionRegistry()
+        replying, release = asyncio.Event(), asyncio.Event()
+        replied: list[str] = []
+
+        async def reply_on_timeout(ask: Ask) -> None:
+            replying.set()
+            await release.wait()
+            replied.append(ask.name)
+
+        token = registry.register(Ask("a"))
+        registry.start_timeout(token, 0, reply_on_timeout)
+        await replying.wait()
+
+        assert registry.cancel_all() == []
+        release.set()
+        await asyncio.sleep(0)
+
+        assert replied == ["a"]
+
 
 class TestWait:
     async def test_returns_the_reply_that_claimed_it(self) -> None:
@@ -222,7 +272,7 @@ class TestWait:
 
         async def reply() -> None:
             await asyncio.sleep(0.01)
-            assert registry.claim_reply(token, None) is ClaimOutcome.CLAIMED
+            assert registry.try_claim(token) is not None
             ask.future.set_result("accept")
 
         replier = asyncio.create_task(reply())
@@ -241,7 +291,7 @@ class TestWait:
             Timeout.TIMED_OUT
         )
         assert token not in registry
-        assert registry.claim_reply(token, None) is ClaimOutcome.NOT_PENDING
+        assert registry.try_claim(token) is None
 
     async def test_a_reply_that_claimed_before_the_deadline_wins_even_if_it_resolves_after(
         self,
@@ -316,7 +366,7 @@ class TestWait:
             )
             await asyncio.sleep(0)
 
-        assert registry.claim_reply("d", None) is ClaimOutcome.CLAIMED
+        assert registry.try_claim("d") is not None
         asks["d"].future.set_result("accept")
 
         outcomes = {name: await waiter for name, waiter in waiters.items()}

@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Generic, Literal, TypeVar, overload
 from uuid import uuid4
 
@@ -15,11 +15,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 R = TypeVar("R")
 
-
-class ClaimOutcome(StrEnum):
-    CLAIMED = "claimed"
-    NOT_PENDING = "not_pending"
-    UNAUTHORIZED = "unauthorized"
+MINTED_TOKEN_LENGTH = 8
 
 
 class Timeout(Enum):
@@ -77,7 +73,7 @@ class DecisionRegistry(Mapping[str, T]):
             if existing.claimed:
                 return None
             _cancel_timeout(existing)
-        token = key if key is not None else uuid4().hex[:8]
+        token = key if key is not None else self._mint_token()
         self._entries[token] = DecisionEntry(token=token, payload=payload)
         return token
 
@@ -95,21 +91,26 @@ class DecisionRegistry(Mapping[str, T]):
         entry.timeout_task = asyncio.create_task(expire())
 
     def try_claim(self, token: str) -> T | None:
+        """Take ownership of ``token``'s outcome, or ``None`` if someone else has.
+
+        A claimant must resolve the ask without awaiting in between: an asker
+        blocked in :meth:`wait` defers to the claim with no deadline of its own.
+        """
         if (entry := self._entries.get(token)) is None or entry.claimed:
             return None
         entry.claimed = True
         _cancel_timeout(entry)
         return entry.payload
 
+    def withdraw(self, token: str) -> bool:
+        """Drop an ask nobody has claimed; ``False`` when a claimant owns it."""
+        if self.try_claim(token) is None:
+            return False
+        self.forget(token)
+        return True
+
     def is_authorized(self, sender_id: str | None) -> bool:
         return self._authorized_senders is None or sender_id in self._authorized_senders
-
-    def claim_reply(self, token: str, sender_id: str | None) -> ClaimOutcome:
-        if not self.is_authorized(sender_id):
-            return ClaimOutcome.UNAUTHORIZED
-        if self.try_claim(token) is None:
-            return ClaimOutcome.NOT_PENDING
-        return ClaimOutcome.CLAIMED
 
     def forget(self, token: str) -> None:
         self._entries.pop(token, None)
@@ -154,14 +155,20 @@ class DecisionRegistry(Mapping[str, T]):
         finally:
             self.forget(token)
 
+    def _mint_token(self) -> str:
+        while (token := uuid4().hex[:MINTED_TOKEN_LENGTH]) in self._entries:
+            pass
+        return token
+
     def _drop(self, entry: DecisionEntry[T]) -> None:
         del self._entries[entry.token]
         _cancel_timeout(entry)
 
 
 def _cancel_timeout(entry: DecisionEntry[Any]) -> None:
-    # An expiry claims from inside its own timeout task; cancelling that task
-    # would abort the on_timeout callback at its next await.
-    if entry.timeout_task and entry.timeout_task is not asyncio.current_task():
-        entry.timeout_task.cancel()
-        entry.timeout_task = None
+    # An expiry claims from inside its own timeout task and then owns the
+    # outcome, so that task is detached rather than cancelled: nothing may
+    # interrupt its on_timeout callback, including a later cancel_all.
+    task, entry.timeout_task = entry.timeout_task, None
+    if task is not None and task is not asyncio.current_task():
+        task.cancel()

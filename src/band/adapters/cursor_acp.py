@@ -31,7 +31,7 @@ from band.integrations.acp.client_runtime import (
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.decisions import ClaimOutcome, DecisionRegistry, Timeout
+from band.runtime.decisions import DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
 from band.workspaces import WorkspaceResolver, workspace_resolver_for
 
@@ -446,8 +446,9 @@ class CursorACPAdapter(ACPClientAdapter):
             )
         except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
             logger.warning("Could not deliver Cursor %s decision prompt", kind)
-            self._pending_decisions.forget(token)
-            return None
+            # A reply that claimed it meanwhile owns the answer; wait for it.
+            if self._pending_decisions.withdraw(token):
+                return None
         finally:
             # Release on_message here, not only in _run_turn's finally --
             # the room needs its queue back the instant a decision is
@@ -506,15 +507,13 @@ class CursorACPAdapter(ACPClientAdapter):
                 mentions=mentions,
             )
             return True
-        outcome = self._pending_decisions.claim_reply(token, msg.sender_id)
-        match outcome:
-            case ClaimOutcome.UNAUTHORIZED:
-                reply = "You are not authorized to resolve Cursor decisions."
-            case ClaimOutcome.NOT_PENDING:
-                reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
-            case ClaimOutcome.CLAIMED:
-                pending.future.set_result(result)
-                reply = f"Cursor {pending.kind} decision `{token}` resolved."
+        if not self._pending_decisions.is_authorized(msg.sender_id):
+            reply = "You are not authorized to resolve Cursor decisions."
+        elif self._pending_decisions.try_claim(token) is None:
+            reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
+        else:
+            pending.future.set_result(result)
+            reply = f"Cursor {pending.kind} decision `{token}` resolved."
         await tools.send_message(reply, mentions=mentions)
         return True
 

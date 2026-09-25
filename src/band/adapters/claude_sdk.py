@@ -174,6 +174,10 @@ _REDACT_RE = re.compile(
 )
 
 
+def _format_tokens(tokens: list[str]) -> str:
+    return ", ".join(f"`{token}`" for token in tokens)
+
+
 def _redact_image_data(content: str | list[dict[str, Any]] | None) -> Any:
     """Replace an image content block's base64 payload before narration.
 
@@ -1520,17 +1524,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     mentions=mention,
                 )
             except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                logger.warning(
-                    "Room %s: Failed to send approval notification — declining", room_id
-                )
-                self._clear_pending_approval(room_id, token)
-                # No notice reached the room — the one delivery attempt is
-                # the failure itself — so this must not suppress the
-                # missing-reply guard the way the other decline paths below
-                # (which do post a notice) correctly do.
-                return PermissionResultDeny(
-                    message="Could not deliver approval prompt, tool use declined"
-                )
+                logger.warning("Room %s: Failed to send approval notification", room_id)
+                # A reply that claimed it meanwhile owns the answer; otherwise
+                # decline without a notice, so the missing-reply guard stays.
+                if registry.withdraw(token):
+                    self._clear_pending_approval(room_id, token)
+                    return PermissionResultDeny(
+                        message="Could not deliver approval prompt, tool use declined"
+                    )
 
         # The request has been posted (or there was nowhere to post it) --
         # either way, on_message must return now so Band's room loop can
@@ -1668,27 +1669,27 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             return
 
+        open_tokens = [entry.token for entry in pending.unclaimed()]
         token = args.strip() if args else ""
-        selected: PendingApproval | None = None
+        if not token:
+            match open_tokens:
+                case []:
+                    await tools.send_message("No pending approvals.", mentions=mention)
+                    return
+                case [only]:
+                    token = only
+                case _:
+                    await tools.send_message(
+                        "Multiple pending approvals — please specify a token: "
+                        + _format_tokens(open_tokens),
+                        mentions=mention,
+                    )
+                    return
 
-        if token:
-            selected = pending.get(token)
-            if not selected:
-                available = ", ".join(f"`{t}`" for t in pending) if pending else "none"
-                await tools.send_message(
-                    f"Unknown approval token `{token}`. Available: {available}.",
-                    mentions=mention,
-                )
-                return
-        elif len(pending) == 1:
-            token, selected = next(iter(pending.items()))
-        elif len(pending) == 0:
-            await tools.send_message("No pending approvals.", mentions=mention)
-            return
-        else:
-            tokens_list = ", ".join(f"`{t}`" for t in pending)
+        if (selected := pending.get(token)) is None:
             await tools.send_message(
-                f"Multiple pending approvals — please specify a token: {tokens_list}",
+                f"Unknown approval token `{token}`. "
+                f"Available: {_format_tokens(open_tokens) or 'none'}.",
                 mentions=mention,
             )
             return

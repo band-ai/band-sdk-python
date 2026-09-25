@@ -319,3 +319,68 @@ class TestApprovalCommandHandling:
         await command_task
 
         assert isinstance(await pending_task, PermissionResultAllow)
+
+    @pytest.mark.asyncio
+    async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
+        self, mock_tools, sender
+    ) -> None:
+        """The approver answered while the prompt send was still failing: their
+        answer owns the approval, so it is honored and confirmed, not
+        overridden by the undelivered-prompt decline."""
+        prompt_in_flight, fail_prompt = asyncio.Event(), asyncio.Event()
+
+        async def _send_message(
+            content: str, mentions: object = None
+        ) -> dict[str, str]:
+            if content.startswith("Approval requested"):
+                prompt_in_flight.set()
+                await fail_prompt.wait()
+                raise RuntimeError("network down")
+            return {"status": "sent"}
+
+        mock_tools.send_message = AsyncMock(side_effect=_send_message)
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5)
+        adapter._room_tools["room-1"] = mock_tools
+        pending_task = asyncio.create_task(
+            adapter._make_can_use_tool("room-1")(
+                SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+            )
+        )
+        await asyncio.wait_for(prompt_in_flight.wait(), 1)
+
+        await adapter._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="approve",
+            args="",
+            sender=sender,
+        )
+        fail_prompt.set()
+
+        assert isinstance(
+            await asyncio.wait_for(pending_task, 1), PermissionResultAllow
+        )
+        assert mock_tools.send_message.call_args.args[0] == (
+            "Approval `a-1` resolved as **accept**."
+        )
+
+    @pytest.mark.asyncio
+    async def test_bare_approve_ignores_an_approval_already_being_answered(
+        self, adapter_with_approval, mock_tools, sender
+    ) -> None:
+        """Only open approvals count: with one claimed and one open, a bare
+        /approve resolves the open one instead of asking for a token."""
+        claimed = register_pending_approval(adapter_with_approval, token="a-1")
+        open_future = register_pending_approval(adapter_with_approval, token="a-2")
+        assert adapter_with_approval._pending_approvals["room-1"].try_claim("a-1")
+
+        await adapter_with_approval._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="approve",
+            args="",
+            sender=sender,
+        )
+
+        assert open_future.result() == ApprovalReply("accept", sender["id"])
+        assert not claimed.done()

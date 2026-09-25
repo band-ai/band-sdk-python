@@ -85,7 +85,7 @@ class BlockingReplyClient(FakeOpencodeClient):
 
 class BlockBeforeReplyClient(FakeOpencodeClient):
     """Pause *before* the OpenCode POST so an in-flight expiry can be
-    interleaved with a same-id redelivery."""
+    interleaved with a same-id redelivery or a teardown."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -1033,6 +1033,28 @@ async def test_permission_timeout_does_not_cancel_its_own_reply() -> None:
 
     assert client.permission_replies[0]["response"] == "reject"
     assert "timed out" in tools.events_sent[0]["content"].lower()
+
+
+async def test_abandon_during_a_timeout_reply_lets_that_reply_reach_opencode() -> None:
+    """The expiry owns the ask it claimed: abandoning the turn while its
+    reply is in flight must not cancel it, or OpenCode never hears back and
+    the session hangs unaborted."""
+    client = BlockBeforeReplyClient()
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        tools=FakeAgentTools(),
+        config=OpencodeAdapterConfig(approval_wait_timeout_s=0.01),
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-timeout", permission="bash")
+    )
+    await asyncio.wait_for(client.reply_started.wait(), timeout=1.0)
+
+    await approvals.abandon()
+    client.allow_reply.set()
+    await wait_for(lambda: bool(client.permission_replies))
+
+    assert client.permission_replies[0]["response"] == "reject"
 
 
 async def test_question_timeout_expiry() -> None:
