@@ -469,21 +469,28 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                         on_chunk=emitter.emit,
                     )
                 )
-                done, _ = await asyncio.wait(
-                    {prompt_task}, timeout=self._turn_timeout_s
-                )
-                if not done:
-                    prompt_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await prompt_task
-                    await self._handle_turn_timeout(
-                        runtime, room_id=room_id, session_id=session_id, tools=tools
+                try:
+                    done, _ = await asyncio.wait(
+                        {prompt_task}, timeout=self._turn_timeout_s
                     )
-                    raise ACPTurnTimeoutError(
-                        f"ACP turn timed out after {self._turn_timeout_s}s"
-                    ) from None
-                await prompt_task
-                await self.emit_usage(tools, self._turn_usage(runtime, session_id))
+                    if not done:
+                        prompt_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await prompt_task
+                        await self._handle_turn_timeout(
+                            runtime, room_id=room_id, session_id=session_id, tools=tools
+                        )
+                        raise ACPTurnTimeoutError(
+                            f"ACP turn timed out after {self._turn_timeout_s}s"
+                        ) from None
+                    await prompt_task
+                finally:
+                    # Whatever usage runtime.prompt() captured before the turn's
+                    # outcome was decided -- success, timeout, or another failure
+                    # downstream of a completed session/prompt call -- tokens
+                    # already spent are still reported, mirroring the finally-based
+                    # convention every other adapter uses (e.g. anthropic.py).
+                    await self.emit_usage(tools, self._turn_usage(runtime, session_id))
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -505,6 +512,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         folded in per ``TurnUsage``'s convention. ``get_last_usage`` returns
         ``None`` for an agent that never reports usage; ``from_object`` turns
         that into an empty (unemitted) ``TurnUsage``.
+
+        This forwards each turn's ``Usage`` raw, with no delta/subtraction
+        logic: the ACP spec's own field docs disagree on scope
+        (``Usage.total_tokens`` etc. say "across session"/"across all turns",
+        but ``PromptResponse.usage`` -- the only field of this type in the
+        spec, still marked **UNSTABLE** -- says "for this turn"). A vendor
+        that reports a running total rather than a per-turn delta would be
+        misreported here. copilot_acp/cursor_acp/omp_acp run live in the
+        ``backends`` CI lane and are covered by
+        ``test_usage_not_cumulative_across_turns``, which would catch that in
+        practice; kiro_acp has no live lane (``e2e_pending``) and so has no
+        equivalent guard -- see docs/acp.md's Kiro section.
         """
         return TurnUsage.from_object(
             runtime.get_last_usage(session_id),

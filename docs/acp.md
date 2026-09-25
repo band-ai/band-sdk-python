@@ -267,3 +267,12 @@ the subscription decision changes; `tests/e2e/baseline/smoke/adapters/test_kiro_
 existed at one point with the same two recall scenarios copilot_acp's live smoke
 covers (room-replay fallback and native `session/load` resume) and can be restored
 from history as a starting point.
+
+**Known residual risk — per-turn usage may be misreported if Kiro reports
+cumulative totals**: `ACPClientAdapter._turn_usage` forwards each turn's ACP
+`Usage` raw, with no delta logic, because the ACP spec's own field docs
+disagree on scope (see `_turn_usage`'s docstring). copilot_acp/cursor_acp/omp_acp
+run live and are covered by `test_usage_not_cumulative_across_turns`, which
+would catch a vendor that actually reports cumulative totals; kiro_acp has no
+live lane, so this is an open, undetectable assumption specific to it until
+the subscription decision changes.

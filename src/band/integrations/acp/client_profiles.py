@@ -312,7 +312,7 @@ class KiroACPClientProfile:
         method: str,
         params: dict[str, object],
     ) -> dict[str, object]:
-        logger.debug("Kiro ACP ext_method: %s, params=%s", method, params)
+        logger.debug("Kiro ACP ext_method: %s", method)
 
         if method == KIRO_MCP_OAUTH_REQUEST_METHOD:
             # No OAuth UI is wired up for a headless Band agent; decline rather
@@ -328,7 +328,7 @@ class KiroACPClientProfile:
         method: str,
         params: dict[str, object],
     ) -> list[CollectedChunk]:
-        logger.debug("Kiro ACP ext_notification: %s, params=%s", method, params)
+        logger.debug("Kiro ACP ext_notification: %s", method)
 
         if method == KIRO_METADATA_METHOD:
             summary = _describe_kiro_context_usage(params)
@@ -362,7 +362,6 @@ def _first_int(params: dict[str, object], *keys: str) -> int | None:
         value = params[key]
         if isinstance(value, int) and not isinstance(value, bool):
             return value
-        return None
     return None
 
 

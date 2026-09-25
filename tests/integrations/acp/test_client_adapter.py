@@ -28,6 +28,8 @@ from band.integrations.acp.client_adapter import (
     _resolve_launcher,
 )
 from band.integrations.acp.client_profiles import (
+    KIRO_MCP_OAUTH_REQUEST_METHOD,
+    KIRO_METADATA_METHOD,
     CursorACPClientProfile,
     KiroACPClientProfile,
     resolve_acp_client_profile,
@@ -2280,7 +2282,7 @@ class TestACPCollectingClientKiroProfileExtensions:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         result = await client.ext_method(
-            "_kiro.dev/mcp/oauth_request", {"url": "https://example.com"}
+            KIRO_MCP_OAUTH_REQUEST_METHOD, {"url": "https://example.com"}
         )
 
         assert result == {"outcome": "declined"}
@@ -2299,7 +2301,7 @@ class TestACPCollectingClientKiroProfileExtensions:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         await client.ext_notification(
-            "_kiro.dev/metadata",
+            KIRO_METADATA_METHOD,
             {"sessionId": "sess-1", "used": 4200, "size": 128000},
         )
 
@@ -2317,7 +2319,7 @@ class TestACPCollectingClientKiroProfileExtensions:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         await client.ext_notification(
-            "_kiro.dev/metadata",
+            KIRO_METADATA_METHOD,
             {"sessionId": "sess-1", "chars_of_code_changed": 12},
         )
 
@@ -2327,7 +2329,7 @@ class TestACPCollectingClientKiroProfileExtensions:
     async def test_ext_notification_no_session_id_is_noop(self) -> None:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
-        await client.ext_notification("_kiro.dev/metadata", {"used": 1, "size": 2})
+        await client.ext_notification(KIRO_METADATA_METHOD, {"used": 1, "size": 2})
 
         assert client.get_collected_chunks() == []
 
@@ -2341,7 +2343,7 @@ class TestACPCollectingClientKiroProfileExtensions:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         await client.ext_notification(
-            "_kiro.dev/metadata",
+            KIRO_METADATA_METHOD,
             {
                 "sessionId": "sess-1",
                 "context_window_used": 10,
@@ -2352,6 +2354,31 @@ class TestACPCollectingClientKiroProfileExtensions:
         chunks = client.get_collected_chunks("sess-1")
         assert len(chunks) == 1
         assert "10/100 tokens (10%)" in chunks[0].content
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_kiro_metadata_falls_through_a_malformed_higher_priority_key(
+        self,
+    ) -> None:
+        """A present-but-wrong-typed higher-priority key (``used``) must not
+        block a valid alternate spelling (``context_window_used``) from
+        resolving the summary -- both are unconfirmed spellings (see the
+        snake_case test above), so a bad value in one must not shadow a good
+        value in another."""
+        client = ACPCollectingClient(profile=KiroACPClientProfile())
+
+        await client.ext_notification(
+            KIRO_METADATA_METHOD,
+            {
+                "sessionId": "sess-1",
+                "used": "not-a-number",
+                "context_window_used": 4200,
+                "size": 8000,
+            },
+        )
+
+        chunks = client.get_collected_chunks("sess-1")
+        assert len(chunks) == 1
+        assert "4200/8000 tokens (52%)" in chunks[0].content
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2376,7 +2403,7 @@ class TestACPCollectingClientKiroProfileExtensions:
         client = ACPCollectingClient(profile=KiroACPClientProfile())
 
         await client.ext_notification(
-            "_kiro.dev/metadata", {"sessionId": "sess-1", **usage}
+            KIRO_METADATA_METHOD, {"sessionId": "sess-1", **usage}
         )
 
         assert client.get_collected_chunks("sess-1") == []

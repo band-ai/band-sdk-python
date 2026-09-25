@@ -138,10 +138,7 @@ USAGE_EXCLUSIONS = (
     ExcludedAdapter(
         Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
     ),
-    # copilot_acp/cursor_acp/omp_acp/kiro_acp all inherit ACPClientAdapter's
-    # SUPPORTED_EMIT = {Emit.USAGE} unchanged (none override it), so all four
-    # report real per-turn usage generically -- none belong here. See the
-    # module docstring above.
+    # kiro_acp needs no entry either, same reason as the ACP-bridge note above.
 )
 
 

@@ -254,7 +254,7 @@ EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({"kiro_acp"})
 
 
 def test_pending_adapters_match_the_allowlist() -> None:
-    """The e2e_pending set equals the explicit allowlist (empty today)."""
+    """The e2e_pending set equals the explicit allowlist."""
 
     pending = {
         str(spec.id): spec.e2e_pending

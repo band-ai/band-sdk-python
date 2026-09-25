@@ -14,6 +14,7 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
@@ -26,8 +27,14 @@ from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
     SYSTEM_UPDATE_PREFIX,
+    ACPTurnTimeoutError,
 )
-from band.integrations.acp.client_profiles import KiroACPClientProfile
+from band.integrations.acp.client_profiles import (
+    KIRO_MCP_OAUTH_REQUEST_METHOD,
+    KIRO_METADATA_METHOD,
+    KiroACPClientProfile,
+)
+from band.integrations.acp.client_runtime import ACPCollectingClient
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
@@ -381,6 +388,44 @@ async def test_no_usage_event_when_agent_does_not_report_it(fake_agent) -> None:
         reply = await session.send("do work")
 
     assert reply.usage == []
+
+
+@pytest.mark.asyncio
+async def test_usage_still_emitted_when_turn_times_out_after_prompt_completes(
+    monkeypatch: pytest.MonkeyPatch, fake_agent
+) -> None:
+    """Tokens already spent are still reported even when the turn times out
+    downstream of a completed ``session/prompt`` call: usage emission rides a
+    ``finally`` around the whole prompt/timeout sequence, not just the success
+    path, mirroring the convention every other adapter uses (e.g.
+    ``anthropic.py``'s ``test_emits_accumulated_usage_when_loop_fails_midway``).
+    """
+    fake_agent.will_say("done").reports_usage(
+        Usage(input_tokens=10, output_tokens=20, total_tokens=30)
+    )
+    original_flush = ACPCollectingClient.flush
+
+    async def _slow_flush(self: ACPCollectingClient, session_id: str) -> None:
+        # session/prompt has already returned (usage captured) by the time
+        # flush() runs; delaying it past turn_timeout_s reproduces a turn that
+        # times out only after tokens were genuinely spent.
+        await asyncio.sleep(0.2)
+        await original_flush(self, session_id)
+
+    monkeypatch.setattr(ACPCollectingClient, "flush", _slow_flush)
+
+    async with acp_adapter(fake_agent, turn_timeout_s=0.05) as session:
+        with pytest.raises(ACPTurnTimeoutError):
+            await session.send("do work")
+
+    assert session.last_reply.usage == [
+        {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -891,7 +936,7 @@ class TestKiroACPClientProfileOverTheWire:
         self, fake_agent
     ) -> None:
         fake_agent.will_call_ext_method(
-            "_kiro.dev/mcp/oauth_request", {"url": "https://example.com"}
+            KIRO_MCP_OAUTH_REQUEST_METHOD, {"url": "https://example.com"}
         ).will_say("done")
 
         async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
@@ -904,7 +949,7 @@ class TestKiroACPClientProfileOverTheWire:
         self, fake_agent
     ) -> None:
         fake_agent.will_send_ext_notification(
-            "_kiro.dev/metadata", {"used": 4200, "size": 128000}
+            KIRO_METADATA_METHOD, {"used": 4200, "size": 128000}
         ).will_say("done")
 
         async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:

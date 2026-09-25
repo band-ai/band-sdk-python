@@ -16,7 +16,7 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
-from band.core.types import USAGE_METADATA_KEY, PlatformMessage
+from band.core.types import USAGE_METADATA_KEY, PlatformMessage, is_usage_event
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
@@ -25,10 +25,6 @@ from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
-
-
-def _is_usage_event(event: dict[str, Any]) -> bool:
-    return USAGE_METADATA_KEY in (event.get("metadata") or {})
 
 
 @dataclass(frozen=True)
@@ -225,7 +221,7 @@ class Reply:
             e["content"]
             for e in self._events_of("task")
             if _SESSION_EVENT_MARKER not in (e.get("metadata") or {})
-            and not _is_usage_event(e)
+            and not is_usage_event(e.get("metadata"))
         ]
 
     @property
@@ -234,7 +230,7 @@ class Reply:
         return [
             e["metadata"][USAGE_METADATA_KEY]
             for e in self._events_of("task")
-            if _is_usage_event(e)
+            if is_usage_event(e.get("metadata"))
         ]
 
     @property

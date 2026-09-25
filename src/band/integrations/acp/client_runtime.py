@@ -1014,6 +1014,10 @@ class ACPRuntime:
         conn = await self.ensure_connection(can_respawn=False)
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
+        # Cleared up front so a call that never completes (cancelled by a turn
+        # timeout before conn.prompt() returns) reports no usage rather than a
+        # stale value left over from this session's last completed turn.
+        self._last_usage[session_id] = None
         try:
             response = await conn.prompt(
                 session_id=session_id, prompt=[text_block(prompt_text)]

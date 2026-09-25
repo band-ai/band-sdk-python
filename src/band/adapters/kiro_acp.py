@@ -35,7 +35,7 @@ from typing import Any
 from typing_extensions import Unpack
 
 from band.core.types import FeatureKwargs
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import ACPClientAdapter, PermissionResolver
 from band.integrations.acp.client_profiles import KiroACPClientProfile
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
@@ -60,6 +60,7 @@ class KiroACPAdapterConfig:
     inject_band_tools: bool = True
     mcp_servers: list[dict[str, Any]] | None = None
     resolve_session_config: SessionConfigResolver | None = None
+    resolve_permission: PermissionResolver | None = None
 
 
 class KiroACPAdapter(ACPClientAdapter):
@@ -88,6 +89,7 @@ class KiroACPAdapter(ACPClientAdapter):
             custom_section=config.custom_section,
             profile=KiroACPClientProfile(),
             resolve_session_config=config.resolve_session_config,
+            resolve_permission=config.resolve_permission,
             **features,
         )
 

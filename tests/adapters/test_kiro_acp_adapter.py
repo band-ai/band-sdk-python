@@ -17,7 +17,7 @@ from band.adapters.kiro_acp import (
     KiroACPAdapter,
     KiroACPAdapterConfig,
 )
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import ACPClientAdapter, ACPPermissionRequest
 from band.integrations.acp.client_profiles import KiroACPClientProfile
 from band.integrations.acp.session_config import ACPConfigRequest
 from band.workspaces import create_room_workspace_resolver
@@ -107,3 +107,14 @@ class TestKiroACPAdapterConstruction:
         adapter = KiroACPAdapter(KiroACPAdapterConfig(resolve_session_config=resolver))
 
         assert adapter._resolve_session_config is resolver
+
+    def test_resolve_permission_is_forwarded(self) -> None:
+        # Unlike Cursor (which wires its own internal resolver), Kiro speaks
+        # standard ACP session/request_permission the same way Copilot/OMP do,
+        # so it needs the same passthrough they get.
+        async def resolver(_request: ACPPermissionRequest) -> str | None:
+            return None
+
+        adapter = KiroACPAdapter(KiroACPAdapterConfig(resolve_permission=resolver))
+
+        assert adapter._resolve_permission is resolver
