@@ -26,7 +26,7 @@ from band.integrations.acp.types import ACPToolCall
 from band.testing import FakeAgentTools
 
 
-class _DecisionTools(FakeAgentTools):
+class DecisionTools(FakeAgentTools):
     """Room tools that enforce the real mention contract (unlike a hand-rolled
     fake, this raises on a mention-less send -- see FakeAgentTools.send_message)
     and signal once a pending decision is visible in the room."""
@@ -47,7 +47,7 @@ class _DecisionTools(FakeAgentTools):
         return [cast(str, sent["content"]) for sent in self.messages_sent]
 
 
-class _FailingDecisionTools(_DecisionTools):
+class FailingDecisionTools(DecisionTools):
     def __init__(self, *, fail_after: int = 0) -> None:
         super().__init__()
         self._fail_after = fail_after
@@ -60,7 +60,7 @@ class _FailingDecisionTools(_DecisionTools):
         return await super().send_message(content, mentions)
 
 
-class _SlowSecondSendTools(_DecisionTools):
+class SlowSecondSendTools(DecisionTools):
     """Blocks its second ``send_message`` (the timeout notice) until released,
     so a test can inject a room reply for the same token while that notice
     send is still in flight. Only ever gates once, so a reply sent while
@@ -173,7 +173,7 @@ class TestCursorACPAdapterConstruction:
 class TestCursorACPAdapterDecisions:
     @pytest.mark.asyncio
     async def test_manual_question_requires_a_valid_room_answer(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
         turn = _turn("room-1", tools, "user-1", "session-1")
         adapter._active_turn = turn
@@ -223,7 +223,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_multi_question_rejects_an_unauthorized_answer_then_resolves(
         self,
     ) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter(
             CursorACPAdapterConfig(decision_authorized_senders=frozenset({"owner"}))
         )
@@ -303,7 +303,7 @@ class TestCursorACPAdapterDecisions:
         absent from the summary shown to the user while still being
         required by _answer_result, making a complete answer impossible to
         construct. It must fall back to a displayable label (its id)."""
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
         turn = _turn("room-1", tools, "user-1", "session-1")
         adapter._active_turn = turn
@@ -355,7 +355,7 @@ class TestCursorACPAdapterDecisions:
         be marked 'answered' without Cursor's required question ever being
         answered. It must cancel outright instead."""
         adapter = CursorACPAdapter()
-        turn = _turn("room-1", _DecisionTools(), "user-1", "session-1")
+        turn = _turn("room-1", DecisionTools(), "user-1", "session-1")
 
         result = await adapter._resolve_question(
             turn,
@@ -379,7 +379,7 @@ class TestCursorACPAdapterDecisions:
         to whichever was processed last, discarding the earlier question's
         options with no signal."""
         adapter = CursorACPAdapter(CursorACPAdapterConfig(question_mode="auto_first"))
-        turn = _turn("room-1", _DecisionTools(), "user-1", "session-1")
+        turn = _turn("room-1", DecisionTools(), "user-1", "session-1")
 
         result = await adapter._resolve_question(
             turn,
@@ -418,7 +418,7 @@ class TestCursorACPAdapterDecisions:
     @pytest.mark.asyncio
     async def test_auto_question_uses_the_first_advertised_option(self) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(question_mode="auto_first"))
-        turn = _turn("room-1", _DecisionTools(), "user-1", "session-1")
+        turn = _turn("room-1", DecisionTools(), "user-1", "session-1")
 
         result = await adapter._resolve_question(
             turn,
@@ -442,7 +442,7 @@ class TestCursorACPAdapterDecisions:
 
     @pytest.mark.asyncio
     async def test_manual_permission_can_be_denied_from_the_room(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
         adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
         request = ACPPermissionRequest(
@@ -472,7 +472,7 @@ class TestCursorACPAdapterDecisions:
 
     @pytest.mark.asyncio
     async def test_manual_permission_can_select_an_advertised_option(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
         adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
         request = ACPPermissionRequest(
@@ -515,7 +515,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         result = await adapter._resolve_plan(
-            _turn("room-1", _DecisionTools(), "user-1", "session-1"),
+            _turn("room-1", DecisionTools(), "user-1", "session-1"),
             {"plan": "Plan"},
         )
 
@@ -523,7 +523,7 @@ class TestCursorACPAdapterDecisions:
 
     @pytest.mark.asyncio
     async def test_manual_plan_accepts_a_room_command(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
         pending = asyncio.create_task(
             adapter._resolve_plan(
@@ -572,7 +572,7 @@ class TestCursorACPAdapterDecisions:
 
         result = await adapter._wait_for_decision(
             kind="plan",
-            turn=_turn("room-1", _FailingDecisionTools(), "user-1", "session-1"),
+            turn=_turn("room-1", FailingDecisionTools(), "user-1", "session-1"),
             prompt="Plan {token}",
         )
 
@@ -586,7 +586,7 @@ class TestCursorACPAdapterDecisions:
         result = await adapter._wait_for_decision(
             kind="plan",
             turn=_turn(
-                "room-1", _FailingDecisionTools(fail_after=1), "user-1", "session-1"
+                "room-1", FailingDecisionTools(fail_after=1), "user-1", "session-1"
             ),
             prompt="Plan {token}",
         )
@@ -603,7 +603,7 @@ class TestCursorACPAdapterDecisions:
         for that same token landing in that window found it still pending
         and was told 'resolved' -- even though the timeout had already
         cancelled the future and the reply was discarded."""
-        tools = _SlowSecondSendTools()
+        tools = SlowSecondSendTools()
         adapter = CursorACPAdapter(CursorACPAdapterConfig(decision_timeout_s=0.01))
         turn = _turn("room-1", tools, "user-1", "session-1")
 
@@ -636,8 +636,8 @@ class TestCursorACPAdapterDecisions:
 
     @pytest.mark.asyncio
     async def test_room_cleanup_cancels_only_its_pending_decision(self) -> None:
-        first_tools = _DecisionTools()
-        second_tools = _DecisionTools()
+        first_tools = DecisionTools()
+        second_tools = DecisionTools()
         adapter = CursorACPAdapter()
         first = asyncio.create_task(
             adapter._wait_for_decision(
@@ -700,7 +700,7 @@ class TestCursorACPAdapterDecisions:
         decision degrades to a timeout. This drives two on_message calls the
         way ExecutionContext would: sequentially, the second only after the
         first has returned."""
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter(
             CursorACPAdapterConfig(decision_timeout_s=5.0, turn_timeout_s=10.0)
         )
@@ -772,7 +772,7 @@ class TestCursorACPAdapterDecisions:
 class TestCursorACPAdapterControlMessages:
     @pytest.mark.asyncio
     async def test_bare_cursor_lists_pending_decisions(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
 
         handled = await adapter._handle_control_message(
@@ -788,7 +788,7 @@ class TestCursorACPAdapterControlMessages:
 
     @pytest.mark.asyncio
     async def test_cursor_decisions_lists_pending_decisions(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
 
         handled = await adapter._handle_control_message(
@@ -805,7 +805,7 @@ class TestCursorACPAdapterControlMessages:
 
     @pytest.mark.asyncio
     async def test_a_two_word_command_shows_usage(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
 
         handled = await adapter._handle_control_message(
@@ -824,7 +824,7 @@ class TestCursorACPAdapterControlMessages:
 
     @pytest.mark.asyncio
     async def test_a_structurally_invalid_decision_command_is_rejected(self) -> None:
-        tools = _DecisionTools()
+        tools = DecisionTools()
         adapter = CursorACPAdapter()
         pending = asyncio.create_task(
             adapter._resolve_plan(
@@ -880,8 +880,8 @@ class TestCursorACPAdapterControlMessages:
     @pytest.mark.asyncio
     async def test_exceeding_max_pending_decisions_evicts_the_oldest(self) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(max_pending_decisions=1))
-        first_tools = _DecisionTools()
-        second_tools = _DecisionTools()
+        first_tools = DecisionTools()
+        second_tools = DecisionTools()
 
         first = asyncio.create_task(
             adapter._wait_for_decision(
