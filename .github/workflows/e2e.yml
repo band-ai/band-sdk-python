@@ -213,7 +213,6 @@ jobs:
       # quota use is minimal; the smoke skips when the secret is unset. Every
       # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
-      CURSOR_API_KEY: ${{ secrets.E2E_CURSOR_API_KEY }}
       # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
       # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
       # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py. Set per
@@ -252,10 +251,6 @@ jobs:
     - name: Install the GitHub Copilot CLI (copilot_acp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
-
-    - name: Install the Cursor CLI (cursor_acp)
-      if: matrix.lane == 'backends'
-      run: bash .github/scripts/setup-cursor.sh
 
     - name: Install Bun and OMP (omp_acp)
       if: matrix.lane == 'backends'

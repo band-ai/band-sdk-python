@@ -345,9 +345,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     def _build_runtime(self, workspace: str | None = None) -> ACPRuntime:
         return ACPRuntime(
-            command=_resolve_launcher(self._command),
+            command=_resolve_launcher(self._spawn_command(workspace)),
             env=self._env,
-            cwd=workspace,
+            cwd=self._spawn_cwd(workspace),
             auth_method=self._auth_method,
             client_factory=self._runtime_client_factory,
             spawn_process=spawn_agent_process,
@@ -355,6 +355,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             use_unstable_protocol=self._use_unstable_protocol,
             pass_builtin_transport_options=self._pass_builtin_transport_options,
         )
+
+    def _spawn_command(self, workspace: str | None) -> list[str]:
+        """The argv to launch the ACP agent subprocess with, for this room's workspace."""
+        del workspace
+        return self._command
+
+    def _spawn_cwd(self, workspace: str | None) -> str | None:
+        """The subprocess-level cwd to launch the ACP agent with, for this room's workspace."""
+        return workspace
 
     def _runtime_client_factory(self) -> ACPCollectingClient:
         return BandACPClient(

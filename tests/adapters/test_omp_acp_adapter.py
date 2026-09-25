@@ -151,6 +151,43 @@ class TestOmpACPAdapterConstruction:
         assert isinstance(client, OmpACPCollectingClient)
 
 
+class TestOmpWorkspaceSpawn:
+    """omp's Bun runtime hangs (or degrades into an endless permission-request
+    retry loop) on its first real turn when the *subprocess itself* is given
+    an explicit cwd -- CPython's subprocess machinery only uses the fast
+    posix_spawn() path when cwd is None, and falls back to a fork()+chdir()
+    path otherwise that breaks omp. omp must instead take its per-room
+    workspace via its own --cwd flag, with the subprocess-level cwd left
+    unset."""
+
+    def test_workspace_becomes_an_omp_cwd_flag_not_a_subprocess_cwd(self) -> None:
+        adapter = OmpACPAdapter()
+
+        assert adapter._spawn_command("/rooms/room-a") == [
+            "omp",
+            "acp",
+            "--cwd=/rooms/room-a",
+            *adapter._command[2:],
+        ]
+        assert adapter._spawn_cwd("/rooms/room-a") is None
+
+    def test_no_workspace_leaves_the_command_untouched(self) -> None:
+        adapter = OmpACPAdapter()
+
+        assert adapter._spawn_command(None) == adapter._command
+        assert adapter._spawn_cwd(None) is None
+
+    def test_runtime_omits_subprocess_cwd_but_keeps_the_omp_cwd_flag(
+        self, tmp_path: Path
+    ) -> None:
+        adapter = OmpACPAdapter()
+
+        runtime = adapter._build_runtime(str(tmp_path))
+
+        assert runtime._cwd is None
+        assert f"--cwd={tmp_path}" in runtime._command
+
+
 class TestOmpDeviceCallNormalization:
     def test_collecting_client_rewrites_device_write(self) -> None:
         client = OmpACPCollectingClient(
@@ -187,7 +224,10 @@ class TestOmpDeviceCallNormalization:
 
 class TestOmpElicitationHandler:
     @pytest.mark.asyncio
-    async def test_approve_form_declines_without_permission_resolver(self) -> None:
+    async def test_approve_form_accepts_without_permission_resolver(self) -> None:
+        """No configured resolver must auto-approve (mirrors
+        _make_permission_handler's default), not silently decline every
+        OMP tool call."""
         adapter = OmpACPAdapter()
         emitter = MagicMock()
         emitter.open_permission = AsyncMock()
@@ -204,8 +244,9 @@ class TestOmpElicitationHandler:
             requested_schema=schema,
         )
 
-        assert isinstance(response, DeclineElicitationResponse)
-        emitter.open_permission.assert_awaited_once()
+        assert isinstance(response, AcceptElicitationResponse)
+        assert response.content == {"choice": OMP_FORM_APPROVE}
+        emitter.open_permission.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_approve_form_accepts_when_resolver_approves(self) -> None:
