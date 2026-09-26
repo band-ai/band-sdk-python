@@ -25,7 +25,7 @@ from band.integrations.crewai.tools import (
     build_band_crewai_tools,
 )
 
-EXPECTED_BASE_TOOLS = 7
+EXPECTED_BASE_TOOLS = 8
 
 
 def _build() -> list[Any]:
