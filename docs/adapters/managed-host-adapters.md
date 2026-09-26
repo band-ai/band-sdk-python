@@ -47,3 +47,20 @@ assert config.single_instance
 ```
 
 Pass `config` to `Agent.create(..., config=config)`. Hosts that kept a second lock file beside the SDK guard can drop it.
+
+## Running inside a host: signals and why the agent stopped
+
+`Agent.run()` is the script entry point: it installs SIGTERM/SIGINT handlers while it runs and stops the agent on either signal. `Agent.run_forever()` (and `BandLink.run_forever()`) install no process-wide signal handlers, so a host under launchd, systemd, a desktop app, or a test runner keeps its own and calls `agent.stop()` itself. Hosts that ran the SDK's event loop on a worker thread to keep the transport's handlers inert can drop that.
+
+`run_forever()` also says why it ended:
+
+- it returns normally once the host calls `stop()`, even if the platform disconnects during shutdown;
+- it raises `AgentDisconnectedError` on a terminal platform disconnect, such as a second connection with the same agent key superseding this one. `error.reason` is the typed `WebSocketDisconnectReason`, and `agent.last_disconnect_reason` keeps it after `stop()`. Do not restart on it, or two copies fight over one identity.
+
+```python
+from band import AgentDisconnectedError, BandConnectionError
+
+assert issubclass(AgentDisconnectedError, BandConnectionError)
+```
+
+Compatibility: before this, a supersede made `run_forever()` return as if nothing happened. Scripts that ignored its return now see `AgentDisconnectedError` in that case; that visible failure is intended. Hosts that polled `runtime.link.last_disconnect_reason` beside `run_forever()` to classify the exit can catch the exception instead.
