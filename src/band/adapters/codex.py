@@ -1621,14 +1621,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 # Settled: the thread is gone, so a fresh one starts below. A
                 # released room is past bootstrap, so its transcript is
-                # fetched here for the history injection.
-                self._released_threads.pop(room_id, None)
+                # fetched here for the history injection; if that fetch fails
+                # the turn fails and the id stays for the next turn to retry.
                 if self.config.inject_history_on_resume_failure:
-                    self._needs_history_injection.add(room_id)
                     if released_id:
                         await self._stash_room_transcript(tools, room_id, trigger_id)
-        else:
-            # Not a bootstrap resume — clean up any stashed history
+                    self._needs_history_injection.add(room_id)
+                self._released_threads.pop(room_id, None)
+        elif room_id not in self._needs_history_injection:
+            # Not a resume, and no fallback history is waiting to be injected
+            # into this fresh thread — clean up any stashed history.
             self._raw_history_by_room.pop(room_id, None)
 
         dynamic_tools = self._build_dynamic_tools(tools)
@@ -1678,7 +1680,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
         The runtime hands history over only on bootstrap; a released room's
         failed resume happens later, so the fresh thread would otherwise
-        start without the conversation.
+        start without the conversation. A failed fetch propagates.
         """
         try:
             context = await tools.fetch_room_context(room_id=room_id)
@@ -1688,7 +1690,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 room_id,
                 exc_info=True,
             )
-            return
+            raise
         self._raw_history_by_room[room_id] = [
             message
             for message in messages_before(context.get("data") or [], trigger_id)

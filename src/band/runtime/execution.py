@@ -529,6 +529,7 @@ class ExecutionContext:
             False if had to cancel mid-processing after timeout.
         """
         if self._process_loop_task is None:
+            await self._finish_pending_release()
             return True
 
         logger.info("Stopping ExecutionContext for room: %s", self.room_id)
@@ -1177,7 +1178,7 @@ class ExecutionContext:
             return
         logger.info("ExecutionContext %s: releasing idle room resources", self.room_id)
         task = asyncio.ensure_future(callback(self.room_id))
-        self._release_task = task
+        self._track_release(task)
         try:
             # Shielded: cancelling the loop leaves the teardown running for
             # stop() to finish.
@@ -1188,17 +1189,28 @@ class ExecutionContext:
                 self.room_id,
                 exc_info=True,
             )
-        finally:
-            if task.done():
+
+    def _track_release(self, task: asyncio.Task[None]) -> None:
+        """Own the release task until it finishes, however its awaiters end."""
+        self._release_task = task
+
+        def forget(done: asyncio.Task[None]) -> None:
+            if self._release_task is done:
                 self._release_task = None
 
+        task.add_done_callback(forget)
+
     async def _finish_pending_release(self) -> None:
-        """Let a release that outlived the room loop finish its teardown."""
-        task, self._release_task = self._release_task, None
+        """Let a release that outlived the room loop finish its teardown.
+
+        Shielded, so cancelling the stop() caller leaves the teardown running
+        and still tracked for a later stop() to finish.
+        """
+        task = self._release_task
         if task is None:
             return
         try:
-            await task
+            await asyncio.shield(task)
         except Exception:
             logger.warning(
                 "ExecutionContext %s: idle resource release failed",

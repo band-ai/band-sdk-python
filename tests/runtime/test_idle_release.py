@@ -226,6 +226,24 @@ async def test_stop_during_a_release_waits_for_its_teardown(room) -> None:
     assert (r.release_finished, r.ctx.is_running) == (True, False)
 
 
+async def test_cancelling_stop_mid_release_keeps_the_teardown_running(room) -> None:
+    r = await _started(room())
+    r.release_gate = asyncio.Event()
+    await r.send("msg-1")
+    await r.wait_released()
+    stopping = asyncio.create_task(r.ctx.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+
+    assert r.ctx._release_task is not None, "the teardown must stay tracked"
+    r.release_gate.set()
+    await asyncio.wait_for(r.ctx.stop(), timeout=5.0)
+    assert (r.release_finished, r.ctx._release_task) == (True, None)
+
+
 class GatedCloseCodexClient(FakeCodexClient):
     """A Codex client whose close() waits for the test to let it finish."""
 

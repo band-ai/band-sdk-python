@@ -796,7 +796,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         try:
             client = await self._room_session(room_id, stored_session_id, tools, msg.id)
         except BaseException:
-            if not self._session_manager.has_session(room_id):
+            if not self._holds_room_continuity(room_id):
                 self._release_room_workspace(room_id)
             raise
 
@@ -829,7 +829,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # you stated) while you were offline gets missed on recall. Tell it plainly this
         # is its own memory of the room and to answer from it.
         replay_context = is_session_bootstrap or room_id in self._replay_rooms
-        self._replay_rooms.discard(room_id)
         if replay_context and self._session_context.get(room_id):
             messages_to_send.append(
                 "Your memory of this room so far — real earlier messages from you and "
@@ -990,6 +989,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         await self._session_manager.cleanup_session(room_id)
         logger.info("Room %s: released idle Claude session %s", room_id, session_id)
 
+    def _holds_room_continuity(self, room_id: str) -> bool:
+        """Whether the room still has a live session, a released session to
+        resume, or replay memory not yet delivered to a fresh session; any of
+        these keeps its workspace claimed until leave or cleanup."""
+        if self._session_manager is not None and self._session_manager.has_session(
+            room_id
+        ):
+            return True
+        return room_id in self._released_sessions or room_id in self._replay_rooms
+
     def _claim_room_workspace(self, room_id: str) -> None:
         """Resolve and claim the room's own workspace when ``workspace_for_room`` is set."""
         if self.workspace_for_room is None or room_id in self._room_workspaces:
@@ -1061,6 +1070,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 )
                 raise
 
+            # The fresh session has now seen the replayed memory.
+            self._replay_rooms.discard(room_id)
             logger.debug("Message %s processed successfully", msg_id)
         finally:
             self._release_turn(room_id, release_future)

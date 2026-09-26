@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk import CLIConnectionError
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.converters.claude_sdk import ClaudeSDKSessionState
@@ -28,6 +29,7 @@ class FakeSessionManager:
         self.resume_error = resume_error
         self.cleanup_entered = asyncio.Event()
         self.cleanup_gate: asyncio.Event | None = None
+        self.query_errors: list[Exception] = []
 
     async def start(self) -> None: ...
 
@@ -46,9 +48,17 @@ class FakeSessionManager:
         if resume_session_id and self.resume_error is not None:
             raise self.resume_error
         client = MagicMock()
-        client.query = AsyncMock(side_effect=self.queries.append)
+        client.query = AsyncMock(side_effect=self._query)
         self.sessions[room_id] = client
         return client
+
+    async def _query(self, text: str) -> None:
+        self.queries.append(text)
+        if self.query_errors:
+            raise self.query_errors.pop(0)
+
+    async def invalidate_session(self, room_id: str) -> None:
+        self.sessions.pop(room_id, None)
 
     async def cleanup_session(self, room_id: str) -> None:
         self.cleanup_entered.set()
@@ -184,6 +194,23 @@ async def test_failed_resume_without_history_fails_the_turn_and_keeps_the_sessio
 
     assert r.manager.created_with == [None, "sess-1"]
     assert r.adapter._released_sessions == {ROOM: "sess-1"}
+    assert ROOM in r.adapter._room_workspaces, "the workspace stays claimed"
+
+
+async def test_a_failed_first_fallback_turn_still_replays_history_on_retry(
+    room,
+) -> None:
+    r = await room(resume_error=RuntimeError("No conversation found"))
+    await r.adapter.release_room_resources(ROOM)
+    r.tools.set_room_context([_transcript_item("msg-0", EARLIER_FACT)])
+    r.manager.query_errors.append(CLIConnectionError("CLI exited"))
+    with pytest.raises(CLIConnectionError):
+        await r.turn("msg-1", "What is my favorite color?", bootstrap=False)
+
+    await r.turn("msg-2", "What is my favorite color?", bootstrap=False)
+
+    assert EARLIER_FACT in r.last_query
+    assert ROOM in r.adapter._room_workspaces
 
 
 async def test_a_room_mid_turn_is_not_released(room) -> None:
