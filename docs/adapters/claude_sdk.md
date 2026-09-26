@@ -103,6 +103,7 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `model` | `str \| None` | `None` | Claude model. Accepts full IDs or aliases such as `"sonnet"`, `"opus"`, `"haiku"`, and `"inherit"`. When `None`, no `--model` flag is sent and the `claude` binary chooses. |
 | `fallback_model` | `str \| None` | `None` | Fallback model for Claude Code if the primary model is unavailable. Aliases are accepted. |
 | `max_thinking_tokens` | `int \| None` | `None` | Maximum tokens for Claude extended thinking. |
+| `effort` | `EffortLevel \| None` | `None` | Response effort level. The accepted values are `claude_agent_sdk`'s `EffortLevel`. When `None`, the model default applies. |
 | `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. |
 | `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions. Must exist if provided. |
 

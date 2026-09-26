@@ -104,7 +104,7 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `workspace_for_room` | `Callable[[str], str] | None` | `None` | Optional override for a room workspace. By default, the adapter creates `./.band-workspaces/<room-id>`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
-| `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
+| `reasoning_effort` | `str \| None` | `None` | Reasoning effort for models that support it. Supported values vary by model and Codex CLI version (`model/list` reports them), so the adapter passes the value through and Codex rejects unknown ones on the next turn. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
 | `turn_timeout_s` | `float` | `180.0` | Maximum seconds to wait for one Codex turn. |
@@ -246,7 +246,7 @@ Type `/help` in the room to see the command list. Common commands:
 | `/model` or `/models` | Show the current model. |
 | `/model list` or `/models list` | List available Codex models. |
 | `/model <id>` | Use a model for subsequent turns. |
-| `/reasoning <level>` | Set reasoning effort for subsequent turns. |
+| `/reasoning <level>` | Set reasoning effort for subsequent turns. Refuses an effort the current model doesn't list (checked live against Codex's `model/list`). `/reasoning` alone shows the current effort and the efforts the current model supports. |
 | `/approvals` | List pending approvals. |
 | `/approve <id>` | Approve one pending request. |
 | `/approve-session <id>` | Approve this request and future similar requests in the room. |
