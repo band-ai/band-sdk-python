@@ -3,234 +3,191 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
-
-from claude_agent_sdk import (
-    AssistantMessage,
-    ResultMessage,
-    ToolResultBlock,
-    ToolUseBlock,
-    UserMessage,
-)
-from claude_agent_sdk.types import (
-    PermissionResultAllow,
-    PermissionResultDeny,
-    ToolPermissionContext,
-)
 
 from band.adapters.claude_sdk import (
-    ApprovalReply,
     ClaudeSDKAdapter,
-    ClaudeSDKCommand,
-    PendingApproval,
 )
-from band.runtime.decisions import DecisionRegistry
-from band.runtime.tools import missing_reply_error
+from band.converters.claude_sdk import (
+    SESSION_ID_METADATA_KEY,
+    ClaudeSDKSessionState,
+)
+from band.core.types import MessageType, PlatformMessage
+from band.runtime.tools import MCP_TOOL_PREFIX, missing_reply_error
 from band.testing import FakeAgentTools
+from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.baseline.decisions import ModelDecision
 
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
-ANY_MODEL = "claude-sonnet-4-6"
 # What a turn that ended without a reply going out must say; tests assert it
 # by substring rather than re-deriving it.
 MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
 
 
-def tool_turn(mcp_tool_name: str) -> list:
-    """A turn's stream in the protocol shape: the assistant calls a tool, then
-    the result comes back in a user-type envelope."""
-    return [
-        AssistantMessage(
-            content=[ToolUseBlock(id="tool-1", name=mcp_tool_name, input={})],
-            model=ANY_MODEL,
-        ),
-        UserMessage(
-            content=[
-                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False)
-            ]
-        ),
-    ]
+APPROVER = {"id": "u1", "name": "Bob", "handle": "@bob"}
 
 
-def error_events(mock_tools: MagicMock) -> list[str]:
-    """Room-visible message of each failure reported through send_failure."""
-    return [call.args[0].message for call in mock_tools.send_failure.call_args_list]
+class ClaudeRoom:
+    """A Claude SDK room driven end to end: people post messages, the scripted
+    CLI answers them through the real SDK client, and the test reads what the
+    room saw."""
 
-
-def narrated_message_types(mock_tools: MagicMock) -> list[str]:
-    """``message_type`` of every event posted through send_event, in order."""
-    return [
-        call.kwargs["message_type"] for call in mock_tools.send_event.call_args_list
-    ]
-
-
-def tool_result_payload(mock_tools: MagicMock) -> dict[str, Any]:
-    """The parsed content of the sole tool_result event posted through send_event."""
-    [result_call] = [
-        call
-        for call in mock_tools.send_event.call_args_list
-        if call.kwargs.get("message_type") == "tool_result"
-    ]
-    return json.loads(result_call.kwargs["content"])
-
-
-def register_pending_approval(
-    adapter: ClaudeSDKAdapter,
-    room_id: str = "room-1",
-    token: str = "a-1",
-    *,
-    tool_name: str = "Bash",
-    tool_input: dict[str, Any] | None = None,
-    summary: str | None = None,
-    created_at: datetime | None = None,
-    requester: dict[str, str] | None = None,
-) -> asyncio.Future[ApprovalReply | None]:
-    """Register one pending approval on adapter, returning its future."""
-    future: asyncio.Future[ApprovalReply | None] = (
-        asyncio.get_running_loop().create_future()
-    )
-    registry = adapter._pending_approvals.setdefault(
-        room_id,
-        DecisionRegistry(max_pending=adapter.max_pending_approvals_per_room),
-    )
-    registry.register_keyed(
-        PendingApproval(
-            tool_name=tool_name,
-            tool_input=tool_input if tool_input is not None else {},
-            summary=summary or tool_name,
-            created_at=created_at or datetime.now(UTC),
-            future=future,
-            requester=requester or {"id": "test-user", "name": "Test"},
-        ),
-        key=token,
-    )
-    return future
-
-
-async def wait_for_pending_approval(
-    adapter: ClaudeSDKAdapter, room_id: str = "room-1"
-) -> None:
-    """Yield until a real ``can_use_tool`` call has registered its approval."""
-    async with asyncio.timeout(1):
-        while not adapter._pending_approvals.get(room_id):
-            await asyncio.sleep(0)
-
-
-async def reply_to_approval(
-    adapter: ClaudeSDKAdapter,
-    tools: MagicMock,
-    command: str,
-    sender: dict[str, str],
-    *,
-    room_id: str = "room-1",
-    tool_use_id: str | None = None,
-) -> PermissionResultAllow | PermissionResultDeny:
-    """Run one manual approval through a room reply; return the tool decision."""
-    pending_task = asyncio.create_task(
-        adapter._make_can_use_tool(room_id)(
-            SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id=tool_use_id)
-        )
-    )
-    await wait_for_pending_approval(adapter, room_id)
-    await adapter._handle_approval_command(
-        tools=tools, room_id=room_id, command=command, args="a-1", sender=sender
-    )
-    return await pending_task
-
-
-def result_message(
-    *,
-    session_id: str = "sess-xyz",
-    is_error: bool = False,
-    result: str | None = None,
-    errors: list[str] | None = None,
-    api_error_status: int | None = None,
-    permission_denials: list[dict[str, Any]] | None = None,
-) -> ResultMessage:
-    """Build a real ``ResultMessage`` with only the fields a test cares about set."""
-    return ResultMessage(
-        subtype="success",
-        duration_ms=100,
-        duration_api_ms=100,
-        is_error=is_error,
-        num_turns=1,
-        session_id=session_id,
-        result=result,
-        errors=errors,
-        api_error_status=api_error_status,
-        permission_denials=permission_denials,
-    )
-
-
-def denial(tool_use_id: str, tool_name: str) -> dict[str, Any]:
-    """A ``SDKPermissionDenial``-shaped entry for ``ResultMessage.permission_denials``."""
-    return {"tool_name": tool_name, "tool_use_id": tool_use_id, "tool_input": {}}
-
-
-def blocking_turn() -> tuple[asyncio.Event, asyncio.Event, Callable[..., Any]]:
-    """A ``_process_response`` stand-in that parks a turn until released.
-
-    Returns ``(started, release, wait_for_response)``. ``started`` fires once
-    the stand-in is entered, so a test can await the detached turn actually
-    reaching it before asserting against a concurrent cleanup/cancellation;
-    the stand-in then blocks on ``release`` until the test sets it.
-    """
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def wait_for_response(*_args: Any) -> None:
-        started.set()
-        await release.wait()
-
-    return started, release, wait_for_response
-
-
-APPROVER = {"id": "u1", "name": "Bob"}
-
-
-class ClaudeApprovalRoom:
-    """A manual-approval Claude SDK room observed through its chat: each
-    ``request`` is a tool call awaiting the room's decision, and ``reply``
-    sends an approval command as :data:`APPROVER`."""
-
-    def __init__(self, adapter: ClaudeSDKAdapter, room_id: str = "room-1") -> None:
+    def __init__(
+        self, adapter: ClaudeSDKAdapter, claude: FakeClaude, room_id: str = "room-1"
+    ) -> None:
         self.adapter = adapter
+        self.claude = claude
         self.room_id = room_id
-        self.tools = FakeAgentTools()
-        self.requests: list[
-            asyncio.Task[PermissionResultAllow | PermissionResultDeny]
-        ] = []
-        adapter._room_tools[room_id] = self.tools
-        adapter._room_last_sender[room_id] = APPROVER
+        self.tools = self.fresh_tools()
+        self._message_ids = itertools.count(1)
+        self._bootstrapped = False
+
+    def fresh_tools(self) -> FakeAgentTools:
+        """A new view of this room, like the tools the runtime builds per message."""
+        return FakeAgentTools(
+            room_id=self.room_id,
+            participants=[
+                {**APPROVER, "role": "member", "status": "active", "type": "User"}
+            ],
+        )
 
     @property
     def chat(self) -> list[str]:
         return [message["content"] for message in self.tools.messages_sent]
 
-    def request(
-        self, tool_name: str = SEND_MESSAGE_MCP_NAME
-    ) -> asyncio.Task[PermissionResultAllow | PermissionResultDeny]:
-        self.requests.append(
-            request := asyncio.create_task(
-                self.adapter._make_can_use_tool(self.room_id)(
-                    tool_name, {}, ToolPermissionContext()
-                )
-            )
+    @property
+    def events(self) -> list[str]:
+        return [event["message_type"] for event in self.tools.events_sent]
+
+    @property
+    def failures(self) -> list[str]:
+        return [
+            event["content"]
+            for event in self.tools.events_sent
+            if event["message_type"] == MessageType.ERROR
+        ]
+
+    @property
+    def tool_call_names(self) -> list[str]:
+        """The tool name each narrated tool_call event carries, in order."""
+        return [
+            json.loads(event["content"])["name"]
+            for event in self.tools.events_sent
+            if event["message_type"] == MessageType.TOOL_CALL
+        ]
+
+    @property
+    def tool_outputs(self) -> dict[str, Any]:
+        """Each narrated tool result's output, by the tool's bare name."""
+        results = [
+            json.loads(event["content"])
+            for event in self.tools.events_sent
+            if event["message_type"] == MessageType.TOOL_RESULT
+        ]
+        return {result["name"]: result["output"] for result in results}
+
+    @property
+    def tool_errors(self) -> dict[str, bool | None]:
+        """Each narrated tool result's ``is_error``, by the tool's bare name."""
+        return {
+            json.loads(event["content"])["name"]: json.loads(event["content"])[
+                "is_error"
+            ]
+            for event in self.tools.events_sent
+            if event["message_type"] == MessageType.TOOL_RESULT
+        }
+
+    @property
+    def reported_failures(self) -> list[dict[str, Any]]:
+        """The structured ``AgentFailure`` behind each error event."""
+        return [
+            event["metadata"]["failure"]
+            for event in self.tools.events_sent
+            if event["message_type"] == MessageType.ERROR
+        ]
+
+    @property
+    def persisted_sessions(self) -> list[str]:
+        """Session ids the room recorded for a later resume, in order."""
+        return [
+            event["metadata"][SESSION_ID_METADATA_KEY]
+            for event in self.tools.events_sent
+            if event["message_type"] == MessageType.TASK
+            and SESSION_ID_METADATA_KEY in (event["metadata"] or {})
+        ]
+
+    def beside(self, room_id: str) -> ClaudeRoom:
+        """Another room served by the same adapter."""
+        return ClaudeRoom(self.adapter, self.claude, room_id)
+
+    async def leave(self) -> None:
+        """The agent leaves the room; a later message bootstraps it afresh."""
+        await self.adapter.on_cleanup(self.room_id)
+        self._bootstrapped = False
+
+    def model_call(self, tool: str, **arguments: Any) -> ModelDecision:
+        """The model calling a Band-server tool, by bare name, for this room."""
+        return ModelDecision.call(
+            f"{MCP_TOOL_PREFIX}{tool}", chat_id=self.room_id, **arguments
         )
-        return request
 
-    async def until_pending(self) -> None:
-        await wait_for_pending_approval(self.adapter, self.room_id)
+    def model_reply(self, content: str) -> ModelDecision:
+        """The model answering the room through the Band reply tool."""
+        return ModelDecision.call(
+            SEND_MESSAGE_MCP_NAME,
+            chat_id=self.room_id,
+            content=content,
+            mentions=[APPROVER["handle"]],
+        )
 
-    async def reply(self, command: ClaudeSDKCommand, token: str = "") -> None:
-        await self.adapter._handle_approval_command(
-            tools=self.tools,
+    async def send(
+        self,
+        content: str,
+        *,
+        sender: dict[str, str] = APPROVER,
+        history: str = "",
+        session_id: str | None = None,
+        tools: FakeAgentTools | None = None,
+    ) -> None:
+        """Deliver one room message; returns once the adapter hands the turn
+        back (it finished, or parked on a human).
+
+        ``tools`` stands in for the fresh tools the runtime builds per message.
+        """
+        bootstrap, self._bootstrapped = not self._bootstrapped, True
+        await self.adapter.on_message(
+            PlatformMessage(
+                id=f"msg-{next(self._message_ids)}",
+                room_id=self.room_id,
+                content=content,
+                sender_id=sender["id"],
+                sender_type="User",
+                sender_name=sender["name"],
+                message_type="text",
+                metadata={},
+                created_at=datetime.now(UTC),
+            ),
+            tools or self.tools,
+            ClaudeSDKSessionState(text=history, session_id=session_id),
+            None,
+            None,
+            is_session_bootstrap=bootstrap,
             room_id=self.room_id,
-            command=command,
-            args=token,
-            sender=APPROVER,
         )
+
+    def send_in_background(self, content: str) -> asyncio.Task[None]:
+        """``send`` without waiting, for a delivery a held message stalls."""
+        return asyncio.create_task(self.send(content))
+
+    async def until_said(self, fragment: str, *, times: int = 1) -> None:
+        """Wait until ``times`` room messages contain ``fragment``."""
+        await self.tools.until_said(fragment, times=times)
+
+    async def settled(self) -> None:
+        """Wait for a turn still running after ``send`` returned."""
+        if (turn := self.adapter._turn_tasks.get(self.room_id)) is not None:
+            await asyncio.wait([turn])

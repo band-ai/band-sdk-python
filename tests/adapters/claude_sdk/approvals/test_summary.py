@@ -1,41 +1,36 @@
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 
 
-class TestApprovalSummary:
-    """Tests for _approval_summary()."""
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input", "summary"),
+    [
+        ("Bash", {"command": "ls -la /home/user"}, "Bash: `ls -la /home/user`"),
+        ("Edit", {"file_path": "/src/main.py"}, "Edit: /src/main.py"),
+        ("SomeTool", {}, "SomeTool"),
+    ],
+)
+def test_an_approval_names_what_the_tool_will_touch(
+    tool_name: str, tool_input: dict[str, Any], summary: str
+) -> None:
+    assert ClaudeSDKAdapter._approval_summary(tool_name, tool_input) == summary
 
-    def test_command_tool_shows_command(self):
-        summary = ClaudeSDKAdapter._approval_summary("Bash", {"command": "rm -rf /tmp"})
-        assert "rm -rf /tmp" in summary
 
-    def test_file_tool_shows_path(self):
-        summary = ClaudeSDKAdapter._approval_summary(
-            "Edit", {"file_path": "/src/main.py"}
-        )
-        assert "/src/main.py" in summary
-
-    def test_fallback_to_tool_name(self):
-        summary = ClaudeSDKAdapter._approval_summary("SomeTool", {})
-        assert summary == "SomeTool"
-
-    def test_redacts_api_key_in_command(self):
-        summary = ClaudeSDKAdapter._approval_summary(
-            "Bash", {"command": "curl -H token=sk-abc123 https://api.example.com"}
-        )
-        assert "sk-abc123" not in summary
-        assert "***" in summary
-
-    def test_redacts_password_in_command(self):
-        summary = ClaudeSDKAdapter._approval_summary(
-            "Bash", {"command": "mysql -u root password=s3cret db"}
-        )
-        assert "s3cret" not in summary
-        assert "***" in summary
-
-    def test_preserves_safe_command(self):
-        summary = ClaudeSDKAdapter._approval_summary(
-            "Bash", {"command": "ls -la /home/user"}
-        )
-        assert "ls -la /home/user" in summary
+@pytest.mark.parametrize(
+    ("command", "secret"),
+    [
+        ("curl -H token=sk-abc123 https://api.example.com", "sk-abc123"),
+        ("mysql -u root password=s3cret db", "s3cret"),
+    ],
+)
+def test_an_approval_never_posts_a_secret_to_the_room(
+    command: str, secret: str
+) -> None:
+    summary = ClaudeSDKAdapter._approval_summary("Bash", {"command": command})
+    assert secret not in summary
+    assert "***" in summary

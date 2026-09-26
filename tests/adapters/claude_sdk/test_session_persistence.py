@@ -1,261 +1,79 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Awaitable, Callable
 
 import pytest
+from claude_agent_sdk import CLIConnectionError
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
-from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
-from tests.adapters.claude_sdk.helpers import (
-    SEND_MESSAGE_MCP_NAME,
-    result_message,
-    tool_turn,
+from tests.adapters.claude_sdk.helpers import ClaudeRoom
+
+OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+
+
+async def test_a_room_resumes_the_session_its_history_recorded(
+    claude_room: OpenRoom,
+) -> None:
+    """Bootstrap resumes the recorded session; the id is re-recorded once, and
+    only a bootstrap ever asks to resume."""
+    room = await claude_room()
+    room.claude.script([room.model_reply("welcome back")], [room.model_reply("ok")])
+
+    await room.send("hello again", session_id="sess-from-history")
+    await room.send("next", session_id="sess-should-not-use")
+
+    assert room.claude.resumed == ["sess-from-history"]
+    assert room.persisted_sessions == ["sess-from-history"]
+    assert room.chat == ["welcome back", "ok"]
+
+
+async def test_a_session_that_cannot_resume_falls_back_to_a_fresh_one(
+    claude_room: OpenRoom,
+) -> None:
+    """A recorded session the CLI can no longer resume heals silently: a fresh
+    session answers, and its id replaces the stale one."""
+    room = await claude_room()
+    room.claude.unresumable.add("sess-broken")
+    room.claude.script([room.model_reply("fresh start")])
+
+    await room.send("hello", session_id="sess-broken")
+
+    assert room.claude.resumed == ["sess-broken", None]
+    [fresh] = room.claude.sessions[1:]
+    assert room.persisted_sessions == [fresh.session_id]
+    assert room.chat == ["fresh start"]
+    assert room.failures == []
+
+
+@pytest.mark.parametrize(
+    ("recorded_session", "attempts"),
+    [(None, [None]), ("sess-broken", ["sess-broken", None])],
+    ids=["no-session-to-resume", "fallback-also-fails"],
 )
+async def test_a_cli_that_will_not_start_fails_the_message_without_leaking_why(
+    claude_room: OpenRoom, recorded_session: str | None, attempts: list[str | None]
+) -> None:
+    room = await claude_room()
+    room.claude.refuse_connect = True
+
+    with pytest.raises(CLIConnectionError, match="exited during startup"):
+        await room.send("hello", session_id=recorded_session)
+
+    assert room.claude.resumed == attempts
+    assert room.failures == [GENERIC_PROVIDER_FAILURE_MESSAGE]
+    assert room.chat == []
 
 
-class TestSessionPersistence:
-    """Tests for session persistence via task events."""
+async def test_events_the_room_rejects_do_not_break_the_turn(
+    claude_room: OpenRoom,
+) -> None:
+    """Recording the session id and narrating tool use are best-effort: with
+    every event rejected, the reply still lands and the turn is not failed."""
+    room = await claude_room()
+    room.tools.send_event_error = RuntimeError("events endpoint down")
+    room.claude.script([room.model_reply("answered anyway")])
 
-    @pytest.mark.asyncio
-    async def test_emits_task_event_after_session_id_capture(self, mock_tools):
-        """Should emit task event with session_id after ResultMessage."""
-        # emit=() isolates the session task event, which posts unconditionally
-        # regardless of emit (see _persist_session_id) — narration is opt-out
-        # by default and would otherwise add tool_call/tool_result events too.
-        adapter = ClaudeSDKAdapter(emit=())
+    await room.send("hello")
 
-        # A turn that actually replied via band_send_message, so the missing-reply
-        # guard stays quiet and the only send_event call is the session task event.
-        turn = tool_turn(SEND_MESSAGE_MCP_NAME)
-        result_msg = result_message(session_id="sess-xyz-789")
-
-        mock_client = MagicMock()
-
-        async def mock_receive():
-            for sdk_message in turn:
-                yield sdk_message
-            yield result_msg
-
-        mock_client.receive_response = mock_receive
-
-        await adapter._process_response(mock_client, "room-123", mock_tools)
-
-        # Verify task event was emitted
-        mock_tools.send_event.assert_called_once_with(
-            content="Claude SDK session",
-            message_type="task",
-            metadata={"claude_sdk_session_id": "sess-xyz-789"},
-        )
-        # Verify in-memory cache was updated
-        assert adapter._session_ids["room-123"] == "sess-xyz-789"
-
-    @pytest.mark.asyncio
-    async def test_uses_history_session_id_for_resume(self, sample_message, mock_tools):
-        """Should use history.session_id for resume on bootstrap."""
-        adapter = ClaudeSDKAdapter()
-        mock_client = MagicMock()
-        mock_client.query = AsyncMock()
-        mock_manager = AsyncMock()
-        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
-
-        with (
-            patch(
-                "band.adapters.claude_sdk.ClaudeSessionManager",
-                return_value=mock_manager,
-            ),
-            patch.object(adapter, "_process_response", new_callable=AsyncMock),
-        ):
-            await adapter.on_started(
-                agent_name="TestBot", agent_description="A test bot"
-            )
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=ClaudeSDKSessionState(
-                    text="[Alice]: Hello", session_id="sess-from-history"
-                ),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-            mock_manager.get_or_create_session.assert_awaited_once_with(
-                "room-123", resume_session_id="sess-from-history"
-            )
-
-    @pytest.mark.asyncio
-    async def test_no_resume_on_non_bootstrap(self, sample_message, mock_tools):
-        """Should not attempt resume on non-bootstrap messages."""
-        adapter = ClaudeSDKAdapter()
-        mock_client = MagicMock()
-        mock_client.query = AsyncMock()
-        mock_manager = AsyncMock()
-        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
-
-        with (
-            patch(
-                "band.adapters.claude_sdk.ClaudeSessionManager",
-                return_value=mock_manager,
-            ),
-            patch.object(adapter, "_process_response", new_callable=AsyncMock),
-        ):
-            await adapter.on_started(
-                agent_name="TestBot", agent_description="A test bot"
-            )
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=ClaudeSDKSessionState(
-                    text="", session_id="sess-should-not-use"
-                ),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-123",
-            )
-
-            mock_manager.get_or_create_session.assert_awaited_once_with(
-                "room-123", resume_session_id=None
-            )
-
-    @pytest.mark.asyncio
-    async def test_falls_back_to_new_session_on_resume_failure(
-        self, sample_message, mock_tools
-    ):
-        """Should create new session if resume fails."""
-        adapter = ClaudeSDKAdapter()
-        mock_client = MagicMock()
-        mock_client.query = AsyncMock()
-        mock_manager = AsyncMock()
-        # First call (with resume) fails, second call (without) succeeds
-        mock_manager.get_or_create_session = AsyncMock(
-            side_effect=[Exception("Resume failed"), mock_client]
-        )
-
-        with (
-            patch(
-                "band.adapters.claude_sdk.ClaudeSessionManager",
-                return_value=mock_manager,
-            ),
-            patch.object(adapter, "_process_response", new_callable=AsyncMock),
-        ):
-            await adapter.on_started(
-                agent_name="TestBot", agent_description="A test bot"
-            )
-            # Should not raise — falls back to new session
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=ClaudeSDKSessionState(text="", session_id="sess-broken"),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-            assert mock_manager.get_or_create_session.await_count == 2
-            # Second call should be without resume
-            second_call = mock_manager.get_or_create_session.call_args_list[1]
-            assert second_call == (("room-123",), {"resume_session_id": None})
-            # A self-healed retry is not a reportable failure.
-            mock_tools.send_failure.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_reports_error_when_no_stored_session_to_retry(
-        self, sample_message, mock_tools
-    ):
-        """No stored session id means there is nothing to fall back to, so
-        the failure must surface without leaking the raw exception text."""
-        adapter = ClaudeSDKAdapter()
-        mock_manager = AsyncMock()
-        mock_manager.get_or_create_session = AsyncMock(
-            side_effect=Exception("Session setup failed")
-        )
-
-        with patch(
-            "band.adapters.claude_sdk.ClaudeSessionManager",
-            return_value=mock_manager,
-        ):
-            await adapter.on_started(
-                agent_name="TestBot", agent_description="A test bot"
-            )
-
-            with pytest.raises(Exception, match="Session setup failed"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=ClaudeSDKSessionState(text=""),
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
-
-        mock_tools.send_failure.assert_called_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "claude_sdk"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
-        assert "Session setup failed" not in failure.message
-
-    @pytest.mark.asyncio
-    async def test_reports_error_when_fallback_session_also_fails(
-        self, sample_message, mock_tools
-    ):
-        """A failure in the fallback session-creation attempt must surface
-        without leaking the raw exception text."""
-        adapter = ClaudeSDKAdapter()
-        mock_manager = AsyncMock()
-        mock_manager.get_or_create_session = AsyncMock(
-            side_effect=[Exception("Resume failed"), Exception("Fresh session failed")]
-        )
-
-        with patch(
-            "band.adapters.claude_sdk.ClaudeSessionManager",
-            return_value=mock_manager,
-        ):
-            await adapter.on_started(
-                agent_name="TestBot", agent_description="A test bot"
-            )
-
-            with pytest.raises(Exception, match="Fresh session failed"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=ClaudeSDKSessionState(text="", session_id="sess-broken"),
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
-
-        mock_tools.send_failure.assert_called_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "claude_sdk"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
-        assert "Fresh session failed" not in failure.message
-
-    @pytest.mark.asyncio
-    async def test_task_event_failure_does_not_break_flow(self, mock_tools):
-        """Task event emission failure should not break the message flow."""
-        adapter = ClaudeSDKAdapter()
-        mock_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
-
-        turn = tool_turn(SEND_MESSAGE_MCP_NAME)
-        result_msg = result_message(session_id="sess-xyz")
-
-        mock_client = MagicMock()
-
-        async def mock_receive():
-            for sdk_message in turn:
-                yield sdk_message
-            yield result_msg
-
-        mock_client.receive_response = mock_receive
-
-        # Should not raise despite send_event failure
-        await adapter._process_response(mock_client, "room-123", mock_tools)
-
-        # Session ID should still be captured in-memory
-        assert adapter._session_ids["room-123"] == "sess-xyz"
+    assert room.chat == ["answered anyway"]
+    assert room.persisted_sessions == []
