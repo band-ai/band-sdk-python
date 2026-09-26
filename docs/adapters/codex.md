@@ -159,6 +159,7 @@ Pass these to `CodexAdapterConfig(...)`:
 | `experimental_api` | `bool` | `True` | Use experimental Codex API features. |
 | `enable_self_config_tools` | `bool` | `False` | Expose tools that let Codex change its own model and reasoning settings. Use only in trusted rooms. |
 | `additional_dynamic_tools` | `list[dict]` | `[]` | Extra dynamic tool schemas registered with the Codex client. |
+| `skill_roots` | `list[str]` | `[]` | Absolute paths of extra skills folders. Each must be an existing directory. Env: `CODEX_SKILL_ROOTS` as a JSON list. See [Skill roots](#skill-roots). |
 | `client_close_timeout_s` | `float \| None` | `10.0` | Timeout for transport close during cleanup. `None` disables the timeout. |
 | `client_name` | `str` | `"band_codex_adapter"` | Client name sent to Codex. |
 | `client_title` | `str` | `"Band Codex Adapter"` | Client title sent to Codex. |
@@ -172,6 +173,22 @@ Pass these directly to `CodexAdapter(...)`:
 | `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
 | `history_converter` | `CodexHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default history/thread-metadata converter. |
+
+### Skill roots
+
+Codex has no CLI flag or config key for extra skills folders; the app-server only accepts them through the `skills/extraRoots/set` request. When `skill_roots` is non-empty, the adapter sends that request to each room's app-server right after `initialize` and before the room's thread starts. If Codex rejects it, the room client's start fails with a `RuntimeError` naming the request; the adapter never continues without the skills. Tested with Codex 0.156.1.
+
+```python
+import tempfile
+
+from band.adapters.codex import CodexAdapterConfig
+
+skills = tempfile.mkdtemp()
+config = CodexAdapterConfig(skill_roots=[skills])
+assert config.skill_roots == [skills]
+```
+
+Hosts that ran a relay process on the app-server's stdio to inject `skills/extraRoots/set` can drop it.
 
 ## Feature flags: Capabilities and Emit
 

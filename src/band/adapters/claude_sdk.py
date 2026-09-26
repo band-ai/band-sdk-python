@@ -61,6 +61,7 @@ from band.converters.claude_sdk import (
     ClaudeSDKSessionState,
 )
 from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
     TurnResultAlreadyReported,
@@ -137,6 +138,47 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 _CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
+
+# CLI flags the adapter itself sets to wire Band's MCP server, tool
+# allowlist, prompt, model, permissions, and session stream. ``extra_args``
+# may not carry them, or a passthrough could silently unhook the Band tools.
+_RESERVED_CLI_FLAGS: frozenset[str] = frozenset(
+    {
+        "mcp-config",
+        "strict-mcp-config",
+        "allowedTools",
+        "allowed-tools",
+        "disallowedTools",
+        "disallowed-tools",
+        "tools",
+        "permission-mode",
+        "permission-prompt-tool",
+        "setting-sources",
+        "system-prompt",
+        "system-prompt-file",
+        "append-system-prompt",
+        "model",
+        "fallback-model",
+        "input-format",
+        "output-format",
+        "resume",
+        "continue",
+        "fork-session",
+        "session-id",
+        "print",
+    }
+)
+
+# Upper bound on draining the interrupted turn's final result after a
+# timeout, so the next turn on the same client does not read it as its own.
+_TIMEOUT_DRAIN_SECONDS = 10.0
+
+
+def _reserved_extra_args(extra_args: dict[str, str | None]) -> list[str]:
+    return sorted(
+        flag for flag in extra_args if flag.lstrip("-") in _RESERVED_CLI_FLAGS
+    )
+
 
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -268,7 +310,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         await agent.run()
     """
 
-    PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+    PermissionMode = Literal[
+        "default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"
+    ]
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
@@ -289,6 +333,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
         setting_sources: list[str] | None = None,
+        plugin_dirs: list[str] | None = None,
+        cli_path: str | None = None,
+        env: dict[str, str] | None = None,
+        add_dirs: list[str] | None = None,
+        extra_args: dict[str, str | None] | None = None,
+        turn_timeout_s: float | None = None,
         # Chat-based approval flow (opt-in)
         approval_mode: ApprovalMode | None = None,
         approval_text_notifications: bool = True,
@@ -316,12 +366,30 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             effort: Response effort level. ``None`` uses the model default.
-            permission_mode: SDK permission mode
+            permission_mode: SDK permission mode. ``"dontAsk"`` never prompts
+                and denies any tool not pre-approved by allow rules;
+                ``"auto"`` lets a model classifier approve or deny each tool
+                call and depends on the Claude account and model. A mode the
+                CLI rejects fails the turn; there is no fallback.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
             cwd: Working directory for Claude Code sessions. If set, Claude Code
                 will operate in this directory (e.g., a mounted git repo).
+            plugin_dirs: Local Claude Code plugin folders to load (each maps
+                to ``{"type": "local", "path": ...}``); their skills load
+                without changing ``cwd`` or ``setting_sources``.
+            cli_path: Path to the ``claude`` executable to launch instead of
+                the one bundled with ``claude-agent-sdk``.
+            env: Extra environment variables for the Claude CLI process only;
+                the host's own ``os.environ`` is left untouched.
+            add_dirs: Additional directories Claude may access (``--add-dir``).
+            extra_args: Additional CLI flags, ``{"flag": "value"}`` or
+                ``{"flag": None}`` for a bare flag.
+            turn_timeout_s: Seconds a turn may run before it is interrupted and
+                a timeout failure is posted to the room. ``None`` (default)
+                leaves turns unbounded. A manual approval wait counts toward
+                it, so keep it above ``approval_wait_timeout_s``.
             approval_mode: Chat-based approval mode.  ``None`` (default) disables
                 chat-based approval -- the SDK's ``permission_mode`` controls
                 approvals entirely.  Set to ``"manual"`` to route approval
@@ -367,6 +435,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
+        self.plugin_dirs: list[str] = list(plugin_dirs or [])
+        self.cli_path = cli_path
+        self.env: dict[str, str] = dict(env or {})
+        self.add_dirs: list[str] = list(add_dirs or [])
+        self.extra_args: dict[str, str | None] = dict(extra_args or {})
+        if reserved := _reserved_extra_args(self.extra_args):
+            raise ValueError(
+                f"extra_args may not set adapter-owned CLI flags: {reserved}"
+            )
+        if turn_timeout_s is not None and turn_timeout_s <= 0:
+            raise ValueError("turn_timeout_s must be > 0 when set")
+        self.turn_timeout_s = turn_timeout_s
         # Which host settings the CLI loads (skills/subagents/settings from
         # ~/.claude and ./.claude). Default isolates the bridged agent so its
         # capabilities are defined here, not by whatever config sits on the host
@@ -501,6 +581,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if self.cwd:
             sdk_options.cwd = self.cwd
 
+        self._apply_cli_passthrough(sdk_options)
+
         # When approval_mode is set, add a PreToolUse hook that returns
         # "ask" for native tools so the SDK delegates to can_use_tool instead
         # of auto-resolving permissions via the permission_mode. Band's MCP
@@ -553,6 +635,21 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         return backend
+
+    def _apply_cli_passthrough(self, sdk_options: ClaudeAgentOptions) -> None:
+        """Map the host's CLI passthrough options; omitted ones stay SDK defaults."""
+        if self.plugin_dirs:
+            sdk_options.plugins = [
+                {"type": "local", "path": path} for path in self.plugin_dirs
+            ]
+        if self.cli_path:
+            sdk_options.cli_path = self.cli_path
+        if self.env:
+            sdk_options.env = dict(self.env)
+        if self.add_dirs:
+            sdk_options.add_dirs = list(self.add_dirs)
+        if self.extra_args:
+            sdk_options.extra_args = dict(self.extra_args)
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
@@ -796,13 +893,26 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         release_future: asyncio.Future[None],
     ) -> None:
         """Run one turn to completion; always releases ``release_future``."""
+        deadline = asyncio.timeout(self.turn_timeout_s)
         try:
             try:
-                # Send query to Claude
-                await client.query(full_message)
+                async with deadline:
+                    await client.query(full_message)
+                    # MCP tools handle execution; this dispatches the stream.
+                    await self._process_response(client, room_id, tools)
 
-                # Process streaming response (MCP tools handle execution)
-                await self._process_response(client, room_id, tools)
+            except TimeoutError:
+                if not deadline.expired():
+                    logger.exception("Error processing message")
+                    await tools.send_failure(
+                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    raise
+                detail = await self._abandon_timed_out_turn(client, room_id)
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, detail, FAILURE_CODE_TIMEOUT)
+                )
+                raise TurnResultAlreadyReported(detail) from None
 
             except TurnResultAlreadyReported:
                 # The failure was already reported via send_failure deeper in
@@ -854,6 +964,35 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
         if release is not None and not release.done():
             release.set_result(None)
+
+    async def _abandon_timed_out_turn(
+        self, client: ClaudeSDKClient, room_id: str
+    ) -> str:
+        """Interrupt a turn that outlived ``turn_timeout_s``; return the notice.
+
+        The interrupted turn still streams a final ResultMessage, which the
+        next turn on this client would otherwise read as its own. It is
+        drained here; a client that cannot be interrupted or drained is
+        evicted so the next message starts a fresh one.
+        """
+        logger.warning(
+            "Room %s: Claude turn timed out after %ss", room_id, self.turn_timeout_s
+        )
+        try:
+            async with asyncio.timeout(_TIMEOUT_DRAIN_SECONDS):
+                await client.interrupt()
+                async for sdk_message in client.receive_response():
+                    if isinstance(sdk_message, ResultMessage):
+                        break
+        except Exception:
+            logger.warning(
+                "Room %s: timed-out Claude turn did not stop cleanly; "
+                "invalidating session",
+                room_id,
+                exc_info=True,
+            )
+            await self._invalidate_session(room_id)
+        return f"Claude turn timed out after {self.turn_timeout_s}s"
 
     async def _cancel_turn(self, room_id: str) -> None:
         """Cancel and await a detached turn before its session is closed."""

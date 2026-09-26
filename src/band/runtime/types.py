@@ -78,6 +78,12 @@ class AgentConfig:
     # (the recovery sweep has no liveness check) and stateful adapters
     # resume the same on-disk sessions, splitting one conversation.
     single_instance: bool = True
+    # Directory holding the single-instance lock file; ``None`` uses the
+    # process temp dir. Processes contend only when they share this
+    # directory, and service managers often give a process its own
+    # ``TMPDIR`` (systemd ``PrivateTmp``, launchd), so pin it when one agent
+    # id may be started both interactively and as a service.
+    single_instance_lock_dir: str | None = None
 
 
 # Platform-side TTL (seconds) for the boolean working-state indicator. The

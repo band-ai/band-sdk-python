@@ -229,7 +229,9 @@ class PlatformRuntime:
             BandConfigError: When another process already holds the lock.
         """
         if self._config.single_instance and self._instance_guard is None:
-            guard = SingleInstanceGuard(self._agent_id)
+            guard = SingleInstanceGuard(
+                self._agent_id, lock_dir=self._config.single_instance_lock_dir
+            )
             guard.acquire()
             self._instance_guard = guard
 
