@@ -7,6 +7,7 @@ Framework-light users can use RoomPresence or BandLink directly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -140,9 +141,10 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
-        # Executions whose stop or room cleanup has not finished yet; a
-        # cancelled teardown stays here for the next stop() to complete.
-        self._tearing_down: dict[str, Execution] = {}
+        # One in-flight stop-and-cleanup per room. Every destroy caller awaits
+        # the same task, and room creation waits for it, so an old room's
+        # cleanup never runs against a rejoined room's new execution.
+        self._teardowns: dict[str, asyncio.Task[bool]] = {}
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -204,7 +206,7 @@ class AgentRuntime:
 
         # Stop all executions with timeout
         all_graceful = True
-        for room_id in list({**self._tearing_down, **self.executions}):
+        for room_id in list({**self._teardowns, **self.executions}):
             graceful = await self._destroy_execution(room_id, timeout=timeout)
             all_graceful = all_graceful and graceful
 
@@ -370,6 +372,9 @@ class AgentRuntime:
 
     async def _create_execution(self, room_id: str) -> Execution:
         """Create and start execution context for a room."""
+        predecessor = self._teardowns.get(room_id)
+        if predecessor is not None:
+            await asyncio.shield(predecessor)
         if room_id in self.executions:
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]
@@ -419,25 +424,39 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        graceful = True
-        stale = self._tearing_down.get(room_id)
-        if stale is not None:
-            graceful = await self._tear_down(room_id, stale, timeout)
-        execution = self.executions.pop(room_id, None)
-        if execution is not None:
-            self._tearing_down[room_id] = execution
-            graceful = await self._tear_down(room_id, execution, timeout) and graceful
-        return graceful
+        teardown = self._teardowns.get(room_id)
+        if teardown is None:
+            execution = self.executions.pop(room_id, None)
+            if execution is None:
+                return True
+            teardown = self._start_teardown(room_id, execution, timeout)
+        # Shielded: a cancelled caller leaves the one teardown running for the
+        # next destroy/stop caller (or room creation) to await.
+        return await asyncio.shield(teardown)
+
+    def _start_teardown(
+        self, room_id: str, execution: Execution, timeout: float | None
+    ) -> asyncio.Task[bool]:
+        """Own the room's single stop-and-cleanup operation until it finishes."""
+        teardown = asyncio.ensure_future(self._tear_down(room_id, execution, timeout))
+        self._teardowns[room_id] = teardown
+
+        def forget(done: asyncio.Task[bool]) -> None:
+            if self._teardowns.get(room_id) is done:
+                del self._teardowns[room_id]
+
+        teardown.add_done_callback(forget)
+        return teardown
 
     async def _tear_down(
         self, room_id: str, execution: Execution, timeout: float | None
     ) -> bool:
-        """Stop ``execution`` and run room cleanup, then forget it.
-
-        The execution stays in ``_tearing_down`` until both finish, so a
-        caller cancelled mid-stop leaves it for a later stop to complete.
-        """
-        graceful = await execution.stop(timeout=timeout)
+        """Stop ``execution`` and run room cleanup, exactly once per teardown."""
+        try:
+            graceful = await execution.stop(timeout=timeout)
+        except Exception:
+            logger.warning("Stopping execution for %s failed", room_id, exc_info=True)
+            graceful = False
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
@@ -451,7 +470,5 @@ class AgentRuntime:
             except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning("Session cleanup callback failed for %s: %s", room_id, e)
 
-        if self._tearing_down.get(room_id) is execution:
-            del self._tearing_down[room_id]
         logger.debug("Destroyed execution for room %s", room_id)
         return graceful

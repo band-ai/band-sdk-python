@@ -389,3 +389,83 @@ async def test_stopping_mid_claude_release_still_stops_the_session(
     assert claude.manager.has_session(ROOM) is False
     assert claude.adapter._released_sessions == {ROOM: "sess-1"}
     await claude.adapter.cleanup_all()
+
+
+class GatedExecution:
+    """An execution whose stop() waits for the test, counting its calls."""
+
+    def __init__(self, generation: int) -> None:
+        self.generation = generation
+        self.stop_calls = 0
+        self.stop_entered = asyncio.Event()
+        self.stop_gate = asyncio.Event()
+
+    async def start(self) -> None: ...
+
+    async def stop(self, timeout: float | None = None) -> bool:
+        self.stop_calls += 1
+        self.stop_entered.set()
+        await self.stop_gate.wait()
+        return True
+
+    async def on_event(self, event: Any) -> None: ...
+
+
+class GenerationRuntime:
+    """An AgentRuntime building a new GatedExecution per room join."""
+
+    def __init__(self) -> None:
+        self.generations: list[GatedExecution] = []
+        self.cleanups: list[tuple[str, int | None]] = []
+
+        def build(*_args: Any, **_kwargs: Any) -> GatedExecution:
+            self.generations.append(GatedExecution(len(self.generations)))
+            return self.generations[-1]
+
+        async def cleanup(room_id: str) -> None:
+            live = self.runtime.executions.get(room_id)
+            self.cleanups.append((room_id, getattr(live, "generation", None)))
+
+        self.runtime = AgentRuntime(
+            make_link_mock(),
+            "agent-1",
+            AsyncMock(),
+            execution_factory=build,
+            on_session_cleanup=cleanup,
+        )
+
+
+async def test_overlapping_destroys_share_one_stop_and_one_cleanup() -> None:
+    g = GenerationRuntime()
+    await g.runtime._create_execution(ROOM)
+    [first] = g.generations
+
+    callers = [
+        asyncio.create_task(g.runtime._destroy_execution(ROOM)) for _ in range(2)
+    ]
+    await first.stop_entered.wait()
+    first.stop_gate.set()
+    results = await asyncio.gather(*callers)
+
+    assert (first.stop_calls, g.cleanups, results) == (1, [(ROOM, None)], [True, True])
+
+
+async def test_a_rejoin_waits_for_the_previous_rooms_cleanup() -> None:
+    g = GenerationRuntime()
+    await g.runtime._create_execution(ROOM)
+    [old] = g.generations
+    leaving = asyncio.create_task(g.runtime._destroy_execution(ROOM))
+    await old.stop_entered.wait()
+    leaving.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await leaving
+
+    rejoining = asyncio.create_task(g.runtime._create_execution(ROOM))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert (rejoining.done(), len(g.generations)) == (False, 1)
+    old.stop_gate.set()
+    new = await asyncio.wait_for(rejoining, timeout=5.0)
+
+    assert g.cleanups == [(ROOM, None)], "old cleanup never saw the new room"
+    assert (old.stop_calls, g.runtime.executions[ROOM]) == (1, new)
