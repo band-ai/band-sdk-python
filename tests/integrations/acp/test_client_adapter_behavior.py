@@ -833,3 +833,38 @@ async def test_replay_after_midrun_respawn() -> None:
     assert prompt.rstrip().endswith("What is my favorite color?"), (
         "the live message must come last so the model answers it, not the transcript"
     )
+
+
+@pytest.mark.asyncio
+async def test_released_room_reloads_its_session_without_replay() -> None:
+    agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
+
+    async with acp_adapter(agent) as session:
+        await session.send("My favorite color is blue.", bootstrap=True)
+        [first] = agent.sessions
+        agent.knows_session(first["session_id"])
+
+        await session.adapter.release_room_resources("room-1")
+        assert "room-1" not in session.adapter._runtimes
+
+        reply = await session.send("What is my favorite color?")
+
+    assert agent.session_load_requests == [first["session_id"]]
+    assert len(agent.sessions) == 1, (
+        "the released session must be reloaded, not replaced"
+    )
+    assert REPLAY_HEADER_LINE not in agent.prompt_texts()[-1]
+    assert reply.texts == ["Blue."]
+
+
+@pytest.mark.asyncio
+async def test_agent_without_session_load_keeps_its_process() -> None:
+    agent = FakeACPAgent(supports_session_load=False).will_say("Noted.")
+
+    async with acp_adapter(agent) as session:
+        await session.send("My favorite color is blue.", bootstrap=True)
+        runtime = session.adapter._runtimes["room-1"]
+
+        await session.adapter.release_room_resources("room-1")
+
+        assert session.adapter._runtimes["room-1"] is runtime

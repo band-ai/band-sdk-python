@@ -1064,6 +1064,11 @@ class ACPRuntime:
         """The MCP transport the connected agent negotiated during ``start()``."""
         return self._agent_mcp_transport
 
+    @property
+    def supports_session_load(self) -> bool:
+        """Whether the connected agent advertised ``session/load``."""
+        return self._agent_supports_session_load
+
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         async with self._stop_lock:
