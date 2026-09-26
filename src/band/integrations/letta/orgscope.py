@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _ADMIN_PREFIX = "/v1/admin"
 _DEFAULT_TIMEOUT_S = 30.0
-# Bounds _paginated_find against a pagination cursor that keeps advancing
+# Bounds _paginated_matches against a pagination cursor that keeps advancing
 # without ever emptying or stalling -- a second, undiscovered quirk in
 # Letta's admin API pagination (the same surface that already produced the
 # null-created_at stall this client works around) would otherwise hang here
@@ -89,19 +89,45 @@ class LettaOrgScopeClient:
         payload: dict[str, Any],
         log_label: str,
     ) -> dict:
-        """The first item on ``path`` matching ``match``, creating one from
-        ``payload`` if none does."""
-        existing = await self._paginated_find(path, match=match)
-        if existing is not None:
-            return existing
+        """Resolve the stable matching item on ``path``, creating it if absent."""
+        matches = await self._paginated_matches(path, match=match)
+        if matches:
+            return self._canonical_match(matches, log_label=log_label)
+
         response = await self._http.post(path, json=payload)
         response.raise_for_status()
         created = response.json()
         logger.info("Created Letta %s (id=%s)", log_label, created["id"])
-        return created
 
-    async def _paginated_find(self, path: str, *, match: _Match) -> dict | None:
-        """The first item on ``path`` satisfying ``match``, paging via ``after``.
+        matches = await self._paginated_matches(path, match=match)
+        if not any(item["id"] == created["id"] for item in matches):
+            raise RuntimeError(
+                f"created Letta {log_label} (id={created['id']}) could not be read back"
+            )
+        return self._canonical_match(matches, log_label=log_label)
+
+    @staticmethod
+    def _canonical_match(matches: list[dict], *, log_label: str) -> dict:
+        """Select one stable identity and report duplicate provisioning."""
+        canonical = min(
+            matches,
+            key=lambda item: (
+                item.get("created_at") is None,
+                item.get("created_at") or "",
+                item["id"],
+            ),
+        )
+        if len(matches) > 1:
+            logger.warning(
+                "Found %s Letta %s records; using id=%s",
+                len(matches),
+                log_label,
+                canonical["id"],
+            )
+        return canonical
+
+    async def _paginated_matches(self, path: str, *, match: _Match) -> list[dict]:
+        """Collect distinct items on ``path`` satisfying ``match``, paging via ``after``.
 
         Letta's own seeded default user has a null ``created_at``, and its
         ``after``-cursor pagination silently drops the boundary filter
@@ -115,6 +141,7 @@ class LettaOrgScopeClient:
         response shape this client does not otherwise need to know).
         """
         after: str | None = None
+        matches: dict[str, dict] = {}
         for _ in range(_MAX_PAGINATION_PAGES):
             response = await self._http.get(
                 path, params={"after": after} if after else None
@@ -122,13 +149,13 @@ class LettaOrgScopeClient:
             response.raise_for_status()
             page: list[dict] = response.json()
             if not page:
-                return None
-            found = next((item for item in page if match(item)), None)
-            if found is not None:
-                return found
+                return list(matches.values())
+            for item in page:
+                if match(item):
+                    matches.setdefault(item["id"], item)
             next_after = page[-1]["id"]
             if next_after == after:
-                return None
+                return list(matches.values())
             after = next_after
         raise RuntimeError(
             f"Letta admin API pagination for {path!r} did not terminate after "
