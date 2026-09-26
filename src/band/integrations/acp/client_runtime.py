@@ -764,9 +764,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             # ACPClientProfile protocol has no such attribute at all.
             session_id = getattr(self._profile, "extension_session_id", None) or ""
         if not session_id:
-            logger.debug(
-                "Dropping extension notification: no resolvable session id"
-            )
+            logger.debug("Dropping extension notification: no resolvable session id")
             return
 
         chunks = await self._profile.ext_notification(method, params)
