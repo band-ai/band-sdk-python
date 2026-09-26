@@ -685,6 +685,7 @@ async def test_leaving_while_a_successor_starts_releases_it(departure: str) -> N
     await wait_for_condition(lambda: len(g.generations) == 2, timeout=5.0)
     candidate = g.generations[1]
     await asyncio.wait_for(candidate.start_entered.wait(), timeout=5.0)
+    assert ROOM not in g.runtime.executions
     candidate.stop_gate.set()
 
     match departure:
