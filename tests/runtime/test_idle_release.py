@@ -399,6 +399,7 @@ class GatedExecution:
         self.stop_calls = 0
         self.stop_entered = asyncio.Event()
         self.stop_gate = asyncio.Event()
+        self.stop_errors: list[Exception] = []
 
     async def start(self) -> None: ...
 
@@ -406,6 +407,8 @@ class GatedExecution:
         self.stop_calls += 1
         self.stop_entered.set()
         await self.stop_gate.wait()
+        if self.stop_errors:
+            raise self.stop_errors.pop(0)
         return True
 
     async def on_event(self, event: Any) -> None: ...
@@ -469,3 +472,26 @@ async def test_a_rejoin_waits_for_the_previous_rooms_cleanup() -> None:
 
     assert g.cleanups == [(ROOM, None)], "old cleanup never saw the new room"
     assert (old.stop_calls, g.runtime.executions[ROOM]) == (1, new)
+
+
+async def test_a_failed_stop_keeps_the_room_until_a_retry_stops_it() -> None:
+    g = GenerationRuntime()
+    await g.runtime._create_execution(ROOM)
+    [old] = g.generations
+    old.stop_gate.set()
+    old.stop_errors.append(RuntimeError("process still running"))
+
+    first = await g.runtime._destroy_execution(ROOM)
+
+    assert (first, old.stop_calls, g.cleanups) == (False, 1, [])
+    assert g.runtime._teardowns[ROOM].execution is old
+    old.stop_errors.append(RuntimeError("still running"))
+    with pytest.raises(RuntimeError, match="failed to stop"):
+        await g.runtime._create_execution(ROOM)
+    assert (old.stop_calls, len(g.generations), g.cleanups) == (2, 1, [])
+
+    second = await g.runtime._destroy_execution(ROOM)
+
+    assert (second, old.stop_calls, g.cleanups) == (True, 3, [(ROOM, None)])
+    new = await g.runtime._create_execution(ROOM)
+    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, new)

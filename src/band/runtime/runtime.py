@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
@@ -49,6 +50,14 @@ class ExecutionFactory(Protocol):
         *,
         hub_room_id: str | None = None,
     ) -> Execution: ...
+
+
+@dataclass
+class RoomTeardown:
+    """A room's execution awaiting a successful stop, plus the current attempt."""
+
+    execution: Execution
+    attempt: asyncio.Task[bool] | None = None
 
 
 class AgentRuntime:
@@ -141,10 +150,11 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
-        # One in-flight stop-and-cleanup per room. Every destroy caller awaits
-        # the same task, and room creation waits for it, so an old room's
-        # cleanup never runs against a rejoined room's new execution.
-        self._teardowns: dict[str, asyncio.Task[bool]] = {}
+        # A room whose execution was taken out of ``executions`` but whose
+        # stop and cleanup have not both succeeded. Destroy callers share its
+        # one in-flight attempt, a failed stop leaves it for a retry, and room
+        # creation waits on it, so old cleanup never meets a rejoined room.
+        self._teardowns: dict[str, RoomTeardown] = {}
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -374,7 +384,12 @@ class AgentRuntime:
         """Create and start execution context for a room."""
         predecessor = self._teardowns.get(room_id)
         if predecessor is not None:
-            await asyncio.shield(predecessor)
+            await self._run_teardown(room_id, predecessor, timeout=None)
+            if self._teardowns.get(room_id) is predecessor:
+                raise RuntimeError(
+                    f"Room {room_id}: the previous execution failed to stop; "
+                    "not creating a new one while it may still be running"
+                )
         if room_id in self.executions:
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]
@@ -429,34 +444,38 @@ class AgentRuntime:
             execution = self.executions.pop(room_id, None)
             if execution is None:
                 return True
-            teardown = self._start_teardown(room_id, execution, timeout)
-        # Shielded: a cancelled caller leaves the one teardown running for the
-        # next destroy/stop caller (or room creation) to await.
-        return await asyncio.shield(teardown)
+            teardown = RoomTeardown(execution)
+            self._teardowns[room_id] = teardown
+        return await self._run_teardown(room_id, teardown, timeout)
 
-    def _start_teardown(
-        self, room_id: str, execution: Execution, timeout: float | None
-    ) -> asyncio.Task[bool]:
-        """Own the room's single stop-and-cleanup operation until it finishes."""
-        teardown = asyncio.ensure_future(self._tear_down(room_id, execution, timeout))
-        self._teardowns[room_id] = teardown
-
-        def forget(done: asyncio.Task[bool]) -> None:
-            if self._teardowns.get(room_id) is done:
-                del self._teardowns[room_id]
-
-        teardown.add_done_callback(forget)
-        return teardown
-
-    async def _tear_down(
-        self, room_id: str, execution: Execution, timeout: float | None
+    async def _run_teardown(
+        self, room_id: str, teardown: RoomTeardown, timeout: float | None
     ) -> bool:
-        """Stop ``execution`` and run room cleanup, exactly once per teardown."""
+        """Join the room's in-flight teardown attempt, starting one if needed.
+
+        Shielded: a cancelled caller leaves the attempt running for the next
+        caller. An attempt whose stop raised is logged and retried by the next
+        caller; the execution stays owned until a stop returns.
+        """
+        attempt = teardown.attempt
+        if attempt is None or (attempt.done() and attempt.exception() is not None):
+            attempt = asyncio.ensure_future(self._tear_down(room_id, teardown, timeout))
+            teardown.attempt = attempt
         try:
-            graceful = await execution.stop(timeout=timeout)
+            return await asyncio.shield(attempt)
         except Exception:
             logger.warning("Stopping execution for %s failed", room_id, exc_info=True)
-            graceful = False
+            return False
+
+    async def _tear_down(
+        self, room_id: str, teardown: RoomTeardown, timeout: float | None
+    ) -> bool:
+        """Stop the execution, then run room cleanup and forget the teardown.
+
+        A raising stop propagates before any cleanup, keeping the teardown
+        (and its execution) for a retry.
+        """
+        graceful = await teardown.execution.stop(timeout=timeout)
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
@@ -470,5 +489,7 @@ class AgentRuntime:
             except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning("Session cleanup callback failed for %s: %s", room_id, e)
 
+        if self._teardowns.get(room_id) is teardown:
+            del self._teardowns[room_id]
         logger.debug("Destroyed execution for room %s", room_id)
         return graceful
