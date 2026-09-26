@@ -12,7 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
@@ -6589,3 +6589,89 @@ class TestReadRoomFileImagePassthrough:
         )
 
         assert turn.content_items[0]["type"] == "inputText"
+
+
+class SkillRootsRejectingClient(FakeCodexClient):
+    """An app-server that does not know ``skills/extraRoots/set``."""
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "skills/extraRoots/set":
+            self.requests.append((method, dict(params or {})))
+            raise CodexJsonRpcError(code=-32601, message="Method not found")
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+async def _bootstrap_turn(adapter: CodexAdapter) -> FakeAgentTools:
+    tools = ToolSchemaFakeTools()
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools,
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+    return tools
+
+
+def _methods(client: FakeCodexClient) -> list[str]:
+    return [method for method, _ in client.requests]
+
+
+class TestSkillRoots:
+    @pytest.mark.asyncio
+    async def test_roots_are_registered_before_the_thread_starts(
+        self, tmp_path
+    ) -> None:
+        client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(skill_roots=[str(tmp_path)])
+        )
+
+        await _bootstrap_turn(adapter)
+
+        methods = _methods(client)
+        assert methods.index("skills/extraRoots/set") < methods.index("thread/start")
+        assert ("skills/extraRoots/set", {"extraRoots": [str(tmp_path)]}) in (
+            client.requests
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_request_without_roots(self) -> None:
+        client = FakeCodexClient(events=[_turn_completed()])
+        await _bootstrap_turn(make_codex_adapter(client))
+        assert "skills/extraRoots/set" not in _methods(client)
+
+    @pytest.mark.asyncio
+    async def test_rejected_roots_abort_the_room_client_start(self, tmp_path) -> None:
+        client = SkillRootsRejectingClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(skill_roots=[str(tmp_path)])
+        )
+
+        with pytest.raises(RuntimeError, match="skills/extraRoots/set"):
+            await _bootstrap_turn(adapter)
+
+        assert "thread/start" not in _methods(client)
+        assert client.closed
+
+    @pytest.mark.parametrize("root", ["relative/skills", "/definitely/not/here"])
+    def test_unusable_roots_are_refused_at_construction(self, root: str) -> None:
+        with pytest.raises(ValidationError, match="skill_roots"):
+            CodexAdapterConfig(skill_roots=[root])
+
+    def test_roots_come_from_the_environment_as_json(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_SKILL_ROOTS", json.dumps([str(tmp_path)]))
+        assert CodexAdapterConfig().skill_roots == [str(tmp_path)]

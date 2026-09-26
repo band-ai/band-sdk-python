@@ -148,6 +148,25 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 # turn, so it cannot contain the marker the header names.
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
+DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
+
+
+def resolve_turn_timeout(configured: float, features: dict[str, Any]) -> float:
+    """Pick a config-based ACP adapter's turn timeout, consuming the legacy kwarg.
+
+    Hosts passed ``turn_timeout_s`` untyped through ``**features`` before the
+    adapter configs typed it; that path keeps working. A non-default config
+    value that disagrees with it is ambiguous and refused.
+    """
+    legacy = features.pop("turn_timeout_s", None)
+    if legacy is None:
+        return configured
+    if configured not in (DEFAULT_TURN_TIMEOUT_SECONDS, legacy):
+        raise ValueError(
+            "turn_timeout_s is set on both the config and the adapter kwargs "
+            f"with different values ({configured} vs {legacy})"
+        )
+    return float(legacy)
 
 
 def new_message_marker() -> str:
@@ -242,7 +261,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         spawn_process: SpawnProcess | None = None,
         client_capabilities: ClientCapabilities | None = None,
         use_unstable_protocol: bool = False,
-        turn_timeout_s: float = 300.0,
+        turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(

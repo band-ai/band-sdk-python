@@ -3349,3 +3349,154 @@ class TestSendMessageDedupWiring:
                     room_id="room-1",
                 )
                 mock_update.assert_not_awaited()
+
+
+async def _started_options(adapter: ClaudeSDKAdapter) -> Any:
+    """The ClaudeAgentOptions the adapter hands its session manager."""
+    with patch("band.adapters.claude_sdk.ClaudeSessionManager") as manager_class:
+        manager_class.return_value = MagicMock()
+        await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+        return manager_class.call_args[0][0]
+
+
+def _failures(mock_tools: MagicMock) -> list[tuple[str | None, str]]:
+    """``(code, message)`` of every failure reported through send_failure."""
+    return [
+        (call.args[0].code, call.args[0].message)
+        for call in mock_tools.send_failure.call_args_list
+    ]
+
+
+class TestHostPassthroughOptions:
+    """Permission modes and CLI passthrough a host sets on the adapter."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["auto", "dontAsk"])
+    async def test_headless_permission_modes_reach_the_cli(self, mode):
+        options = await _started_options(ClaudeSDKAdapter(permission_mode=mode))
+        assert options.permission_mode == mode
+
+    @pytest.mark.asyncio
+    async def test_passthrough_options_reach_the_cli(self, tmp_path):
+        adapter = ClaudeSDKAdapter(
+            plugin_dirs=[str(tmp_path / "plugin")],
+            cli_path="/opt/claude/bin/claude",
+            env={"ANTHROPIC_API_KEY": "per-agent-key"},
+            add_dirs=[str(tmp_path / "shared")],
+            extra_args={"debug-to-stderr": None},
+        )
+        options = await _started_options(adapter)
+
+        assert options.plugins == [{"type": "local", "path": str(tmp_path / "plugin")}]
+        assert options.cli_path == "/opt/claude/bin/claude"
+        assert options.env == {"ANTHROPIC_API_KEY": "per-agent-key"}
+        assert options.add_dirs == [str(tmp_path / "shared")]
+        assert options.extra_args == {"debug-to-stderr": None}
+
+    @pytest.mark.asyncio
+    async def test_plugins_leave_band_wiring_in_place(self, tmp_path):
+        options = await _started_options(ClaudeSDKAdapter(plugin_dirs=[str(tmp_path)]))
+        assert list(options.mcp_servers) == ["band"]
+        assert _SEND_MESSAGE_MCP_NAME in options.allowed_tools
+        assert options.setting_sources == []
+
+    @pytest.mark.asyncio
+    async def test_omitted_passthrough_keeps_sdk_defaults(self):
+        options = await _started_options(ClaudeSDKAdapter())
+        assert (
+            options.plugins,
+            options.cli_path,
+            options.env,
+            options.add_dirs,
+            options.extra_args,
+        ) == ([], None, {}, [], {})
+
+    @pytest.mark.parametrize(
+        "flag", ["mcp-config", "--permission-mode", "allowedTools"]
+    )
+    def test_extra_args_cannot_replace_adapter_owned_flags(self, flag):
+        with pytest.raises(ValueError, match="adapter-owned CLI flags"):
+            ClaudeSDKAdapter(extra_args={flag: "x"})
+
+
+class TestTurnTimeout:
+    """turn_timeout_s bounds a Claude turn like the Codex and ACP adapters."""
+
+    @staticmethod
+    def _client(interrupt: AsyncMock) -> MagicMock:
+        client = MagicMock()
+        client.query = AsyncMock()
+        client.interrupt = interrupt
+
+        async def interrupted_turn_result():
+            yield _result_message()
+
+        client.receive_response = interrupted_turn_result
+        return client
+
+    @staticmethod
+    async def _run_stuck_turn(
+        adapter: ClaudeSDKAdapter,
+        client: MagicMock,
+        message: PlatformMessage,
+        tools: MagicMock,
+    ) -> AsyncMock:
+        manager = AsyncMock()
+        manager.get_or_create_session = AsyncMock(return_value=client)
+        manager.invalidate_session = AsyncMock()
+        _started, _release, never_finishes = _blocking_turn()
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager", return_value=manager
+            ),
+            patch.object(adapter, "_process_response", side_effect=never_finishes),
+        ):
+            await adapter.on_started(agent_name="TestBot", agent_description="d")
+            with pytest.raises(TurnResultAlreadyReported):
+                await adapter.on_message(
+                    msg=message,
+                    tools=tools,
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_stuck_turn_is_interrupted_and_reported_as_timeout(
+        self, sample_message, mock_tools
+    ):
+        adapter = ClaudeSDKAdapter(turn_timeout_s=0.05)
+        client = self._client(interrupt=AsyncMock())
+
+        manager = await self._run_stuck_turn(
+            adapter, client, sample_message, mock_tools
+        )
+
+        assert _failures(mock_tools) == [
+            ("timeout", "Claude turn timed out after 0.05s")
+        ]
+        client.interrupt.assert_awaited_once()
+        manager.invalidate_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_uninterruptible_turn_evicts_the_session(
+        self, sample_message, mock_tools
+    ):
+        adapter = ClaudeSDKAdapter(turn_timeout_s=0.05)
+        client = self._client(
+            interrupt=AsyncMock(side_effect=CLIConnectionError("gone"))
+        )
+
+        manager = await self._run_stuck_turn(
+            adapter, client, sample_message, mock_tools
+        )
+
+        assert [code for code, _ in _failures(mock_tools)] == ["timeout"]
+        manager.invalidate_session.assert_awaited_once_with("room-123")
+
+    def test_non_positive_timeout_is_rejected(self):
+        with pytest.raises(ValueError, match="turn_timeout_s"):
+            ClaudeSDKAdapter(turn_timeout_s=0)

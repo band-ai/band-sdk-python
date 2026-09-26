@@ -12,11 +12,13 @@ are never unlinked (removing a lock file races against a concurrent
 acquire on the recreated path); a leftover file without a holder carries
 no lock and is harmless.
 
-Scope, honestly stated: the lock file lives in the process's temp dir,
-so the guard only catches duplicates that share it. Processes with
-divergent ``TMPDIR`` (e.g. systemd ``PrivateTmp``), separate containers,
-or different hosts do not contend — deployments that shard one agent id
-across such boundaries need platform-level dedup, not this guard. It
+Scope, honestly stated: the lock file lives in the process's temp dir
+unless ``AgentConfig.single_instance_lock_dir`` names another directory,
+so the guard only catches duplicates that share that directory. Processes
+with divergent ``TMPDIR`` (e.g. systemd ``PrivateTmp``) and no shared lock
+dir, separate containers, or different hosts do not contend — deployments
+that shard one agent id across such boundaries need platform-level dedup,
+not this guard. It
 also guards only the long-lived Agent runtime; one-shot invocations
 (``band.runtime.oneshot``) rely on server-arbitrated message claiming
 instead of host locks.

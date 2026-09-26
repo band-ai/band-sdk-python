@@ -20,9 +20,11 @@ from typing_extensions import Unpack
 
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
+    DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
     PermissionResolver,
     SpawnProcess,
+    resolve_turn_timeout,
 )
 from band.integrations.acp.client_runtime import (
     ACPCollectingClient,
@@ -104,6 +106,7 @@ class OmpACPAdapterConfig:
     mcp_servers: list[dict[str, Any]] | None = None
     resolve_session_config: SessionConfigResolver | None = None
     resolve_permission: PermissionResolver | None = None
+    turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
 
 
 class OmpACPAdapter(ACPClientAdapter):
@@ -123,6 +126,9 @@ class OmpACPAdapter(ACPClientAdapter):
             if workspace_for_room is not None:
                 raise ValueError("set either cwd or workspace_for_room, not both")
             workspace_for_room = create_room_workspace_resolver(config.cwd)
+        turn_timeout_s = resolve_turn_timeout(
+            config.turn_timeout_s, cast("dict[str, Any]", features)
+        )
         super().__init__(
             command=finalize_omp_command(config.command),
             env=config.env,
@@ -136,6 +142,7 @@ class OmpACPAdapter(ACPClientAdapter):
             client_capabilities=_OMP_FORM_CAPABILITIES,
             use_unstable_protocol=True,
             spawn_process=spawn_process,
+            turn_timeout_s=turn_timeout_s,
             **features,
         )
 
