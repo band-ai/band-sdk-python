@@ -82,9 +82,7 @@ class ACPToolCall:
         (e.g. Copilot's ``band-band_send_message``) at construction, so the
         canonical name is the only one the object ever carries.
         """
-        name = str(
-            getattr(tool_call, "title", None) or getattr(tool_call, "name", "unknown")
-        )
+        name = str(getattr(tool_call, "title", None) or "unknown")
         if canonicalize is not None:
             name = canonicalize(name)
         raw_input = getattr(tool_call, "raw_input", None)

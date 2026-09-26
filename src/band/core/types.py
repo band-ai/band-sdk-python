@@ -87,7 +87,7 @@ ContactRequestActionField = Literal[
 ]
 
 
-class _FlagEnum(StrEnum):
+class FlagEnum(StrEnum):
     """A StrEnum whose members combine with ``|`` into a ``frozenset``.
 
     Unlike ``enum.Flag``, membership stays string-valued (no int bitmask),
@@ -97,12 +97,12 @@ class _FlagEnum(StrEnum):
 
     def __or__(self, other: Self | frozenset[Self]) -> frozenset[Self]:
         # Only guards a member on at least one side of `|`. Two already-combined
-        # frozensets of different _FlagEnum subclasses (e.g. `(Emit.A | Emit.B) |
+        # frozensets of different FlagEnum subclasses (e.g. `(Emit.A | Emit.B) |
         # (Capability.C | Capability.D)`) are both plain `frozenset` by then, so
         # `frozenset.__or__` runs instead and this guard never sees them.
         if isinstance(other, frozenset):
             combined = frozenset(other) | {self}
-        elif isinstance(other, _FlagEnum):
+        elif isinstance(other, FlagEnum):
             combined = frozenset({self, other})
         else:
             return NotImplemented
@@ -116,7 +116,7 @@ class _FlagEnum(StrEnum):
     __ror__ = __or__
 
 
-class Capability(_FlagEnum):
+class Capability(FlagEnum):
     """Platform tool categories an adapter can expose to the LLM.
 
     These control tool-schema inclusion only -- they do NOT affect
@@ -134,7 +134,7 @@ class Capability(_FlagEnum):
 ALL_CAPABILITIES: frozenset[Capability] = frozenset(Capability)
 
 
-class Emit(_FlagEnum):
+class Emit(FlagEnum):
     """Event types an adapter can emit to the platform."""
 
     TOOL_CALLS = "tool_calls"

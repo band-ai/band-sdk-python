@@ -14,21 +14,36 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
 from acp import RequestError
+from acp.schema import Usage
 from pydantic import BaseModel
 
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
     SYSTEM_UPDATE_PREFIX,
+    ACPPermissionRequest,
+    ACPTurnTimeoutError,
 )
+from band.integrations.acp.client_profiles import KiroACPClientProfile, KiroExtension
+from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.runtime.formatters import build_participants_message
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
+from band.testing import reported_failures
+from tests.integrations.acp.acp_toolkit import (
+    DeniedPermission,
+    FakeACPAgent,
+    TranscriptTools,
+    acp_adapter,
+    live_line,
+)
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -344,21 +359,150 @@ async def test_plan_relayed_as_task_event(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ordinary_tool_permission_granted_without_a_bubble(fake_agent) -> None:
-    """An ordinary tool's permission is auto-granted silently — no permission pair.
+async def test_usage_emitted_from_prompt_response(fake_agent) -> None:
+    """A standard ACP ``session/prompt`` response's ``usage`` becomes a usage event."""
+    fake_agent.will_say("done").reports_usage(
+        Usage(input_tokens=10, output_tokens=20, total_tokens=30, thought_tokens=5)
+    )
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("do work")
 
-    The tool's own tool_call/tool_result already show the call, so posting a
-    permission pair too would duplicate it in the room.
-    """
-    fake_agent.will_ask_permission(
-        tool_call_id="tc-1", title="band_lookup_peers"
-    ).will_say("done")
+    # thought_tokens folds into output_tokens: ACP reports it disjointly, like
+    # codex/opencode's reasoning tokens (see TurnUsage._build's convention).
+    # Equality against the full list also pins the record count to exactly one.
+    assert reply.usage == [
+        {
+            "input_tokens": 10,
+            "output_tokens": 25,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_usage_event_when_agent_does_not_report_it(fake_agent) -> None:
+    """No ``usage`` field on the response (the common case today) emits nothing --
+    the honest N-A, not a false all-zero record."""
+    fake_agent.will_say("done")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("do work")
+
+    assert reply.usage == []
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_cancels_the_in_flight_prompt(
+    fake_agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling ``on_message`` (a platform interrupt/stop) must cancel the
+    ``prompt()`` call too, never leave it running detached against the agent."""
+    handler_started = asyncio.Event()
+    never_set = asyncio.Event()
+
+    @fake_agent.on_prompt
+    async def _stall(agent: FakeACPAgent, session_id: str) -> None:
+        del agent, session_id
+        handler_started.set()
+        await never_set.wait()
+
+    prompt_tasks: list[asyncio.Task[object]] = []
+    original_prompt = ACPRuntime.prompt
+
+    async def _capturing_prompt(self: ACPRuntime, **kwargs: object) -> object:
+        prompt_tasks.append(asyncio.current_task())
+        return await original_prompt(self, **kwargs)
+
+    monkeypatch.setattr(ACPRuntime, "prompt", _capturing_prompt)
+
+    async with acp_adapter(fake_agent, turn_timeout_s=30) as session:
+        turn1 = asyncio.create_task(session.send("do work"))
+        await handler_started.wait()  # the fake agent is now blocked on never_set
+
+        turn1.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn1
+
+    assert len(prompt_tasks) == 1
+    assert prompt_tasks[0].cancelled()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title", ["band_lookup_peers", "write_file", "band_send_message"]
+)
+async def test_permission_is_granted_silently_with_the_offered_allow_option(
+    fake_agent, title: str
+) -> None:
+    """An approved tool gets no permission pair (its own tool_call/tool_result
+    narrate it), including a Band tool that posts to the room."""
+    fake_agent.will_ask_permission(title=title, allow_option_id="allow-7").will_say(
+        "done"
+    )
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("do the thing")
 
-    assert fake_agent.approved is True  # the round-trip still granted the allow option
-    assert reply.permissions == []  # no duplicate permission pair for an ordinary tool
-    assert "done" in reply.texts  # the turn proceeded after approval
+    assert fake_agent.approved is True
+    assert reply.permissions == []
+    assert "done" in reply.texts
+
+
+@pytest.mark.asyncio
+async def test_permission_without_an_allow_option_is_cancelled_and_posted(
+    fake_agent,
+) -> None:
+    """With nothing to allow, the adapter cancels rather than guessing, and the
+    synthetic pair is the room's only record of the call."""
+    fake_agent.will_ask_permission(
+        tool_call_id="tc-danger",
+        title="rm_rf",
+        raw_input={"path": "/tmp/important"},
+        allow_option_id=None,
+    )
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("clean up")
+
+    assert fake_agent.approved is False
+    assert reply.denied_permissions == [
+        DeniedPermission(
+            call=ToolCallRoomEvent(
+                name="rm_rf", args={"path": "/tmp/important"}, tool_call_id="tc-danger"
+            ),
+            result=ToolResultRoomEvent(
+                name="rm_rf",
+                output="Permission cancelled",
+                tool_call_id="tc-danger",
+                is_error=True,
+            ),
+            outcome="cancelled",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_permission_resolver_deny_cancels_the_request(fake_agent) -> None:
+    async def deny(_request: ACPPermissionRequest) -> None:
+        return None
+
+    fake_agent.will_ask_permission(title="write_file")
+    async with acp_adapter(fake_agent, resolve_permission=deny) as session:
+        reply = await session.send("write it")
+
+    assert fake_agent.approved is False
+    assert [denied.outcome for denied in reply.denied_permissions] == ["cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_denied_band_tool_is_posted_under_its_canonical_name(fake_agent) -> None:
+    """The pair is the only record of a denied call, so an MCP-prefixed Band
+    tool name must be canonicalized like real narration."""
+    fake_agent.will_ask_permission(title="band-band_send_event", allow_option_id=None)
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("post an event")
+
+    assert [
+        (denied.call.name, denied.result.name) for denied in reply.denied_permissions
+    ] == [("band_send_event", "band_send_event")]
 
 
 @pytest.mark.asyncio
@@ -833,3 +977,92 @@ async def test_replay_after_midrun_respawn() -> None:
     assert prompt.rstrip().endswith("What is my favorite color?"), (
         "the live message must come last so the model answers it, not the transcript"
     )
+
+
+@pytest.mark.asyncio
+async def test_reply_delivery_failure_keeps_the_agent_connection(fake_agent) -> None:
+    """The agent answered; posting the reply is what failed. That is not an ACP
+    failure, so the next turn reuses the same connection."""
+    fake_agent.will_say("Here's the answer")
+    failing = TranscriptTools()
+    failing.send_message_error = RuntimeError("platform rejected the message")
+
+    async with acp_adapter(fake_agent) as session:
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await session.send("Hello", tools=failing)
+        reply = await session.send("Again")
+
+    assert reported_failures(failing) == []
+    assert reply.texts == ["Here's the answer"]
+    assert fake_agent.connection_count == 1
+
+
+@pytest.mark.asyncio
+async def test_session_bookkeeping_failure_keeps_the_agent_connection(
+    fake_agent,
+) -> None:
+    """A failed trailing task event must not turn a completed prompt into an ACP failure."""
+    fake_agent.will_say("done")
+    failing = TranscriptTools()
+    failing.send_event_error = RuntimeError("platform rejected the task event")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send("Hello", tools=failing)
+        await session.send("Again")
+
+    assert reported_failures(failing) == []
+    assert fake_agent.connection_count == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_timeout_cancels_only_its_own_room(fake_agent) -> None:
+    """A timed-out room is cancelled and reported without disturbing another
+    room's in-flight turn."""
+    b_started = asyncio.Event()
+    release = asyncio.Event()
+
+    @fake_agent.on_prompt
+    async def _block(agent: FakeACPAgent, session_id: str) -> None:
+        if len(agent.prompts) == 1:
+            b_started.set()
+        await release.wait()
+        await agent.say(session_id, "done")
+
+    timed_out = TranscriptTools()
+    async with acp_adapter(fake_agent, turn_timeout_s=30) as session:
+        b_turn = asyncio.create_task(session.send("Hello", room="room-b"))
+        await b_started.wait()
+        room_b_session = session.session_id("room-b")
+        # Only room-a's turn, started from here on, gets the short deadline.
+        session.adapter._turn_timeout_s = 0.05
+
+        with pytest.raises(ACPTurnTimeoutError):
+            await session.send("Hello", room="room-a", tools=timed_out)
+
+        assert not b_turn.done()
+        room_a_session = next(
+            sid for sid in fake_agent.session_ids() if sid != room_b_session
+        )
+        release.set()
+        b_reply = await b_turn
+
+    assert fake_agent.cancelled_sessions == [room_a_session]
+    assert [(f["provider"], f["code"]) for f in reported_failures(timed_out)] == [
+        ("acp", FAILURE_CODE_TIMEOUT)
+    ]
+    assert "room-a" not in session.adapter._room_to_session
+    assert b_reply.texts == ["done"]
+
+
+@pytest.mark.asyncio
+async def test_kiro_metadata_notification_posts_a_context_window_plan(
+    fake_agent,
+) -> None:
+    fake_agent.will_send_ext_notification(
+        KiroExtension.METADATA, {"contextUsagePercentage": 3}
+    ).will_say("done")
+
+    async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
+        reply = await session.send("do work")
+
+    assert reply.plans == ["[Kiro context window] 3% used"]

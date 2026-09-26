@@ -6,7 +6,7 @@ import asyncio
 import logging
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
 from uuid import uuid4
@@ -19,6 +19,7 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     SseMcpServer,
+    Usage,
 )
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
@@ -38,6 +39,7 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
+    TurnUsage,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
@@ -214,7 +216,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    # Tool/thought/plan narration is inherent to ACP and always posted by
+    # RoomTurnEmitter, so only USAGE (from `session/prompt`'s response) is opt-out.
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
@@ -465,27 +469,24 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     room_id=room_id,
                     session_id=session_id,
                 )
-                prompt_task = asyncio.create_task(
-                    runtime.prompt(
-                        session_id=session_id,
-                        prompt_text=prompt_text,
-                        on_chunk=emitter.emit,
-                    )
-                )
-                done, _ = await asyncio.wait(
-                    {prompt_task}, timeout=self._turn_timeout_s
-                )
-                if not done:
-                    prompt_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await prompt_task
+                deadline = asyncio.timeout(self._turn_timeout_s)
+                try:
+                    async with deadline:
+                        result = await runtime.prompt(
+                            session_id=session_id,
+                            prompt_text=prompt_text,
+                            on_chunk=emitter.emit,
+                        )
+                except TimeoutError:
+                    if not deadline.expired():
+                        raise
                     await self._handle_turn_timeout(
                         runtime, room_id=room_id, session_id=session_id, tools=tools
                     )
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self._turn_timeout_s}s"
                     ) from None
-                await prompt_task
+                await self.emit_usage(tools, self._turn_usage(result.usage))
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -497,6 +498,22 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await self.on_cleanup(room_id)
             await tools.send_failure(_to_agent_failure(e))
             raise
+
+    @staticmethod
+    def _turn_usage(usage: Usage | None) -> TurnUsage:
+        """Map ACP's ``Usage`` onto ``TurnUsage``, folding in the disjoint ``thoughtTokens``.
+
+        Forwarded raw: ``PromptResponse.usage`` is documented as per-turn (see
+        docs/acp.md, "Per-turn usage").
+        """
+        return TurnUsage.from_object(
+            usage,
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cached_read_tokens",
+            cache_write="cached_write_tokens",
+            reasoning="thought_tokens",
+        )
 
     async def _handle_turn_timeout(
         self,

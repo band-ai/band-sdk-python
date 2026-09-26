@@ -134,9 +134,6 @@ USAGE_EXCLUSIONS = (
     ExcludedAdapter(
         Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
     ),
-    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.CURSOR_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.OMP_ACP, "ACP exposes no per-turn token-usage updates"),
 )
 
 

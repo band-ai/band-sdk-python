@@ -24,7 +24,7 @@ from typing import Any
 
 from band import create_room_workspace_resolver
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import AdapterFeatures, Capability, Emit
 from band.testing import feature_kwargs
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
@@ -456,16 +456,21 @@ def _build_opencode(
     )
 
 
+def _ensure_subdir(work_dir: str, name: str) -> str:
+    """Create and return the ``name`` subdirectory of ``work_dir``."""
+    home = os.path.join(work_dir, name)
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
 def copilot_home_dir(work_dir: str) -> str:
     """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
 
-    The one place the subdirectory name and its creation live — the registry
-    builder and the bespoke test configs (``test_copilot_acp.py``) all call
-    this rather than each re-picking the name and an os.path/pathlib API.
+    The one place the subdirectory name lives — the registry builder and the
+    bespoke test configs (``test_copilot_acp.py``) all call this rather than
+    each re-picking the name.
     """
-    home = os.path.join(work_dir, "copilot-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "copilot-home")
 
 
 def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
@@ -489,6 +494,21 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
         "COPILOT_PROVIDER_API_KEY": s.llm_credentials.anthropic_api_key,
         "COPILOT_MODEL": s.llm_models.anthropic_model,
     }
+
+
+def _clamp_emit_to_supported(
+    built_features: dict[str, Any], supported_emit: frozenset[Emit]
+) -> None:
+    """Clamp a shared fixture's requested ``emit`` down to what an ACP-bridge
+    adapter actually declares in ``SUPPORTED_EMIT``.
+
+    Every ACP-bridge adapter (Copilot/Cursor/OMP/Kiro) narrates tool calls
+    unconditionally and only opts into ``Emit.USAGE`` -- so a shared fixture
+    that also requests ``Emit.TOOL_CALLS`` (e.g. for the memory/contacts
+    matrix) would otherwise trip the construction-time unsupported-emit check.
+    """
+    if "emit" in built_features:
+        built_features["emit"] &= supported_emit
 
 
 @adapter(
@@ -539,14 +559,7 @@ def _build_copilot_acp(
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
     built_features = feature_kwargs(features)
-    if "emit" in built_features:
-        # memory_features()/contacts_features() request Emit.TOOL_CALLS so tool
-        # calls surface as tool_call events for the rest of the matrix, but this
-        # adapter narrates every tool call unconditionally and declares no
-        # SUPPORTED_EMIT (see ACPClientAdapter) -- clamp to what it actually
-        # supports so the shared fixture's intent survives without tripping the
-        # construction-time unsupported-emit check.
-        built_features["emit"] &= CopilotACPAdapter.SUPPORTED_EMIT
+    _clamp_emit_to_supported(built_features, CopilotACPAdapter.SUPPORTED_EMIT)
 
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
@@ -557,9 +570,7 @@ def _build_copilot_acp(
 
 def omp_agent_home_dir(work_dir: str) -> str:
     """Create and return the ``pi-coding-agent-home`` subdirectory of ``work_dir``."""
-    home = os.path.join(work_dir, "pi-coding-agent-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "pi-coding-agent-home")
 
 
 def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
@@ -606,8 +617,7 @@ def _build_omp_acp(
         config_kwargs["command"] = tuple(s.backends.omp_command.split())
 
     built_features = feature_kwargs(features)
-    if "emit" in built_features:
-        built_features["emit"] &= OmpACPAdapter.SUPPORTED_EMIT
+    _clamp_emit_to_supported(built_features, OmpACPAdapter.SUPPORTED_EMIT)
 
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
@@ -655,10 +665,57 @@ def _build_cursor_acp(
     if s.backends.cursor_command.strip():
         config_kwargs["command"] = tuple(s.backends.cursor_command.split())
     built_features = feature_kwargs(features)
-    if "emit" in built_features:
-        built_features["emit"] &= CursorACPAdapter.SUPPORTED_EMIT
+    _clamp_emit_to_supported(built_features, CursorACPAdapter.SUPPORTED_EMIT)
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
+        additional_tools=_custom_tool_defs(tools),
+        **built_features,
+    )
+
+
+@adapter(
+    Adapter.KIRO_ACP,
+    requires=[Dep.KIRO_CLI],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+    e2e_pending=(
+        "headless KIRO_API_KEY auth needs a paid Kiro subscription this org has "
+        "decided not to purchase, and kiro-cli has no BYOK route around it "
+        "(see docs/acp.md)"
+    ),
+)
+def _build_kiro_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.kiro_acp import (  # noqa: PLC0415 -- isolates the kiro_acp extra from the other frameworks this file builds
+        KiroACPAdapter,
+        KiroACPAdapterConfig,
+    )
+
+    # Hermetic per cell like copilot_acp: a fresh cwd (Kiro reads project config
+    # from it) and a fresh KIRO_HOME (no stray host session/trust state).
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-kiro-acp-")
+
+    config_kwargs: dict[str, Any] = {
+        "custom_section": prompt or "",
+        "workspace_for_room": create_room_workspace_resolver(sandbox),
+        "env": {
+            "KIRO_HOME": _ensure_subdir(sandbox, "kiro-home"),
+            "KIRO_API_KEY": s.backends.kiro_api_key,
+        },
+    }
+    if s.backends.kiro_command.strip():
+        config_kwargs["command"] = tuple(s.backends.kiro_command.split())
+
+    built_features = feature_kwargs(features)
+    _clamp_emit_to_supported(built_features, KiroACPAdapter.SUPPORTED_EMIT)
+
+    return KiroACPAdapter(
+        config=KiroACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         **built_features,
     )

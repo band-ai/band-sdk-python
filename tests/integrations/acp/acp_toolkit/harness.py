@@ -16,7 +16,7 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
-from band.core.types import PlatformMessage
+from band.core.types import USAGE_METADATA_KEY, PlatformMessage, is_usage_event
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
@@ -153,6 +153,15 @@ def inject_acp_spawn(
     adapter._build_runtime = _build_runtime  # type: ignore[method-assign]
 
 
+@dataclass(frozen=True)
+class DeniedPermission:
+    """A denied permission request's synthetic room pair, parsed."""
+
+    call: ToolCallRoomEvent
+    result: ToolResultRoomEvent
+    outcome: str
+
+
 @dataclass
 class Reply:
     """A readable view of what the adapter posted back for one turn."""
@@ -214,18 +223,48 @@ class Reply:
 
     @property
     def plans(self) -> list[str]:
-        # Task events, minus the adapter's trailing "ACP client session" bookkeeping.
+        # Task events, minus the adapter's trailing "ACP client session"
+        # bookkeeping and any per-turn usage event (see SimpleAdapter.emit_usage)
+        # -- neither is a real ACP plan chunk, though both ride message_type=task.
         return [
             e["content"]
             for e in self._events_of("task")
             if _SESSION_EVENT_MARKER not in (e.get("metadata") or {})
+            and not is_usage_event(e.get("metadata"))
+        ]
+
+    @property
+    def usage(self) -> list[dict[str, Any]]:
+        """Per-turn token-usage payloads (see ``SimpleAdapter.emit_usage``), in order."""
+        return [
+            e["metadata"][USAGE_METADATA_KEY]
+            for e in self._events_of("task")
+            if is_usage_event(e.get("metadata"))
         ]
 
     @property
     def permissions(self) -> list[dict[str, Any]]:
+        return self._permission_events("tool_call")
+
+    @property
+    def denied_permissions(self) -> list[DeniedPermission]:
+        return [
+            DeniedPermission(
+                call=ToolCallRoomEvent.model_validate_json(call["content"]),
+                result=ToolResultRoomEvent.model_validate_json(result["content"]),
+                outcome=result["metadata"]["permission_outcome"],
+            )
+            for call, result in zip(
+                self._permission_events("tool_call"),
+                self._permission_events("tool_result"),
+                strict=True,
+            )
+        ]
+
+    def _permission_events(self, message_type: str) -> list[dict[str, Any]]:
         return [
             e
-            for e in self._events_of("tool_call")
+            for e in self._events_of(message_type)
             if (e.get("metadata") or {}).get("permission_request")
         ]
 
@@ -264,6 +303,7 @@ class AcpSession:
         room_context: list[dict[str, Any]] | None = None,
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
+        tools: TranscriptTools | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -273,8 +313,9 @@ class AcpSession:
         the adapter re-fetches the room transcript itself (the off-bootstrap
         rehydration path). ``participants_msg``/``contacts_msg`` model the
         change-triggered roster/contacts updates the runtime attaches to a turn.
+        Pass ``tools`` to script room-side failures (e.g. ``send_message_error``).
         """
-        tools = TranscriptTools()
+        tools = tools or TranscriptTools()
         if room_context is not None:
             tools.set_room_context(room_context)
         self._last_tools = tools

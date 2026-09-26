@@ -30,6 +30,7 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
+    Usage,
 )
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -85,7 +86,10 @@ class FakeACPAgent:
         self.auth_methods: list[str] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
+        self.cancelled_sessions: list[str] = []
+        self.connection_count = 0
         self.approved: bool | None = None
+        self._usage: Usage | None = None
 
     # -- scripting ---------------------------------------------------------------
 
@@ -105,6 +109,13 @@ class FakeACPAgent:
 
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
+        return self
+
+    def reports_usage(self, usage: Usage) -> FakeACPAgent:
+        """Make every ``session/prompt`` response carry this standard ACP
+        ``usage`` value -- unset (the default) mirrors an agent that never
+        reports it, so ``SimpleAdapter.emit_usage`` stays a no-op."""
+        self._usage = usage
         return self
 
     def knows_session(self, session_id: str) -> FakeACPAgent:
@@ -240,6 +251,24 @@ class FakeACPAgent:
         self._script.append(_action)
         return self
 
+    def will_send_ext_notification(
+        self, method: str, params: dict[str, Any]
+    ) -> FakeACPAgent:
+        """Send a client-bound extension notification (``sessionId`` auto-filled).
+
+        Extension notifications aren't implicitly connection-scoped, so a real
+        agent includes the session id in the payload itself; this mirrors that
+        without making every call site repeat it.
+        """
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a._conn_for(sid).ext_notification(
+                method, {"sessionId": sid, **params}
+            )
+
+        self._script.append(_action)
+        return self
+
     def will_plan(self, *steps: str) -> FakeACPAgent:
         self._script.append(
             lambda a, sid: a.emit(sid, update_plan([plan_entry(s) for s in steps]))
@@ -251,22 +280,30 @@ class FakeACPAgent:
         *,
         tool_call_id: str = "tc-1",
         title: str | None = None,
-        allow_option_id: str = "allow-1",
+        raw_input: dict[str, Any] | None = None,
+        allow_option_id: str | None = "allow-1",
     ) -> FakeACPAgent:
+        """Ask to run a tool, offering ``allow_option_id`` (``None``: reject only)."""
+        options = [
+            PermissionOption(kind="reject_once", name="Reject", optionId="reject-1")
+        ]
+        if allow_option_id is not None:
+            options.insert(
+                0,
+                PermissionOption(
+                    kind="allow_once", name="Allow", optionId=allow_option_id
+                ),
+            )
+
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
                 sid,
-                ToolCallUpdate(tool_call_id=tool_call_id, title=title),
-                [
-                    PermissionOption(
-                        kind="allow_once", name="Allow", optionId=allow_option_id
-                    ),
-                    PermissionOption(
-                        kind="reject_once", name="Reject", optionId="reject-1"
-                    ),
-                ],
+                ToolCallUpdate(
+                    tool_call_id=tool_call_id, title=title, raw_input=raw_input
+                ),
+                options,
             )
-            a.approved = allow_option_id in str(resp)
+            a.approved = allow_option_id is not None and allow_option_id in str(resp)
 
         self._script.append(_action)
         return self
@@ -334,6 +371,7 @@ class FakeACPAgent:
 
     def on_connect(self, conn: AgentSideConnection) -> None:
         self._current_conn = conn
+        self.connection_count += 1
 
     async def initialize(
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
@@ -404,6 +442,10 @@ class FakeACPAgent:
         self._config_options = updated
         return SetSessionConfigOptionResponse(config_options=self._config_options)
 
+    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        del kwargs
+        self.cancelled_sessions.append(session_id)
+
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""
         del kwargs
@@ -434,4 +476,4 @@ class FakeACPAgent:
         else:
             for action in self._script:
                 await action(self, session_id)
-        return PromptResponse(stop_reason="end_turn")
+        return PromptResponse(stop_reason="end_turn", usage=self._usage)

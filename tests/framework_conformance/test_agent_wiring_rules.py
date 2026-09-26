@@ -237,16 +237,17 @@ def test_peer_must_be_a_live_adapter() -> None:
 
 # --- e2e_pending allowlist ----------------------------------------------------------------
 
-# Pending is a short-lived staging state for an adapter whose backend isn't
-# CI-wired yet: it keeps the adapter's CI lane defined while running zero matrix
-# cells, which must never become a quiet way to dodge E2E. Adding an adapter here
-# requires editing this allowlist (naming it, deliberately, in review) and a
-# follow-up that takes its lane live.
-EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({"cursor_acp"})
+# Pending is normally a short-lived staging state for an adapter whose backend
+# isn't CI-wired yet: it keeps the adapter's CI lane defined while running zero
+# matrix cells, which must never become a quiet way to dodge E2E. Adding an
+# adapter here requires editing this allowlist (naming it, deliberately, in
+# review) and a follow-up that takes its lane live. kiro_acp is a standing
+# exception with no follow-up; its e2e_pending reason says why.
+EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({"cursor_acp", "kiro_acp"})
 
 
 def test_pending_adapters_match_the_allowlist() -> None:
-    """The e2e_pending set equals the explicit allowlist (empty today)."""
+    """The e2e_pending set equals the explicit allowlist."""
 
     pending = {
         str(spec.id): spec.e2e_pending

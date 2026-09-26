@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 
 from acp import connect_to_agent, spawn_agent_process, text_block
@@ -17,7 +18,9 @@ from acp.schema import (
     DeclineElicitationResponse,
     LoadSessionResponse,
     NewSessionResponse,
+    PromptResponse,
     SetSessionConfigOptionResponse,
+    Usage,
 )
 
 from band.integrations.acp.client_profiles import (
@@ -42,6 +45,18 @@ ElicitationHandler = Callable[..., Awaitable[object]]
 ElicitationNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
 MCPTransportKind = Literal["http", "sse"]
+
+
+@dataclass(frozen=True)
+class PromptResult:
+    """One ``session/prompt`` call's collected chunks and the ``usage`` it reported.
+
+    ``usage`` is ``None`` for an agent that omits the optional ACP field.
+    """
+
+    chunks: list[CollectedChunk]
+    usage: Usage | None
+
 
 # ACP grants a tool-call permission by *selecting one of the options the agent
 # offered* (each carries an ``optionId`` and a ``kind``); the on-wire response is
@@ -288,7 +303,9 @@ class ACPConnectionProtocol(Protocol):
         mcp_servers: list[object],
     ) -> LoadSessionResponse | None: ...
 
-    async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
+    async def prompt(
+        self, *, session_id: str, prompt: list[object]
+    ) -> PromptResponse: ...
 
     async def set_config_option(
         self,
@@ -747,6 +764,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             # ACPClientProfile protocol has no such attribute at all.
             session_id = getattr(self._profile, "extension_session_id", None) or ""
         if not session_id:
+            logger.debug("Dropping extension notification: no resolvable session id")
             return
 
         chunks = await self._profile.ext_notification(method, params)
@@ -1004,18 +1022,23 @@ class ACPRuntime:
         session_id: str,
         prompt_text: str,
         on_chunk: ChunkSink | None = None,
-    ) -> list[CollectedChunk]:
+    ) -> PromptResult:
         conn = await self.ensure_connection(can_respawn=False)
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
         try:
-            await conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+            response = await conn.prompt(
+                session_id=session_id, prompt=[text_block(prompt_text)]
+            )
             if self._client is not None:
                 await self._client.flush(session_id)
         finally:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
-        return self.get_collected_chunks(session_id)
+        return PromptResult(
+            chunks=self.get_collected_chunks(session_id),
+            usage=response.usage,
+        )
 
     async def cancel_turn(self, session_id: str) -> None:
         """Tell the agent to stop a timed-out room's prompt."""

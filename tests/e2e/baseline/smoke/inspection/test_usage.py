@@ -8,11 +8,11 @@ usage-capable adapter.
 
 Coverage is registry-derived, not a hand-maintained list: the fan is the whole
 matrix minus the adapters that cannot emit usage — ``CREWAI_FLOW`` (usage lives in
-user-supplied flow internals — N-A), ``CREWAI`` (usage capture deferred: its
-result counter is cumulative-lifetime, not per-turn), and ``COPILOT_ACP`` / ``OMP_ACP``
-(ACP exposes no per-turn token-usage updates). Every other adapter runs, letta
-included (it emits via ``Emit.USAGE`` from the per-room
-``LettaResponse.usage``). Deriving from ``exclude=`` rather than an explicit
+user-supplied flow internals — N-A) and ``CREWAI`` (usage capture deferred: its
+result counter is cumulative-lifetime, not per-turn). Every other adapter runs,
+letta included (it emits via ``Emit.USAGE`` from the per-room
+``LettaResponse.usage``), as do the ACP bridges (``ACPClientAdapter`` maps the
+``session/prompt`` response's ``usage``). Deriving from ``exclude=`` rather than an explicit
 include-list means a newly-registered usage-capable adapter is exercised
 automatically — and a new adapter that *cannot* emit usage fails loudly here
 until it's consciously added to the exclusion, which is the intended signal. The

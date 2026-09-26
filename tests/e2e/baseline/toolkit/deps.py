@@ -158,6 +158,7 @@ class Dep(Enum):
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
+    KIRO_CLI = "kiro_cli"  # the `kiro-cli` CLI on PATH, authenticated via KIRO_API_KEY
     SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
 
 
@@ -284,6 +285,13 @@ def _cursor_cli_available(settings: BaselineSettings) -> bool:
     )
 
 
+def _kiro_cli_available(settings: BaselineSettings) -> bool:
+    """The Kiro CLI is on PATH *and* ``KIRO_API_KEY`` is set."""
+    return _cli_on_path(settings.backends.kiro_command, "kiro-cli") and bool(
+        settings.backends.kiro_api_key
+    )
+
+
 def _codex_cwd_available(settings: BaselineSettings) -> bool:
     """``CODEX_CWD`` is an existing, explicitly-disposable dir outside the repo.
 
@@ -372,6 +380,11 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OMP: DepSpec(
         _omp_available,
         f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
+        lane=Lane.BACKENDS,
+    ),
+    Dep.KIRO_CLI: DepSpec(
+        _kiro_cli_available,
+        "Kiro CLI not found on PATH, or KIRO_API_KEY not set",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(

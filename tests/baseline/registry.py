@@ -43,6 +43,10 @@ SUPPORT: tuple[AdapterSupport, ...] = (
         reason="external Cursor ACP process is outside isolated adapter execution",
     ),
     AdapterSupport(
+        Adapter.KIRO_ACP,
+        reason="external Kiro CLI ACP process is outside isolated adapter execution",
+    ),
+    AdapterSupport(
         Adapter.OMP_ACP,
         reason="external OMP ACP process is outside isolated adapter execution",
     ),

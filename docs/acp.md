@@ -26,6 +26,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/adapters/cursor_acp.py` | `CursorACPAdapter` — Cursor CLI backend with room-routed decisions |
 | `src/band/adapters/omp_acp.py` | `OmpACPAdapter` — stdio-only OMP (`omp acp`) with enforced `always-ask` approval |
+| `src/band/adapters/kiro_acp.py` | `KiroACPAdapter` — thin `ACPClientAdapter` for AWS Kiro CLI |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -96,6 +97,15 @@ Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copil
 ## Capabilities (Client Adapter)
 
 `ACPClientAdapter` supports `Capability.MEMORY` and `Capability.CONTACTS`. Only memory tools are gated on the declared capability (an enterprise feature the adapter must opt into); contact tools register unconditionally, matching the adapter's pre-existing default that every caller without `features=` (every ACP example) relies on — declaring `Capability.CONTACTS` only stops the base class's unsupported-capability warning for a caller that does declare it. The registered tool vocabulary (computed once at construction) drives tool-name canonicalization too. `render_system_prompt` carries the matching capability sections.
+
+## Per-turn usage (Client Adapter)
+
+`ACPClientAdapter` reports `Emit.USAGE` from the `session/prompt` response's
+`usage` field, for every ACP vendor. It forwards that value as-is: the (still
+unstable) spec documents `PromptResponse.usage` as per-turn, though the `Usage`
+field docs say "across session". A vendor reporting running totals would be
+over-counted. The live `test_usage_not_cumulative_across_turns` guards the
+backends that run in CI; `kiro_acp` has no live lane, so nothing guards it.
 
 ## Permission pairing (Client Adapter)
 
@@ -212,3 +222,29 @@ fresh `PI_CODING_AGENT_DIR`. Excluded from framework-conformance as a bridge.
 - Example: `examples/acp/clients/omp.py`.
 - Pin used by CI: `@oh-my-pi/pi-coding-agent@18.2.8` (see `.github/scripts/setup-omp.sh`).
 
+## AWS Kiro CLI backend
+
+`KiroACPAdapter` (`src/band/adapters/kiro_acp.py`) drives `kiro-cli acp` through
+`ACPClientAdapter`, stdio only (Kiro documents no remote/`--port` mode).
+`KiroACPClientProfile` handles two of Kiro's experimental `_kiro.dev/*`
+notifications ([kiro.dev/docs/cli/acp](https://kiro.dev/docs/cli/acp)):
+
+- `_kiro.dev/metadata`: its `contextUsagePercentage` is posted as a room-visible
+  plan chunk (`[Kiro context window] 42% used`); any other payload is ignored.
+- `_kiro.dev/mcp/oauth_request`: logged as a warning. A headless agent can't
+  complete an MCP server's OAuth, so that server's tools stay unavailable.
+
+The field name comes from the `kiro-cli` 2.24 binary, not a live session.
+
+Auth is the ambient `kiro-cli login` (interactive only) or `KIRO_API_KEY` in the
+config `env` for headless use. `KIRO_API_KEY` requires a paid Kiro subscription
+([kiro.dev/docs/cli/headless](https://kiro.dev/docs/cli/headless/)), and Kiro has
+no bring-your-own-key provider option to route around it.
+
+**No live E2E coverage.** This org has decided not to buy a Kiro subscription, so
+the baseline builder is registered `e2e_pending`: it stays placed in the
+`backends` lane but runs no matrix cells. Coverage is the adapter/profile unit
+tests plus a `FakeACPAgent` wire test in
+`tests/integrations/acp/test_client_adapter_behavior.py`. They prove Band's side of
+the bridge, not `kiro-cli`'s real wire behavior. Revisit if the subscription
+decision changes.

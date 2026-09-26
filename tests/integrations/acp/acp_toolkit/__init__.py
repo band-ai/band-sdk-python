@@ -25,6 +25,7 @@ from __future__ import annotations
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, PromptHandler
 from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
+    DeniedPermission,
     FakeSpawn,
     Reply,
     RoomActivity,
@@ -37,6 +38,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
 
 __all__ = [
     "AcpSession",
+    "DeniedPermission",
     "FakeACPAgent",
     "FakeSpawn",
     "PromptHandler",

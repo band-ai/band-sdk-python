@@ -828,10 +828,10 @@ class TestACPRuntime:
         runtime._client._session_chunks["sess-1"] = []
 
         session_id = await runtime.create_session(cwd="/tmp", mcp_servers=[])
-        chunks = await runtime.prompt(session_id=session_id, prompt_text="hello")
+        result = await runtime.prompt(session_id=session_id, prompt_text="hello")
 
         assert session_id == "sess-1"
-        assert chunks == []
+        assert result.chunks == []
         mock_conn.new_session.assert_awaited_once_with(cwd="/tmp", mcp_servers=[])
         mock_conn.prompt.assert_awaited_once()
 
