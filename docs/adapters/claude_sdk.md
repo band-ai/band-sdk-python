@@ -126,8 +126,8 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `approval_text_notifications` | `bool` | `True` | Send room messages for automatic approval or decline decisions. |
 | `approval_wait_timeout_s` | `float` | `300.0` | Seconds to wait for a manual approval. |
 | `approval_timeout_decision` | `"accept" \| "decline"` | `"decline"` | Decision when manual approval times out. |
-| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approvals per room. Oldest entries are evicted when full. |
-| `approval_authorized_senders` | `set[str] \| None` | `None` | Sender IDs allowed to `/approve` and `/decline`. `None` means any room participant. |
+| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approvals per room (at least 1). The oldest unanswered one is evicted (declined) when full. |
+| `approval_authorized_senders` | `set[str] \| None` | `None` | Sender IDs allowed to `/approve` and `/decline`. `None` means any room participant; an empty set means nobody. |
 
 When `approval_mode="manual"`, Claude pauses and the adapter posts a message like:
 

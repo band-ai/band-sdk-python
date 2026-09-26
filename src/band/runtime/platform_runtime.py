@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from band_rest.core.api_error import ApiError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.streaming import ControlMode
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
@@ -166,6 +167,7 @@ class PlatformRuntime:
         self,
         on_execute: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
         on_cleanup: Callable[[str], Awaitable[None]] | None = None,
+        on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -176,6 +178,8 @@ class PlatformRuntime:
         Args:
             on_execute: Callback for message execution
             on_cleanup: Callback for session cleanup
+            on_control: Callback for an interrupt/stop control signal, for
+                adapter work that outlives the message cycle it started in
 
         Raises:
             BandConfigError: When another process on this host already runs
@@ -198,6 +202,7 @@ class PlatformRuntime:
                 on_execute=on_execute,
                 session_config=self._session_config,
                 on_session_cleanup=on_cleanup or self._noop_cleanup,
+                on_control=on_control,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
             )

@@ -123,7 +123,7 @@ Pass these to `CodexAdapterConfig(...)`:
 | `approval_wait_timeout_s` | `float` | `300.0` | Seconds to wait for a manual approval. |
 | `approval_timeout_decision` | `"accept" \| "acceptForSession" \| "decline"` | `"decline"` | Decision when manual approval times out. |
 | `session_approval_granularity` | `"binary" \| "full_command"` | `"full_command"` | How `/approve-session` matches future commands. `"full_command"` matches the exact command string; `"binary"` matches the first command token. |
-| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approval requests per room. |
+| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approval requests per room (at least 1). The oldest unanswered one is evicted (declined) when full; a redelivered request id replaces its predecessor instead. |
 | `max_approval_audit_per_room` | `int` | `100` | Maximum approval audit entries kept per room. |
 | `max_session_approved_per_room` | `int` | `100` | Maximum session-level approval patterns kept per room. |
 

@@ -18,6 +18,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
@@ -52,7 +53,7 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
-from band_sdk_core import AgentFailure
+from band_sdk_core import AgentFailure, is_authorized_sender
 from typing_extensions import Unpack
 
 from band.converters.claude_sdk import (
@@ -66,6 +67,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     Capability,
     Emit,
@@ -89,7 +91,13 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     is_marked_terminal,
 )
-from band.runtime.formatters import strip_leading_mentions
+from band.runtime.decisions import (
+    DecisionEntry,
+    DecisionRegistry,
+    Timeout,
+    sender_allowlist,
+)
+from band.runtime.formatters import format_tokens, strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -98,7 +106,6 @@ from band.runtime.tools import (
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
-    band_tool_errored,
     is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
@@ -125,7 +132,7 @@ _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 # ("thinking.type.enabled is not supported for this model. Use
 # thinking.type.adaptive"), so the run returns an error result with no output.
 # Pinning a known-good model avoids that path; callers can override via `model=`.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # claude_agent_sdk's stdio transport defaults max_buffer_size to 1 MiB and
 # fatally drops the whole CLI connection (not just the one tool call) if a
@@ -134,7 +141,7 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 # inside that message, so an image well under our own advertised cap can
 # already exceed the library's unrelated default. Size the buffer off the
 # same constant instead of a second, driftable number.
-_CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
+CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
 
@@ -145,26 +152,45 @@ ApprovalDecision = Literal["accept", "decline"]
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
 # (e.g. E2E smokes) can anchor on the exact wording instead of re-typing it.
+
+
+class ClaudeSDKCommand(StrEnum):
+    """The `/<word>` room commands handled locally instead of sent to Claude --
+    the single source for parsing, dispatch, and room-facing prompt text."""
+
+    APPROVE = "approve"
+    DECLINE = "decline"
+    APPROVALS = "approvals"
+    STATUS = "status"
+
+
 APPROVAL_REQUESTED_TEMPLATE = (
     "Approval requested ({summary}). Token: `{token}`.\n"
-    "Reply `/approve {token}` or `/decline {token}`.\n"
-    "Use `/approvals` to list pending approvals."
+    f"Reply `/{ClaudeSDKCommand.APPROVE} {{token}}` or "
+    f"`/{ClaudeSDKCommand.DECLINE} {{token}}`.\n"
+    f"Use `/{ClaudeSDKCommand.APPROVALS}` to list pending approvals."
 )
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
+APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Decision: **{decision}**."
+APPROVAL_UNKNOWN_TOKEN_TEMPLATE = (
+    "Unknown approval token `{token}`. Available: {available}."
+)
+APPROVAL_UNAUTHORIZED_MESSAGE = "You are not authorized to approve or decline tool use."
 
 # Commands recognised as local (not forwarded to Claude)
-_APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
-_LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
+_APPROVAL_CMDS = frozenset(
+    {ClaudeSDKCommand.APPROVE, ClaudeSDKCommand.DECLINE, ClaudeSDKCommand.APPROVALS}
+)
+# Membership by plain string: Python 3.11's Enum rejects `"word" in ClaudeSDKCommand`.
+_LOCAL_CMDS = frozenset(ClaudeSDKCommand)
 
-# Band's MCP tools are intentionally always available; approval_mode only gates
-# Claude Code's native tools.
-_NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}).+"
-
-# A pending approval's future, force-resolved by eviction or room teardown
-# rather than a genuine /decline reply — distinct from the "decline" string
-# _handle_approval_command sets, since only that path posts a room-visible
-# notice for the specific call it declines (see _record_notified_decline).
-_FORCED_DECLINE = "forced_decline"
+# Claude Code's lookup for deferred tool definitions -- including Band's own, which
+# it must load before it can reply. It only reads definitions, so gating it would
+# make a room approve every lookup before the agent could answer.
+TOOL_SEARCH = "ToolSearch"
+# Band's MCP tools and ToolSearch are intentionally always available;
+# approval_mode only gates Claude Code's side-effecting native tools.
+NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(TOOL_SEARCH)}$).+"
 
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
@@ -223,15 +249,27 @@ async def _pre_tool_use_continue_hook(
     }
 
 
+@dataclass(frozen=True)
+class ApprovalReply:
+    """A room member's ``/approve`` or ``/decline`` for one pending approval."""
+
+    decision: ApprovalDecision
+    sender_id: str
+
+
 @dataclass
 class PendingApproval:
-    """A tool-use approval request waiting for a chat-room decision."""
+    """A tool-use approval request waiting for a chat-room decision.
+
+    ``future`` resolves to ``None`` when eviction or room teardown forces a
+    decline without any reply.
+    """
 
     tool_name: str
     tool_input: dict[str, Any]
     summary: str
     created_at: datetime
-    future: asyncio.Future[str]
+    future: asyncio.Future[ApprovalReply | None]
     requester: dict[str, str]
 
 
@@ -249,7 +287,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
+class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionState]):
     """
     Claude Agent SDK adapter using SimpleAdapter pattern.
 
@@ -306,7 +344,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             model: Claude model to use. Pass a full ID (e.g.
                 ``"claude-opus-4-7-20251224"``) or a family alias
                 (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
-                When ``None`` (default), the adapter pins ``_DEFAULT_MODEL``
+                When ``None`` (default), the adapter pins ``DEFAULT_MODEL``
                 rather than letting the npm ``claude`` binary auto-select,
                 which fails under API-key auth (legacy thinking request shape).
             fallback_model: Optional fallback model passed to
@@ -381,8 +419,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.approval_text_notifications = approval_text_notifications
         self.approval_wait_timeout_s = approval_wait_timeout_s
         self.approval_timeout_decision: ApprovalDecision = approval_timeout_decision
+        # Validated here because registries are built lazily, inside the
+        # approval callback, where a bad value would first surface.
+        if max_pending_approvals_per_room < 1:
+            raise ValueError("max_pending_approvals_per_room must be >= 1")
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
-        self.approval_authorized_senders: set[str] | None = approval_authorized_senders
+        self.approval_authorized_senders = sender_allowlist(approval_authorized_senders)
 
         # send_message dedup window.  0 disables the wrapper.
         if send_message_dedup_ttl_seconds < 0:
@@ -394,8 +436,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._mcp_server = None
         self._mcp_backend: BandMCPBackend | None = None
 
-        # Per-room tools storage for MCP server access
+        # Per-room tools: the adapter's own sends use them directly, while the
+        # MCP server's tool calls go through _mcp_room_tools (see _bind_mcp_tools).
         self._room_tools: dict[str, AgentToolsProtocol] = {}
+        self._mcp_room_tools: dict[str, AgentToolsProtocol] = {}
 
         # Per-room session context (text history for Claude SDK)
         self._session_context: dict[str, str] = {}
@@ -418,8 +462,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         # Approval flow state
-        # {room_id: {token: PendingApproval, ...}}
-        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
+        # {room_id: DecisionRegistry of PendingApproval}
+        self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
         self._approval_seq: dict[str, int] = {}  # per-room counters
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
@@ -452,7 +496,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
 
-        # Create MCP server with self (provides tool access via _room_tools)
+        # Create MCP server with self (provides tool access via _mcp_room_tools)
         self._mcp_backend = await self._create_mcp_backend()
         self._mcp_server = self._mcp_backend.server
 
@@ -466,18 +510,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # Build SDK options. When the caller doesn't pin a model, default to a
         # known-good one rather than the npm `claude` binary's auto-selection,
-        # which fails under API-key auth (see _DEFAULT_MODEL). fallback_model
+        # which fails under API-key auth (see DEFAULT_MODEL). fallback_model
         # stays None unless explicitly set.
-        resolved_model = self.model or _DEFAULT_MODEL
+        resolved_model = self.model or DEFAULT_MODEL
         sdk_options = ClaudeAgentOptions(
             model=resolved_model,
             fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
-            allowed_tools=self._mcp_backend.allowed_tools,
+            allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
             permission_mode=self.permission_mode,
             effort=self.effort,
-            max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
             # Left at the SDK default, setting_sources loads the host's user + project
             # settings (~/.claude and ./.claude): filesystem skills and subagents then
@@ -509,7 +553,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             sdk_options.hooks = {
                 "PreToolUse": [
                     HookMatcher(
-                        matcher=_NATIVE_TOOL_MATCHER,
+                        matcher=NATIVE_TOOL_MATCHER,
                         hooks=[_pre_tool_use_continue_hook],
                     ),
                 ],
@@ -542,7 +586,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         backend = await create_band_mcp_backend(
             kind="sdk",
             tool_definitions=tool_definitions,
-            get_tools=self._room_tools.get,
+            get_tools=self._mcp_room_tools.get,
             additional_tools=self._custom_tools,
         )
 
@@ -581,40 +625,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Store tools for MCP server access.  Wrap with the send_message
-        # dedup shim so MCP-driven retries (event-loop saturation
-        # under Claude CLI load causes the same band_send_message tool
-        # call to fire more than once for a single LLM-intended send) do
-        # not turn into duplicate chat messages.  Bypass the wrapper when
-        # the operator has explicitly opted out via ttl=0.
-        #
-        # The wrapper MUST persist for the room so a lingering MCP retry can
-        # still see the cache through self._room_tools.get. MCP tool calls
-        # only resolve by room id, not by the original inbound message id, so
-        # the cache is intentionally keyed by the outgoing payload within the
-        # per-room wrapper. Swap the inner reference instead of rebuilding the
-        # wrapper.
-        #
-        # DedupingAgentTools is structurally a superset of AgentToolsProtocol
-        # (the dedup shim only intercepts send_message and __getattr__-forwards
-        # everything else), but pyrefly cannot reason about __getattr__ for
-        # protocol conformance, so we cast through Any.
-        if self.send_message_dedup_ttl_seconds > 0:
-            existing = self._room_tools.get(room_id)
-            if isinstance(existing, DedupingAgentTools):
-                if existing._inner is not tools:
-                    await existing.update_inner(tools)
-                tools = cast(AgentToolsProtocol, existing)
-            else:
-                wrapper = DedupingAgentTools(
-                    tools,
-                    ttl_seconds=self.send_message_dedup_ttl_seconds,
-                    label=room_id,
-                )
-                tools = cast(AgentToolsProtocol, wrapper)
-                self._room_tools[room_id] = tools
-        else:
-            self._room_tools[room_id] = tools
+        self._room_tools[room_id] = tools
+        await self._bind_mcp_tools(room_id, tools)
 
         # Approval flow: track notify target and intercept local commands
         if self.approval_mode is not None:
@@ -635,7 +647,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                         sender=sender,
                     )
                     return
-                elif cmd == "status":
+                elif cmd == ClaudeSDKCommand.STATUS:
                     await self._handle_status_command(
                         tools=tools,
                         room_id=room_id,
@@ -656,11 +668,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             return
 
-        # Determine session_id for resume: prefer history (persisted) then
-        # in-memory cache.  Only used on bootstrap/reconnect.
-        stored_session_id: str | None = None
-        if is_session_bootstrap:
-            stored_session_id = history.session_id or self._session_ids.get(room_id)
+        # The manager only resumes when it has to create the client: on
+        # bootstrap, or after a retired client (see _retire_client).
+        stored_session_id = (
+            history.session_id if is_session_bootstrap else None
+        ) or self._session_ids.get(room_id)
 
         # Get or create Claude SDK client for this room (optionally resuming)
         try:
@@ -829,6 +841,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
+                await self._retire_client(room_id)
+                raise
+
+            except asyncio.CancelledError:
+                await self._retire_client(room_id)
                 raise
 
             logger.debug("Message %s processed successfully", msg_id)
@@ -877,6 +894,40 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         """
         if not task.cancelled():
             task.exception()
+
+    async def _bind_mcp_tools(self, room_id: str, tools: AgentToolsProtocol) -> None:
+        """Point the room's MCP tool calls at ``tools``, deduping replies.
+
+        Under CLI load one band_send_message can be re-issued (see
+        DedupingAgentTools). Retries resolve the room by id only, so the
+        wrapper lives per room and swaps its inner tools rather than resetting
+        its cache. The adapter's own notices never pass through it.
+        """
+        if self.send_message_dedup_ttl_seconds <= 0:
+            self._mcp_room_tools[room_id] = tools
+            return
+        existing = self._mcp_room_tools.get(room_id)
+        if isinstance(existing, DedupingAgentTools):
+            if existing._inner is not tools:
+                await existing.update_inner(tools)
+            return
+        # pyrefly can't see DedupingAgentTools' __getattr__ forwarding.
+        self._mcp_room_tools[room_id] = cast(
+            AgentToolsProtocol,
+            DedupingAgentTools(
+                tools, ttl_seconds=self.send_message_dedup_ttl_seconds, label=room_id
+            ),
+        )
+
+    async def _retire_client(self, room_id: str) -> None:
+        """Close a live client whose turn stopped before its ResultMessage.
+
+        The CLI keeps that turn's remaining messages queued, and the next
+        ``receive_response`` would read them as its own. The session id stays,
+        so the next client resumes the conversation.
+        """
+        if self._session_manager:
+            await self._session_manager.cleanup_session(room_id)
 
     async def _invalidate_session(self, room_id: str) -> None:
         """Evict the cached session and client so the next message for this
@@ -1167,7 +1218,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         Single source of truth for the three call sites that can determine a
         decline was actually delivered (auto_decline, manual /decline, manual
         timeout) — deliberately not called for a forced resolution (approval
-        eviction, room teardown; see _FORCED_DECLINE), which never posts a
+        eviction, room teardown; a ``None`` reply), which never posts a
         notice for the specific call it force-declines.
         """
         self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
@@ -1244,13 +1295,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self, block: ToolResultBlock, result_tool_name: str | None
     ) -> bool:
         """Whether this finished call counts as the turn's productive work."""
-        # Belt and braces with the sibling adapters: a Band tool wrapper that
-        # caught an exception returns an "Error " string without is_error, so
-        # cross-check the content too (see band_tool_errored).
         return is_terminal_success(
             result_tool_name,
-            succeeded=not block.is_error
-            and not band_tool_errored(result_tool_name, block.content),
+            succeeded=not block.is_error,
             custom_terminal=result_tool_name in self._custom_terminal_names,
         )
 
@@ -1305,6 +1352,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         self._room_tools.pop(room_id, None)
+        self._mcp_room_tools.pop(room_id, None)
         self._session_context.pop(room_id, None)
         self._session_ids.pop(room_id, None)
         self._room_last_sender.pop(room_id, None)
@@ -1327,6 +1375,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             self._mcp_backend = None
             self._mcp_server = None
         self._room_tools.clear()
+        self._mcp_room_tools.clear()
         self._session_context.clear()
         self._session_ids.clear()
         self._room_last_sender.clear()
@@ -1442,7 +1491,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self,
         room_id: str,
         summary: str,
-        decision: str,
+        decision: ApprovalDecision,
         *,
         requester: dict[str, str] | None = None,
     ) -> bool:
@@ -1489,19 +1538,22 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         # Store pending approval (evict oldest if capacity exceeded)
-        room_pending = self._pending_approvals.setdefault(room_id, {})
-        if len(room_pending) >= self.max_pending_approvals_per_room:
-            oldest_token = min(room_pending, key=lambda t: room_pending[t].created_at)
-            oldest = room_pending.pop(oldest_token)
-            if not oldest.future.done():
-                oldest.future.set_result(_FORCED_DECLINE)
+        registry = self._pending_approvals.setdefault(
+            room_id, self._new_approval_registry()
+        )
+        registration = registry.register_keyed(pending, key=token)
+        # Per-room sequence tokens never repeat, so the key is never claimed.
+        assert registration is not None
+        entry = registration.entry
+        for removed in registration.removed:
+            removed.payload.future.set_result(None)
+        if (evicted := registration.evicted) is not None:
             logger.warning(
                 "Room %s: Evicted oldest pending approval %s (capacity %s)",
                 room_id,
-                oldest_token,
+                evicted.token,
                 self.max_pending_approvals_per_room,
             )
-        room_pending[token] = pending
 
         # Notify user — if we can't deliver the prompt, decline immediately
         # so the caller isn't left waiting for a timeout nobody will see.
@@ -1514,70 +1566,95 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     mentions=mention,
                 )
             except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                logger.warning(
-                    "Room %s: Failed to send approval notification — declining", room_id
-                )
-                self._clear_pending_approval(room_id, token)
-                # No notice reached the room — the one delivery attempt is
-                # the failure itself — so this must not suppress the
-                # missing-reply guard the way the other decline paths below
-                # (which do post a notice) correctly do.
-                return PermissionResultDeny(
-                    message="Could not deliver approval prompt, tool use declined"
-                )
+                logger.warning("Room %s: Failed to send approval notification", room_id)
+                # A reply that claimed it meanwhile owns the answer; otherwise
+                # decline without a notice, so the missing-reply guard stays.
+                if registry.withdraw(entry):
+                    self._clear_pending_approval(room_id, entry)
+                    return PermissionResultDeny(
+                        message="Could not deliver approval prompt, tool use declined"
+                    )
 
         # The request has been posted (or there was nowhere to post it) --
         # either way, on_message must return now so Band's room loop can
         # dispatch the reply that will resolve this wait.
         self._release_turn(room_id)
 
-        # Wait for decision or timeout
         try:
-            decision_raw = await asyncio.wait_for(
-                pending.future,
-                timeout=self.approval_wait_timeout_s,
+            decision = await registry.wait(
+                entry, pending.future, timeout_s=self.approval_wait_timeout_s
             )
-            if decision_raw == "accept":
-                return PermissionResultAllow()
-            # Only a genuine "decline" (a human replying to the approval
-            # prompt via _handle_approval_command, which posts its own
-            # resolved-as-decline notice) implies delivery. A forced
-            # resolution — eviction or room teardown, _FORCED_DECLINE — never
-            # posts a notice for this specific call, so must not count.
-            if decision_raw == "decline" and tool_use_id:
-                self._record_notified_decline(room_id, tool_use_id)
-            return PermissionResultDeny(message="User declined tool use")
-
-        except TimeoutError:
-            decision: ApprovalDecision = self.approval_timeout_decision
-            notified = False
-            if tools:
-                notified = await self._send_best_effort(
-                    tools,
-                    f"Approval `{token}` timed out. Decision: **{decision}**.",
-                    mention,
-                    room_id=room_id,
-                    failure_note="Failed to send timeout notification",
-                    log_level=logging.DEBUG,
-                )
-
-            if decision == "accept":
-                return PermissionResultAllow()
-            # Suppressing the missing-reply guard requires a delivered notice:
-            # a timeout nobody heard about must still surface as an error.
-            if notified and tool_use_id:
-                self._record_notified_decline(room_id, tool_use_id)
-            return PermissionResultDeny(message="Approval timed out, tool use declined")
-
         finally:
-            self._clear_pending_approval(room_id, token)
+            self._clear_pending_approval(room_id, entry)
+
+        match decision:
+            case Timeout.TIMED_OUT:
+                return await self._apply_approval_timeout(
+                    tools, room_id, token, mention, tool_use_id
+                )
+            case ApprovalReply():
+                return await self._apply_approval_reply(
+                    tools, room_id, token, decision, tool_use_id
+                )
+        # Forced by eviction or room teardown: no notice names this call.
+        return PermissionResultDeny(message="User declined tool use")
+
+    async def _apply_approval_reply(
+        self,
+        tools: AgentToolsProtocol | None,
+        room_id: str,
+        token: str,
+        reply: ApprovalReply,
+        tool_use_id: str | None,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        notified = False
+        if tools:
+            notified = await self._send_best_effort(
+                tools,
+                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=reply.decision),
+                [reply.sender_id],
+                room_id=room_id,
+                failure_note=f"Failed to send approval resolution notice for token {token}",
+            )
+        if reply.decision == "accept":
+            return PermissionResultAllow()
+        if notified and tool_use_id:
+            self._record_notified_decline(room_id, tool_use_id)
+        return PermissionResultDeny(message="User declined tool use")
+
+    async def _apply_approval_timeout(
+        self,
+        tools: AgentToolsProtocol | None,
+        room_id: str,
+        token: str,
+        mention: list[str] | None,
+        tool_use_id: str | None,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        decision = self.approval_timeout_decision
+        notified = False
+        if tools:
+            notified = await self._send_best_effort(
+                tools,
+                APPROVAL_TIMED_OUT_TEMPLATE.format(token=token, decision=decision),
+                mention,
+                room_id=room_id,
+                failure_note="Failed to send timeout notification",
+                log_level=logging.DEBUG,
+            )
+        if decision == "accept":
+            return PermissionResultAllow()
+        # Suppressing the missing-reply guard requires a delivered notice: a
+        # timeout nobody heard about must still surface as an error.
+        if notified and tool_use_id:
+            self._record_notified_decline(room_id, tool_use_id)
+        return PermissionResultDeny(message="Approval timed out, tool use declined")
 
     # ------------------------------------------------------------------
     # Command extraction & handling
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_command(content: str) -> tuple[str, str] | None:
+    def _extract_command(content: str) -> tuple[ClaudeSDKCommand, str] | None:
         """Check if *content* starts with a ``/command``.
 
         Only the first token is considered to avoid false positives from
@@ -1591,98 +1668,86 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if not stripped.startswith("/"):
             return None
         token, _, rest = stripped.partition(" ")
-        clean = token[1:]
-        if clean.lower() in _LOCAL_CMDS:
-            return (clean.lower(), rest.strip())
+        if (word := token[1:].lower()) in _LOCAL_CMDS:
+            return (ClaudeSDKCommand(word), rest.strip())
         return None
 
     async def _handle_approval_command(
         self,
         tools: AgentToolsProtocol,
         room_id: str,
-        command: str,
+        command: ClaudeSDKCommand,
         args: str,
         sender: dict[str, str],
     ) -> None:
         """Handle ``/approve``, ``/decline``, or ``/approvals``."""
-        # This is a reference to the live mutable dict for the room (or an
-        # empty dict if none exists).  Safe because the event loop is
-        # single-threaded, so no concurrent mutation can occur mid-handler.
-        pending = self._pending_approvals.get(room_id, {})
+        # This is a reference to the live registry for the room (or a
+        # throwaway empty one if none exists).  Safe because the event loop
+        # is single-threaded, so no concurrent mutation can occur mid-handler.
+        pending = self._pending_approvals.get(room_id) or self._new_approval_registry()
         mention: list[str] = [sender["id"]]
 
-        # Authorization: /approve and /decline require sender to be authorized
-        if (
-            command in ("approve", "decline")
-            and self.approval_authorized_senders
-            and sender["id"] not in self.approval_authorized_senders
-        ):
-            await tools.send_message(
-                "You are not authorized to approve or decline tool use.",
-                mentions=mention,
-            )
-            return
-
         # --- /approvals: list pending ---
-        if command == "approvals":
-            if not pending:
+        if command == ClaudeSDKCommand.APPROVALS:
+            if not (open_entries := pending.unclaimed()):
                 await tools.send_message("No pending approvals.", mentions=mention)
                 return
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
-            for token, item in list(pending.items()):
-                age_s = int((now - item.created_at).total_seconds())
-                lines.append(f"- `{token}`: {item.summary} ({age_s}s ago)")
+            for entry in open_entries:
+                age_s = int((now - entry.payload.created_at).total_seconds())
+                lines.append(
+                    f"- `{entry.token}`: {entry.payload.summary} ({age_s}s ago)"
+                )
             await tools.send_message("\n".join(lines), mentions=mention)
             return
 
         # --- /approve [token] | /decline [token] ---
-        token = args.strip() if args else ""
-        selected: PendingApproval | None = None
-
-        if token:
-            selected = pending.get(token)
-            if not selected:
-                available = ", ".join(f"`{t}`" for t in pending) if pending else "none"
-                await tools.send_message(
-                    f"Unknown approval token `{token}`. Available: {available}.",
-                    mentions=mention,
-                )
-                return
-        elif len(pending) == 1:
-            token, selected = next(iter(pending.items()))
-        elif len(pending) == 0:
-            await tools.send_message("No pending approvals.", mentions=mention)
-            return
-        else:
-            tokens_list = ", ".join(f"`{t}`" for t in pending)
+        if not is_authorized_sender(self.approval_authorized_senders, sender["id"]):
             await tools.send_message(
-                f"Multiple pending approvals — please specify a token: {tokens_list}",
+                APPROVAL_UNAUTHORIZED_MESSAGE,
                 mentions=mention,
             )
             return
 
-        decision: ApprovalDecision = "accept" if command == "approve" else "decline"
-        notified = await self._send_best_effort(
-            tools,
-            APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision),
-            mention,
-            room_id=room_id,
-            failure_note=f"Failed to send approval resolution notice for token {token}",
-        )
+        open_tokens = [entry.token for entry in pending.unclaimed()]
+        token = args.strip() if args else ""
+        if not token:
+            match open_tokens:
+                case []:
+                    await tools.send_message("No pending approvals.", mentions=mention)
+                    return
+                case [only]:
+                    token = only
+                case _:
+                    await tools.send_message(
+                        "Multiple pending approvals — please specify a token: "
+                        + format_tokens(open_tokens),
+                        mentions=mention,
+                    )
+                    return
 
-        if not selected.future.done():
-            # A failed notice for a decline must not claim delivery --
-            # _FORCED_DECLINE is the existing "declined with no notice"
-            # sentinel (matches eviction/teardown above), which
-            # _resolve_manual_approval's decision_raw == "decline" check
-            # correctly treats as not implying the missing-reply guard is
-            # covered. An accept has no such guard to protect, so it always
-            # resolves as a genuine accept regardless of notice delivery.
-            resolved = (
-                decision if (notified or decision == "accept") else _FORCED_DECLINE
+        if (selected := pending.get(token)) is None:
+            await tools.send_message(
+                APPROVAL_UNKNOWN_TOKEN_TEMPLATE.format(
+                    token=token, available=format_tokens(open_tokens) or "none"
+                ),
+                mentions=mention,
             )
-            selected.future.set_result(resolved)
+            return
+
+        if pending.try_claim(token) is None:
+            await tools.send_message(
+                f"Approval `{token}` is no longer pending.", mentions=mention
+            )
+            return
+
+        # Resolved with no await after the claim: the waiting asker posts the
+        # "resolved" notice, so a stalled send can never strand a claimed ask.
+        decision: ApprovalDecision = (
+            "accept" if command == ClaudeSDKCommand.APPROVE else "decline"
+        )
+        selected.future.set_result(ApprovalReply(decision, sender["id"]))
 
     async def _handle_status_command(
         self,
@@ -1695,7 +1760,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             self._session_manager.get_session_count() if self._session_manager else 0
         )
         session_id = self._session_ids.get(room_id, "—")
-        pending_count = len(self._pending_approvals.get(room_id, {}))
+        registry = self._pending_approvals.get(room_id)
+        pending_count = registry.unclaimed_count() if registry else 0
 
         lines = [
             "**Claude SDK Status**",
@@ -1749,19 +1815,25 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._approval_seq[room_id] = seq
         return f"a-{seq}"
 
-    def _clear_pending_approval(self, room_id: str, token: str) -> None:
+    def _new_approval_registry(self) -> DecisionRegistry[PendingApproval]:
+        return DecisionRegistry(max_pending=self.max_pending_approvals_per_room)
+
+    def _clear_pending_approval(
+        self, room_id: str, entry: DecisionEntry[PendingApproval]
+    ) -> None:
         """Remove a single pending approval from a room."""
-        room_pending = self._pending_approvals.get(room_id)
-        if not room_pending:
+        registry = self._pending_approvals.get(room_id)
+        if registry is None:
             return
-        room_pending.pop(token, None)
-        if not room_pending:
+        registry.forget(entry)
+        if len(registry) == 0:
             self._pending_approvals.pop(room_id, None)
 
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
         """Decline and remove all pending approvals for a room."""
-        room_pending = self._pending_approvals.pop(room_id, {})
-        for item in room_pending.values():
-            if not item.future.done():
-                item.future.set_result(_FORCED_DECLINE)
+        registry = self._pending_approvals.pop(room_id, None)
+        if registry is None:
+            return
+        for entry in registry.cancel_all():
+            entry.payload.future.set_result(None)
         # Keep the seq counter to avoid token collisions with suspended coroutines
