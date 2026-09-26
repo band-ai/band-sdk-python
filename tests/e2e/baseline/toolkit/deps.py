@@ -158,6 +158,7 @@ class Dep(Enum):
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
+    SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
 
 
 @dataclass(frozen=True)
@@ -387,6 +388,10 @@ _DEPS: dict[Dep, DepSpec] = {
     # The serve -- not the adapter's approval_mode -- decides when a permission is
     # asked, so the manual-relay smoke needs a serve whose rules gate `bash` to
     # `ask`. Unstated, that smoke stalls to its deadline instead of naming why.
+    Dep.SECOND_USER: DepSpec(
+        lambda s: bool(s.credentials.api_key_user_2),
+        "BAND_API_KEY_USER_2 not set",
+    ),
     Dep.OPENCODE_BASH_ASKS: DepSpec(
         lambda s: s.backends.opencode_bash_asks,
         "E2E_OPENCODE_BASH_ASKS=true must declare that OPENCODE_BASE_URL's serve "

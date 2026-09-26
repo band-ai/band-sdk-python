@@ -28,7 +28,12 @@ from band.adapters.claude_sdk import (
 from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE as CLAUDE_TIMED_OUT,
 )
-from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKCommand
+from band.adapters.claude_sdk import (
+    APPROVAL_UNAUTHORIZED_MESSAGE,
+    APPROVAL_UNKNOWN_TOKEN_TEMPLATE,
+    ClaudeSDKAdapter,
+    ClaudeSDKCommand,
+)
 from band.adapters.codex import (
     APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED,
 )
@@ -39,14 +44,17 @@ from band.adapters.codex import (
     APPROVAL_TIMED_OUT_TEMPLATE as CODEX_TIMED_OUT,
 )
 from band.adapters.codex import (
+    NO_APPROVALS_TO_RESOLVE_MESSAGE,
     CodexAdapter,
     CodexAdapterConfig,
     CodexCommand,
     CodexSandboxMode,
 )
 from band.adapters.cursor_acp import (
+    DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
     DECISION_TIMED_OUT_TEMPLATE,
+    DECISION_UNAUTHORIZED_MESSAGE,
     PERMISSION_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorACPAdapter,
@@ -56,8 +64,10 @@ from band.adapters.cursor_acp import (
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
+    APPROVAL_NO_LONGER_PENDING_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
     PermissionReplyWord,
+    format_question_prompt,
 )
 from band.adapters.opencode.approvals import (
     APPROVAL_REQUESTED_TEMPLATE as OPENCODE_REQUESTED,
@@ -87,11 +97,48 @@ class Outcome(StrEnum):
     TIMEOUT = "timeout"  # never answers, so the adapter's wait expires
 
 
+def marker_command(marker: str, target: Path) -> str:
+    """The one shell command whose only effect is writing ``marker`` to ``target``."""
+    return f"printf %s {marker} > {target}"
+
+
 def command_request(marker: str, target: Path) -> str:
     """Ask for exactly one shell command whose only effect is writing ``marker``."""
     return (
-        f"Use your shell tool to run exactly `printf %s {marker} > {target}`. "
+        f"Use your shell tool to run exactly `{marker_command(marker, target)}`. "
         "You must execute it with the tool, not answer from memory."
+    )
+
+
+def appending_command(marker: str, target: Path) -> str:
+    """A shell command that appends ``marker`` to ``target``, so each run shows."""
+    return f"printf %s {marker} >> {target}"
+
+
+def repeat_request(command: str, done: str) -> str:
+    """Ask for ``command`` twice, as two tool calls, then a closing word."""
+    return (
+        f"Use your shell tool to run exactly `{command}`, then run exactly the same "
+        "command a second time as its own separate tool call. You must execute both "
+        f"with the tool. When both have run, reply with exactly `{done}`."
+    )
+
+
+def commands_request(*commands: str) -> str:
+    """Ask for each command as its own tool call, none retried after a decline."""
+    listed = " and ".join(f"`{command}`" for command in commands)
+    return (
+        f"Use your shell tool to run exactly these commands: {listed}. Run each one "
+        "as its own separate tool call, never combined into one command. If a "
+        "command is declined, do not retry it; just say so and continue."
+    )
+
+
+def question_request() -> str:
+    """Ask the agent to put a question to the room and echo the answer."""
+    return (
+        "Use your question tool to ask me which codeword to use. After I answer, "
+        "reply with exactly the codeword I gave you and nothing else."
     )
 
 
@@ -158,17 +205,54 @@ class Notice:
 
 
 @dataclass(frozen=True)
+class AgentSetup:
+    """How a manual-approval agent is rooted and who may decide its asks."""
+
+    workdir: Path
+    wait_timeout_s: float
+    # Sender ids allowed to decide; None admits anyone.
+    approvers: frozenset[str] | None = None
+
+
+@dataclass(frozen=True)
+class SessionApproval:
+    """Approving an ask so that a repeat of the same command no longer asks."""
+
+    reply: Callable[[re.Match[str]], str]
+    notice: Callable[[re.Match[str]], Notice]
+
+
+@dataclass(frozen=True)
+class QuestionRelay:
+    """How the agent puts a question to the room, and confirms the answer."""
+
+    request: re.Pattern[str]
+    answered: Callable[[re.Match[str]], Notice]
+
+    def find(self, messages: list[MessageCreatedPayload]) -> re.Match[str] | None:
+        matches = (self.request.search(m.content or "") for m in messages)
+        return next((m for m in matches if m), None)
+
+
+@dataclass(frozen=True)
 class ApprovalDialect:
     """One coding agent's manual-approval build and room vocabulary.
 
-    ``build(settings, workdir, wait_timeout_s)`` roots the agent in ``workdir``;
-    ``reply``/``notice`` take the outcome and the matched approval request.
+    ``build(settings, setup)`` roots the agent in ``setup.workdir``;
+    ``reply``/``notice`` take the outcome and the matched approval request, and
+    ``late_notice`` is what a reply to an ask that already expired gets. The
+    optional parts name what only some agents can do: ``refusal`` (restricting
+    who decides), ``session_approval`` and ``question``.
     """
 
-    build: Callable[[BaselineSettings, Path, float], SimpleAdapter[Any]]
+    build: Callable[[BaselineSettings, AgentSetup], SimpleAdapter[Any]]
     request: re.Pattern[str]
     reply: Callable[[Outcome, re.Match[str]], str]
     notice: Callable[[Outcome, re.Match[str]], Notice]
+    late_notice: Callable[[re.Match[str]], Notice]
+    refusal: Notice | None = None
+    session_approval: SessionApproval | None = None
+    question: QuestionRelay | None = None
     # Beyond the cell's own requirements: what makes the backend actually ask.
     extra_deps: tuple[Dep, ...] = ()
     # Where the workdir must live (Codex may only touch a disposable root).
@@ -180,31 +264,40 @@ class ApprovalDialect:
         self, messages: list[MessageCreatedPayload]
     ) -> re.Match[str] | None:
         """The first approval request among ``messages``, if the agent posted one."""
-        matches = (self.request.search(m.content or "") for m in messages)
-        return next((m for m in matches if m), None)
+        return next(iter(self.find_requests(messages)), None)
+
+    def find_requests(
+        self, messages: list[MessageCreatedPayload]
+    ) -> list[re.Match[str]]:
+        """Every distinct approval request among ``messages``, in order."""
+        found: dict[str, re.Match[str]] = {}
+        for message in messages:
+            for match in self.request.finditer(message.content or ""):
+                found.setdefault(match["token"], match)
+        return list(found.values())
 
     def settled(
-        self, notice: Notice, since_request: list[MessageCreatedPayload]
+        self, since_request: list[MessageCreatedPayload], *notices: Notice
     ) -> bool:
-        """Whether the turn has played out past the decision: the notice is shown and
-        the agent has closed the turn with a reply that is neither."""
+        """Whether the turn has played out past its decisions: every notice is shown
+        and the agent has closed the turn with a reply that is none of them."""
         contents = [m.content or "" for m in since_request]
         closed = any(
-            self.request.search(content) is None and notice.text not in content
+            self.request.search(content) is None
+            and not any(notice.text in content for notice in notices)
             for content in contents
         )
-        return closed and notice.streamed_in(contents)
+        return closed and all(notice.streamed_in(contents) for notice in notices)
 
 
-def _claude_sdk(
-    settings: BaselineSettings, workdir: Path, wait_timeout_s: float
-) -> SimpleAdapter[Any]:
+def _claude_sdk(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     return ClaudeSDKAdapter(
         model=settings.llm_models.anthropic_model,
         custom_section=SHELL_PROMPT,
-        cwd=str(workdir),
+        cwd=str(setup.workdir),
         approval_mode="manual",
-        approval_wait_timeout_s=wait_timeout_s,
+        approval_wait_timeout_s=setup.wait_timeout_s,
+        approval_authorized_senders=setup.approvers,
     )
 
 
@@ -228,17 +321,15 @@ def _claude_sdk_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
             return Notice(CLAUDE_TIMED_OUT.format(token=token, decision="decline"))
 
 
-def _codex(
-    settings: BaselineSettings, workdir: Path, wait_timeout_s: float
-) -> SimpleAdapter[Any]:
+def _codex(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     # A read-only sandbox under "on-request" makes Codex escalate any write to the
     # room for approval; "never" (the matrix default) would never ask.
     config = codex_config_kwargs(settings, prompt=SHELL_PROMPT) | {
-        "workspace_for_room": lambda _room_id: str(workdir),
+        "workspace_for_room": lambda _room_id: str(setup.workdir),
         "approval_mode": "manual",
         "approval_policy": "on-request",
         "sandbox": CodexSandboxMode.READ_ONLY,
-        "approval_wait_timeout_s": wait_timeout_s,
+        "approval_wait_timeout_s": setup.wait_timeout_s,
     }
     return CodexAdapter(config=CodexAdapterConfig(**config))
 
@@ -261,37 +352,40 @@ def _codex_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
             return Notice(CODEX_TIMED_OUT.format(token=token, decision="decline"))
 
 
-def _cursor(
-    settings: BaselineSettings, workdir: Path, wait_timeout_s: float
-) -> SimpleAdapter[Any]:
+def _cursor(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     config_kwargs: dict[str, Any] = {
         "api_key": settings.backends.cursor_api_key,
         "custom_section": SHELL_PROMPT,
-        "cwd": str(workdir),
+        "cwd": str(setup.workdir),
         "approval_mode": "manual",
         # Only the permission is under test; other decisions resolve themselves.
         "question_mode": "auto_first",
         "plan_mode": "auto_accept",
-        "decision_timeout_s": wait_timeout_s,
+        "decision_timeout_s": setup.wait_timeout_s,
+        "decision_authorized_senders": setup.approvers,
     }
     if settings.backends.cursor_command.strip():
         config_kwargs["command"] = tuple(settings.backends.cursor_command.split())
     return CursorACPAdapter(config=CursorACPAdapterConfig(**config_kwargs))
 
 
-def _allow_once(options: str) -> str:
-    """The least-privilege allow option among a permission request's option ids."""
+def _allow_option(options: str, *, lasting: bool) -> str:
+    """The allow option among a permission request's option ids: the one-shot
+    one, or with ``lasting`` the one that also covers repeats."""
     allowed = [option for option in options.split(", ") if option.startswith("allow")]
     assert allowed, f"Cursor offered no allow option: {options}"
-    return min(allowed, key=lambda option: "once" not in option)
+    return min(allowed, key=lambda option: ("once" in option) == lasting)
+
+
+def _cursor_select(request: re.Match[str], *, lasting: bool) -> str:
+    choice = _allow_option(request["options"], lasting=lasting)
+    return f"{ROOM_COMMAND} {CursorCommandWord.SELECT} {request['token']} {choice}"
 
 
 def _cursor_reply(outcome: Outcome, request: re.Match[str]) -> str:
-    token = request["token"]
     if outcome is Outcome.APPROVE:
-        choice = _allow_once(request["options"])
-        return f"{ROOM_COMMAND} {CursorCommandWord.SELECT} {token} {choice}"
-    return f"{ROOM_COMMAND} {CursorCommandWord.DENY} {token}"
+        return _cursor_select(request, lasting=False)
+    return f"{ROOM_COMMAND} {CursorCommandWord.DENY} {request['token']}"
 
 
 def _cursor_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
@@ -303,18 +397,18 @@ def _cursor_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
     return Notice(template.format(kind="permission", token=request["token"]))
 
 
-def _opencode(
-    settings: BaselineSettings, workdir: Path, wait_timeout_s: float
-) -> SimpleAdapter[Any]:
+def _opencode(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     return OpencodeAdapter(
         config=OpencodeAdapterConfig(
             base_url=settings.backends.opencode_base_url,
             provider_id=settings.backends.opencode_provider_id,
             model_id=settings.backends.opencode_model_id,
             custom_section=SHELL_PROMPT,
-            directory=str(workdir),
+            directory=str(setup.workdir),
             approval_mode="manual",
-            approval_wait_timeout_s=wait_timeout_s,
+            approval_wait_timeout_s=setup.wait_timeout_s,
+            question_mode="manual",
+            question_wait_timeout_s=setup.wait_timeout_s,
         )
     )
 
@@ -348,18 +442,56 @@ def _opencode_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
             )
 
 
+def _cursor_resolved(request: re.Match[str]) -> Notice:
+    return Notice(
+        DECISION_RESOLVED_TEMPLATE.format(kind="permission", token=request["token"])
+    )
+
+
+def _codex_session_notice(request: re.Match[str]) -> Notice:
+    return Notice(
+        CODEX_RESOLVED.format(token=request["token"], decision="acceptForSession")
+    )
+
+
+def _opencode_handled(reply: str) -> Callable[[re.Match[str]], Notice]:
+    return lambda request: Notice(
+        APPROVAL_HANDLED_TEMPLATE.format(request_id=request["token"], reply=reply)
+    )
+
+
+OPENCODE_QUESTION = QuestionRelay(
+    request=template_pattern(
+        format_question_prompt([], "{request_id}").splitlines()[0], token="request_id"
+    ),
+    answered=lambda request: Notice(
+        f"OpenCode question `{request['token']}` answered."
+    ),
+)
+
 DIALECTS: dict[Adapter, ApprovalDialect] = {
     Adapter.CLAUDE_SDK: ApprovalDialect(
         build=_claude_sdk,
         request=template_pattern(CLAUDE_REQUESTED),
         reply=_claude_sdk_reply,
         notice=_claude_sdk_notice,
+        late_notice=lambda request: Notice(
+            APPROVAL_UNKNOWN_TOKEN_TEMPLATE.format(
+                token=request["token"], available="none"
+            )
+        ),
+        refusal=Notice(APPROVAL_UNAUTHORIZED_MESSAGE),
     ),
     Adapter.CODEX: ApprovalDialect(
         build=_codex,
         request=template_pattern(CODEX_REQUESTED),
         reply=_codex_reply,
         notice=_codex_notice,
+        late_notice=lambda _request: Notice(NO_APPROVALS_TO_RESOLVE_MESSAGE),
+        session_approval=SessionApproval(
+            reply=lambda request: f"/{CodexCommand.APPROVE_SESSION} {request['token']}",
+            notice=_codex_session_notice,
+        ),
         workdir_root=lambda settings: settings.backends.codex_cwd,
     ),
     Adapter.CURSOR_ACP: ApprovalDialect(
@@ -367,12 +499,28 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         request=template_pattern(PERMISSION_REQUESTED_TEMPLATE),
         reply=_cursor_reply,
         notice=_cursor_notice,
+        late_notice=lambda request: Notice(
+            DECISION_NOT_PENDING_TEMPLATE.format(token=request["token"])
+        ),
+        refusal=Notice(DECISION_UNAUTHORIZED_MESSAGE),
+        session_approval=SessionApproval(
+            reply=lambda request: _cursor_select(request, lasting=True),
+            notice=_cursor_resolved,
+        ),
     ),
     Adapter.OPENCODE: ApprovalDialect(
         build=_opencode,
         request=template_pattern(OPENCODE_REQUESTED, token="request_id"),
         reply=_opencode_reply,
         notice=_opencode_notice,
+        late_notice=lambda request: Notice(
+            APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id=request["token"])
+        ),
+        session_approval=SessionApproval(
+            reply=lambda request: f"{PermissionReplyWord.ALWAYS} {request['token']}",
+            notice=_opencode_handled("always"),
+        ),
+        question=OPENCODE_QUESTION,
         # The serve's permission rules, not approval_mode, decide whether bash asks.
         extra_deps=(Dep.OPENCODE_BASH_ASKS,),
     ),

@@ -256,8 +256,12 @@ fixture-closure / platform-touching cases under `guards/`.
 
 ## Fixtures (from `conftest.py`)
 
-`baseline_settings`, `user_ops`, `resource_manager`, `reply_capture`, `judge`,
-`agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
+`baseline_settings`, `user_ops`, `second_user_ops`, `resource_manager`,
+`reply_capture`, `judge`, `agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
+
+- `second_user_ops` drives a second human (`BAND_API_KEY_USER_2`), for scenarios
+  where who sends a message matters (e.g. an approver allowlist). It fails, never
+  skips, without the key (`Dep.SECOND_USER`).
 
 - `reply_capture` and `judge` pre-bind their plumbing (the WS observer; the judge
   model + key), so tests pass only the test-specific arguments.
