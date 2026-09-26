@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from band_rest.core.api_error import ApiError
 
@@ -15,9 +16,10 @@ from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import Execution, ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.single_instance import SingleInstanceGuard
+from band.runtime.status import AgentStatus, RoomStatus
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -81,6 +83,8 @@ class PlatformRuntime:
         self._pending_hub_room_id: str | None = (
             None  # Hub room waiting for ExecutionContext
         )
+        # When the current start() completed; None while not running.
+        self._started_at: datetime | None = None
 
     @property
     def agent_id(self) -> str:
@@ -172,6 +176,7 @@ class PlatformRuntime:
         self,
         on_execute: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
         on_cleanup: Callable[[str], Awaitable[None]] | None = None,
+        on_idle_release: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -206,6 +211,7 @@ class PlatformRuntime:
                 on_session_cleanup=on_cleanup or self._noop_cleanup,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
+                on_idle_release=on_idle_release,
             )
 
             # Route preemptive control signals (interrupt/stop/play) to the
@@ -221,7 +227,29 @@ class PlatformRuntime:
             self.release_single_instance()
             raise
 
+        self._started_at = datetime.now(UTC)
         logger.info("Platform runtime started for agent: %s", self._agent_name)
+
+    def status(self) -> AgentStatus:
+        """An immutable snapshot of connection and room state.
+
+        Synchronous and lock-free: it only copies in-memory fields, so it is
+        safe to call from a heartbeat. Rooms are listed only while running.
+        """
+        executions = (
+            sorted(self._runtime.executions.items())
+            if self._runtime is not None and self._started_at is not None
+            else []
+        )
+        return AgentStatus(
+            connected=self._link is not None and self._link.is_connected,
+            last_disconnect_reason=self.last_disconnect_reason,
+            started_at=self._started_at,
+            rooms=tuple(
+                RoomStatus(room_id=room_id, state=_execution_state(execution))
+                for room_id, execution in executions
+            ),
+        )
 
     def claim_single_instance(self) -> None:
         """Take this agent id's host-wide run lock (idempotent).
@@ -272,6 +300,7 @@ class PlatformRuntime:
             if self._link:
                 await self._link.disconnect()
         finally:
+            self._started_at = None
             self.release_single_instance()
         logger.info("Platform runtime stopped")
         return graceful
@@ -469,3 +498,9 @@ class PlatformRuntime:
         # Inject the system prompt
         execution.inject_system_message(prompt)
         logger.info("System prompt injected into hub room %s", hub_room_id)
+
+
+def _execution_state(execution: Execution) -> ExecutionState | None:
+    """The canonical state of an execution; None for a custom one without it."""
+    state = getattr(execution, "state", None)
+    return state if isinstance(state, ExecutionState) else None

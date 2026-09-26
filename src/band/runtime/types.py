@@ -144,6 +144,14 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
+    # Seconds a room may stay idle after its last turn before the adapter is
+    # asked to release that room's harness resources (process, session) via
+    # ``release_room_resources``. The room stays joined; its next message
+    # recreates the resources and resumes the same conversation where the
+    # adapter supports it (see docs/adapters/managed-host-adapters.md). Only
+    # rooms that ran a turn are considered. None = never release (default).
+    release_idle_room_after_s: float | None = None
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
@@ -176,6 +184,9 @@ class SessionConfig:
             )
 
         _require_positive_when_set("max_cycle_seconds", self.max_cycle_seconds)
+        _require_positive_when_set(
+            "release_idle_room_after_s", self.release_idle_room_after_s
+        )
 
 
 @dataclass

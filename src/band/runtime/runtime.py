@@ -102,6 +102,7 @@ class AgentRuntime:
         on_session_cleanup: Callable[[str], Awaitable[None]] | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
+        on_idle_release: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -115,6 +116,8 @@ class AgentRuntime:
             session_config: Configuration for ExecutionContext
             on_session_cleanup: Optional callback for session cleanup (receives room_id)
             on_participant_added: Optional callback for participant_added events
+            on_idle_release: Optional callback (receives room_id) run when a
+                room has been idle for ``SessionConfig.release_idle_room_after_s``
             on_participant_removed: Optional callback for participant_removed events
         """
         self.link = link
@@ -124,6 +127,7 @@ class AgentRuntime:
         self._session_config = session_config or SessionConfig()
         self._on_session_cleanup = on_session_cleanup
         self._on_participant_added = on_participant_added
+        self._on_idle_release = on_idle_release
         self._on_participant_removed = on_participant_removed
 
         # Hub room (set by PlatformRuntime when ContactEventStrategy.HUB_ROOM
@@ -390,6 +394,7 @@ class AgentRuntime:
                 on_participant_removed=self._on_participant_removed,
                 hub_room_id=self._hub_room_id,
                 claim_registry=self._claim_registry,
+                on_idle_release=self._on_idle_release,
             )
 
         self.executions[room_id] = execution

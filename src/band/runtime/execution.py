@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from asyncio import timeout as asyncio_timeout
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
@@ -235,6 +236,7 @@ class ExecutionContext:
         *,
         hub_room_id: str | None = None,
         claim_registry: ClaimRegistry | None = None,
+        on_idle_release: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -254,6 +256,10 @@ class ExecutionContext:
                 passes one registry to its default contexts so a room/message
                 pair executes at most once per runtime. Defaults to a private
                 instance for standalone contexts.
+            on_idle_release: Called with the room id once the room has been
+                idle for ``config.release_idle_room_after_s`` after a turn.
+                Runs on this room's own processing loop, so no turn for the
+                room can start or be running while it runs.
         """
         self.room_id = room_id
         self.link = link
@@ -346,6 +352,12 @@ class ExecutionContext:
         # work; a no-op (None) here.
         self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
 
+        # Idle resource release. ``_idle_since`` is the loop time the room
+        # finished its last turn; None before the first turn and after a
+        # release, so an untouched or already-released room is left alone.
+        self._on_idle_release = on_idle_release
+        self._idle_since: float | None = None
+
     @property
     def thread_id(self) -> str:
         """LangGraph thread_id = room_id."""
@@ -363,6 +375,10 @@ class ExecutionContext:
         This ensures the idle event is properly synchronized with state changes
         for graceful shutdown coordination.
         """
+        if self.state is ExecutionState.PROCESSING and new_state is ExecutionState.IDLE:
+            self._idle_since = time.monotonic()
+        elif new_state is ExecutionState.PROCESSING:
+            self._idle_since = None
         self.state = new_state
         if new_state is ExecutionState.PROCESSING:
             self._idle_event.clear()
@@ -1067,6 +1083,7 @@ class ExecutionContext:
                     self.room_id,
                     self.queue.qsize(),
                 )
+                wait_s, release_on_timeout = self._next_idle_wait()
                 try:
                     # asyncio.timeout() (not wait_for): wait_for wraps the
                     # awaitable in a child task, and on Python 3.11 cancelling
@@ -1075,9 +1092,12 @@ class ExecutionContext:
                     # race on the Windows Proactor loop). asyncio.timeout() arms a
                     # timer on the current task instead, so an external cancel
                     # propagates directly into `queue.get()`.
-                    async with asyncio.timeout(self.config.idle_resync_seconds):
+                    async with asyncio.timeout(wait_s):
                         event = await self.queue.get()
                 except TimeoutError:
+                    if release_on_timeout and self._idle_release_due():
+                        await self._release_idle_resources()
+                        continue
                     if self._stopped:
                         # Efficiency: a stopped room would only get /next->204.
                         logger.debug(
@@ -1118,6 +1138,47 @@ class ExecutionContext:
         except Exception:
             logger.exception("ExecutionContext %s error", self.room_id)
         logger.debug("ExecutionContext %s loop exited", self.room_id)
+
+    def _next_idle_wait(self) -> tuple[float, bool]:
+        """How long to wait for the next event, and whether an idle release
+        (rather than the resync safety net) is what that wait ends in."""
+        resync_s = self.config.idle_resync_seconds
+        release_s = self._seconds_until_idle_release()
+        if release_s is not None and release_s < resync_s:
+            return release_s, True
+        return resync_s, False
+
+    def _seconds_until_idle_release(self) -> float | None:
+        after_s = self.config.release_idle_room_after_s
+        if after_s is None or self._on_idle_release is None or self._idle_since is None:
+            return None
+        elapsed = time.monotonic() - self._idle_since
+        return max(after_s - elapsed, 0.0)
+
+    def _idle_release_due(self) -> bool:
+        """Re-checked when the wait ends: still idle, nothing queued, deadline passed."""
+        remaining = self._seconds_until_idle_release()
+        return (
+            remaining == 0.0
+            and self.state is ExecutionState.IDLE
+            and self.queue.empty()
+        )
+
+    async def _release_idle_resources(self) -> None:
+        # Cleared first: a failing release is not retried until another turn.
+        self._idle_since = None
+        callback = self._on_idle_release
+        if callback is None:
+            return
+        logger.info("ExecutionContext %s: releasing idle room resources", self.room_id)
+        try:
+            await callback(self.room_id)
+        except Exception:
+            logger.warning(
+                "ExecutionContext %s: idle resource release failed",
+                self.room_id,
+                exc_info=True,
+            )
 
     async def _retry_pending_processed_acks(self) -> bool:
         """Retry durable processed acks for locally completed messages."""
