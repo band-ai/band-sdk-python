@@ -237,7 +237,7 @@ async def test_two_instances_stay_isolated_in_shared_org() -> None:
 
 @pytest.mark.asyncio
 async def test_concurrent_adapter_starts_reuse_one_org_user_scope() -> None:
-    """Concurrent process starts for one Band agent reuse its Letta identity."""
+    """Concurrent starts and a successor reuse one Letta identity and state."""
     loopback = LETTA_MCP_ADVERTISED_HOST in ("127.0.0.1", "localhost")
     agent_name = f"ConcurrentStartBot-{uuid4().hex[:8]}"
 
@@ -256,6 +256,8 @@ async def test_concurrent_adapter_starts_reuse_one_org_user_scope() -> None:
         )
 
     adapters = (make_adapter(), make_adapter())
+    started_adapters = list(adapters)
+    agent_id: str | None = None
     try:
         await asyncio.gather(
             *(
@@ -266,8 +268,23 @@ async def test_concurrent_adapter_starts_reuse_one_org_user_scope() -> None:
 
         user_ids = {adapter._client.default_headers["user_id"] for adapter in adapters}
         assert len(user_ids) == 1
+
+        agent_id = await adapters[0]._create_agent()
+        await asyncio.gather(*(adapter.cleanup_all() for adapter in started_adapters))
+        started_adapters.clear()
+
+        successor = make_adapter()
+        await successor.on_started(agent_name, "Concurrent startup test bot")
+        started_adapters.append(successor)
+        user_ids.add(successor._client.default_headers["user_id"])
+        assert len(user_ids) == 1
+
+        resumed = await successor._client.agents.retrieve(agent_id)
+        assert resumed.id == agent_id
     finally:
-        await asyncio.gather(*(adapter.cleanup_all() for adapter in adapters))
+        if agent_id is not None:
+            await adapters[0]._client.agents.delete(agent_id)
+        await asyncio.gather(*(adapter.cleanup_all() for adapter in started_adapters))
 
 
 @pytest.mark.asyncio

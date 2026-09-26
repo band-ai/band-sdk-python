@@ -9,6 +9,7 @@ globally, so it observes ``LettaOrgScopeClient``'s real
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 from pytest_httpx import HTTPXMock
@@ -37,6 +38,18 @@ class TestFindOrCreateOrganization:
             url=f"{_BASE_URL}/v1/admin/orgs/",
             json={"id": "org-new", "name": "band-x"},
         )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json=[{"id": "org-new", "name": "band-x"}],
+            is_optional=True,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-new",
+            json=[],
+            is_optional=True,
+        )
 
         org_id = await _client().find_or_create_organization("band-x")
 
@@ -49,6 +62,12 @@ class TestFindOrCreateOrganization:
             method="GET",
             url=f"{_BASE_URL}/v1/admin/orgs/",
             json=[{"id": "org-1", "name": "band-x"}],
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-1",
+            json=[],
+            is_optional=True,
         )
 
         org_id = await _client().find_or_create_organization("band-x")
@@ -67,12 +86,130 @@ class TestFindOrCreateOrganization:
             url=f"{_BASE_URL}/v1/admin/orgs/?after=org-1",
             json=[{"id": "org-2", "name": "band-x"}],
         )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-2",
+            json=[],
+            is_optional=True,
+        )
 
         org_id = await _client().find_or_create_organization("band-x")
 
         assert org_id == "org-2"
-        assert len(httpx_mock.get_requests(method="GET")) == 2
         assert len(httpx_mock.get_requests(method="POST")) == 0
+
+    @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
+    async def test_duplicate_matches_across_pages_use_oldest_and_warn(
+        self, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json=[
+                {
+                    "id": "org-old",
+                    "name": "band-x",
+                    "created_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "id": "page-1",
+                    "name": "other",
+                    "created_at": "2026-01-02T00:00:00Z",
+                },
+            ],
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=page-1",
+            json=[
+                {
+                    "id": "org-new",
+                    "name": "band-x",
+                    "created_at": "2026-01-03T00:00:00Z",
+                }
+            ],
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-new",
+            json=[],
+        )
+
+        with caplog.at_level(logging.WARNING, logger=orgscope.__name__):
+            org_id = await _client().find_or_create_organization("band-x")
+
+        assert org_id == "org-old"
+        assert len(httpx_mock.get_requests(method="GET")) == 3
+        assert any(
+            record.levelno == logging.WARNING and "org-old" in record.message
+            for record in caplog.records
+        )
+
+    @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
+    async def test_created_organization_is_reconciled_with_existing_match(
+        self, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        httpx_mock.add_response(
+            method="GET", url=f"{_BASE_URL}/v1/admin/orgs/", json=[]
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json={
+                "id": "org-new",
+                "name": "band-x",
+                "created_at": "2026-01-03T00:00:00Z",
+            },
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json=[
+                {
+                    "id": "org-old",
+                    "name": "band-x",
+                    "created_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "id": "org-new",
+                    "name": "band-x",
+                    "created_at": "2026-01-03T00:00:00Z",
+                },
+            ],
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-new",
+            json=[],
+        )
+
+        with caplog.at_level(logging.WARNING, logger=orgscope.__name__):
+            org_id = await _client().find_or_create_organization("band-x")
+
+        assert org_id == "org-old"
+        assert any(
+            record.levelno == logging.WARNING and "org-old" in record.message
+            for record in caplog.records
+        )
+
+    @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
+    async def test_created_organization_must_be_read_back(
+        self, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            method="GET", url=f"{_BASE_URL}/v1/admin/orgs/", json=[]
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json={"id": "org-new", "name": "band-x"},
+        )
+        httpx_mock.add_response(
+            method="GET", url=f"{_BASE_URL}/v1/admin/orgs/", json=[]
+        )
+
+        with pytest.raises(RuntimeError, match="created.*organization"):
+            await _client().find_or_create_organization("band-x")
 
 
 class TestFindOrCreateUser:
@@ -84,6 +221,18 @@ class TestFindOrCreateUser:
             method="POST",
             url=f"{_BASE_URL}/v1/admin/users/",
             json={"id": "user-new", "name": "band-x", "organization_id": "org-1"},
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/",
+            json=[{"id": "user-new", "name": "band-x", "organization_id": "org-1"}],
+            is_optional=True,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/?after=user-new",
+            json=[],
+            is_optional=True,
         )
 
         user_id = await _client().find_or_create_user("band-x", organization_id="org-1")
@@ -103,6 +252,12 @@ class TestFindOrCreateUser:
             url=f"{_BASE_URL}/v1/admin/users/",
             json=[{"id": "user-1", "name": "band-x", "organization_id": "org-1"}],
         )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/?after=user-1",
+            json=[],
+            is_optional=True,
+        )
 
         user_id = await _client().find_or_create_user("band-x", organization_id="org-1")
 
@@ -119,6 +274,12 @@ class TestFindOrCreateUser:
             method="GET",
             url=f"{_BASE_URL}/v1/admin/users/?after=user-1",
             json=[{"id": "user-2", "name": "band-x", "organization_id": "org-1"}],
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/?after=user-2",
+            json=[],
+            is_optional=True,
         )
 
         user_id = await _client().find_or_create_user("band-x", organization_id="org-1")
@@ -148,6 +309,18 @@ class TestFindOrCreateUser:
             method="POST",
             url=f"{_BASE_URL}/v1/admin/users/",
             json={"id": "user-Y", "name": "band-Bob", "organization_id": "org-Y"},
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/",
+            json=[{"id": "user-Y", "name": "band-Bob", "organization_id": "org-Y"}],
+            is_optional=True,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/?after=user-Y",
+            json=[],
+            is_optional=True,
         )
 
         user_id = await _client().find_or_create_user(
@@ -187,11 +360,23 @@ class TestFindOrCreateUser:
             url=f"{_BASE_URL}/v1/admin/users/",
             json={"id": "user-new", "name": "band-x", "organization_id": "org-1"},
         )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/",
+            json=[{"id": "user-new", "name": "band-x", "organization_id": "org-1"}],
+            is_optional=True,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/users/?after=user-new",
+            json=[],
+            is_optional=True,
+        )
 
         user_id = await _client().find_or_create_user("band-x", organization_id="org-1")
 
         assert user_id == "user-new"
-        assert len(httpx_mock.get_requests(method="GET")) == 2
+        assert len(httpx_mock.get_requests(method="POST")) == 1
 
     async def test_pagination_gives_up_after_max_pages(
         self, httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
@@ -222,6 +407,18 @@ class TestAuthPassthrough:
             url=f"{_BASE_URL}/v1/admin/orgs/",
             json={"id": "org-1", "name": "band-x"},
         )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json=[{"id": "org-1", "name": "band-x"}],
+            is_optional=True,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-1",
+            json=[],
+            is_optional=True,
+        )
 
         await _client(bearer_token="secret").find_or_create_organization("band-x")
 
@@ -238,6 +435,18 @@ class TestAuthPassthrough:
             method="POST",
             url=f"{_BASE_URL}/v1/admin/orgs/",
             json={"id": "org-1", "name": "band-x"},
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/",
+            json=[{"id": "org-1", "name": "band-x"}],
+            is_optional=True,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{_BASE_URL}/v1/admin/orgs/?after=org-1",
+            json=[],
+            is_optional=True,
         )
 
         await _client(bearer_token=None).find_or_create_organization("band-x")
@@ -263,8 +472,7 @@ class TestResolveOrgScopedHeaders:
         )
 
         assert headers == {"user_id": "user-1"}
-        assert len(httpx_mock.get_requests(url=f"{_BASE_URL}/v1/admin/orgs/")) == 2
-        assert len(httpx_mock.get_requests(url=f"{_BASE_URL}/v1/admin/users/")) == 2
+        assert len(httpx_mock.get_requests(method="GET")) == 6
 
     @pytest.mark.parametrize("agent_name", ["", "   ", "\t\n"])
     async def test_blank_agent_name_raises_before_any_http_call(

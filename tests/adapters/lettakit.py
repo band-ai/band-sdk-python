@@ -141,10 +141,9 @@ def mock_org_user_provisioned(
 ) -> None:
     """Wire httpx_mock for a fresh org+user provisioned under ``name``.
 
-    Matches the one-shot "no existing org/user" happy path that
-    ``resolve_org_scoped_headers`` exercises the first time an agent name is
-    seen. Tests covering pagination or name-conflict edge cases stay inline
-    next to what they cover — only the plain happy path is shared here.
+    Matches a no-existing-org/user startup, including the post-create read-back
+    that makes the created identities safe to use. Tests covering pagination or
+    duplicate edge cases stay inline next to what they cover.
     """
     httpx_mock.add_response(method="GET", url=f"{base_url}/v1/admin/orgs/", json=[])
     httpx_mock.add_response(
@@ -152,11 +151,35 @@ def mock_org_user_provisioned(
         url=f"{base_url}/v1/admin/orgs/",
         json={"id": org_id, "name": name},
     )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{base_url}/v1/admin/orgs/",
+        json=[{"id": org_id, "name": name}],
+        is_optional=True,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{base_url}/v1/admin/orgs/?after={org_id}",
+        json=[],
+        is_optional=True,
+    )
     httpx_mock.add_response(method="GET", url=f"{base_url}/v1/admin/users/", json=[])
     httpx_mock.add_response(
         method="POST",
         url=f"{base_url}/v1/admin/users/",
         json={"id": user_id, "name": name, "organization_id": org_id},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{base_url}/v1/admin/users/",
+        json=[{"id": user_id, "name": name, "organization_id": org_id}],
+        is_optional=True,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{base_url}/v1/admin/users/?after={user_id}",
+        json=[],
+        is_optional=True,
     )
 
 
