@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
@@ -30,7 +30,7 @@ from band.integrations.opencode import (
     OpencodeQuestionRequest,
 )
 from band.runtime.decisions import DecisionEntry, DecisionRegistry
-from band.runtime.formatters import strip_leading_mentions
+from band.runtime.formatters import format_tokens, strip_leading_mentions
 
 logger = logging.getLogger(__name__)
 
@@ -212,9 +212,7 @@ class RoomApprovals:
         An ask counts as parked until it's claimed -- claiming always cancels
         its expiry timer, so "still parked" and "still unclaimed" coincide.
         """
-        return bool(
-            self._permissions.unclaimed_count() or self._questions.unclaimed_count()
-        )
+        return self._permissions.has_unclaimed() or self._questions.has_unclaimed()
 
     async def wait_until_idle(self) -> None:
         """Block until no manual ask is awaiting a human reply."""
@@ -289,8 +287,11 @@ class RoomApprovals:
             permission=request.permission,
             patterns=request.patterns,
         )
-        if (entry := self._permissions.register(pending, key=request_id)) is None:
+        if (
+            registration := self._permissions.register_keyed(pending, key=request_id)
+        ) is None:
             return
+        entry = registration.entry
         self._known_permission_ids.add(request_id)
 
         if self._config.approval_mode == "auto_accept":
@@ -330,8 +331,11 @@ class RoomApprovals:
             request_id=request_id,
             questions=request.questions,
         )
-        if (entry := self._questions.register(pending, key=request_id)) is None:
+        if (
+            registration := self._questions.register_keyed(pending, key=request_id)
+        ) is None:
             return
+        entry = registration.entry
         self._known_question_ids.add(request_id)
 
         if not request.questions:
@@ -380,8 +384,8 @@ class RoomApprovals:
             if (
                 approval.request_id is None
                 and approval.reply == "reject"
-                and self._permissions.unclaimed_count()
-                and self._questions.unclaimed_count()
+                and self._permissions.has_unclaimed()
+                and self._questions.has_unclaimed()
             ):
                 await self._notify_room(self._which_dual_reject_hint(), mentions)
                 return True
@@ -390,8 +394,8 @@ class RoomApprovals:
                 # Ambiguous rather than unknown: name the asks instead of
                 # forwarding the reply to the model as a fresh prompt.
                 if (
-                    self._questions.unclaimed_count()
-                    and not self._permissions.unclaimed_count()
+                    self._questions.has_unclaimed()
+                    and not self._permissions.has_unclaimed()
                 ):
                     await self._notify_room(
                         self._which_question_command_hint(), mentions
@@ -415,7 +419,7 @@ class RoomApprovals:
                 approval.reply in ("once", "always")
                 and approval.request_id in self._questions
                 and approval.request_id not in self._permissions
-                and not self._permissions.unclaimed_count()
+                and not self._permissions.has_unclaimed()
             ):
                 await self._notify_room(self._which_question_command_hint(), mentions)
             else:
@@ -489,7 +493,7 @@ class RoomApprovals:
             and named not in self._permissions
             and named not in self._known_permission_ids
             and named not in self._known_question_ids
-            and self._questions.unclaimed_count()
+            and self._questions.has_unclaimed()
         ):
             return False
         if (
@@ -506,7 +510,7 @@ class RoomApprovals:
                     or named in self._known_question_ids
                 )
             )
-        return bool(self._permissions.unclaimed_count()) or (
+        return self._permissions.has_unclaimed() or (
             named is not None and named in self._known_permission_ids
         )
 
@@ -732,9 +736,9 @@ class RoomApprovals:
             )
 
 
-def _format_ids(registry: DecisionRegistry[Any]) -> str:
+def _format_ids(registry: DecisionRegistry[PendingT]) -> str:
     """The asks still awaiting an answer, as a hint's id list."""
-    return ", ".join(f"`{entry.token}`" for entry in registry.unclaimed())
+    return format_tokens(entry.token for entry in registry.unclaimed())
 
 
 def _is_question_rejection(command: str) -> bool:

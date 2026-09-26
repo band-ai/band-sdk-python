@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, Literal, TypeVar, overload
+from typing import Generic, Literal, TypeVar
 
 import band_sdk_core
 from band_sdk_core import CancelledDecisions, ClaimOutcome
@@ -34,6 +34,27 @@ class DecisionEntry(Generic[T]):
     payload: T
 
 
+@dataclass(frozen=True, eq=False)
+class Registration(Generic[T]):
+    """A new entry, plus any open ask registering it removed -- for the caller
+    to resolve, as with every removal of an unclaimed ask."""
+
+    entry: DecisionEntry[T]
+    evicted: DecisionEntry[T] | None = None
+    replaced: DecisionEntry[T] | None = None
+
+    @property
+    def removed(self) -> list[DecisionEntry[T]]:
+        return [entry for entry in (self.evicted, self.replaced) if entry is not None]
+
+
+def sender_allowlist(senders: Iterable[str] | None) -> frozenset[str] | None:
+    """A configured allowlist in the shape ``band_sdk_core.is_authorized_sender``
+    takes: ``None`` admits anyone; any collection, empty included, only its
+    members."""
+    return None if senders is None else frozenset(senders)
+
+
 class DecisionRegistry(Mapping[str, T]):
     """Pending asks by token, oldest first. ``max_pending=None`` never evicts."""
 
@@ -51,36 +72,33 @@ class DecisionRegistry(Mapping[str, T]):
     def __len__(self) -> int:
         return len(self._entries)
 
-    @overload
-    def register(
+    def register_minted(
         self, payload: T, *, room_id: str | None = None
-    ) -> DecisionEntry[T]: ...
+    ) -> Registration[T]:
+        """Add ``payload`` under a freshly minted token, optionally scoped to
+        ``room_id``, evicting the oldest open ask first when at capacity."""
+        evicted = self._evict_oldest()
+        if (registered := self._core.register_minted(room_id)) is None:
+            raise RuntimeError("DecisionRegistry ran out of tickets")
+        token, ticket = registered
+        return Registration(
+            entry=self._store(payload, token=token, ticket=ticket), evicted=evicted
+        )
 
-    @overload
-    def register(self, payload: T, *, key: str) -> DecisionEntry[T] | None: ...
-
-    def register(
-        self, payload: T, *, key: str | None = None, room_id: str | None = None
-    ) -> DecisionEntry[T] | None:
-        """Add ``payload`` under ``key``, or under a minted token scoped to
-        ``room_id``. A redelivered ``key`` replaces its unclaimed predecessor
-        in place; ``None`` if it's claimed."""
-        if key is None:
-            registered = self._core.register_minted(room_id)
-        elif room_id is None:
-            registered = self._core.register_keyed(key)
-        else:
-            raise TypeError("register takes key or room_id, not both")
-        match registered:
-            case None if key is None:
-                raise RuntimeError("DecisionRegistry ran out of tickets")
-            case None:
-                return None
-            case (token, ticket):
-                self._cancel_timeout(token)
-                entry = DecisionEntry(token=token, ticket=ticket, payload=payload)
-                self._entries[token] = entry
-                return entry
+    def register_keyed(self, payload: T, *, key: str) -> Registration[T] | None:
+        """Add ``payload`` under ``key``. A redelivered key replaces its open
+        predecessor in place rather than growing the registry, so only a new
+        key evicts; ``None`` while the key is claimed."""
+        replaced = self._entries.get(key)
+        evicted = None if replaced is not None else self._evict_oldest()
+        if (registered := self._core.register_keyed(key)) is None:
+            return None
+        token, ticket = registered
+        return Registration(
+            entry=self._store(payload, token=token, ticket=ticket),
+            evicted=evicted,
+            replaced=replaced,
+        )
 
     def start_timeout(
         self,
@@ -140,14 +158,14 @@ class DecisionRegistry(Mapping[str, T]):
         token = self._core.oldest_unclaimed()
         return None if token is None else self._entries[token]
 
+    def has_unclaimed(self) -> bool:
+        """Whether any entry still awaits an answer. Unlike the Mapping's own
+        truthiness, an entry whose claimant is still resolving it doesn't count."""
+        return self.unclaimed_count() > 0
+
     def has_claimed(self) -> bool:
         """Whether a claimant is still resolving some entry."""
         return len(self) > self.unclaimed_count()
-
-    def evict_oldest(self) -> DecisionEntry[T] | None:
-        """At capacity, remove the oldest unclaimed entry for the caller to resolve."""
-        token = self._core.evict_oldest()
-        return None if token is None else self._discard(token)
 
     def cancel_all(self) -> list[DecisionEntry[T]]:
         """Remove every entry, returning the unclaimed ones for the caller to
@@ -193,13 +211,24 @@ class DecisionRegistry(Mapping[str, T]):
             self._cancel_timeout(entry.token)
         return outcome
 
+    def _store(self, payload: T, *, token: str, ticket: int) -> DecisionEntry[T]:
+        self._cancel_timeout(token)
+        entry = DecisionEntry(token=token, ticket=ticket, payload=payload)
+        self._entries[token] = entry
+        return entry
+
+    def _evict_oldest(self) -> DecisionEntry[T] | None:
+        token = self._core.evict_oldest()
+        return None if token is None else self._discard(token)
+
     def _entries_for(self, tokens: list[str]) -> list[DecisionEntry[T]]:
         return [self._entries[token] for token in tokens]
 
     def _drop_cancelled(self, cancelled: CancelledDecisions) -> list[DecisionEntry[T]]:
-        for token in cancelled.claimed:
+        unclaimed = self._entries_for(cancelled.unclaimed)
+        for token in (*cancelled.unclaimed, *cancelled.claimed):
             self._discard(token)
-        return [self._discard(token) for token in cancelled.unclaimed]
+        return unclaimed
 
     def _discard(self, token: str) -> DecisionEntry[T]:
         self._cancel_timeout(token)

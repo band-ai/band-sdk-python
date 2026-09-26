@@ -33,7 +33,12 @@ from band.integrations.acp.client_runtime import (
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.decisions import DecisionRegistry, Timeout
+from band.runtime.decisions import (
+    DecisionEntry,
+    DecisionRegistry,
+    Timeout,
+    sender_allowlist,
+)
 from band.runtime.formatters import strip_leading_mentions
 from band.workspaces import WorkspaceResolver, workspace_resolver_for
 
@@ -107,6 +112,14 @@ class CursorACPAdapterConfig:
     turn_timeout_s: float = 900.0
     max_pending_decisions: int = 10
     decision_authorized_senders: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        # Accept any collection of sender ids, as plain membership once did.
+        object.__setattr__(
+            self,
+            "decision_authorized_senders",
+            sender_allowlist(self.decision_authorized_senders),
+        )
 
 
 @dataclass
@@ -182,12 +195,6 @@ class CursorACPAdapter(ACPClientAdapter):
             raise ValueError("decision_timeout_s must be less than turn_timeout_s")
         if config.max_pending_decisions <= 0:
             raise ValueError("max_pending_decisions must be greater than zero")
-        # Checked here rather than at the first reply, where a non-set
-        # allowlist would otherwise raise inside the room command.
-        if config.decision_authorized_senders is not None and not isinstance(
-            config.decision_authorized_senders, frozenset
-        ):
-            raise TypeError("decision_authorized_senders must be a frozenset or None")
 
     @staticmethod
     def _cursor_env(config: CursorACPAdapterConfig) -> dict[str, str] | None:
@@ -467,8 +474,12 @@ class CursorACPAdapter(ACPClientAdapter):
             choices=choices or {},
             multi_select=multi_select,
         )
-        self._evict_oldest_decision()
-        entry = self._pending_decisions.register(pending, room_id=turn.room_id)
+        registration = self._pending_decisions.register_minted(
+            pending, room_id=turn.room_id
+        )
+        if registration.evicted is not None:
+            self._resolve_evicted_decision(registration.evicted)
+        entry = registration.entry
         try:
             await turn.tools.send_message(
                 prompt.replace("{token}", entry.token),
@@ -626,9 +637,8 @@ class CursorACPAdapter(ACPClientAdapter):
             else None
         )
 
-    def _evict_oldest_decision(self) -> None:
-        if (evicted := self._pending_decisions.evict_oldest()) is None:
-            return
+    @staticmethod
+    def _resolve_evicted_decision(evicted: DecisionEntry[PendingDecision]) -> None:
         logger.info(
             "Evicting oldest pending Cursor %s decision `%s` in room %s "
             "(max_pending_decisions reached)",

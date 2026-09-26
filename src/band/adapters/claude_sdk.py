@@ -91,8 +91,13 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     is_marked_terminal,
 )
-from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
-from band.runtime.formatters import strip_leading_mentions
+from band.runtime.decisions import (
+    DecisionEntry,
+    DecisionRegistry,
+    Timeout,
+    sender_allowlist,
+)
+from band.runtime.formatters import format_tokens, strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -195,10 +200,6 @@ _REDACT_RE = re.compile(
     """,
     re.IGNORECASE,
 )
-
-
-def _format_tokens(tokens: list[str]) -> str:
-    return ", ".join(f"`{token}`" for token in tokens)
 
 
 def _redact_image_data(content: str | list[dict[str, Any]] | None) -> Any:
@@ -420,11 +421,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if max_pending_approvals_per_room < 1:
             raise ValueError("max_pending_approvals_per_room must be >= 1")
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
-        self.approval_authorized_senders: frozenset[str] | None = (
-            None
-            if approval_authorized_senders is None
-            else frozenset(approval_authorized_senders)
-        )
+        self.approval_authorized_senders = sender_allowlist(approval_authorized_senders)
 
         # send_message dedup window.  0 disables the wrapper.
         if send_message_dedup_ttl_seconds < 0:
@@ -1534,19 +1531,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         registry = self._pending_approvals.setdefault(
             room_id, self._new_approval_registry()
         )
-        if (evicted := registry.evict_oldest()) is not None:
-            evicted.payload.future.set_result(None)
+        registration = registry.register_keyed(pending, key=token)
+        # Per-room sequence tokens never repeat, so the key is never claimed.
+        assert registration is not None
+        entry = registration.entry
+        for removed in registration.removed:
+            removed.payload.future.set_result(None)
+        if (evicted := registration.evicted) is not None:
             logger.warning(
                 "Room %s: Evicted oldest pending approval %s (capacity %s)",
                 room_id,
                 evicted.token,
                 self.max_pending_approvals_per_room,
-            )
-        if (entry := registry.register(pending, key=token)) is None:
-            # Per-room sequence tokens never repeat; never wait on an ask
-            # another claimant owns.
-            return PermissionResultDeny(
-                message="Approval token already in use, tool use declined"
             )
 
         # Notify user — if we can't deliver the prompt, decline immediately
@@ -1716,7 +1712,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 case _:
                     await tools.send_message(
                         "Multiple pending approvals — please specify a token: "
-                        + _format_tokens(open_tokens),
+                        + format_tokens(open_tokens),
                         mentions=mention,
                     )
                     return
@@ -1724,7 +1720,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if (selected := pending.get(token)) is None:
             await tools.send_message(
                 f"Unknown approval token `{token}`. "
-                f"Available: {_format_tokens(open_tokens) or 'none'}.",
+                f"Available: {format_tokens(open_tokens) or 'none'}.",
                 mentions=mention,
             )
             return

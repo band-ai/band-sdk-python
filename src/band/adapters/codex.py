@@ -2640,18 +2640,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             room_id,
             DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
         )
-        # A redelivered id replaces its predecessor rather than growing the
-        # registry, so only a new id may evict another ask.
-        if token not in registry and (evicted := registry.evict_oldest()) is not None:
-            evicted.payload.future.set_result("decline")
-            logger.warning(
-                "Evicted oldest pending approval %s in room %s (limit %s)",
-                evicted.token,
-                room_id,
-                self.config.max_pending_approvals_per_room,
-            )
-        superseded = registry.get(token)
-        if (entry := registry.register(pending, key=token)) is None:
+        if (registration := registry.register_keyed(pending, key=token)) is None:
             logger.warning(
                 "Approval %s in room %s was redelivered after a reply claimed it; "
                 "declining the redelivery",
@@ -2659,9 +2648,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 room_id,
             )
             return "decline"
-        if superseded is not None:
-            # Replacing an open ask removes it, so resolve it like an eviction.
-            superseded.future.set_result("decline")
+        entry = registration.entry
+        for removed in registration.removed:
+            removed.payload.future.set_result("decline")
+        if (evicted := registration.evicted) is not None:
+            logger.warning(
+                "Evicted oldest pending approval %s in room %s (limit %s)",
+                evicted.token,
+                room_id,
+                self.config.max_pending_approvals_per_room,
+            )
         try:
             approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
                 summary=summary, token=token
