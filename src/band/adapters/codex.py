@@ -553,6 +553,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         )
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
+        # Threads of rooms whose app-server was released while idle; the next
+        # turn's fresh app-server resumes them with thread/resume.
+        self._released_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
@@ -1351,6 +1354,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return
         self._active_room.set(room_id)
         async with self._rpc_lock:
+            self._released_threads.pop(room_id, None)
             thread_id = self._room_threads.pop(room_id, None)
             if thread_id:
                 self._token_usage.pop(thread_id, None)
@@ -1362,30 +1366,53 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
             self._room_task_titles.pop(room_id, None)
-            if self._client is None:
-                self._room_clients.pop(room_id, None)
-                self._release_room_workspace(room, room_id)
-                return
             try:
-                close_coro = self._client.close()
-                timeout = self.config.client_close_timeout_s
-                if timeout is not None:
-                    try:
-                        await asyncio.wait_for(close_coro, timeout=timeout)
-                    except TimeoutError:
-                        logger.warning(
-                            "Codex client.close() exceeded %ss timeout; "
-                            "dropping client reference",
-                            timeout,
-                        )
-                else:
-                    await close_coro
+                await self._close_active_client()
             finally:
-                self._client = None
-                self._initialized = False
-                self._selected_model = None
                 self._room_clients.pop(room_id, None)
                 self._release_room_workspace(room, room_id)
+
+    async def release_room_resources(self, room_id: str) -> None:
+        """Close an idle room's app-server, keeping its thread for resume.
+
+        Codex persists each thread on disk, so the next turn's fresh
+        app-server continues it via ``thread/resume`` with the same thread
+        id. The room's workspace claim and settings stay. A room with a turn
+        or approval in flight holds its lock and is left alone.
+        """
+        room = self._room_clients.get(room_id)
+        if room is None or room.client is None or room.rpc_lock.locked():
+            return
+        self._active_room.set(room_id)
+        async with self._rpc_lock:
+            thread_id = self._room_threads.pop(room_id, None)
+            if thread_id:
+                self._released_threads[room_id] = thread_id
+            await self._close_active_client()
+        logger.info("Released idle Codex app-server for room %s", room_id)
+
+    async def _close_active_client(self) -> None:
+        """Close the active room's client (bounded) and forget it."""
+        if self._client is None:
+            return
+        try:
+            close_coro = self._client.close()
+            timeout = self.config.client_close_timeout_s
+            if timeout is not None:
+                try:
+                    await asyncio.wait_for(close_coro, timeout=timeout)
+                except TimeoutError:
+                    logger.warning(
+                        "Codex client.close() exceeded %ss timeout; "
+                        "dropping client reference",
+                        timeout,
+                    )
+            else:
+                await close_coro
+        finally:
+            self._client = None
+            self._initialized = False
+            self._selected_model = None
 
     async def cleanup_all(self) -> None:
         """Close every room-owned Codex process during agent shutdown."""
@@ -1545,17 +1572,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
 
-        if is_session_bootstrap and history.has_thread():
+        resume_id = self._released_threads.pop(room_id, None) or (
+            history.thread_id if is_session_bootstrap and history.has_thread() else None
+        )
+        if resume_id:
             try:
                 result = await self._client.request(
                     "thread/resume",
                     {
-                        "threadId": history.thread_id,
+                        "threadId": resume_id,
                         "personality": self.config.personality,
                     },
                 )
                 resumed = result.get("thread", {}) if isinstance(result, dict) else {}
-                thread_id = str(resumed.get("id") or history.thread_id or "")
+                thread_id = str(resumed.get("id") or resume_id)
                 if thread_id:
                     self._room_threads[room_id] = thread_id
                     self._raw_history_by_room.pop(room_id, None)
@@ -1582,7 +1612,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 logger.warning(
                     "thread/resume failed for room %s thread %s: %s",
                     room_id,
-                    history.thread_id,
+                    resume_id,
                     exc,
                 )
                 if self.config.inject_history_on_resume_failure:

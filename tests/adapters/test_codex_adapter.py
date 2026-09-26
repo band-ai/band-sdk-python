@@ -7049,3 +7049,61 @@ class TestProbes:
         assert client.closed
         assert "skills/extraRoots/set" not in _methods(client)
         assert (adapter._room_clients, adapter._workspace_rooms) == ({}, {})
+
+
+async def _later_turn(adapter: CodexAdapter, tools: FakeAgentTools) -> None:
+    await adapter.on_message(
+        make_platform_message(),
+        tools,
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+
+class TestIdleRelease:
+    @pytest.mark.asyncio
+    async def test_released_room_resumes_its_thread_on_the_next_turn(self) -> None:
+        client = FakeCodexClient(events=[_turn_completed("turn-1")])
+        adapter = make_codex_adapter(client)
+        tools = await _bootstrap_turn(adapter)
+        [started] = [p for m, p in client.requests if m == "thread/start"]
+
+        await adapter.release_room_resources("room-1")
+
+        assert client.closed
+        client.closed = False
+        client._events.append(_turn_completed("turn-2"))
+        await _later_turn(adapter, tools)
+        methods = _methods(client)
+        assert methods.count("thread/start") == 1
+        assert "turn/start" in methods[methods.index("thread/resume") :]
+        assert ("thread/resume", {"threadId": "thr-1", "personality": "pragmatic"}) in (
+            client.requests
+        )
+        assert started["cwd"] == adapter._room_clients["room-1"].workspace
+
+    @pytest.mark.asyncio
+    async def test_a_room_with_its_lock_held_is_not_released(self) -> None:
+        client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(client)
+        await _bootstrap_turn(adapter)
+        room = adapter._room_clients["room-1"]
+
+        async with room.rpc_lock:
+            await adapter.release_room_resources("room-1")
+
+        assert (client.closed, room.client is client) == (False, True)
+
+    @pytest.mark.asyncio
+    async def test_leaving_after_a_release_forgets_the_thread(self) -> None:
+        client = FakeCodexClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(client)
+        await _bootstrap_turn(adapter)
+        await adapter.release_room_resources("room-1")
+
+        await adapter.on_cleanup("room-1")
+
+        assert (adapter._released_threads, adapter._room_clients) == ({}, {})
