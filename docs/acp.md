@@ -60,7 +60,7 @@ A turn's events must land in the room in the order they happened, because two th
 - A call's `tool_call_update` frames fold by `tool_call_id` into one result, finalized once the call reports a terminal status (`completed`/`failed`).
 - The buffer (`_session_chunks`) still accumulates the finalized chunks — the per-turn record `get_collected_chunks` returns, cleared each turn by `reset_session` (in-memory, not durable) and keyed per session so concurrent rooms don't need a global lock.
 
-`RoomTurnEmitter` (`room_emitter.py`) is the sink: it posts narration (thought/tool_call/tool_result/plan) live for **every** tool call — including Band messaging tools, with no suppression — and holds **only** the assistant text until close (the text-fallback decision needs the whole turn). `ACPRuntime.prompt(..., on_chunk=emitter.emit)` registers the sink and `flush`es at turn end.
+`RoomTurnEmitter` (`room_emitter.py`) is the sink: it posts narration (thought/tool_call/tool_result/plan) live for **every** tool call — including Band messaging tools, with no suppression **beyond the caller's `emit=` set** (Emit gating below) — and holds **only** the assistant text until close (the text-fallback decision needs the whole turn). `ACPRuntime.prompt(..., on_chunk=emitter.emit)` registers the sink and `flush`es at turn end.
 
 ## History replay fallback (Client Adapter)
 
@@ -85,13 +85,17 @@ loaded session gets no replay, so history is never doubled.
 
 ## Reply Delivery (Client Adapter)
 
-Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close. The decision lives in `turn_replied_in_room()` (`room_emitter.py`), which reads the collected tool-call stream — the ACP adapter can't flip an in-process flag like the siblings, because its tools may execute out-of-process (remote band-mcp), so it matches `tool_call` title + `completed` status. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools/registry.py`): the SDK's `band_send_message` (also what band-mcp 1.3.2+ advertises, since its registrar reuses the SDK tool definitions) plus the legacy `create_agent_chat_message` spelling from band-mcp ≤1.3.1. This suppression is about the text fallback only — the call's own `tool_call`/`tool_result` narration (below) is never suppressed.
+Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close. The decision lives in `turn_replied_in_room()` (`room_emitter.py`), which reads the collected tool-call stream — the ACP adapter can't flip an in-process flag like the siblings, because its tools may execute out-of-process (remote band-mcp), so it matches `tool_call` title + `completed` status. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools/registry.py`): the SDK's `band_send_message` (also what band-mcp 1.3.2+ advertises, since its registrar reuses the SDK tool definitions) plus the legacy `create_agent_chat_message` spelling from band-mcp ≤1.3.1. This suppression is about the text fallback only — the call's own `tool_call`/`tool_result` narration (below) is affected only by the caller's `emit=` set (Emit gating), never by this decision.
 
 ## Tool narration (Client Adapter)
 
-Every tool call is narrated as `tool_call`/`tool_result`, including Band messaging tools (`band_send_message`/`band_send_event`) — there is no "self-reporting" special case. Because emission is live and causally ordered (above), a Band messaging tool's own room post lands *between* its `tool_call` and `tool_result` narration, so the room naturally reads `tool_call -> message -> tool_result` without any special-casing.
+Every tool call is narrated as `tool_call`/`tool_result` (subject to the caller's `emit=` set — see Emit gating), including Band messaging tools (`band_send_message`/`band_send_event`) — there is no "self-reporting" special case. Because emission is live and causally ordered (above), a Band messaging tool's own room post lands *between* its `tool_call` and `tool_result` narration, so the room naturally reads `tool_call -> message -> tool_result` without any special-casing.
 
 Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copilot registers the loopback server's tools as `band-<tool>`) has the prefix stripped at chunk construction when the name reveals one of the adapter's own registered tools (`canonicalize_mcp_tool_name` in `src/band/runtime/tools/registry.py`, sharing one resolver with `is_room_posting_tool`). Foreign tool names pass through untouched.
+
+## Emit gating (Client Adapter)
+
+`ACPClientAdapter` declares `SUPPORTED_EMIT = {TOOL_CALLS, THOUGHTS, TASK_EVENTS}`, so a caller narrows room narration with `emit=` — `emit=()` silences all narration; a subset posts only the requested kinds; omitting `emit=` posts every kind (the historical behavior). The emitter receives the caller's resolved `features.emit` and gates by kind: `THOUGHT` chunks require `Emit.THOUGHTS`; `TOOL_CALL`/`TOOL_RESULT` chunks — including the denied-permission pair — require `Emit.TOOL_CALLS`; `PLAN` chunks and the closing session bookkeeping event require `Emit.TASK_EVENTS`. `Emit.USAGE` is not declared: the ACP stream carries no usage data. Two things never gate: chunk *recording* (the tool-first delivery decision must see the whole turn even when narration is off) and the held assistant text (always relayed at close unless the turn already posted in-room).
 
 ## Capabilities (Client Adapter)
 
@@ -99,7 +103,7 @@ Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copil
 
 ## Permission pairing (Client Adapter)
 
-Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
+Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened. The pair follows the same `Emit.TOOL_CALLS` gate as ordinary tool narration: with tool calls off, a denied request is silent.
 
 ## Dynamic model and reasoning configuration (Client Adapter)
 
