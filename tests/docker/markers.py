@@ -35,3 +35,9 @@ requires_posix_shell = pytest.mark.skipif(
     sys.platform == "win32",
     reason="grep -ralF needs a real POSIX bash/grep, not the WSL launcher stub",
 )
+
+# pty.openpty() needs termios/tty, which don't exist on Windows.
+requires_posix_pty = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="pty.openpty() needs termios/tty, unavailable on Windows",
+)
