@@ -389,6 +389,18 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             await tools.send_event(content, message_type, None)
             return ToolResult(data=f"Event ({message_type}) sent successfully")
 
+        @band_tool("ending the turn without a reply")
+        async def band_no_reply(
+            context: ToolContext,
+            reason: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            await tools.no_reply(or_none(reason))
+            # Same suppression as a sent message: the adapter must not post
+            # its own reply for this turn.
+            mark_message_sent(context.session_id)
+            return ToolResult(data="No reply sent; this turn is complete")
+
         @band_tool("adding participant '{identifier}'")
         async def band_add_participant(
             context: ToolContext,
@@ -468,6 +480,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         return [
             band_send_message,
             band_send_event,
+            band_no_reply,
             band_add_participant,
             band_remove_participant,
             band_lookup_peers,

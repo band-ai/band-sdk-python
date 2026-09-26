@@ -1024,6 +1024,7 @@ class TestBandTools:
         expected = {
             "mcp__band__band_send_message",
             "mcp__band__band_send_event",
+            "mcp__band__band_no_reply",
             "mcp__band__band_add_participant",
             "mcp__band__band_remove_participant",
             "mcp__band__band_get_participants",
@@ -1606,6 +1607,32 @@ class TestTurnFailureSurfacing:
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
         assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_no_reply_tool_ends_the_turn_quietly(self, mock_tools):
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn("mcp__band__band_no_reply")
+        mock_client = self._client_yielding(*turn, _result_message(is_error=False))
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+        mock_tools.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_reply_does_not_excuse_a_later_silent_turn(self, mock_tools):
+        adapter = ClaudeSDKAdapter()
+        quiet = _tool_turn("mcp__band__band_no_reply")
+        await adapter._process_response(
+            self._client_yielding(*quiet, _result_message()), "room-123", mock_tools
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(
+                self._client_yielding(_result_message()), "room-123", mock_tools
+            )
+
+        assert [_MISSING_REPLY_TEXT in e for e in _error_events(mock_tools)] == [True]
 
     @pytest.mark.asyncio
     async def test_assistant_carried_tool_result_also_counts(self, mock_tools):

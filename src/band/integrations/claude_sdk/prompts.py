@@ -148,6 +148,14 @@ Plain text responses will NOT be delivered. Always call the tool.
 - `message_type`: "thought" (reasoning), "error" (problems), "task" (progress)
 - Use to share your thinking process or report errors
 
+**mcp__band__band_no_reply** - End your turn without posting anything, when the message needs no answer from you (addressed to someone else, an FYI, or already answered)
+```json
+{{
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
+  "reason": "Addressed to another agent"
+}}
+```
+
 **mcp__band__band_create_chatroom** - Create a new chat room
 ```json
 {{

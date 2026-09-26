@@ -52,6 +52,7 @@ from band.runtime.tools.inputs import (
     ListTasksInput,
     ListUserMemoriesInput,
     LookupPeersInput,
+    NoReplyInput,
     ReadRoomFileInput,
     RegisterMyAgentInput,
     RejectContactRequestInput,
@@ -95,6 +96,14 @@ ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
     {BandTool.SEND_MESSAGE, "create_agent_chat_message", BandTool.SEND_ROOM_FILE}
 )
 
+# Tool names whose successful call settles the turn's reply: either a visible
+# post (ROOM_POSTING_TOOL_NAMES) or band_no_reply's deliberate silence. Bridge
+# adapters suppress their fallback text relay once one of these succeeded
+# in the current turn.
+REPLY_SETTLING_TOOL_NAMES: frozenset[str] = ROOM_POSTING_TOOL_NAMES | {
+    BandTool.NO_REPLY
+}
+
 
 def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None:
     """The member of ``names`` behind ``tool_name``'s MCP spelling, if any.
@@ -128,6 +137,16 @@ def is_room_posting_tool(tool_name: str) -> bool:
     pre-suppression behavior), never a wrong post.
     """
     return _resolve_mcp_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES) is not None
+
+
+def settles_turn_reply(tool_name: str) -> bool:
+    """True when a successful call of ``tool_name`` is the turn's reply.
+
+    Same MCP-spelling tolerance as :func:`is_room_posting_tool`; adds
+    ``band_no_reply``, whose deliberate silence also means no fallback text
+    may be relayed for the turn.
+    """
+    return _resolve_mcp_tool_name(tool_name, REPLY_SETTLING_TOOL_NAMES) is not None
 
 
 def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> str:
@@ -228,6 +247,11 @@ _TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
         name=BandTool.SEND_EVENT,
         input_model=SendEventInput,
         method_name="send_event",
+    ),
+    ToolDefinition(
+        name=BandTool.NO_REPLY,
+        input_model=NoReplyInput,
+        method_name="no_reply",
     ),
     ToolDefinition(
         name=BandTool.ADD_PARTICIPANT,

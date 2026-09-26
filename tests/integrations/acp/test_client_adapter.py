@@ -2252,6 +2252,21 @@ class TestTurnRepliedInRoom:
         ]
         assert not turn_replied_in_room(chunks)
 
+    @pytest.mark.parametrize("name", ["band_no_reply", "band-band_no_reply"])
+    def test_completed_no_reply_settles_the_turn(self, name: str) -> None:
+        chunks = [
+            self._chunk("tool_call", name, tool_call_id="tc-1", status="completed")
+        ]
+        assert turn_replied_in_room(chunks)
+
+    def test_failed_no_reply_keeps_the_text_fallback(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "band_no_reply", tool_call_id="tc-1", status="failed"
+            )
+        ]
+        assert not turn_replied_in_room(chunks)
+
     def test_foreign_mcp_servers_own_tool_never_counts(self) -> None:
         """A non-Band MCP server's own tool that happens to end in
         ``-band_send_message`` must not suppress the text fallback -- only the

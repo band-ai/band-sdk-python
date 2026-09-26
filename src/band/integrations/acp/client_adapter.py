@@ -354,7 +354,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # external band-mcp's MCP-prefixed legacy call
             # (band-create_agent_chat_message) would canonicalize to nothing and
             # narrate under the raw prefixed name — the one case reply-suppression
-            # (is_room_posting_tool, same source set) already tolerates.
+            # (settles_turn_reply, a superset of this source set) already tolerates.
             | ROOM_POSTING_TOOL_NAMES
         )
         return definitions, names
