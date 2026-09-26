@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.client.streaming import AgentControlPayload, ControlMode
+from band.client.streaming import AgentControlPayload, ControlMode, WireEvent
 from band.platform.event import ReconnectedEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext, ResyncRequest
@@ -97,6 +97,26 @@ class TestRouting:
             ("r1", ControlMode.INTERRUPT),
         ]
         assert (rooms.resyncs("r1"), rooms.resyncs("r2")) == (0, 1)
+
+    async def test_wire_interrupt_does_not_stop_the_room(
+        self, rooms: ControlledRooms
+    ) -> None:
+        payload = AgentControlPayload.from_wire(
+            WireEvent.AGENT_CONTROL,
+            {
+                "mode": "interrupt",
+                "scope": "room",
+                "agent_id": "agent-123",
+                "correlation_id": "ctl-wire-interrupt",
+                "execution_id": None,
+                "room_id": "r1",
+            },
+        )
+
+        await rooms.runtime.handle_control(payload)
+
+        assert rooms.executions["r1"]._stopped is False
+        assert rooms.heard == [("r1", ControlMode.INTERRUPT)]
 
     async def test_a_correlation_id_applies_its_signal_once(
         self, rooms: ControlledRooms

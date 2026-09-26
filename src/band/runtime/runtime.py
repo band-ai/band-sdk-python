@@ -343,7 +343,7 @@ class AgentRuntime:
         """
         match mode:
             case ControlMode.INTERRUPT | ControlMode.STOP:
-                attr = "interrupt" if mode is ControlMode.INTERRUPT else "stop_room"
+                attr = "interrupt" if mode == ControlMode.INTERRUPT else "stop_room"
                 fn = getattr(execution, attr, None)
                 if fn is None:
                     logger.debug(
