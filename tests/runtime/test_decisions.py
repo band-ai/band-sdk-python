@@ -70,6 +70,12 @@ class Room:
         entry.payload.future.set_result(answer)
         return True
 
+    async def abandon(self, name: str) -> None:
+        """The asker's turn is cancelled; wait until it has fully unwound."""
+        asker = self.askers.pop(name)
+        asker.cancel()
+        await asyncio.wait([asker])
+
     def tear_down(self, room_id: str) -> None:
         for entry in self.registry.cancel_room(room_id):
             entry.payload.future.set_result("cancelled")
@@ -155,8 +161,7 @@ async def test_tearing_down_a_room_resolves_only_its_open_asks(
 
     room.tear_down("room-1")
     claimed.payload.future.set_result("accept")
-    room.askers.pop("abandoned").cancel()
-    await asyncio.sleep(0)
+    await room.abandon("abandoned")
 
     [survivor] = room.registry.unclaimed_in_room("room-2")
     assert survivor.payload.name == "elsewhere"
