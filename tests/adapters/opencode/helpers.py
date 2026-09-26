@@ -449,6 +449,16 @@ def make_fake_mcp_backend_factory(
     return mock
 
 
+#: Virtual seconds an ask waits for a human in looptime tests.
+ASK_DEADLINE_S = 60.0
+
+
+async def time_passes(seconds: float) -> None:
+    """Let ``seconds`` of virtual time pass under ``@pytest.mark.looptime``:
+    every timer due meanwhile fires, in order, with no real waiting."""
+    await asyncio.sleep(seconds)
+
+
 async def wait_for(predicate: Callable[[], bool], timeout_s: float = 1.0) -> None:
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:

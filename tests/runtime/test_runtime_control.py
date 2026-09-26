@@ -8,126 +8,126 @@ import pytest
 
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.event import ReconnectedEvent
-from band.runtime.execution import ExecutionContext
+from band.platform.link import BandLink
+from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage
+from band.testing.platform import platform_connection_stub
 
 
 def _control(mode: str, scope: str = "agent", **kw) -> AgentControlPayload:
     return AgentControlPayload(mode=mode, scope=scope, agent_id="agent-123", **kw)
 
 
-def _fake_execution(room_id: str) -> MagicMock:
-    """A control-capable execution: interrupt/stop_room sync, resume_room async."""
-    ex = MagicMock()
-    ex.room_id = room_id
-    ex.interrupt = MagicMock(return_value=True)
-    ex.stop_room = MagicMock()
-    ex.resume_room = AsyncMock()
-    return ex
+async def never_executes(_context: ExecutionContext, event: object) -> None:
+    raise AssertionError(f"No cycle should run, got {event!r}")
 
 
 @pytest.fixture
-def runtime() -> AgentRuntime:
-    link = MagicMock()
-    return AgentRuntime(link=link, agent_id="agent-123", on_execute=AsyncMock())
+def link() -> BandLink:
+    """A real link that is never connected: control routing needs no I/O."""
+    platform = platform_connection_stub()
+    return BandLink(
+        agent_id=platform.agent_id,
+        api_key=platform.api_key,
+        ws_url=platform.ws_url,
+        rest_url=platform.rest_url,
+    )
+
+
+class ControlledRooms:
+    """Real idle room executions under one runtime, observed the way an
+    adapter sees control: the aborts its ``on_interrupt`` hears, and the
+    catch-ups a play queues."""
+
+    def __init__(self, link: BandLink, *room_ids: str) -> None:
+        self.heard: list[tuple[str, ControlMode]] = []
+        self.runtime = AgentRuntime(
+            link=link,
+            agent_id=link.agent_id,
+            on_execute=never_executes,
+            on_control=self.on_interrupt,
+        )
+        self.executions = {
+            room_id: ExecutionContext(
+                room_id, link, never_executes, agent_id=link.agent_id
+            )
+            for room_id in room_ids
+        }
+        self.runtime.executions = dict(self.executions)
+
+    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        self.heard.append((room_id, mode))
+
+    async def signal(self, mode: str, **payload: object) -> None:
+        await self.runtime.handle_control(_control(mode, **payload))
+
+    def resyncs(self, room_id: str) -> int:
+        """Drain the room's queue, counting the /next catch-ups requested."""
+        queue = self.executions[room_id].queue
+        drained = [queue.get_nowait() for _ in range(queue.qsize())]
+        return sum(isinstance(item, ResyncRequest) for item in drained)
+
+
+@pytest.fixture
+def rooms(link: BandLink) -> ControlledRooms:
+    return ControlledRooms(link, "r1", "r2")
 
 
 class TestRouting:
-    async def test_agent_scope_null_room_fans_out_to_all(self, runtime):
-        a, b = _fake_execution("r1"), _fake_execution("r2")
-        runtime.executions = {"r1": a, "r2": b}
+    """The runtime's own interrupt()/stop_room() only cancel the task that
+    invoked the handler, so every abort is also forwarded to the adapter's
+    on_interrupt -- even with no cycle to cancel, since the adapter may keep
+    a turn running detached (e.g. parked on a human decision)."""
 
-        await runtime.handle_control(_control("interrupt", scope="agent", room_id=None))
+    async def test_signals_reach_exactly_the_rooms_they_name(
+        self, rooms: ControlledRooms
+    ) -> None:
+        await rooms.signal("interrupt", scope="agent", room_id=None)
+        await rooms.signal("stop", scope="room", room_id="r2")
+        await rooms.signal("interrupt", scope="agent", room_id="r1")
+        await rooms.signal("interrupt", scope="room", room_id="ghost")
+        await rooms.signal("interrupt", scope="room", room_id=None)
+        await rooms.signal("play", scope="room", room_id="r2")
 
-        a.interrupt.assert_called_once()
-        b.interrupt.assert_called_once()
+        assert rooms.heard == [
+            ("r1", ControlMode.INTERRUPT),
+            ("r2", ControlMode.INTERRUPT),
+            ("r2", ControlMode.STOP),
+            ("r1", ControlMode.INTERRUPT),
+        ]
+        assert (rooms.resyncs("r1"), rooms.resyncs("r2")) == (0, 1)
 
-    async def test_room_scope_targets_single_room(self, runtime):
-        a, b = _fake_execution("r1"), _fake_execution("r2")
-        runtime.executions = {"r1": a, "r2": b}
-
-        await runtime.handle_control(_control("stop", scope="room", room_id="r2"))
-
-        a.stop_room.assert_not_called()
-        b.stop_room.assert_called_once()
-
-    async def test_agent_scope_with_room_id_targets_that_room(self, runtime):
-        a, b = _fake_execution("r1"), _fake_execution("r2")
-        runtime.executions = {"r1": a, "r2": b}
-
-        await runtime.handle_control(_control("interrupt", scope="agent", room_id="r1"))
-
-        a.interrupt.assert_called_once()
-        b.interrupt.assert_not_called()
-
-    async def test_unknown_room_is_noop(self, runtime):
-        a = _fake_execution("r1")
-        runtime.executions = {"r1": a}
-
-        await runtime.handle_control(
-            _control("interrupt", scope="room", room_id="ghost")
+    async def test_a_correlation_id_applies_its_signal_once(
+        self, rooms: ControlledRooms
+    ) -> None:
+        """The server does not dedupe; signals without an id cannot be."""
+        await rooms.signal(
+            "interrupt", scope="room", room_id="r1", correlation_id="ctl-1"
         )
-
-        a.interrupt.assert_not_called()
-
-    async def test_play_routes_to_resume_room(self, runtime):
-        a = _fake_execution("r1")
-        runtime.executions = {"r1": a}
-
-        await runtime.handle_control(_control("play", scope="room", room_id="r1"))
-
-        a.resume_room.assert_awaited_once()
-
-
-class TestDedup:
-    async def test_duplicate_correlation_id_dropped(self, runtime):
-        a = _fake_execution("r1")
-        runtime.executions = {"r1": a}
-        sig = _control("interrupt", scope="room", room_id="r1", correlation_id="ctl-1")
-
-        await runtime.handle_control(sig)
-        await runtime.handle_control(sig)  # duplicate
-
-        a.interrupt.assert_called_once()
-
-    async def test_distinct_correlation_ids_both_applied(self, runtime):
-        a = _fake_execution("r1")
-        runtime.executions = {"r1": a}
-
-        await runtime.handle_control(
-            _control("interrupt", scope="room", room_id="r1", correlation_id="ctl-1")
+        await rooms.signal(
+            "interrupt", scope="room", room_id="r1", correlation_id="ctl-1"
         )
-        await runtime.handle_control(
-            _control("interrupt", scope="room", room_id="r1", correlation_id="ctl-2")
+        await rooms.signal(
+            "interrupt", scope="room", room_id="r1", correlation_id="ctl-2"
         )
-
-        assert a.interrupt.call_count == 2
-
-    async def test_play_after_stop_not_dropped(self, runtime):
-        """Distinct signals have distinct correlation_ids; play after stop runs."""
-        a = _fake_execution("r1")
-        runtime.executions = {"r1": a}
-
-        await runtime.handle_control(
-            _control("stop", scope="room", room_id="r1", correlation_id="ctl-stop")
+        await rooms.signal(
+            "stop", scope="room", room_id="r2", correlation_id="ctl-stop"
         )
-        await runtime.handle_control(
-            _control("play", scope="room", room_id="r1", correlation_id="ctl-play")
+        await rooms.signal(
+            "play", scope="room", room_id="r2", correlation_id="ctl-play"
         )
+        await rooms.signal("stop", scope="room", room_id="r2")
+        await rooms.signal("stop", scope="room", room_id="r2")
 
-        a.stop_room.assert_called_once()
-        a.resume_room.assert_awaited_once()
-
-    async def test_missing_correlation_id_not_deduped(self, runtime):
-        a = _fake_execution("r1")
-        runtime.executions = {"r1": a}
-        sig = _control("interrupt", scope="room", room_id="r1")  # no correlation_id
-
-        await runtime.handle_control(sig)
-        await runtime.handle_control(sig)
-
-        assert a.interrupt.call_count == 2  # both applied (cannot dedup)
+        assert rooms.heard == [
+            ("r1", ControlMode.INTERRUPT),
+            ("r1", ControlMode.INTERRUPT),
+            ("r2", ControlMode.STOP),
+            ("r2", ControlMode.STOP),
+            ("r2", ControlMode.STOP),
+        ]
+        assert rooms.resyncs("r2") == 1
 
 
 class TestStopSurvivesReconnect:
@@ -193,77 +193,20 @@ class TestStopSurvivesReconnect:
         link.get_next_message.assert_not_awaited()
 
 
-class TestOnControlHook:
-    """The runtime's own interrupt()/stop_room() only cancel the task that
-    invoked the handler -- on_control lets an adapter reach work it kept
-    running detached after that task already returned (e.g. a turn parked
-    on a human decision)."""
-
-    @pytest.fixture
-    def runtime_with_hook(self) -> tuple[AgentRuntime, AsyncMock]:
-        on_control = AsyncMock()
-        link = MagicMock()
-        runtime = AgentRuntime(
-            link=link,
-            agent_id="agent-123",
-            on_execute=AsyncMock(),
-            on_control=on_control,
-        )
-        return runtime, on_control
-
-    async def test_interrupt_fires_on_control_even_with_no_active_cycle(
-        self, runtime_with_hook
-    ) -> None:
-        """The exact bug: a released/detached turn leaves no active cycle task
-        for interrupt() to cancel, but the adapter must still be told."""
-        runtime, on_control = runtime_with_hook
-        execution = _fake_execution("r1")
-        execution.interrupt.return_value = (
-            False  # nothing for the cycle itself to cancel
-        )
-        runtime.executions = {"r1": execution}
-
-        await runtime.handle_control(_control("interrupt", scope="room", room_id="r1"))
-
-        on_control.assert_awaited_once_with("r1", ControlMode.INTERRUPT)
-
-    async def test_stop_fires_on_control(self, runtime_with_hook) -> None:
-        runtime, on_control = runtime_with_hook
-        execution = _fake_execution("r1")
-        runtime.executions = {"r1": execution}
-
-        await runtime.handle_control(_control("stop", scope="room", room_id="r1"))
-
-        on_control.assert_awaited_once_with("r1", ControlMode.STOP)
-
-    async def test_play_does_not_fire_on_control(self, runtime_with_hook) -> None:
-        """Resuming a room isn't an abort signal; nothing for on_interrupt to do."""
-        runtime, on_control = runtime_with_hook
-        execution = _fake_execution("r1")
-        runtime.executions = {"r1": execution}
-
-        await runtime.handle_control(_control("play", scope="room", room_id="r1"))
-
-        on_control.assert_not_awaited()
-
-    async def test_no_hook_configured_is_a_no_op(self, runtime) -> None:
-        """The default (no on_control passed) must not raise."""
-        execution = _fake_execution("r1")
-        runtime.executions = {"r1": execution}
-
-        await runtime.handle_control(_control("interrupt", scope="room", room_id="r1"))
-
-
 class TestGracefulDegradation:
-    async def test_custom_execution_without_methods_is_skipped(self, runtime):
-        """A custom Execution lacking the control methods degrades to no-op."""
+    async def test_every_mode_is_a_no_op_without_the_optional_hooks(
+        self, link: BandLink
+    ) -> None:
+        """No adapter on_interrupt, and a custom Execution lacking the
+        control methods: every mode degrades to a no-op instead of raising."""
 
         class BareExecution:
             room_id = "r1"
 
-        runtime.executions = {"r1": BareExecution()}
+        runtime = AgentRuntime(
+            link=link, agent_id=link.agent_id, on_execute=never_executes
+        )
+        runtime.executions = {"r1": BareExecution()}  # type: ignore[dict-item]
 
-        # Must not raise for any mode.
-        await runtime.handle_control(_control("interrupt", scope="room", room_id="r1"))
-        await runtime.handle_control(_control("stop", scope="room", room_id="r1"))
-        await runtime.handle_control(_control("play", scope="room", room_id="r1"))
+        for mode in ("interrupt", "stop", "play"):
+            await runtime.handle_control(_control(mode, scope="room", room_id="r1"))

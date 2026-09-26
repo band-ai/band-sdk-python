@@ -3,6 +3,10 @@
 Each test drives ``DecisionRegistry`` the way the adapters do -- an asker
 waits on every ask, replies claim and resolve, and whoever removes an open
 ask resolves it -- then checks the one outcome every asker ends up with.
+
+Deadlines run on looptime's virtual clock, which jumps to the next timer only
+once every task is idle, so each expiry lands exactly when it is due and every
+other ordering is set by awaiting what the flow observably did.
 """
 
 from __future__ import annotations
@@ -17,9 +21,11 @@ from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
 
 Outcome = str | Timeout
 
-#: Short enough to keep the suite fast, long enough to order events around it.
-DEADLINE_S = 0.02
-PAST_DEADLINE_S = 3 * DEADLINE_S
+pytestmark = pytest.mark.looptime
+
+#: Virtual seconds; distinct deadlines fix which of two expiries is due first.
+SHORT_DEADLINE_S = 30.0
+DEADLINE_S = 60.0
 
 
 @dataclass
@@ -28,6 +34,7 @@ class Ask:
     future: asyncio.Future[str] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
+    waiting: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class Room:
@@ -44,7 +51,7 @@ class Room:
         *,
         key: str | None = None,
         room_id: str | None = None,
-        timeout_s: float = 1.0,
+        timeout_s: float = DEADLINE_S,
     ) -> DecisionEntry[Ask] | None:
         ask = Ask(name)
         registration = (
@@ -58,10 +65,18 @@ class Room:
             why = "evicted" if removed is registration.evicted else "replaced"
             removed.payload.future.set_result(why)
         self.askers[name] = asyncio.create_task(
-            self.registry.wait(registration.entry, ask.future, timeout_s=timeout_s)
+            self._wait(registration.entry, ask, timeout_s)
         )
-        await asyncio.sleep(0)
+        await ask.waiting.wait()
         return registration.entry
+
+    async def _wait(
+        self, entry: DecisionEntry[Ask], ask: Ask, timeout_s: float
+    ) -> Outcome:
+        # wait() runs straight into its first suspension once called, so a
+        # caller woken by ``waiting`` finds the asker already parked in it.
+        ask.waiting.set()
+        return await self.registry.wait(entry, ask.future, timeout_s=timeout_s)
 
     def reply(self, token: str, answer: str) -> bool:
         """A room reply: claim, then resolve with no await in between."""
@@ -89,9 +104,16 @@ class Expiries:
 
     def __init__(self) -> None:
         self.names: list[str] = []
+        self._expired = asyncio.Condition()
 
     async def __call__(self, entry: DecisionEntry[Ask]) -> None:
-        self.names.append(entry.payload.name)
+        async with self._expired:
+            self.names.append(entry.payload.name)
+            self._expired.notify_all()
+
+    async def until(self, name: str) -> None:
+        async with self._expired:
+            await self._expired.wait_for(lambda: name in self.names)
 
 
 @pytest.fixture
@@ -121,17 +143,18 @@ async def test_a_busy_room_gives_every_asker_exactly_one_outcome(
     evicting, a redelivery of the claimed ask is refused, the claimant's
     late answer still wins past the deadline, and the rest time out."""
     room = open_room(max_pending=2)
-    await room.ask("a", key="a", timeout_s=DEADLINE_S)
+    await room.ask("a", key="a", timeout_s=SHORT_DEADLINE_S)
     await room.ask("b", key="b")
     claimed = room.registry.try_claim("a")
     assert claimed is not None
 
-    await room.ask("c1", key="c", timeout_s=DEADLINE_S)
-    await room.ask("c2", key="c", timeout_s=DEADLINE_S)
+    await room.ask("c1", key="c")
+    await room.ask("c2", key="c")
     assert await room.ask("a-again", key="a") is None
     assert list(room.registry) == ["a", "c"]
 
-    await asyncio.sleep(PAST_DEADLINE_S)
+    # c2's deadline is due after a's, so once c2 has expired a is past its own.
+    assert await room.askers["c2"] is Timeout.TIMED_OUT
     claimed.payload.future.set_result("accept")
 
     assert await room.outcomes() == {
@@ -194,22 +217,23 @@ async def test_expiry_timers_race_replies_redeliveries_and_teardown(
         assert registration is not None
         return registration.entry
 
-    registry.start_timeout(ask("answered", "p1"), DEADLINE_S, expiries)
+    registry.start_timeout(ask("answered", "p1"), SHORT_DEADLINE_S, expiries)
     first = ask("first", "p2")
-    registry.start_timeout(first, DEADLINE_S, expiries)
+    registry.start_timeout(first, SHORT_DEADLINE_S, expiries)
     redelivery = ask("redelivery", "p2")
-    registry.start_timeout(first, DEADLINE_S, expiries)
+    registry.start_timeout(first, SHORT_DEADLINE_S, expiries)
     registry.start_timeout(redelivery, DEADLINE_S, expiries)
     registry.start_timeout(ask("slow", "p3"), 0, slow_expiry)
     assert registry.try_claim("p1") is not None
 
     await replying.wait()
-    await asyncio.sleep(PAST_DEADLINE_S)
+    # Every other timer was due before the redelivery's; only it may fire.
+    await expiries.until("redelivery")
     assert expiries.names == ["redelivery"]
 
     assert registry.cancel_all() == []
     release.set()
-    await asyncio.sleep(0)
+    await expiries.until("slow")
     assert expiries.names == ["redelivery", "slow"]
 
 
@@ -254,7 +278,7 @@ async def test_a_failed_prompt_withdraws_the_ask_unless_a_reply_claimed_it() -> 
     assert registry.withdraw(answered) is False
     claimed.payload.future.set_result("accept")
 
-    assert await registry.wait(answered, answered_ask.future, timeout_s=1.0) == (
+    assert await registry.wait(answered, answered_ask.future, timeout_s=DEADLINE_S) == (
         "accept"
     )
     assert not registry
