@@ -50,10 +50,5 @@ def test_untyped_kwarg_keeps_working(build: AdapterFactory) -> None:
     assert build(turn_timeout_s=900.0)._turn_timeout_s == 900.0
 
 
-def test_matching_values_on_both_paths_are_accepted(build: AdapterFactory) -> None:
-    assert build(900.0, turn_timeout_s=900.0)._turn_timeout_s == 900.0
-
-
-def test_conflicting_values_are_refused(build: AdapterFactory) -> None:
-    with pytest.raises(ValueError, match="turn_timeout_s is set on both"):
-        build(1800.0, turn_timeout_s=900.0)
+def test_deliberate_config_value_wins_over_the_kwarg(build: AdapterFactory) -> None:
+    assert build(1800.0, turn_timeout_s=900.0)._turn_timeout_s == 1800.0

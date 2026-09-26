@@ -155,17 +155,14 @@ def resolve_turn_timeout(configured: float, features: dict[str, Any]) -> float:
     """Pick a config-based ACP adapter's turn timeout, consuming the legacy kwarg.
 
     Hosts passed ``turn_timeout_s`` untyped through ``**features`` before the
-    adapter configs typed it; that path keeps working. A non-default config
-    value that disagrees with it is ambiguous and refused.
+    adapter configs typed it; that path keeps working. The config value wins
+    whenever it was changed from the default, since that is the deliberate
+    typed setting. The kwarg is removed from ``features`` so it never reaches
+    ``ACPClientAdapter`` twice.
     """
     legacy = features.pop("turn_timeout_s", None)
-    if legacy is None:
+    if legacy is None or configured != DEFAULT_TURN_TIMEOUT_SECONDS:
         return configured
-    if configured not in (DEFAULT_TURN_TIMEOUT_SECONDS, legacy):
-        raise ValueError(
-            "turn_timeout_s is set on both the config and the adapter kwargs "
-            f"with different values ({configured} vs {legacy})"
-        )
     return float(legacy)
 
 

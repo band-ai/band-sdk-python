@@ -6640,10 +6640,16 @@ class TestSkillRoots:
 
         await _bootstrap_turn(adapter)
 
-        methods = _methods(client)
-        assert methods.index("skills/extraRoots/set") < methods.index("thread/start")
-        assert ("skills/extraRoots/set", {"extraRoots": [str(tmp_path)]}) in (
-            client.requests
+        # initialize itself is not a recorded request; extraRoots follows it
+        # directly, and model discovery still runs before the thread starts.
+        assert _methods(client)[:3] == [
+            "skills/extraRoots/set",
+            "model/list",
+            "thread/start",
+        ]
+        assert client.requests[0] == (
+            "skills/extraRoots/set",
+            {"extraRoots": [str(tmp_path)]},
         )
 
     @pytest.mark.asyncio
@@ -6662,7 +6668,7 @@ class TestSkillRoots:
         with pytest.raises(RuntimeError, match="skills/extraRoots/set"):
             await _bootstrap_turn(adapter)
 
-        assert "thread/start" not in _methods(client)
+        assert _methods(client) == ["skills/extraRoots/set"]
         assert client.closed
 
     @pytest.mark.parametrize("root", ["relative/skills", "/definitely/not/here"])
@@ -6674,4 +6680,6 @@ class TestSkillRoots:
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("CODEX_SKILL_ROOTS", json.dumps([str(tmp_path)]))
-        assert CodexAdapterConfig().skill_roots == [str(tmp_path)]
+        monkeypatch.setenv("CODEX_CWD", str(tmp_path))
+        config = CodexAdapterConfig()
+        assert (config.skill_roots, config.cwd) == ([str(tmp_path)], None)
