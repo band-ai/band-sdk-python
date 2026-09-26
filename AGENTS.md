@@ -45,7 +45,7 @@ tasks) and hydrates each event's payload into a typed, rule-free
 [docs/websocket-events.md](docs/websocket-events.md) for the channel table,
 payload field reference, and `band-sdk-core`'s delivery-lifecycle decisions.
 Whenever code here starts calling a `band_sdk_core` symbol it didn't use
-before, extend `.github/workflows/ci.yml`'s wheel-smoke step to prove that
+before, extend `.github/scripts/wheel-smoke.py` (CI's isolated-wheel smoke) to prove that
 symbol is callable from the isolated pinned wheel, not just importable.
 
 ## Contact Event Handling

@@ -251,65 +251,8 @@ jobs:
         uv venv /tmp/test-install
         uv pip install dist/*.whl --python /tmp/test-install/bin/python
 
-    - name: Verify core imports (no extras)
-      run: |
-        /tmp/test-install/bin/python <<'PYEOF'
-        from band import Agent, BandLink, AgentRuntime
-        from band.config import load_agent_config
-        from band_sdk_core import (
-            AgentFailure,
-            ClaimOutcome,
-            ClaimRegistry,
-            DecisionRegistry,
-            ParticipantRoster,
-            RetryTracker,
-            Session,
-            SessionPolicy,
-            evaluate_adapter_result,
-            evaluate_delivery_event,
-            evaluate_drain_candidate,
-            evaluate_next_message,
-            is_authorized_sender,
-            is_self_echo,
-        )
-
-        # Prove the pinned band_sdk_core wheel is callable, not just importable,
-        # from this isolated install -- not only from the dev checkout via uv sync.
-        registry = ClaimRegistry()
-        assert registry.try_claim("room", "message") is True
-        decisions = DecisionRegistry(max_pending=1)
-        token, ticket = decisions.register_keyed("ask-1")
-        assert decisions.try_claim(token, ticket) is ClaimOutcome.Claimed
-        assert decisions.unclaimed_count() == 0
-        assert decisions.cancel_all().claimed == ["ask-1"]
-        assert is_authorized_sender(frozenset({"alice"}), "alice") is True
-        tracker = RetryTracker()
-        assert tracker.max_retries == 1
-        roster = ParticipantRoster()
-        assert roster.list() == []
-        session = Session(SessionPolicy.default())
-        assert session.begin_attempt(0.0) == 0
-        assert is_self_echo("agent-1", "Agent", "agent-1") is True
-        assert evaluate_drain_candidate(None, [], "agent-1") == {"decision": "no_candidate"}
-        assert evaluate_delivery_event("room_added", "room-1", {}, "agent-1") == {
-            "decision": "ignored",
-            "event_type": "room_added",
-        }
-        assert evaluate_next_message("msg-1", None) == {"decision": "no_pending"}
-        assert evaluate_adapter_result("room-1", "msg-1", True) == {
-            "decision": "processed",
-            "room_id": "room-1",
-            "message_id": "msg-1",
-        }
-        failure = AgentFailure("wheel-smoke", "failure")
-        assert failure.to_dict() == {
-            "provider": "wheel-smoke",
-            "code": None,
-            "message": "failure",
-            "detail": None,
-        }
-        print('Core imports successful')
-        PYEOF
+    - name: Smoke-test the isolated wheel (no extras)
+      run: /tmp/test-install/bin/python .github/scripts/wheel-smoke.py
 
     - name: Start the Desktop room view from a fresh resolve
       # The lockfile says nothing about what a user's `uv tool install` picks:
