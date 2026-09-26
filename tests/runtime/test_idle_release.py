@@ -401,8 +401,11 @@ class GatedExecution:
         self.stop_entered = asyncio.Event()
         self.stop_gate = asyncio.Event()
         self.stop_errors: list[Exception] = []
+        self.start_error: Exception | None = None
 
-    async def start(self) -> None: ...
+    async def start(self) -> None:
+        if self.start_error is not None:
+            raise self.start_error
 
     async def stop(self, timeout: float | None = None) -> bool:
         self.stop_calls += 1
@@ -422,10 +425,17 @@ class GenerationRuntime:
         self.generations: list[GatedExecution] = []
         self.cleanups: list[tuple[str, int | None]] = []
         self.cleanup_errors: list[Exception] = []
+        self.build_errors: list[Exception] = []
+        self.start_errors: list[Exception] = []
 
         def build(*_args: Any, **_kwargs: Any) -> GatedExecution:
-            self.generations.append(GatedExecution(len(self.generations)))
-            return self.generations[-1]
+            if self.build_errors:
+                raise self.build_errors.pop(0)
+            execution = GatedExecution(len(self.generations))
+            if self.start_errors:
+                execution.start_error = self.start_errors.pop(0)
+            self.generations.append(execution)
+            return execution
 
         async def cleanup(room_id: str) -> None:
             live = self.runtime.executions.get(room_id)
@@ -511,8 +521,7 @@ async def test_a_rejoin_past_a_failing_stop_is_created_once_the_stop_succeeds() 
 
     assert ROOM in presence.roster.tracked_room_ids()
     assert (ROOM in g.runtime.executions, g.cleanups) == (False, [])
-    pending = g.runtime._pending_creations[ROOM]
-    await asyncio.wait_for(pending, timeout=5.0)
+    await asyncio.wait_for(_recovery(g), timeout=5.0)
     assert (old.stop_calls, g.cleanups) == (4, [(ROOM, None)])
     assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
 
@@ -573,7 +582,7 @@ async def test_leaving_cancels_a_pending_rejoin(departure: str) -> None:
     old.stop_errors.extend(RuntimeError("still running") for _ in range(2))
     await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
     await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    pending = g.runtime._pending_creations[ROOM]
+    pending = _recovery(g)
 
     match departure:
         case "room_removed":
@@ -600,7 +609,52 @@ async def test_a_failed_cleanup_is_retried_before_the_room_is_recreated() -> Non
     await presence._handle_room_added(make_room_added_event(room_id=ROOM))
 
     assert (ROOM in g.runtime.executions, len(g.generations)) == (False, 1)
-    await asyncio.wait_for(g.runtime._pending_creations[ROOM], timeout=5.0)
+    await asyncio.wait_for(_recovery(g), timeout=5.0)
     assert old.stop_calls == 1, "a cleanup retry must not stop the execution again"
     assert g.cleanups == [(ROOM, None)] * 3, "no new execution before cleanup succeeds"
     assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
+
+
+def _recovery(g: GenerationRuntime) -> asyncio.Task[None]:
+    task = g.runtime._pending_creations[ROOM].task
+    assert task is not None
+    return task
+
+
+async def _leave_and_rejoin(g: GenerationRuntime) -> GatedExecution:
+    g.runtime._teardown_retry_delay_s = 0.0
+    _admit_rooms(g.runtime.link)
+    presence = g.runtime.presence
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    [old] = g.generations
+    old.stop_gate.set()
+    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+    return old
+
+
+async def test_a_failed_successor_build_is_retried_without_another_join() -> None:
+    g = GenerationRuntime()
+    await _leave_and_rejoin(g)
+    g.build_errors.append(RuntimeError("factory unavailable"))
+
+    await g.runtime.presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    await wait_for_condition(lambda: ROOM in g.runtime.executions, timeout=5.0)
+
+    assert g.build_errors == [], "the failing build was attempted"
+    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
+
+
+async def test_a_successor_that_fails_to_start_is_stopped_and_never_live() -> None:
+    g = GenerationRuntime()
+    await _leave_and_rejoin(g)
+    g.start_errors.append(RuntimeError("harness did not start"))
+
+    await g.runtime.presence._handle_room_added(make_room_added_event(room_id=ROOM))
+
+    failed = g.generations[1]
+    assert ROOM not in g.runtime.executions, "a failed start is never published"
+    failed.stop_gate.set()
+    await asyncio.wait_for(_recovery(g), timeout=5.0)
+    assert failed.stop_calls == 1, "the failed candidate is released"
+    assert (len(g.generations), g.runtime.executions[ROOM]) == (3, g.generations[2])
+    assert g.cleanups == [(ROOM, None), (ROOM, None)]

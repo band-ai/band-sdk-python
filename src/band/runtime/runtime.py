@@ -73,6 +73,18 @@ class RoomTeardown:
     stopped: bool | None = None
 
 
+@dataclass
+class RoomCreation:
+    """The owner bringing an admitted room's execution up.
+
+    ``first_attempt`` resolves with the execution (or None) after the first
+    try, so a join returns promptly while ``task`` keeps retrying.
+    """
+
+    first_attempt: asyncio.Future[Execution | None]
+    task: asyncio.Task[None] | None = None
+
+
 class AgentRuntime:
     """
     Convenience wrapper: RoomPresence + Execution management.
@@ -171,10 +183,10 @@ class AgentRuntime:
         # one in-flight attempt, a failed stop leaves it for a retry, and room
         # creation waits on it, so old cleanup never meets a rejoined room.
         self._teardowns: dict[str, RoomTeardown] = {}
-        # Admitted rooms waiting on a predecessor's failed stop. Each retries
-        # that stop in the background and creates the room's execution once it
-        # succeeds, so an admitted room is never left without one.
-        self._pending_creations: dict[str, asyncio.Task[None]] = {}
+        # One owner per admitted room bringing its execution up: it finishes a
+        # predecessor's teardown, builds and starts a candidate, and retries
+        # after any failure until an execution is live or the room is left.
+        self._pending_creations: dict[str, RoomCreation] = {}
         self._teardown_retry_delay_s = TEARDOWN_RETRY_DELAY_S
 
         # Control-signal dedup. The server does not deduplicate
@@ -404,26 +416,74 @@ class AgentRuntime:
     # --- Execution management ---
 
     async def _create_execution(self, room_id: str) -> Execution | None:
-        """Create and start execution context for a room.
+        """Bring up the room's execution through its single creation owner.
 
-        When the room's previous execution is still failing to stop, returns
-        None and keeps retrying that stop in the background; the execution is
-        created as soon as it succeeds.
+        Returns the live execution, or None when the first attempt failed; the
+        owner then keeps retrying in the background until one is live.
         """
-        predecessor = self._teardowns.get(room_id)
-        if predecessor is not None:
-            await self._run_teardown(room_id, predecessor, timeout=None)
-            if self._teardowns.get(room_id) is predecessor:
-                self._create_after_teardown(room_id)
-                return None
         if room_id in self.executions:
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]
+        creation = self._pending_creations.get(room_id)
+        if creation is None:
+            creation = RoomCreation(asyncio.get_running_loop().create_future())
+            self._pending_creations[room_id] = creation
+            creation.task = asyncio.ensure_future(self._bring_up(room_id, creation))
+        return await asyncio.shield(creation.first_attempt)
 
+    async def _bring_up(self, room_id: str, creation: RoomCreation) -> None:
+        """Retry creation until an execution is live; cancelled by a leave."""
+        try:
+            execution = await self._attempt_creation(room_id)
+            creation.first_attempt.set_result(execution)
+            while execution is None:
+                await asyncio.sleep(self._teardown_retry_delay_s)
+                execution = await self._attempt_creation(room_id)
+        finally:
+            if not creation.first_attempt.done():
+                creation.first_attempt.set_result(None)
+            if self._pending_creations.get(room_id) is creation:
+                del self._pending_creations[room_id]
+
+    async def _attempt_creation(self, room_id: str) -> Execution | None:
+        """One atomic try: finish any predecessor teardown, then build, start
+        and only then publish a candidate. None when the room is not live yet.
+
+        A candidate whose start fails (or is cancelled) is handed to a
+        teardown before anything else happens, so it cannot leak or be seen
+        as live.
+        """
+        teardown = self._teardowns.get(room_id)
+        if teardown is not None:
+            await self._run_teardown(room_id, teardown, timeout=None)
+            if self._teardowns.get(room_id) is teardown:
+                return None
+        try:
+            execution = self._build_execution(room_id)
+        except Exception:
+            logger.warning(
+                "Building the execution for %s failed", room_id, exc_info=True
+            )
+            return None
+        try:
+            await execution.start()
+        except BaseException as exc:
+            self._teardowns[room_id] = RoomTeardown(execution)
+            if not isinstance(exc, Exception):
+                raise
+            logger.warning(
+                "Starting the execution for %s failed", room_id, exc_info=True
+            )
+            return None
+        self.executions[room_id] = execution
+        logger.debug("Created execution for room %s", room_id)
+        return execution
+
+    def _build_execution(self, room_id: str) -> Execution:
         # Use factory if provided, otherwise create ExecutionContext
         if self._execution_factory:
             try:
-                execution = self._execution_factory(
+                return self._execution_factory(
                     room_id,
                     self.link,
                     hub_room_id=self._hub_room_id,
@@ -431,48 +491,19 @@ class AgentRuntime:
             except TypeError:
                 # Backward compatibility: support legacy factories that
                 # accept only (room_id, link).
-                execution = self._execution_factory(room_id, self.link)
-        else:
-            execution = ExecutionContext(
-                room_id=room_id,
-                link=self.link,
-                on_execute=self._on_execute,
-                config=self._session_config,
-                agent_id=self.agent_id,
-                on_participant_added=self._on_participant_added,
-                on_participant_removed=self._on_participant_removed,
-                hub_room_id=self._hub_room_id,
-                claim_registry=self._claim_registry,
-                on_idle_release=self._on_idle_release,
-            )
-
-        self.executions[room_id] = execution
-        await execution.start()
-
-        logger.debug("Created execution for room %s", room_id)
-        return execution
-
-    def _create_after_teardown(self, room_id: str) -> None:
-        """Retry the room's failed predecessor stop until it succeeds, then
-        create its execution. At most one such retry runs per room."""
-        pending = self._pending_creations.get(room_id)
-        if pending is not None and not pending.done():
-            return
-        self._pending_creations[room_id] = asyncio.ensure_future(
-            self._retry_teardown_then_create(room_id)
+                return self._execution_factory(room_id, self.link)
+        return ExecutionContext(
+            room_id=room_id,
+            link=self.link,
+            on_execute=self._on_execute,
+            config=self._session_config,
+            agent_id=self.agent_id,
+            on_participant_added=self._on_participant_added,
+            on_participant_removed=self._on_participant_removed,
+            hub_room_id=self._hub_room_id,
+            claim_registry=self._claim_registry,
+            on_idle_release=self._on_idle_release,
         )
-
-    async def _retry_teardown_then_create(self, room_id: str) -> None:
-        try:
-            while (teardown := self._teardowns.get(room_id)) is not None:
-                await asyncio.sleep(self._teardown_retry_delay_s)
-                await self._run_teardown(room_id, teardown, timeout=None)
-            await self._create_execution(room_id)
-        except Exception:
-            logger.exception("Creating the execution for room %s failed", room_id)
-        finally:
-            if self._pending_creations.get(room_id) is asyncio.current_task():
-                del self._pending_creations[room_id]
 
     async def _destroy_execution(
         self, room_id: str, timeout: float | None = None
@@ -487,9 +518,12 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        pending = self._pending_creations.pop(room_id, None)
-        if pending is not None:
-            pending.cancel()
+        creation = self._pending_creations.pop(room_id, None)
+        if creation is not None and creation.task is not None:
+            # Awaited, so a candidate the cancelled attempt was starting is
+            # already recorded as a teardown below.
+            creation.task.cancel()
+            await asyncio.wait({creation.task})
         teardown = self._teardowns.get(room_id)
         if teardown is None:
             execution = self.executions.pop(room_id, None)
