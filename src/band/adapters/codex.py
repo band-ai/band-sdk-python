@@ -3812,21 +3812,35 @@ async def _probe_client(config: CodexAdapterConfig) -> AsyncIterator[CodexStdioC
         await client.close()
 
 
+# A catalog far past any real one; reaching it means pagination is broken.
+_MAX_MODEL_LIST_PAGES = 50
+
+
 async def fetch_codex_models(client: CodexClientProtocol) -> list[HarnessModel]:
     """Every visible model from ``model/list``, following ``nextCursor``.
 
-    The one listing path for probes and room startup alike. Raises on a
-    failed request; an empty list is a successful, empty catalog.
+    The one listing path for probes, ``/model list``, and room startup.
+    Raises on a failed request, a cursor Codex already returned, or more
+    than ``_MAX_MODEL_LIST_PAGES`` pages, so a degraded app-server can
+    neither hang startup nor flood itself with requests. An empty list is a
+    successful, empty catalog.
     """
     models: list[HarnessModel] = []
     params: dict[str, Any] = {}
-    while True:
+    seen_cursors: set[str] = set()
+    for _ in range(_MAX_MODEL_LIST_PAGES):
         result = await client.request("model/list", params)
         models.extend(codex_models(result))
         cursor = result.get("nextCursor") if isinstance(result, dict) else None
         if not cursor:
             return models
+        if cursor in seen_cursors:
+            raise RuntimeError(f"Codex model/list repeated cursor {cursor!r}")
+        seen_cursors.add(cursor)
         params = {"cursor": cursor}
+    raise RuntimeError(
+        f"Codex model/list returned more than {_MAX_MODEL_LIST_PAGES} pages"
+    )
 
 
 async def list_models(config: CodexAdapterConfig) -> list[HarnessModel]:

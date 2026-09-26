@@ -23,6 +23,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
     PendingApproval,
+    fetch_codex_models,
 )
 from band.adapters.codex import (
     list_models as codex_list_models,
@@ -6815,6 +6816,40 @@ class TestReasoningEffort:
             {},
             {"cursor": "page-2"},
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_repeated_cursor_stops_the_listing_promptly(self) -> None:
+        stuck = {"data": [], "nextCursor": "same"}
+        client = PagedModelListClient(pages=[stuck] * 100)
+
+        with pytest.raises(RuntimeError, match="repeated cursor 'same'"):
+            await asyncio.wait_for(fetch_codex_models(client), timeout=1.0)
+        assert _methods(client).count("model/list") == 2
+
+    @pytest.mark.asyncio
+    async def test_endless_distinct_cursors_hit_the_page_ceiling(self) -> None:
+        pages = [{"data": [], "nextCursor": f"p{i}"} for i in range(200)]
+        client = PagedModelListClient(pages=pages)
+
+        with pytest.raises(RuntimeError, match="more than 50 pages"):
+            await fetch_codex_models(client)
+        assert _methods(client).count("model/list") == 50
+
+    @pytest.mark.asyncio
+    async def test_broken_pagination_leaves_room_start_on_the_unchecked_path(
+        self,
+    ) -> None:
+        stuck = {"data": [], "nextCursor": "same"}
+        client = PagedModelListClient(events=[_turn_completed()], pages=[stuck] * 10)
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+
+        await asyncio.wait_for(_bootstrap_turn(adapter), timeout=2.0)
+
+        assert _started_turn_effort(client) == "ultra"
+        assert "thread/start" in _methods(client)
 
     @pytest.mark.asyncio
     async def test_an_empty_catalog_does_not_inherit_another_rooms(self) -> None:
