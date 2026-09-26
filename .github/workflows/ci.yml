@@ -258,7 +258,9 @@ jobs:
         from band.config import load_agent_config
         from band_sdk_core import (
             AgentFailure,
+            ClaimOutcome,
             ClaimRegistry,
+            DecisionRegistry,
             ParticipantRoster,
             RetryTracker,
             Session,
@@ -267,6 +269,7 @@ jobs:
             evaluate_delivery_event,
             evaluate_drain_candidate,
             evaluate_next_message,
+            is_authorized_sender,
             is_self_echo,
         )
 
@@ -274,6 +277,12 @@ jobs:
         # from this isolated install -- not only from the dev checkout via uv sync.
         registry = ClaimRegistry()
         assert registry.try_claim("room", "message") is True
+        decisions = DecisionRegistry(max_pending=1)
+        token, ticket = decisions.register_keyed("ask-1")
+        assert decisions.try_claim(token, ticket) is ClaimOutcome.Claimed
+        assert decisions.unclaimed_count() == 0
+        assert decisions.cancel_all().claimed == ["ask-1"]
+        assert is_authorized_sender(frozenset({"alice"}), "alice") is True
         tracker = RetryTracker()
         assert tracker.max_retries == 1
         roster = ParticipantRoster()
