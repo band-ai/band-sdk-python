@@ -243,7 +243,7 @@ def test_peer_must_be_a_live_adapter() -> None:
 # adapter here requires editing this allowlist (naming it, deliberately, in
 # review) and a follow-up that takes its lane live. kiro_acp is a standing
 # exception with no follow-up; its e2e_pending reason says why.
-EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({"kiro_acp"})
+EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({"cursor_acp", "kiro_acp"})
 
 
 def test_pending_adapters_match_the_allowlist() -> None:

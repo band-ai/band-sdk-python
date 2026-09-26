@@ -18,7 +18,7 @@ npm install -g "opencode-ai@${OPENCODE_VERSION}"
 read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
 {
   "$schema": "https://opencode.ai/config.json",
-  "small_model": "opencode/mimo-v2.5-free",
+  "small_model": "opencode/mimo-v2.6-flash-free",
   "provider": {
     "opencode": { "options": { "apiKey": "{env:OPENCODE_ZEN_API_KEY}" } }
   },

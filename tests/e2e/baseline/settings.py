@@ -133,7 +133,7 @@ class Backends(BaseSettings):
     opencode_provider_id: str = "opencode"  # OPENCODE_PROVIDER_ID (the Zen provider)
     # A current OpenCode Zen *free* model (the catalogue shifts; confirm against the
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
-    opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
+    opencode_model_id: str = "mimo-v2.6-flash-free"  # OPENCODE_MODEL_ID
     # Whether the serve behind opencode_base_url gates its `bash` tool to `ask`.
     # Only the server's own permission rules decide when it raises a
     # `permission.asked`, so the manual-approval smoke has no way to provoke one

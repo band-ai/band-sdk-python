@@ -83,6 +83,7 @@ class FakeACPAgent:
         self.prompts: list[dict[str, Any]] = []
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
+        self.auth_methods: list[str] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
         self.cancelled_sessions: list[str] = []
@@ -386,6 +387,11 @@ class FakeACPAgent:
                 ),
             ),
         )
+
+    async def authenticate(self, method_id: str, **kwargs: Any) -> None:
+        """Accept any auth method (Cursor's ``cursor_login``, for one)."""
+        del kwargs
+        self.auth_methods.append(method_id)
 
     async def load_session(
         self, cwd: str, session_id: str, mcp_servers: Any = None, **kwargs: Any

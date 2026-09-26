@@ -7,10 +7,11 @@ import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
-from uuid import uuid4
 
+from band_sdk_core import is_authorized_sender
 from typing_extensions import Unpack
 
+from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
@@ -32,6 +33,12 @@ from band.integrations.acp.client_runtime import (
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.decisions import (
+    DecisionEntry,
+    DecisionRegistry,
+    Timeout,
+    sender_allowlist,
+)
 from band.runtime.formatters import strip_leading_mentions
 from band.workspaces import WorkspaceResolver, workspace_resolver_for
 
@@ -43,6 +50,11 @@ QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
 _INVALID_DECISION = object()
+DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
+DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisions."
+
+
+ROOM_COMMAND = "/cursor"
 
 
 class CursorCommandWord(StrEnum):
@@ -58,6 +70,18 @@ class CursorCommandWord(StrEnum):
     ACCEPT = "accept"
     REJECT = "reject"
     ANSWER = "answer"
+
+
+PERMISSION_REQUESTED_TEMPLATE = (
+    "Cursor needs permission to run `{tool}`. "
+    f"Reply `{ROOM_COMMAND} {CursorCommandWord.SELECT} {{token}} <option-id>` "
+    f"or `{ROOM_COMMAND} {CursorCommandWord.DENY} {{token}}`. "
+    "Available options: {options}"
+)
+DECISION_RESOLVED_TEMPLATE = "Cursor {kind} decision `{token}` resolved."
+DECISION_TIMED_OUT_TEMPLATE = (
+    "Cursor {kind} decision `{token}` timed out and was cancelled."
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +113,14 @@ class CursorACPAdapterConfig:
     turn_timeout_s: float = 900.0
     max_pending_decisions: int = 10
     decision_authorized_senders: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        # Accept any collection of sender ids, as plain membership once did.
+        object.__setattr__(
+            self,
+            "decision_authorized_senders",
+            sender_allowlist(self.decision_authorized_senders),
+        )
 
 
 @dataclass
@@ -129,7 +161,9 @@ class CursorACPAdapter(ACPClientAdapter):
         self._cursor_profile = CursorACPClientProfile(self._resolve_extension_method)
         self._turn_lock = asyncio.Lock()
         self._active_turn: CursorTurn | None = None
-        self._pending_decisions: dict[str, PendingDecision] = {}
+        self._pending_decisions: DecisionRegistry[PendingDecision] = DecisionRegistry(
+            max_pending=config.max_pending_decisions
+        )
         env = self._cursor_env(config)
         workspace_for_room = workspace_resolver_for(
             config.cwd, config.workspace_for_room
@@ -300,6 +334,14 @@ class CursorACPAdapter(ACPClientAdapter):
         if session_id is not None:
             self._cursor_profile.forget_session(session_id)
 
+    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        """A room /stop or interrupt must also reach a turn parked on a
+        decision -- the runtime's own interrupt only cancels the task that
+        already returned once the decision prompt was posted. Matches
+        on_cleanup's choice not to hard-cancel the turn itself: waking its
+        pending decision is enough for it to wind down on its own."""
+        self._cancel_room_decisions(room_id)
+
     async def cleanup_all(self, *, final: bool = True) -> None:
         self._cancel_all_decisions()
         self._cursor_profile.clear_sessions()
@@ -322,12 +364,11 @@ class CursorACPAdapter(ACPClientAdapter):
                     kind="permission",
                     turn=turn,
                     choices=choices,
-                    prompt=(
-                        f"Cursor needs permission to run `{request.tool_call.name}`. "
-                        f"Reply `/cursor {CursorCommandWord.SELECT} {{token}} <option-id>` "
-                        f"or `/cursor {CursorCommandWord.DENY} {{token}}`. "
-                        f"Available options: "
-                        f"{', '.join(sorted(choices['permission'])) or 'none'}"
+                    prompt=PERMISSION_REQUESTED_TEMPLATE.format(
+                        tool=request.tool_call.name,
+                        # _wait_for_decision fills the token in once it's minted.
+                        token="{token}",
+                        options=", ".join(sorted(choices["permission"])) or "none",
                     ),
                 )
                 return result if isinstance(result, str) else None
@@ -380,7 +421,7 @@ class CursorACPAdapter(ACPClientAdapter):
                     choices=choices,
                     multi_select=multi_select,
                     prompt=(
-                        f"Cursor needs input. Reply `/cursor {CursorCommandWord.ANSWER} "
+                        f"Cursor needs input. Reply `{ROOM_COMMAND} {CursorCommandWord.ANSWER} "
                         "{token} question-id=option-id[,option-id] ...`. Questions: "
                         + self._question_summary(questions)
                     ),
@@ -407,8 +448,8 @@ class CursorACPAdapter(ACPClientAdapter):
                     turn=turn,
                     prompt=(
                         f"{description} needs approval. Reply "
-                        f"`/cursor {CursorCommandWord.ACCEPT} {{token}}` or "
-                        f"`/cursor {CursorCommandWord.REJECT} {{token}}`."
+                        f"`{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
+                        f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
                     ),
                 )
                 return (
@@ -426,59 +467,62 @@ class CursorACPAdapter(ACPClientAdapter):
         choices: dict[str, tuple[str, ...]] | None = None,
         multi_select: frozenset[str] = frozenset(),
     ) -> object | None:
-        token = uuid4().hex[:8]
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
-        self._evict_oldest_decision()
-        self._pending_decisions[token] = PendingDecision(
+        pending = PendingDecision(
             kind=kind,
             room_id=turn.room_id,
             future=future,
             choices=choices or {},
             multi_select=multi_select,
         )
+        registration = self._pending_decisions.register_minted(
+            pending, room_id=turn.room_id
+        )
+        if registration.evicted is not None:
+            self._resolve_evicted_decision(registration.evicted)
+        entry = registration.entry
         try:
-            try:
-                await turn.tools.send_message(
-                    prompt.replace("{token}", token),
-                    mentions=[turn.requester_id] if turn.requester_id else None,
-                )
-            except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
-                logger.warning("Could not deliver Cursor %s decision prompt", kind)
-                return None
-            finally:
-                # Release on_message here, not only in _run_turn's finally --
-                # the room needs its queue back the instant a decision is
-                # outstanding, whether or not the prompt itself landed.
-                if not turn.release.done():
-                    turn.release.set_result(None)
-            try:
-                return await asyncio.wait_for(
-                    future, timeout=self._config.decision_timeout_s
-                )
-            except TimeoutError:
-                # Pop before the (awaited) notice send below: a room reply
-                # for this token that lands while the notice is still being
-                # sent must see it as no-longer-pending, not resolve a
-                # future the timeout has already cancelled.
-                self._pending_decisions.pop(token, None)
-                try:
-                    await turn.tools.send_message(
-                        f"Cursor {kind} decision `{token}` timed out and was cancelled.",
-                        mentions=[turn.requester_id] if turn.requester_id else None,
-                    )
-                except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
-                    logger.warning("Could not deliver Cursor %s timeout notice", kind)
+            await turn.tools.send_message(
+                prompt.replace("{token}", entry.token),
+                mentions=_requester_mentions(turn),
+            )
+        except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
+            logger.warning("Could not deliver Cursor %s decision prompt", kind)
+            # A reply that claimed it meanwhile owns the answer; wait for it.
+            if self._pending_decisions.withdraw(entry):
                 return None
         finally:
-            pending = self._pending_decisions.pop(token, None)
-            if pending is not None and not pending.future.done():
-                pending.future.set_result(None)
+            # Release on_message here, not only in _run_turn's finally --
+            # the room needs its queue back the instant a decision is
+            # outstanding, whether or not the prompt itself landed.
+            if not turn.release.done():
+                turn.release.set_result(None)
+
+        result = await self._pending_decisions.wait(
+            entry, future, timeout_s=self._config.decision_timeout_s
+        )
+        if result is Timeout.TIMED_OUT:
+            await self._notify_decision_timeout(turn, kind, entry.token)
+            return None
+        return result
+
+    @staticmethod
+    async def _notify_decision_timeout(
+        turn: CursorTurn, kind: DecisionKind, token: str
+    ) -> None:
+        try:
+            await turn.tools.send_message(
+                DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
+                mentions=_requester_mentions(turn),
+            )
+        except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
+            logger.warning("Could not deliver Cursor %s timeout notice", kind)
 
     async def _handle_control_message(
         self, msg: PlatformMessage, tools: AgentToolsProtocol, room_id: str
     ) -> bool:
         words = strip_leading_mentions(msg.content).strip().split()
-        if not words or words[0].lower() != "/cursor":
+        if not words or words[0].lower() != ROOM_COMMAND:
             return False
         mentions = [msg.sender_id]
         if len(words) == 1 or words[1].lower() == CursorCommandWord.DECISIONS:
@@ -486,7 +530,7 @@ class CursorACPAdapter(ACPClientAdapter):
             return True
         if len(words) < 3:
             await tools.send_message(
-                f"Use `/cursor {CursorCommandWord.DECISIONS}` to list pending "
+                f"Use `{ROOM_COMMAND} {CursorCommandWord.DECISIONS}` to list pending "
                 "Cursor decisions.",
                 mentions=mentions,
             )
@@ -495,13 +539,7 @@ class CursorACPAdapter(ACPClientAdapter):
         pending = self._pending_decisions.get(token)
         if pending is None or pending.room_id != room_id:
             await tools.send_message(
-                f"Cursor decision `{token}` is not pending.", mentions=mentions
-            )
-            return True
-        if not self._is_authorized(msg.sender_id):
-            await tools.send_message(
-                "You are not authorized to resolve Cursor decisions.",
-                mentions=mentions,
+                DECISION_NOT_PENDING_TEMPLATE.format(token=token), mentions=mentions
             )
             return True
         result = self._command_result(action, words[3:], pending)
@@ -511,11 +549,16 @@ class CursorACPAdapter(ACPClientAdapter):
                 mentions=mentions,
             )
             return True
-        if not pending.future.done():
+        if not is_authorized_sender(
+            self._config.decision_authorized_senders, msg.sender_id
+        ):
+            reply = DECISION_UNAUTHORIZED_MESSAGE
+        elif self._pending_decisions.try_claim(token) is None:
+            reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
+        else:
             pending.future.set_result(result)
-        await tools.send_message(
-            f"Cursor {pending.kind} decision `{token}` resolved.", mentions=mentions
-        )
+            reply = DECISION_RESOLVED_TEMPLATE.format(kind=pending.kind, token=token)
+        await tools.send_message(reply, mentions=mentions)
         return True
 
     def _command_result(
@@ -595,62 +638,51 @@ class CursorACPAdapter(ACPClientAdapter):
             else None
         )
 
-    def _is_authorized(self, sender_id: str | None) -> bool:
-        allowed = self._config.decision_authorized_senders
-        return allowed is None or sender_id in allowed
-
-    def _evict_oldest_decision(self) -> None:
-        if len(self._pending_decisions) < self._config.max_pending_decisions:
-            return
-        oldest_token = next(iter(self._pending_decisions))
-        pending = self._pending_decisions.pop(oldest_token)
+    @staticmethod
+    def _resolve_evicted_decision(evicted: DecisionEntry[PendingDecision]) -> None:
         logger.info(
             "Evicting oldest pending Cursor %s decision `%s` in room %s "
             "(max_pending_decisions reached)",
-            pending.kind,
-            oldest_token,
-            pending.room_id,
+            evicted.payload.kind,
+            evicted.token,
+            evicted.payload.room_id,
         )
-        if not pending.future.done():
-            pending.future.set_result(None)
+        evicted.payload.future.set_result(None)
 
     def _cancel_room_decisions(self, room_id: str) -> None:
-        for token, pending in tuple(self._pending_decisions.items()):
-            if pending.room_id == room_id:
-                self._pending_decisions.pop(token)
-                logger.info(
-                    "Cancelling pending Cursor %s decision `%s` in room %s "
-                    "(room cleanup)",
-                    pending.kind,
-                    token,
-                    room_id,
-                )
-                if not pending.future.done():
-                    pending.future.set_result(None)
+        for entry in self._pending_decisions.cancel_room(room_id):
+            logger.info(
+                "Cancelling pending Cursor %s decision `%s` in room %s (room cleanup)",
+                entry.payload.kind,
+                entry.token,
+                room_id,
+            )
+            entry.payload.future.set_result(None)
 
     def _cancel_all_decisions(self) -> None:
-        for token, pending in self._pending_decisions.items():
+        for entry in self._pending_decisions.cancel_all():
             logger.info(
                 "Cancelling pending Cursor %s decision `%s` in room %s "
                 "(adapter shutdown)",
-                pending.kind,
-                token,
-                pending.room_id,
+                entry.payload.kind,
+                entry.token,
+                entry.payload.room_id,
             )
-            if not pending.future.done():
-                pending.future.set_result(None)
-        self._pending_decisions.clear()
+            entry.payload.future.set_result(None)
 
     async def _list_decisions(
         self, tools: AgentToolsProtocol, room_id: str, *, mentions: list[str]
     ) -> None:
         pending = [
-            f"`{token}` ({decision.kind})"
-            for token, decision in self._pending_decisions.items()
-            if decision.room_id == room_id
+            f"`{entry.token}` ({entry.payload.kind})"
+            for entry in self._pending_decisions.unclaimed_in_room(room_id)
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")
         await tools.send_message(content, mentions=mentions)
+
+
+def _requester_mentions(turn: CursorTurn) -> list[str] | None:
+    return [turn.requester_id] if turn.requester_id else None
 
 
 __all__ = [

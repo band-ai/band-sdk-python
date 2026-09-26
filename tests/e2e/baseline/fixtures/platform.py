@@ -9,10 +9,13 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from band_rest import AsyncRestClient
+from band_rest.core.api_error import ApiError
 
 from band import agent as agent_module
 from band.runtime import single_instance
+from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     new_run_id,
@@ -23,6 +26,10 @@ from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient, user_ws_obser
 
 logger = logging.getLogger(__name__)
 
+#: Statuses meaning the platform refuses the key itself (unauthenticated, or its
+#: account's plan lacks durable human API keys).
+REJECTED_KEY_STATUSES = frozenset({401, 403})
+
 __all__ = [
     "baseline_run_id",
     "baseline_settings",
@@ -31,6 +38,7 @@ __all__ = [
     "orphan_sweep",
     "reap_leaked_agents",
     "resource_manager",
+    "second_user_ops",
     "user_ops",
 ]
 
@@ -60,6 +68,27 @@ def user_ops(baseline_user_client: AsyncRestClient) -> UserOps:
     rather than spinning up a fresh client per test.
     """
     return UserOps(baseline_user_client)
+
+
+@pytest.fixture
+async def second_user_ops(baseline_settings: BaselineSettings) -> UserOps:
+    """A second human's driver, for scenarios where who sends a message matters.
+
+    Fails (never skips) without ``BAND_API_KEY_USER_2``, per the validation policy.
+    A key the platform rejects is configuration, not a transient, so it fails as
+    an assertion that ``flaky_infra`` never reruns.
+    """
+    require_dep(Dep.SECOND_USER, baseline_settings)
+    ops = UserOps(user_rest_client(baseline_settings, second=True))
+    try:
+        await ops.whoami()
+    except ApiError as error:
+        if error.status_code not in REJECTED_KEY_STATUSES:
+            raise
+        raise AssertionError(
+            f"BAND_API_KEY_USER_2 was rejected ({error.status_code}): {error.body}"
+        ) from error
+    return ops
 
 
 @pytest.fixture(scope="session")

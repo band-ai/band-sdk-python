@@ -334,7 +334,8 @@ def task_lifecycle_instruction(marker: str) -> str:
         f"task's id and status='{TaskAssignmentStatus.IN_PROGRESS.value}'. Then "
         f"call {TaskTool.UPDATE.value} again with the same id and "
         f"status='{TaskAssignmentStatus.COMPLETED.value}' and a brief comment. "
-        "Do not call any other tool."
+        "Then use band_send_message to briefly confirm what you did. Do not "
+        "call any other tool."
     )
 
 
@@ -346,7 +347,8 @@ def task_read_instruction() -> str:
         f"Now call {TaskTool.LIST.value} to see the board. Then call "
         f"{TaskTool.GET.value} on the task you created earlier. Then call "
         f"{TaskTool.GET_HISTORY.value} on that same task. Then call "
-        f"{TaskTool.GET_BOARD.value}. Do not call any other tool."
+        f"{TaskTool.GET_BOARD.value}. Then use band_send_message to briefly "
+        "summarize what you found. Do not call any other tool."
     )
 
 
