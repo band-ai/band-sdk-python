@@ -26,6 +26,7 @@ Run with:
 
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -232,6 +233,41 @@ async def test_two_instances_stay_isolated_in_shared_org() -> None:
     finally:
         await adapter_a.cleanup_all()
         await adapter_b.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_adapter_starts_reuse_one_org_user_scope() -> None:
+    """Concurrent process starts for one Band agent reuse its Letta identity."""
+    loopback = LETTA_MCP_ADVERTISED_HOST in ("127.0.0.1", "localhost")
+    agent_name = f"ConcurrentStartBot-{uuid4().hex[:8]}"
+
+    def make_adapter() -> LettaAdapter:
+        return LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url=LETTA_BASE_URL,
+                provider_key=LETTA_API_KEY or None,
+                model=LETTA_MODEL,
+                embedding=LETTA_EMBEDDING,
+                mcp=LettaMCPConfig(
+                    bind_host="127.0.0.1" if loopback else "0.0.0.0",
+                    advertised_host=LETTA_MCP_ADVERTISED_HOST,
+                ),
+            ),
+        )
+
+    adapters = (make_adapter(), make_adapter())
+    try:
+        await asyncio.gather(
+            *(
+                adapter.on_started(agent_name, "Concurrent startup test bot")
+                for adapter in adapters
+            )
+        )
+
+        user_ids = {adapter._client.default_headers["user_id"] for adapter in adapters}
+        assert len(user_ids) == 1
+    finally:
+        await asyncio.gather(*(adapter.cleanup_all() for adapter in adapters))
 
 
 @pytest.mark.asyncio
