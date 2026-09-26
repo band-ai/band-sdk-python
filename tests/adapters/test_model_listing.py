@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -35,15 +36,27 @@ _OMP_LISTING = {
 
 
 def _fake_omp(tmp_path: Path, *, stdout: str, exit_code: int = 0) -> str:
-    """An executable that answers ``models --json`` like OMP 18.3.2 does."""
-    script = tmp_path / "omp"
-    script.write_text(
-        "#!/bin/sh\n"
-        f"cat <<'JSON'\n{stdout}\nJSON\n"
-        f"echo 'omp failed' >&2\nexit {exit_code}\n"
+    """An executable that answers ``models --json`` like OMP 18.3.2 does.
+
+    The body runs through the kind of launcher a real install has on each OS
+    (an npm ``.cmd`` shim on Windows, an executable script elsewhere), so the
+    listing's launcher resolution and spawn are exercised for real.
+    """
+    body = tmp_path / "fake_omp.py"
+    body.write_text(
+        "import sys\n"
+        f"sys.stdout.write({stdout!r} + '\\n')\n"
+        "sys.stderr.write('omp failed\\n')\n"
+        f"sys.exit({exit_code})\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    return str(script)
+    if sys.platform == "win32":
+        launcher = tmp_path / "omp.cmd"
+        launcher.write_text(f'@"{sys.executable}" "{body}" %*\n')
+    else:
+        launcher = tmp_path / "omp"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{body}" "$@"\n')
+        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    return str(launcher)
 
 
 async def test_omp_listing_is_parsed_from_the_cli(tmp_path: Path) -> None:
