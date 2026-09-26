@@ -255,6 +255,20 @@ def test_codex_rejects_the_former_shared_cwd_option() -> None:
         CodexAdapter(CodexAdapterConfig(cwd="/workspace"))
 
 
+def test_codex_config_ignores_an_ambient_codex_cwd_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CODEX_CWD`` is a plausible ambient env var (a Codex CLI convention,
+    this repo's own E2E harness) unrelated to this banned kwarg; it must never
+    silently populate ``cwd`` and trip the rejection above."""
+    monkeypatch.setenv("CODEX_CWD", "/some/unrelated/directory")
+
+    config = CodexAdapterConfig(workspace_for_room=lambda _room_id: "/tmp/x")
+
+    assert config.cwd is None
+    CodexAdapter(config)  # must not raise
+
+
 @pytest.mark.asyncio
 async def test_codex_starts_each_thread_in_its_room_workspace(tmp_path: Path) -> None:
     class Client:

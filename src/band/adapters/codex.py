@@ -17,7 +17,12 @@ from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
@@ -361,6 +366,34 @@ class RoomCodexClient:
     rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
 
 
+class _WithoutCwdBinding(PydanticBaseSettingsSource):
+    """Drops ``cwd``'s implicit env binding from a settings source.
+
+    ``populate_by_name=True`` makes pydantic-settings honor a field's bare
+    name as an env alias alongside any explicit ``validation_alias`` -- which
+    for a field literally named ``cwd`` means the plain, generically-meaningful
+    ``CODEX_CWD`` is always live, however it's aliased. ``cwd`` exists on
+    ``CodexAdapterConfig`` only to reject the legacy explicit kwarg (see
+    ``CodexAdapter.__init__``), so an ambient ``CODEX_CWD`` set for something
+    unrelated (e.g. a Codex CLI convention, or this repo's own E2E harness)
+    must never silently populate it and trip that rejection.
+    """
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self._source = source
+
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:
+        return self._source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        values = dict(self._source())
+        values.pop("cwd", None)
+        return values
+
+
 class CodexAdapterConfig(BaseSettings):
     """Runtime configuration for Codex adapter sessions.
 
@@ -405,6 +438,8 @@ class CodexAdapterConfig(BaseSettings):
         Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
     ) = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
+    # Explicit-kwarg-only (see settings_customise_sources): rejected outright
+    # in CodexAdapter.__init__ -- never populated from CODEX_CWD.
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = Field(default=None, exclude=True)
     approval_policy: str = "never"
@@ -500,6 +535,24 @@ class CodexAdapterConfig(BaseSettings):
         if isinstance(value, str):
             return value.split()
         return value
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Keep ``cwd`` constructible only via an explicit kwarg -- see
+        ``_WithoutCwdBinding``."""
+        return (
+            init_settings,
+            _WithoutCwdBinding(env_settings),
+            _WithoutCwdBinding(dotenv_settings),
+            file_secret_settings,
+        )
 
 
 class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):

@@ -621,6 +621,12 @@ def _build_omp_acp(
     requires=[Dep.CURSOR_CLI],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
+    e2e_pending=(
+        "no way to run Cursor CLI live in CI: it has no BYOK provider knob "
+        "(unlike copilot_acp's COPILOT_PROVIDER_* env vars), so it needs "
+        "either a real Cursor account API key or a full AWS Bedrock setup, "
+        "neither of which is provisioned"
+    ),
 )
 def _build_cursor_acp(
     s: BaselineSettings,
