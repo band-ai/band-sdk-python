@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -16,12 +17,19 @@ from pydantic import BaseModel, ValidationError
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
+    _REASONING_EFFORTS,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
     CodexAdapter,
     CodexAdapterConfig,
     PendingApproval,
+    fetch_codex_models,
 )
+from band.adapters.codex import (
+    list_models as codex_list_models,
+)
+from band.core.exceptions import BandConnectionError
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -6683,3 +6691,361 @@ class TestSkillRoots:
         monkeypatch.setenv("CODEX_CWD", str(tmp_path))
         config = CodexAdapterConfig()
         assert (config.skill_roots, config.cwd) == ([str(tmp_path)], None)
+
+
+def _final_text(text: str) -> RpcEvent:
+    return _event_notification(
+        "item/agentMessage/delta", {"itemId": "m", "delta": text}
+    )
+
+
+class TestNoReply:
+    @pytest.mark.asyncio
+    async def test_no_reply_suppresses_the_fallback_text(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(1, "band_no_reply", {"reason": "not for me"}),
+                _final_text("Nothing to add."),
+                _turn_completed(),
+            ]
+        )
+        assert turn.tools.messages_sent == []
+        assert reported_failures(turn.tools) == []
+
+    @pytest.mark.asyncio
+    async def test_no_reply_does_not_carry_into_the_next_turn(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(1, "band_no_reply"),
+                _turn_completed("turn-1"),
+            ]
+        )
+        turn.client._events.extend(
+            [_final_text("Second answer"), _turn_completed("turn-2")]
+        )
+
+        await turn.adapter.on_message(
+            make_platform_message(),
+            turn.tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert [m["content"] for m in turn.tools.messages_sent] == ["Second answer"]
+
+
+_LISTED_MODELS = {
+    "data": [
+        {
+            "id": "gpt-6-sol",
+            "displayName": "GPT-6-Sol",
+            "hidden": False,
+            "isDefault": True,
+            "defaultReasoningEffort": "medium",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "medium"},
+                {"reasoningEffort": "max"},
+            ],
+        },
+        {"id": "internal-preview", "hidden": True},
+    ],
+    "nextCursor": None,
+}
+
+
+def _started_turn_effort(client: FakeCodexClient) -> Any:
+    return next(p for m, p in client.requests if m == "turn/start").get("effort")
+
+
+class TestReasoningEffort:
+    @pytest.mark.asyncio
+    async def test_advertised_effort_beyond_the_static_set_reaches_the_turn(
+        self,
+    ) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed()], model_list_result=_LISTED_MODELS
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="max"),
+        )
+        await _bootstrap_turn(adapter)
+        assert _started_turn_effort(client) == "max"
+
+    @pytest.mark.asyncio
+    async def test_effort_the_model_does_not_offer_fails_the_start(self) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed()], model_list_result=_LISTED_MODELS
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+        with pytest.raises(ValueError, match="does not offer reasoning_effort 'ultra'"):
+            await _bootstrap_turn(adapter)
+        assert "thread/start" not in _methods(client)
+
+    @pytest.mark.asyncio
+    async def test_effort_is_unchecked_when_no_list_is_available(self) -> None:
+        client = ModelListFailingClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+        await _bootstrap_turn(adapter)
+        assert _started_turn_effort(client) == "ultra"
+
+    @pytest.mark.asyncio
+    async def test_selected_model_on_a_later_page_is_validated(self) -> None:
+        page_two = {"data": _LISTED_MODELS["data"], "nextCursor": None}
+        client = PagedModelListClient(
+            events=[_turn_completed()],
+            pages=[{"data": [{"id": "gpt-5.5"}], "nextCursor": "page-2"}, page_two],
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+
+        with pytest.raises(ValueError, match="offers: medium, max"):
+            await _bootstrap_turn(adapter)
+        assert [p for m, p in client.requests if m == "model/list"] == [
+            {},
+            {"cursor": "page-2"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_repeated_cursor_stops_the_listing_promptly(self) -> None:
+        stuck = {"data": [], "nextCursor": "same"}
+        client = PagedModelListClient(pages=[stuck] * 100)
+
+        with pytest.raises(RuntimeError, match="repeated cursor 'same'"):
+            await asyncio.wait_for(fetch_codex_models(client), timeout=1.0)
+        assert _methods(client).count("model/list") == 2
+
+    @pytest.mark.asyncio
+    async def test_endless_distinct_cursors_hit_the_page_ceiling(self) -> None:
+        pages = [{"data": [], "nextCursor": f"p{i}"} for i in range(200)]
+        client = PagedModelListClient(pages=pages)
+
+        with pytest.raises(RuntimeError, match="more than 50 pages"):
+            await fetch_codex_models(client)
+        assert _methods(client).count("model/list") == 50
+
+    @pytest.mark.asyncio
+    async def test_broken_pagination_leaves_room_start_on_the_unchecked_path(
+        self,
+    ) -> None:
+        stuck = {"data": [], "nextCursor": "same"}
+        client = PagedModelListClient(events=[_turn_completed()], pages=[stuck] * 10)
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+
+        await asyncio.wait_for(_bootstrap_turn(adapter), timeout=2.0)
+
+        assert _started_turn_effort(client) == "ultra"
+        assert "thread/start" in _methods(client)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_catalog_does_not_inherit_another_rooms(self) -> None:
+        client = PagedModelListClient(
+            events=[_turn_completed()], pages=[_LISTED_MODELS, {"data": []}]
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="max"),
+        )
+        wire_codex_room(adapter, client, "room-1", initialized=False)
+        await adapter._ensure_client_ready()
+        assert adapter._accepted_efforts() == ("medium", "max")
+
+        wire_codex_room(adapter, client, "room-2", initialized=False)
+        await adapter._ensure_client_ready()
+
+        assert adapter._accepted_efforts() == tuple(sorted(_REASONING_EFFORTS))
+
+
+class PagedModelListClient(FakeCodexClient):
+    """Answers successive ``model/list`` calls from ``pages`` in order."""
+
+    def __init__(self, *, pages: list[dict[str, Any]], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pages = deque(pages)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "model/list":
+            self.requests.append((method, dict(params or {})))
+            return self._pages.popleft()
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class ModelListFailingClient(FakeCodexClient):
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "model/list":
+            raise CodexJsonRpcError(code=-32601, message="Method not found")
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class ProbeClient(FakeCodexClient):
+    """A throwaway probe client: scripted replies, a record of its close."""
+
+    def __init__(
+        self,
+        *,
+        replies: dict[str, Any] | None = None,
+        connect_error: Exception | None = None,
+        initialize_error: BaseException | None = None,
+    ) -> None:
+        super().__init__()
+        self._replies = replies or {}
+        self._connect_error = connect_error
+        self._initialize_error = initialize_error
+
+    async def connect(self) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+        await super().connect()
+
+    async def initialize(self, **kwargs: Any) -> dict[str, Any]:
+        if self._initialize_error is not None:
+            raise self._initialize_error
+        return await super().initialize(**kwargs)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        self.requests.append((method, dict(params or {})))
+        reply = self._replies.get(method, {})
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+
+@pytest.fixture
+def probe_client(monkeypatch: pytest.MonkeyPatch) -> Callable[..., ProbeClient]:
+    def install(**kwargs: Any) -> ProbeClient:
+        client = ProbeClient(**kwargs)
+        monkeypatch.setattr(
+            "band.adapters.codex.CodexStdioClient", lambda **_kwargs: client
+        )
+        return client
+
+    return install
+
+
+def _missing_codex() -> BandConnectionError:
+    error = BandConnectionError("Codex CLI binary not found: 'codex'.")
+    error.__cause__ = FileNotFoundError("codex")
+    return error
+
+
+class TestProbes:
+    @pytest.mark.asyncio
+    async def test_list_models_returns_visible_models_and_closes(
+        self, probe_client
+    ) -> None:
+        client = probe_client(replies={"model/list": _LISTED_MODELS})
+
+        models = await codex_list_models(CodexAdapterConfig())
+
+        assert models == [
+            HarnessModel(
+                id="gpt-6-sol",
+                label="GPT-6-Sol",
+                provider="openai",
+                efforts=("medium", "max"),
+                default_effort="medium",
+                is_default=True,
+            )
+        ]
+        assert client.closed
+
+    @pytest.mark.asyncio
+    async def test_list_models_closes_the_client_on_cancellation(
+        self, probe_client
+    ) -> None:
+        client = probe_client(initialize_error=asyncio.CancelledError())
+        with pytest.raises(asyncio.CancelledError):
+            await codex_list_models(CodexAdapterConfig())
+        assert client.closed
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kwargs", "reason_part"),
+        [
+            ({"connect_error": _missing_codex()}, "binary not found"),
+            ({"initialize_error": RuntimeError("bad frame")}, "did not complete"),
+            (
+                {
+                    "replies": {
+                        "account/read": {"account": None, "requiresOpenaiAuth": True}
+                    }
+                },
+                "not logged in",
+            ),
+        ],
+        ids=["missing-executable", "handshake", "login-required"],
+    )
+    async def test_preflight_names_the_failure(
+        self, probe_client, kwargs: dict[str, Any], reason_part: str
+    ) -> None:
+        client = probe_client(**kwargs)
+
+        result = await CodexAdapter(CodexAdapterConfig()).preflight()
+
+        assert (
+            result.ok,
+            reason_part in (result.reason or ""),
+            bool(result.remedy),
+        ) == (
+            False,
+            True,
+            True,
+        )
+        assert client.closed or not client.connected
+
+    @pytest.mark.asyncio
+    async def test_preflight_passes_without_touching_room_state(
+        self, probe_client, tmp_path
+    ) -> None:
+        client = probe_client(
+            replies={"account/read": {"account": {"type": "chatgpt"}}}
+        )
+        adapter = CodexAdapter(
+            CodexAdapterConfig(
+                skill_roots=[str(tmp_path)],
+                workspace_for_room=lambda room: str(tmp_path / room),
+            )
+        )
+
+        result = await adapter.preflight()
+
+        assert result == PreflightResult.passed()
+        assert client.closed
+        assert "skills/extraRoots/set" not in _methods(client)
+        assert (adapter._room_clients, adapter._workspace_rooms) == ({}, {})

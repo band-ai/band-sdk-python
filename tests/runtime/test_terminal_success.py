@@ -9,13 +9,17 @@ tool must opt in via ``band_terminal`` (checked by ``is_marked_terminal``).
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from band.runtime.custom_tools import is_marked_terminal
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     EVENT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
+    AgentTools,
     band_tool_errored,
     is_terminal_success,
+    settles_turn_reply,
 )
 
 # A concrete Band tool of each kind, derived from the registry so a rename can't
@@ -98,3 +102,22 @@ def test_is_marked_terminal_reads_the_flag() -> None:
 
     assert is_marked_terminal(TerminalModel) is True
     assert is_marked_terminal(PlainModel) is False
+
+
+def test_no_reply_is_terminal_and_settles_the_reply() -> None:
+    assert is_terminal_success("band_no_reply", succeeded=True) is True
+    assert settles_turn_reply("band_no_reply") is True
+    assert settles_turn_reply("band-band_no_reply") is True
+    assert settles_turn_reply("other-band_no_reply") is False
+
+
+async def test_no_reply_is_local_only() -> None:
+    rest = MagicMock()
+    tools = AgentTools("room-1", rest)
+
+    outcome = await tools.execute_tool_call_structured(
+        "band_no_reply", {"reason": "addressed to another agent"}
+    )
+
+    assert (outcome.ok, outcome.value) == (True, {"status": "no_reply"})
+    assert rest.mock_calls == []

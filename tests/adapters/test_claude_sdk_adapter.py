@@ -15,11 +15,11 @@ import json
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk._errors import CLIConnectionError
+from claude_agent_sdk._errors import CLIConnectionError, CLINotFoundError
 from claude_agent_sdk.types import (
     PermissionResultAllow,
     PermissionResultDeny,
@@ -42,7 +42,11 @@ from band.adapters.claude_sdk import (
     TurnResultAlreadyReported,
     _pre_tool_use_continue_hook,
 )
+from band.adapters.claude_sdk import (
+    list_models as claude_list_models,
+)
 from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
@@ -1024,6 +1028,7 @@ class TestBandTools:
         expected = {
             "mcp__band__band_send_message",
             "mcp__band__band_send_event",
+            "mcp__band__band_no_reply",
             "mcp__band__band_add_participant",
             "mcp__band__band_remove_participant",
             "mcp__band__band_get_participants",
@@ -1417,6 +1422,7 @@ class TestSessionPersistence:
         the failure must surface without leaking the raw exception text."""
         adapter = ClaudeSDKAdapter()
         mock_manager = AsyncMock()
+        mock_manager.has_session = MagicMock(return_value=False)
         mock_manager.get_or_create_session = AsyncMock(
             side_effect=Exception("Session setup failed")
         )
@@ -1454,6 +1460,7 @@ class TestSessionPersistence:
         without leaking the raw exception text."""
         adapter = ClaudeSDKAdapter()
         mock_manager = AsyncMock()
+        mock_manager.has_session = MagicMock(return_value=False)
         mock_manager.get_or_create_session = AsyncMock(
             side_effect=[Exception("Resume failed"), Exception("Fresh session failed")]
         )
@@ -1606,6 +1613,32 @@ class TestTurnFailureSurfacing:
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
         assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_no_reply_tool_ends_the_turn_quietly(self, mock_tools):
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn("mcp__band__band_no_reply")
+        mock_client = self._client_yielding(*turn, _result_message(is_error=False))
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+        mock_tools.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_reply_does_not_excuse_a_later_silent_turn(self, mock_tools):
+        adapter = ClaudeSDKAdapter()
+        quiet = _tool_turn("mcp__band__band_no_reply")
+        await adapter._process_response(
+            self._client_yielding(*quiet, _result_message()), "room-123", mock_tools
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._process_response(
+                self._client_yielding(_result_message()), "room-123", mock_tools
+            )
+
+        assert [_MISSING_REPLY_TEXT in e for e in _error_events(mock_tools)] == [True]
 
     @pytest.mark.asyncio
     async def test_assistant_carried_tool_result_also_counts(self, mock_tools):
@@ -3500,3 +3533,108 @@ class TestTurnTimeout:
     def test_non_positive_timeout_is_rejected(self):
         with pytest.raises(ValueError, match="turn_timeout_s"):
             ClaudeSDKAdapter(turn_timeout_s=0)
+
+
+class ProbeSDKClient:
+    """Stands in for ClaudeSDKClient in probe tests; records its options and close."""
+
+    instances: ClassVar[list[ProbeSDKClient]] = []
+    connect_error: ClassVar[BaseException | None] = None
+    server_info: ClassVar[dict[str, Any]] = {}
+
+    def __init__(self, options: Any) -> None:
+        self.options = options
+        self.disconnected = False
+        ProbeSDKClient.instances.append(self)
+
+    async def connect(self) -> None:
+        if ProbeSDKClient.connect_error is not None:
+            raise ProbeSDKClient.connect_error
+
+    async def get_server_info(self) -> dict[str, Any]:
+        return ProbeSDKClient.server_info
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+
+@pytest.fixture
+def probe_sdk(monkeypatch: pytest.MonkeyPatch) -> type[ProbeSDKClient]:
+    ProbeSDKClient.instances = []
+    ProbeSDKClient.connect_error = None
+    ProbeSDKClient.server_info = {}
+    monkeypatch.setattr("band.adapters.claude_sdk.ClaudeSDKClient", ProbeSDKClient)
+    return ProbeSDKClient
+
+
+class TestProbes:
+    @pytest.mark.asyncio
+    async def test_list_models_reads_server_info_models(self, probe_sdk):
+        probe_sdk.server_info = {
+            "models": [
+                {
+                    "value": "default",
+                    "displayName": "Default (recommended)",
+                    "supportedEffortLevels": ["low", "max"],
+                },
+                {"value": "haiku", "displayName": "Haiku"},
+            ]
+        }
+        adapter = ClaudeSDKAdapter(cli_path="/opt/claude", env={"K": "v"})
+
+        models = await claude_list_models(adapter)
+
+        assert models == [
+            HarnessModel(
+                id="default",
+                label="Default (recommended)",
+                provider="anthropic",
+                efforts=("low", "max"),
+                is_default=True,
+            ),
+            HarnessModel(id="haiku", label="Haiku", provider="anthropic"),
+        ]
+        [client] = probe_sdk.instances
+        assert (client.options.cli_path, client.options.env, client.disconnected) == (
+            "/opt/claude",
+            {"K": "v"},
+            True,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("error", "reason_part"),
+        [
+            (CLINotFoundError("claude not found"), "CLI not found"),
+            (CLIConnectionError("exited early"), "did not complete its handshake"),
+        ],
+        ids=["missing-executable", "handshake"],
+    )
+    async def test_preflight_names_the_failure_and_closes(
+        self, probe_sdk, error, reason_part
+    ):
+        probe_sdk.connect_error = error
+
+        result = await ClaudeSDKAdapter().preflight()
+
+        assert (result.ok, reason_part in (result.reason or "")) == (False, True)
+        assert [c.disconnected for c in probe_sdk.instances] == [True]
+
+    @pytest.mark.asyncio
+    async def test_preflight_cancellation_still_closes(self, probe_sdk):
+        probe_sdk.connect_error = asyncio.CancelledError()
+        with pytest.raises(asyncio.CancelledError):
+            await ClaudeSDKAdapter().preflight()
+        assert [c.disconnected for c in probe_sdk.instances] == [True]
+
+    @pytest.mark.asyncio
+    async def test_preflight_creates_no_room_session(self, probe_sdk, tmp_path):
+        adapter = ClaudeSDKAdapter(workspace_for_room=lambda r: str(tmp_path / r))
+        await adapter.on_started("Claude", "coding agent")
+
+        result = await adapter.preflight()
+
+        assert result == PreflightResult.passed()
+        assert adapter._session_manager is not None
+        assert adapter._session_manager._sessions == {}
+        assert (adapter._room_workspaces, adapter._workspace_rooms) == ({}, {})

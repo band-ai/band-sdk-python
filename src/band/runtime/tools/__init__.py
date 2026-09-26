@@ -63,6 +63,7 @@ from band.runtime.tools.inputs import (
     ListTasksInput,
     ListUserMemoriesInput,
     LookupPeersInput,
+    NoReplyInput,
     ReadRoomFileInput,
     RegisterMyAgentInput,
     RejectContactRequestInput,
@@ -102,6 +103,7 @@ from band.runtime.tools.registry import (
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
+    REPLY_SETTLING_TOOL_NAMES,
     ROOM_POSTING_TOOL_NAMES,
     TASK_TOOL_NAMES,
     TOOL_DEFINITIONS,
@@ -123,6 +125,7 @@ from band.runtime.tools.registry import (
     missing_reply_error,
     redact_tool_call_args,
     resolve_capabilities,
+    settles_turn_reply,
 )
 from band.runtime.tools.schema import (
     ToolCallOutcome,
@@ -166,6 +169,7 @@ __all__ = [
     "MEMORY_TOOL_NAMES",
     "PREVIEWABLE_IMAGE_CONTENT_TYPES",
     "READ_ONLY_TOOL_NAMES",
+    "REPLY_SETTLING_TOOL_NAMES",
     "ROOM_POSTING_TOOL_NAMES",
     "TASK_TOOL_NAMES",
     "TOOL_DEFINITIONS",
@@ -209,6 +213,7 @@ __all__ = [
     "ListTasksInput",
     "ListUserMemoriesInput",
     "LookupPeersInput",
+    "NoReplyInput",
     "ParticipantAddResult",
     "ParticipantRemoveResult",
     "ReadRoomFileInput",
@@ -266,6 +271,7 @@ __all__ = [
     "resolve_capabilities",
     "resolve_tool_model",
     "serialize_tool_result",
+    "settles_turn_reply",
     "strip_handle_prefix",
     "validate_tool_arguments",
 ]

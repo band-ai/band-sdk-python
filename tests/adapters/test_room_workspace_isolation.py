@@ -5,19 +5,23 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 
+from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
     CodexClientProtocol,
     CodexSessionState,
 )
+from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.testing import FakeAgentTools
 from band.workspaces import resolve_room_workspace
+from tests.integrations.acp.conftest import make_platform_message
 
 
 def test_default_workspace_is_created_per_room(
@@ -311,3 +315,77 @@ async def test_codex_starts_each_thread_in_its_room_workspace(tmp_path: Path) ->
         resolve_room_workspace("room-a", workspace_for_room),
         resolve_room_workspace("room-b", workspace_for_room),
     ]
+
+
+async def _started_claude(workspace_for_room: Callable[[str], str]) -> ClaudeSDKAdapter:
+    adapter = ClaudeSDKAdapter(workspace_for_room=workspace_for_room)
+    await adapter.on_started("Claude", "coding agent")
+    return adapter
+
+
+def _claude_session_cwd(adapter: ClaudeSDKAdapter, room_id: str) -> object:
+    manager = adapter._session_manager
+    assert manager is not None
+    return manager._build_options(room_id).cwd
+
+
+@pytest.mark.asyncio
+async def test_claude_sessions_run_in_their_own_room_workspace(tmp_path: Path) -> None:
+    adapter = await _started_claude(lambda room_id: str(tmp_path / room_id))
+
+    adapter._claim_room_workspace("room-a")
+    adapter._claim_room_workspace("room-b")
+
+    assert [
+        _claude_session_cwd(adapter, "room-a"),
+        _claude_session_cwd(adapter, "room-b"),
+    ] == [str(tmp_path / "room-a"), str(tmp_path / "room-b")]
+
+
+@pytest.mark.asyncio
+async def test_claude_rejects_a_workspace_shared_by_live_rooms(tmp_path: Path) -> None:
+    adapter = await _started_claude(lambda _room_id: str(tmp_path / "shared"))
+    adapter._claim_room_workspace("room-a")
+
+    with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
+        adapter._claim_room_workspace("room-b")
+
+
+@pytest.mark.asyncio
+async def test_claude_room_cleanup_releases_its_workspace(tmp_path: Path) -> None:
+    adapter = await _started_claude(lambda _room_id: str(tmp_path / "shared"))
+    adapter._claim_room_workspace("room-a")
+
+    await adapter.on_cleanup("room-a")
+
+    adapter._claim_room_workspace("room-b")
+    assert _claude_session_cwd(adapter, "room-b") == str(tmp_path / "shared")
+
+
+@pytest.mark.asyncio
+async def test_failed_claude_session_start_releases_its_workspace(
+    tmp_path: Path,
+) -> None:
+    adapter = await _started_claude(lambda _room_id: str(tmp_path / "shared"))
+    manager = adapter._session_manager
+    assert manager is not None
+    manager.get_or_create_session = AsyncMock(side_effect=RuntimeError("no cli"))
+
+    with pytest.raises(RuntimeError, match="no cli"):
+        await adapter.on_message(
+            make_platform_message("hi", room_id="room-a"),
+            FakeAgentTools(),
+            ClaudeSDKSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-a",
+        )
+
+    adapter._claim_room_workspace("room-b")
+    assert _claude_session_cwd(adapter, "room-b") == str(tmp_path / "shared")
+
+
+def test_claude_rejects_cwd_with_workspace_for_room(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="either cwd or workspace_for_room"):
+        ClaudeSDKAdapter(cwd=str(tmp_path), workspace_for_room=lambda r: r)

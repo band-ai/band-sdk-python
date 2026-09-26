@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from band_rest.core.api_error import ApiError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.streaming import WebSocketDisconnectReason
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
@@ -119,6 +120,11 @@ class PlatformRuntime:
         if not self._link:
             raise RuntimeError("Runtime not started")
         return self._link
+
+    @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """The link's terminal disconnect reason, or ``None`` before connecting."""
+        return self._link.last_disconnect_reason if self._link else None
 
     @property
     def runtime(self) -> AgentRuntime:
@@ -270,10 +276,12 @@ class PlatformRuntime:
         logger.info("Platform runtime stopped")
         return graceful
 
-    async def run_forever(self) -> None:
-        """Run until interrupted."""
+    async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
+        """Run until the link ends (see ``BandLink.run_forever``)."""
         if self._link:
-            await self._link.run_forever()
+            await self._link.run_forever(
+                install_signal_handlers=install_signal_handlers
+            )
 
     async def _fetch_agent_metadata(self) -> None:
         """Fetch agent metadata from platform."""

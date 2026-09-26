@@ -14,29 +14,27 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
-from band.runtime.tools import is_room_posting_tool
+from band.runtime.tools import settles_turn_reply
 
 logger = logging.getLogger(__name__)
 
 
 def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
-    """True when the turn posted to the room via a Band messaging tool.
+    """True when the turn settled its reply via a Band tool: a room post or band_no_reply.
 
     Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
     at execution time, ACP tool calls may run out-of-process (a remote band-mcp
     server the SDK never sees execute). The ACP session-update stream is the one
     record of the turn that covers both, so detection matches the collected
     tool-call chunks by their reported title (ACP has no structured tool-name
-    field). A room-posting call counts once it (or its result update) reports
+    field). A reply-settling call counts once it (or its result update) reports
     ``completed`` — a failed post must not suppress the text fallback, or the turn
     goes silent.
     """
     posting_call_ids: set[str] = set()
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        if isinstance(chunk.tool, ACPToolCall) and is_room_posting_tool(
-            chunk.tool.name
-        ):
+        if isinstance(chunk.tool, ACPToolCall) and settles_turn_reply(chunk.tool.name):
             if metadata.get("status") == ToolStatus.COMPLETED:
                 return True
             # Correlate with a later result only by a real id. An empty id (a

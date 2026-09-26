@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -14,26 +17,36 @@ from acp.schema import (
     ElicitationCapabilities,
     ElicitationFormCapabilities,
     PermissionOption,
+    SessionConfigOptionSelect,
 )
+from acp.transports import default_environment
 from pydantic import JsonValue
 from typing_extensions import Unpack
 
+from band.core.harness import HarnessModel
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
     DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
     PermissionResolver,
     SpawnProcess,
+    _resolve_launcher,
     resolve_turn_timeout,
 )
 from band.integrations.acp.client_runtime import (
     ACPCollectingClient,
+    ACPRuntime,
     ElicitationHandler,
     ElicitationNarrator,
     elicitation_requested_schema,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
-from band.integrations.acp.session_config import SessionConfigResolver
+from band.integrations.acp.session_config import (
+    SessionConfigOption,
+    SessionConfigResolver,
+    flatten_select_options,
+    session_config_options,
+)
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.omp import (
     DEFAULT_OMP_ACP_COMMAND,
@@ -51,6 +64,9 @@ from band.runtime.custom_tools import CustomToolDef
 from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
 
 logger = logging.getLogger(__name__)
+
+_OMP_MODEL_OPTION_ID = "model"
+_OMP_THINKING_OPTION_ID = "thinking"
 
 _OMP_FORM_CAPABILITIES = ClientCapabilities(
     elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities())
@@ -250,8 +266,132 @@ class OmpACPAdapter(ACPClientAdapter):
         return handler
 
 
+async def list_models(config: OmpACPAdapterConfig | None = None) -> list[HarnessModel]:
+    """The models this OMP install offers.
+
+    Reads ``omp models --json``. When that command is unavailable (fails or
+    prints something that is not its JSON listing), falls back to the
+    ``model``/``thinking`` selects a throwaway ACP session advertises in
+    ``configOptions``. No model turn runs, no room workspace or session is
+    used, and every subprocess is closed on every exit path, cancellation
+    included. Tested with OMP 18.3.2.
+    """
+    config = config or OmpACPAdapterConfig()
+    try:
+        return await _models_from_cli(config)
+    except (RuntimeError, ValueError) as exc:
+        logger.info(
+            "omp models --json unavailable (%s); reading ACP session configOptions",
+            exc,
+        )
+        return await _models_from_acp_session(config)
+
+
+async def _models_from_cli(config: OmpACPAdapterConfig) -> list[HarnessModel]:
+    [omp] = _resolve_launcher([config.command[0]])
+    proc = await asyncio.create_subprocess_exec(
+        omp,
+        "models",
+        "--json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**default_environment(), **(config.env or {})},
+    )
+    try:
+        stdout, stderr = await proc.communicate()
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"`{omp} models --json` exited {proc.returncode}: "
+            f"{stderr.decode(errors='replace').strip()}"
+        )
+    listing = json.loads(stdout)
+    if not isinstance(listing, dict) or not isinstance(listing.get("models"), list):
+        raise ValueError("`omp models --json` printed no model listing")
+    return omp_models(listing)
+
+
+async def _models_from_acp_session(config: OmpACPAdapterConfig) -> list[HarnessModel]:
+    runtime = ACPRuntime(
+        command=_resolve_launcher(finalize_omp_command(config.command)),
+        env=config.env,
+        client_capabilities=_OMP_FORM_CAPABILITIES,
+        use_unstable_protocol=True,
+    )
+    try:
+        await runtime.start()
+        with tempfile.TemporaryDirectory(prefix="band-omp-probe-") as cwd:
+            session = await runtime.create_session_response(cwd=cwd, mcp_servers=[])
+            try:
+                return omp_session_models(session_config_options(session) or ())
+            finally:
+                await runtime.close_session(session.session_id)
+    finally:
+        await runtime.stop()
+
+
+def omp_session_models(
+    options: Sequence[SessionConfigOption],
+) -> list[HarnessModel]:
+    """Models from an OMP session's ``model`` select.
+
+    The ``thinking`` select is session-wide, so its levels are attributed
+    only to the session's current model, the one they apply to.
+    """
+    selects = {
+        option.id: option
+        for option in options
+        if isinstance(option, SessionConfigOptionSelect)
+    }
+    model_select = selects.get(_OMP_MODEL_OPTION_ID)
+    if model_select is None:
+        raise RuntimeError("OMP's ACP session advertises no model option")
+    thinking = selects.get(_OMP_THINKING_OPTION_ID)
+    levels = (
+        tuple(o.value for o in flatten_select_options(thinking.options))
+        if thinking is not None
+        else ()
+    )
+    current = model_select.current_value
+    return [
+        HarnessModel(
+            id=option.value,
+            label=option.name or option.value,
+            provider=option.value.partition("/")[0] or None,
+            efforts=levels if option.value == current else (),
+            default_effort=(
+                thinking.current_value
+                if thinking is not None and option.value == current
+                else None
+            ),
+            is_default=option.value == current,
+        )
+        for option in flatten_select_options(model_select.options)
+    ]
+
+
+def omp_models(listing: dict[str, Any]) -> list[HarnessModel]:
+    """Parse ``omp models --json``; ``id`` is the ``provider/model`` selector."""
+    return [
+        HarnessModel(
+            id=str(entry.get("selector") or entry["id"]),
+            label=str(entry.get("name") or entry["id"]),
+            provider=entry.get("provider"),
+            efforts=tuple(entry.get("thinking") or ()),
+        )
+        for entry in listing.get("models") or []
+        if isinstance(entry, dict) and entry.get("id")
+    ]
+
+
 __all__ = [
     "DEFAULT_OMP_ACP_COMMAND",
     "OmpACPAdapter",
     "OmpACPAdapterConfig",
+    "list_models",
+    "omp_models",
+    "omp_session_models",
 ]

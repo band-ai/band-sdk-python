@@ -124,6 +124,21 @@ class GetParticipantsInput(BaseModel):
     # No parameters required
 
 
+class NoReplyInput(BaseModel):
+    """End this turn without posting anything to the room.
+
+    Call this instead of band_send_message when the latest message needs no
+    answer from you: it was addressed to someone else, it is an FYI or an
+    acknowledgement, or another participant already answered it. It is a
+    complete turn, not an error; do not also send a message.
+    """
+
+    reason: str | None = Field(
+        default=None,
+        description="Short note on why no reply is needed (kept in local logs only)",
+    )
+
+
 class CreateChatroomInput(BaseModel):
     """Create a new chat room for a specific task or conversation."""
 

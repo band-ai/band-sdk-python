@@ -32,6 +32,7 @@ class BandTool(StrEnum):
 
     SEND_MESSAGE = "band_send_message"
     SEND_EVENT = "band_send_event"
+    NO_REPLY = "band_no_reply"
     ADD_PARTICIPANT = "band_add_participant"
     REMOVE_PARTICIPANT = "band_remove_participant"
     GET_PARTICIPANTS = "band_get_participants"
