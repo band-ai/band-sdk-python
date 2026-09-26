@@ -7,7 +7,11 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.claude_sdk import TurnResultAlreadyReported
+from band.adapters.claude_sdk import (
+    APPROVAL_REQUESTED_TEMPLATE,
+    APPROVAL_RESOLVED_TEMPLATE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import Emit
 from tests.adapters.claude_sdk.fakecli import EndTurn, Raw, Thinking
 from tests.adapters.claude_sdk.helpers import (
@@ -144,6 +148,31 @@ async def test_a_declined_side_tool_never_explains_a_silent_turn(
     assert room.failures == [MISSING_REPLY_TEXT]
     assert room.chat[-1] == "I can't clean the build, but here is the status."
     assert sum("decline" in message for message in room.chat[:-1]) == 2
+
+
+async def test_a_declined_reply_explains_the_silence_only_if_the_room_was_told(
+    claude_room: OpenRoom,
+) -> None:
+    """A project that loads its settings can ask before every Band reply.
+    Declining that reply in the room already tells the room why none came, so
+    no missing reply is reported; when the approval prompt never reaches the
+    room, the decline explains nothing and the missing reply is reported."""
+    room = await claude_room(approval_mode="manual", setting_sources=["project"])
+    room.claude.project_ask_rules = [SEND_MESSAGE_MCP_NAME]
+    room.claude.script([room.model_reply("Here you go.")], [room.model_reply("Again.")])
+
+    await room.send("answer me")
+    await room.send("/decline a-1")
+    await room.settled()
+    room.tools.send_message_error = RuntimeError("network down")
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("try once more")
+
+    assert room.chat == [
+        APPROVAL_REQUESTED_TEMPLATE.format(summary="band_send_message", token="a-1"),
+        APPROVAL_RESOLVED_TEMPLATE.format(token="a-1", decision="decline"),
+    ]
+    assert room.failures == [MISSING_REPLY_TEXT]
 
 
 async def test_tool_traffic_the_cli_carries_outside_assistant_calls_still_counts(

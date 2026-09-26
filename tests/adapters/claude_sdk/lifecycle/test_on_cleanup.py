@@ -63,24 +63,32 @@ async def test_a_room_left_mid_turn_can_be_rejoined_with_a_fresh_session(
     assert room.chat == ["welcome back"]
 
 
-async def test_a_cancelled_message_cancels_its_turn_and_frees_the_room(
+async def test_a_cancelled_message_never_leaks_its_turn_into_the_next(
     claude_room: OpenRoom,
 ) -> None:
-    """The runtime cancelling a message cancels its detached turn, so the
-    room's next message is answered instead of refused."""
+    """The runtime cancelling a message cancels its detached turn and retires
+    that CLI process, so nothing the abandoned turn would still do reaches the
+    room or is read as the next message's answer; the next message resumes the
+    conversation in a fresh process."""
     room = await claude_room()
     abandoned = Hold()
-    room.claude.script([abandoned], [room.model_reply("second")])
+    room.claude.script(
+        [room.model_reply("first")],
+        [abandoned, room.model_reply("abandoned reply")],
+        [room.model_reply("second")],
+    )
 
+    await room.send("quick")
     message = asyncio.create_task(room.send("slow"))
     async with abandoned:
         message.cancel()
         with pytest.raises(asyncio.CancelledError):
             await message
-        await room.send("again")
+    await room.send("again")
 
-        assert room.chat == ["second"]
-        assert room.failures == []
+    assert room.chat == ["first", "second"]
+    assert room.failures == []
+    assert room.claude.resumed == [None, "sess-1"]
 
 
 async def test_turn_task_exceptions_are_retrieved_without_raising() -> None:

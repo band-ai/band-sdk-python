@@ -106,7 +106,6 @@ from band.runtime.tools import (
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
-    band_tool_errored,
     is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
@@ -433,8 +432,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._mcp_server = None
         self._mcp_backend: BandMCPBackend | None = None
 
-        # Per-room tools storage for MCP server access
+        # Per-room tools: the adapter's own sends use them directly, while the
+        # MCP server's tool calls go through _mcp_room_tools (see _bind_mcp_tools).
         self._room_tools: dict[str, AgentToolsProtocol] = {}
+        self._mcp_room_tools: dict[str, AgentToolsProtocol] = {}
 
         # Per-room session context (text history for Claude SDK)
         self._session_context: dict[str, str] = {}
@@ -491,7 +492,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
 
-        # Create MCP server with self (provides tool access via _room_tools)
+        # Create MCP server with self (provides tool access via _mcp_room_tools)
         self._mcp_backend = await self._create_mcp_backend()
         self._mcp_server = self._mcp_backend.server
 
@@ -581,7 +582,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         backend = await create_band_mcp_backend(
             kind="sdk",
             tool_definitions=tool_definitions,
-            get_tools=self._room_tools.get,
+            get_tools=self._mcp_room_tools.get,
             additional_tools=self._custom_tools,
         )
 
@@ -620,40 +621,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Store tools for MCP server access.  Wrap with the send_message
-        # dedup shim so MCP-driven retries (event-loop saturation
-        # under Claude CLI load causes the same band_send_message tool
-        # call to fire more than once for a single LLM-intended send) do
-        # not turn into duplicate chat messages.  Bypass the wrapper when
-        # the operator has explicitly opted out via ttl=0.
-        #
-        # The wrapper MUST persist for the room so a lingering MCP retry can
-        # still see the cache through self._room_tools.get. MCP tool calls
-        # only resolve by room id, not by the original inbound message id, so
-        # the cache is intentionally keyed by the outgoing payload within the
-        # per-room wrapper. Swap the inner reference instead of rebuilding the
-        # wrapper.
-        #
-        # DedupingAgentTools is structurally a superset of AgentToolsProtocol
-        # (the dedup shim only intercepts send_message and __getattr__-forwards
-        # everything else), but pyrefly cannot reason about __getattr__ for
-        # protocol conformance, so we cast through Any.
-        if self.send_message_dedup_ttl_seconds > 0:
-            existing = self._room_tools.get(room_id)
-            if isinstance(existing, DedupingAgentTools):
-                if existing._inner is not tools:
-                    await existing.update_inner(tools)
-                tools = cast(AgentToolsProtocol, existing)
-            else:
-                wrapper = DedupingAgentTools(
-                    tools,
-                    ttl_seconds=self.send_message_dedup_ttl_seconds,
-                    label=room_id,
-                )
-                tools = cast(AgentToolsProtocol, wrapper)
-                self._room_tools[room_id] = tools
-        else:
-            self._room_tools[room_id] = tools
+        self._room_tools[room_id] = tools
+        await self._bind_mcp_tools(room_id, tools)
 
         # Approval flow: track notify target and intercept local commands
         if self.approval_mode is not None:
@@ -695,11 +664,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
             return
 
-        # Determine session_id for resume: prefer history (persisted) then
-        # in-memory cache.  Only used on bootstrap/reconnect.
-        stored_session_id: str | None = None
-        if is_session_bootstrap:
-            stored_session_id = history.session_id or self._session_ids.get(room_id)
+        # The manager only resumes when it has to create the client: on
+        # bootstrap, or after a retired client (see _retire_client).
+        stored_session_id = (
+            history.session_id if is_session_bootstrap else None
+        ) or self._session_ids.get(room_id)
 
         # Get or create Claude SDK client for this room (optionally resuming)
         try:
@@ -868,6 +837,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
+                await self._retire_client(room_id)
+                raise
+
+            except asyncio.CancelledError:
+                await self._retire_client(room_id)
                 raise
 
             logger.debug("Message %s processed successfully", msg_id)
@@ -916,6 +890,40 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """
         if not task.cancelled():
             task.exception()
+
+    async def _bind_mcp_tools(self, room_id: str, tools: AgentToolsProtocol) -> None:
+        """Point the room's MCP tool calls at ``tools``, deduping replies.
+
+        Under CLI load one band_send_message can be re-issued (see
+        DedupingAgentTools). Retries resolve the room by id only, so the
+        wrapper lives per room and swaps its inner tools rather than resetting
+        its cache. The adapter's own notices never pass through it.
+        """
+        if self.send_message_dedup_ttl_seconds <= 0:
+            self._mcp_room_tools[room_id] = tools
+            return
+        existing = self._mcp_room_tools.get(room_id)
+        if isinstance(existing, DedupingAgentTools):
+            if existing._inner is not tools:
+                await existing.update_inner(tools)
+            return
+        # pyrefly can't see DedupingAgentTools' __getattr__ forwarding.
+        self._mcp_room_tools[room_id] = cast(
+            AgentToolsProtocol,
+            DedupingAgentTools(
+                tools, ttl_seconds=self.send_message_dedup_ttl_seconds, label=room_id
+            ),
+        )
+
+    async def _retire_client(self, room_id: str) -> None:
+        """Close a live client whose turn stopped before its ResultMessage.
+
+        The CLI keeps that turn's remaining messages queued, and the next
+        ``receive_response`` would read them as its own. The session id stays,
+        so the next client resumes the conversation.
+        """
+        if self._session_manager:
+            await self._session_manager.cleanup_session(room_id)
 
     async def _invalidate_session(self, room_id: str) -> None:
         """Evict the cached session and client so the next message for this
@@ -1283,13 +1291,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self, block: ToolResultBlock, result_tool_name: str | None
     ) -> bool:
         """Whether this finished call counts as the turn's productive work."""
-        # Belt and braces with the sibling adapters: a Band tool wrapper that
-        # caught an exception returns an "Error " string without is_error, so
-        # cross-check the content too (see band_tool_errored).
         return is_terminal_success(
             result_tool_name,
-            succeeded=not block.is_error
-            and not band_tool_errored(result_tool_name, block.content),
+            succeeded=not block.is_error,
             custom_terminal=result_tool_name in self._custom_terminal_names,
         )
 
@@ -1344,6 +1348,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         self._room_tools.pop(room_id, None)
+        self._mcp_room_tools.pop(room_id, None)
         self._session_context.pop(room_id, None)
         self._session_ids.pop(room_id, None)
         self._room_last_sender.pop(room_id, None)
@@ -1366,6 +1371,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             self._mcp_backend = None
             self._mcp_server = None
         self._room_tools.clear()
+        self._mcp_room_tools.clear()
         self._session_context.clear()
         self._session_ids.clear()
         self._room_last_sender.clear()

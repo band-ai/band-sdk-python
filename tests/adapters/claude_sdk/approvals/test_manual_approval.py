@@ -122,10 +122,9 @@ async def test_a_busy_room_evicts_the_oldest_ask_and_asks_for_a_token(
 async def test_only_allowlisted_senders_decide_but_anyone_can_list(
     claude_room: OpenRoom, allowlist: set[str], admin_decides: bool
 ) -> None:
-    """However a stranger names the approval, they are refused rather than
-    guided to a token; an empty allowlist admits nobody, not everybody.
-    Identical refusals to one person collapse in the room's send dedup, so
-    any token hint would show up as a message of its own."""
+    """However a stranger names the approval, they are refused every time
+    rather than guided to a token; an empty allowlist admits nobody, not
+    everybody."""
     room = await claude_room(
         approval_mode="manual", approval_authorized_senders=allowlist
     )
@@ -145,7 +144,7 @@ async def test_only_allowlisted_senders_decide_but_anyone_can_list(
     )
     assert room.chat == [
         prompt("a-1", "Bash: `ls`"),
-        NOT_AUTHORIZED,
+        *[NOT_AUTHORIZED] * 3,
         "Pending approvals:\n- `a-1`: Bash: `ls` (0s ago)",
         *admin_outcome,
     ]

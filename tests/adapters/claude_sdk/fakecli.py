@@ -92,6 +92,9 @@ class FakeClaude:
         self.sessions: list[FakeCLISession] = []
         self.prompts: list[str] = []
         self.unresumable: set[str] = set()
+        # permissions.ask rules in the project's settings file, which the CLI
+        # only reads when the options load the "project" setting source.
+        self.project_ask_rules: list[str] = []
         self.refuse_connect = False
         self.errors: list[BaseException] = []
 
@@ -293,6 +296,8 @@ class FakeCLISession(Transport):
                 return {"behavior": "deny", "message": "Blocked by a PreToolUse hook"}
             case "ask":
                 return await self._can_use_tool(tool_use_id, call)
+        if self._ask_rule_matches(call.name):
+            return await self._can_use_tool(tool_use_id, call)
         if self._auto_approved(call.name):
             return {"behavior": "allow"}
         return await self._can_use_tool(tool_use_id, call)
@@ -316,6 +321,14 @@ class FakeCLISession(Transport):
                 specific = output["response"].get("hookSpecificOutput") or {}
                 decision = specific.get("permissionDecision", decision)
         return decision
+
+    def _ask_rule_matches(self, tool_name: str) -> bool:
+        if "project" not in (self.options.setting_sources or []):
+            return False
+        return any(
+            _allow_rule_matches(rule, tool_name)
+            for rule in self.claude.project_ask_rules
+        )
 
     def _auto_approved(self, tool_name: str) -> bool:
         match self.options.permission_mode:
