@@ -7,6 +7,7 @@ from typing import Self
 
 from band.core.delivery import deliver_reply
 from band.core.protocols import AgentToolsProtocol, send_event_safe
+from band.core.types import Emit
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -72,6 +73,11 @@ class RoomTurnEmitter:
 
     On a clean close the held text is relayed (unless already posted in-room), and
     the session bookkeeping ``task`` event is posted last.
+
+    Which event kinds reach the room is controlled by the emit set passed at
+    construction (``None``: all kinds — the historical default). Chunks are
+    always recorded regardless, so the tool-first delivery decision keeps
+    working even when narration is silenced.
     """
 
     def __init__(
@@ -81,33 +87,47 @@ class RoomTurnEmitter:
         mentions: list[dict[str, str]],
         session_id: str,
         room_id: str,
+        emit: frozenset[Emit] | None = None,
     ) -> None:
         self._tools = tools
         self._mentions = mentions
         self._session_id = session_id
         self._room_id = room_id
+        # ``None``: post every kind (the historical behavior). Adapters pass
+        # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
+        # reaches the room sink.
+        self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._chunks: list[CollectedChunk] = []
         self._pending_text: list[str] = []
 
     async def emit(self, chunk: CollectedChunk) -> None:
+        # Record every chunk regardless of the emit set: the tool-first
+        # delivery decision (``turn_replied_in_room``) must see the whole
+        # turn, even when narration is silenced.
         self._chunks.append(chunk)
         match chunk.chunk_type:
             case ChunkType.TEXT:
                 if chunk.content:
                     self._pending_text.append(chunk.content)
             case ChunkType.THOUGHT:
+                if Emit.THOUGHTS not in self._emit:
+                    return
                 await self._tools.send_event(
                     content=chunk.content,
                     message_type="thought",
                     metadata=chunk.metadata,
                 )
             case ChunkType.TOOL_CALL | ChunkType.TOOL_RESULT:
+                if Emit.TOOL_CALLS not in self._emit:
+                    return
                 await self._tools.send_event(
                     content=self._tool_event_content(chunk),
                     message_type=chunk.chunk_type,
                     metadata=chunk.metadata,
                 )
             case ChunkType.PLAN:
+                if Emit.TASK_EVENTS not in self._emit:
+                    return
                 await self._tools.send_event(
                     content=chunk.content,
                     message_type="task",
@@ -138,7 +158,11 @@ class RoomTurnEmitter:
         execution frame to show it happened — this synthetic pair is the only
         record. An approved request grants silently; if the tool then executes,
         its own real ``tool_call``/``tool_result`` narrate it like any other tool.
+        The pair is part of tool-call narration, so it is suppressed when
+        ``Emit.TOOL_CALLS`` is not in the emitter's emit set.
         """
+        if Emit.TOOL_CALLS not in self._emit:
+            return
         metadata: dict[str, object] = {
             "permission_request": True,
             "tool_name": call.name,
@@ -176,6 +200,8 @@ class RoomTurnEmitter:
         if not turn_replied_in_room(self._chunks):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
+        if Emit.TASK_EVENTS not in self._emit:
+            return False
         await send_event_safe(
             self._tools,
             content="ACP client session",
