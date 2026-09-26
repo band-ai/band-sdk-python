@@ -200,8 +200,9 @@ def _build_custom_tools(
         for tool_def in raw_tools
     ]
     names = [_registered_name(tool) for tool in converted]
-    # Strands' registry is last-wins, so a collision would silently replace the
-    # platform tool the room depends on.
+    # Strands' own registry raises on a duplicate name, but only once the Agent
+    # is built mid-turn; this check fails at construction and names the Band
+    # tools the collision would have taken over.
     shadowed = sorted(set(names) & ALL_TOOL_NAMES)
     if shadowed:
         raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
