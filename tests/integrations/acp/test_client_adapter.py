@@ -1264,6 +1264,19 @@ class TestACPCollectingClientCursorProfileExtensions:
         assert result["outcome"]["outcome"] == "answered"
 
     @pytest.mark.asyncio
+    async def test_extension_logs_do_not_include_the_method_name(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        profile = CursorACPClientProfile()
+        method = "cursor/private-token"
+
+        with caplog.at_level(logging.DEBUG, logger=client_profiles.__name__):
+            await profile.ext_method(method, {})
+            await profile.ext_notification(method, {})
+
+        assert method not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_ext_method_without_decision_bridge_cancels_when_unanswerable(
         self,
     ) -> None:

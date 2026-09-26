@@ -149,7 +149,7 @@ class CursorACPClientProfile:
         method: str,
         params: dict[str, object],
     ) -> dict[str, object]:
-        logger.debug("Cursor ACP extension method: %s", method)
+        logger.debug("Cursor ACP extension method received")
         if method not in {CURSOR_ASK_QUESTION_METHOD, CURSOR_CREATE_PLAN_METHOD}:
             return {}
         if self._resolve_method is not None:
@@ -184,7 +184,7 @@ class CursorACPClientProfile:
         method: str,
         params: dict[str, object],
     ) -> list[CollectedChunk]:
-        logger.debug("Cursor ACP extension notification: %s", method)
+        logger.debug("Cursor ACP extension notification received")
 
         if method == "cursor/update_todos":
             return self._todo_chunks(params)
