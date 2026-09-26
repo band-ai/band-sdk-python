@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
@@ -58,10 +58,16 @@ class ExecutionFactory(Protocol):
 
 @dataclass
 class RoomTeardown:
-    """A room's execution awaiting a successful stop, plus the current attempt."""
+    """A room's execution awaiting a successful stop, plus the current attempt.
+
+    ``immediate`` is set once any caller asks for an immediate stop; it cuts a
+    graceful attempt's wait short and is never cleared, so a later graceful
+    request cannot extend an immediate one.
+    """
 
     execution: Execution
     attempt: asyncio.Task[bool] | None = None
+    immediate: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class AgentRuntime:
@@ -496,6 +502,8 @@ class AgentRuntime:
         caller. An attempt whose stop raised is logged and retried by the next
         caller; the execution stays owned until a stop returns.
         """
+        if timeout is None:
+            teardown.immediate.set()
         attempt = teardown.attempt
         if attempt is None or (attempt.done() and attempt.exception() is not None):
             attempt = asyncio.ensure_future(self._tear_down(room_id, teardown, timeout))
@@ -506,6 +514,36 @@ class AgentRuntime:
             logger.warning("Stopping execution for %s failed", room_id, exc_info=True)
             return False
 
+    @staticmethod
+    async def _stop_execution(teardown: RoomTeardown, timeout: float | None) -> bool:
+        """Stop the execution, letting an immediate request preempt a graceful one.
+
+        Only one ``stop()`` call runs at a time. A graceful stop that an
+        immediate request interrupts is cancelled first and, if it had not
+        finished, followed by ``stop(timeout=None)``; either way the outcome is
+        non-graceful for every waiter.
+        """
+        execution = teardown.execution
+        if timeout is None or teardown.immediate.is_set():
+            return await execution.stop(timeout=None)
+        graceful_stop = asyncio.ensure_future(execution.stop(timeout=timeout))
+        preempted = asyncio.ensure_future(teardown.immediate.wait())
+        try:
+            await asyncio.wait(
+                {graceful_stop, preempted}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            preempted.cancel()
+        if graceful_stop.done():
+            return graceful_stop.result()
+        graceful_stop.cancel()
+        await asyncio.wait({graceful_stop})
+        if graceful_stop.cancelled():
+            await execution.stop(timeout=None)
+        else:
+            graceful_stop.result()
+        return False
+
     async def _tear_down(
         self, room_id: str, teardown: RoomTeardown, timeout: float | None
     ) -> bool:
@@ -514,7 +552,7 @@ class AgentRuntime:
         A raising stop propagates before any cleanup, keeping the teardown
         (and its execution) for a retry.
         """
-        graceful = await teardown.execution.stop(timeout=timeout)
+        graceful = await self._stop_execution(teardown, timeout)
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin

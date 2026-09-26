@@ -512,3 +512,72 @@ async def test_a_rejoin_past_a_failing_stop_is_created_once_the_stop_succeeds() 
     await asyncio.wait_for(pending, timeout=5.0)
     assert (old.stop_calls, g.cleanups) == (4, [(ROOM, None)])
     assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
+
+
+def _admit_rooms(link: Any) -> None:
+    """Let RoomPresence's admission subscribe on a mock link."""
+    link.subscribe_room = AsyncMock()
+    link.unsubscribe_room = AsyncMock()
+    link.is_room_subscribed = MagicMock(return_value=True)
+
+
+async def test_a_room_removal_preempts_a_graceful_shutdown(room) -> None:
+    r = room()
+    r.turn_gate = asyncio.Event()
+    cleanups: list[str] = []
+    runtime = _runtime_over(r, cleanups)
+    _admit_rooms(r.link)
+    await runtime.presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    await r.send("msg-1")
+    stop_timeouts: list[float | None] = []
+    running_stops = 0
+    most_concurrent_stops = 0
+    real_stop = r.ctx.stop
+
+    async def tracked_stop(timeout: float | None = None) -> bool:
+        nonlocal running_stops, most_concurrent_stops
+        stop_timeouts.append(timeout)
+        running_stops += 1
+        most_concurrent_stops = max(most_concurrent_stops, running_stops)
+        try:
+            return await real_stop(timeout=timeout)
+        finally:
+            running_stops -= 1
+
+    r.ctx.stop = tracked_stop  # type: ignore[method-assign]
+    shutting_down = asyncio.create_task(runtime.stop(timeout=30.0))
+    await wait_for_condition(lambda: stop_timeouts == [30.0], timeout=5.0)
+
+    await asyncio.wait_for(
+        runtime.presence._handle_room_removed(make_room_removed_event(room_id=ROOM)),
+        timeout=5.0,
+    )
+
+    assert not r.turn_gate.is_set()
+    assert (cleanups, most_concurrent_stops, stop_timeouts) == ([ROOM], 1, [30.0, None])
+    assert await asyncio.wait_for(shutting_down, timeout=5.0) is False
+
+
+@pytest.mark.parametrize("departure", ["room_removed", "runtime_stop"])
+async def test_leaving_cancels_a_pending_rejoin(departure: str) -> None:
+    g = GenerationRuntime()
+    g.runtime._teardown_retry_delay_s = 3600.0
+    _admit_rooms(g.runtime.link)
+    presence = g.runtime.presence
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    [old] = g.generations
+    old.stop_gate.set()
+    old.stop_errors.extend(RuntimeError("still running") for _ in range(2))
+    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    pending = g.runtime._pending_creations[ROOM]
+
+    match departure:
+        case "room_removed":
+            await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+        case "runtime_stop":
+            await g.runtime.stop()
+
+    assert (pending.cancelled(), g.runtime._pending_creations) == (True, {})
+    assert (old.stop_calls, g.cleanups) == (3, [(ROOM, None)])
+    assert (len(g.generations), ROOM in g.runtime.executions) == (1, False)
