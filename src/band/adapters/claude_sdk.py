@@ -33,8 +33,9 @@ try:
         ToolUseBlock,
         UserMessage,
     )
-    from claude_agent_sdk._errors import (
-        CLIConnectionError,  # type: ignore[import-not-found]
+    from claude_agent_sdk._errors import (  # type: ignore[import-not-found]
+        CLIConnectionError,
+        CLINotFoundError,
     )
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
@@ -60,6 +61,7 @@ from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -1504,6 +1506,46 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._release_room_workspace(room_id)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
+    async def preflight(self) -> PreflightResult:
+        """Launch a throwaway Claude Code process, complete its handshake, close it.
+
+        Uses the configured ``cli_path``/``env``. Claude Code's handshake does
+        not report whether the account is logged in, so a login problem still
+        surfaces on the first turn.
+        """
+        try:
+            await self._probe_server_info()
+        except CLINotFoundError as exc:
+            return PreflightResult.failed(
+                f"Claude Code CLI not found: {exc}",
+                "Install Claude Code, or set cli_path to the claude executable.",
+            )
+        except Exception as exc:  # noqa: BLE001 -- any launch/handshake failure is the probe's answer, not a crash
+            return PreflightResult.failed(
+                f"Claude Code did not complete its handshake: {exc}",
+                "Run `claude` in a terminal to check the install, then retry.",
+            )
+        return PreflightResult.passed()
+
+    async def _probe_server_info(self) -> dict[str, Any]:
+        """``get_server_info()`` from a throwaway client that no room owns."""
+        client = ClaudeSDKClient(options=self._probe_options())
+        try:
+            await client.connect()
+            return await client.get_server_info() or {}
+        finally:
+            await client.disconnect()
+
+    def _probe_options(self) -> ClaudeAgentOptions:
+        options = ClaudeAgentOptions(
+            setting_sources=[],
+            max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
+        )
+        self._apply_cli_passthrough(options)
+        if self.cwd:
+            options.cwd = self.cwd
+        return options
+
     async def cleanup_all(self) -> None:
         """Cleanup all sessions (call on stop)."""
         # Decline all pending approvals across rooms
@@ -1958,3 +2000,25 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             if not item.future.done():
                 item.future.set_result(_FORCED_DECLINE)
         # Keep the seq counter to avoid token collisions with suspended coroutines
+
+
+async def list_models(adapter: ClaudeSDKAdapter) -> list[HarnessModel]:
+    """The models Claude Code offers this account, with their effort levels.
+
+    Read from ``get_server_info()`` of a throwaway Claude Code process
+    launched with ``adapter``'s ``cli_path``/``env``; no model turn runs and
+    no room session is created. Tested with Claude Code 2.1.280.
+    """
+    info = await adapter._probe_server_info()
+    return [_claude_model(entry) for entry in info.get("models") or []]
+
+
+def _claude_model(entry: dict[str, Any]) -> HarnessModel:
+    value = str(entry["value"])
+    return HarnessModel(
+        id=value,
+        label=str(entry.get("displayName") or value),
+        provider="anthropic",
+        efforts=tuple(entry.get("supportedEffortLevels") or ()),
+        is_default=value == "default",
+    )

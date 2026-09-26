@@ -7,7 +7,8 @@ import json
 import logging
 import time as _time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -32,6 +33,8 @@ from band.core.delivery import (
     deliver_reply,
     reraise_delivery_cause,
 )
+from band.core.exceptions import BandConnectionError
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -108,6 +111,7 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
+# Efforts accepted when Codex has not (yet) advertised a model's own list.
 _REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
@@ -199,7 +203,7 @@ class SetReasoningInput(BaseModel):
 
     effort: str | None = Field(
         default=None,
-        description="Reasoning effort level: none, minimal, low, medium, high, or xhigh. Omit to keep current.",
+        description="Reasoning effort level the current model offers (e.g. low, medium, high, xhigh, max). Omit to keep current.",
     )
     summary: str | None = Field(
         default=None,
@@ -358,9 +362,9 @@ class CodexAdapterConfig(BaseSettings):
 
     transport: TransportKind = "stdio"
     model: str | None = None
-    reasoning_effort: (
-        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
-    ) = None
+    # Any value the harness advertises for the model (e.g. "max"); checked
+    # against model/list's supportedReasoningEfforts when that list is known.
+    reasoning_effort: str | None = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
     # Explicit-kwarg-only (see settings_customise_sources): rejected outright
     # in CodexAdapter.__init__ -- never populated from CODEX_CWD.
@@ -541,6 +545,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
         self._workspace_rooms: dict[str, str] = {}
+        # {model id: efforts} from the last model/list, adapter-wide.
+        self._advertised_efforts: dict[str, tuple[str, ...]] = {}
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
         )
@@ -666,10 +672,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 raise RuntimeError("_handle_set_reasoning must run under _rpc_lock")
             parts: list[str] = []
             if inp.effort is not None:
-                if inp.effort not in _REASONING_EFFORTS:
+                accepted = adapter._accepted_efforts()
+                if inp.effort not in accepted:
                     return (
                         f"Invalid reasoning effort '{inp.effort}'. "
-                        f"Valid: {', '.join(sorted(_REASONING_EFFORTS))}."
+                        f"Valid: {', '.join(accepted)}."
                     )
                 adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
@@ -1462,27 +1469,48 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         )
 
     async def _select_model(self) -> str:
-        state = self._require_active_client_state()
-        if state.model_override:
-            return state.model_override
-        if self.config.model:
-            return self.config.model
+        """Pick the room's model; validate a configured effort against it.
 
+        model/list runs when no model is pinned (its first visible model is
+        the default) or when a reasoning effort is configured, since that is
+        the only source of the model's accepted efforts. A failed listing
+        falls back to the pinned or default model and skips the check.
+        """
+        state = self._require_active_client_state()
+        pinned = state.model_override or self.config.model
+        models: list[HarnessModel] | None = None
+        if not pinned or self.config.reasoning_effort:
+            models = await self._fetch_models()
+        selected = pinned or (models[0].id if models else _DEFAULT_MODEL)
+        self._check_configured_effort(selected)
+        return selected
+
+    async def _fetch_models(self) -> list[HarnessModel] | None:
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         try:
             result = await self._client.request("model/list", {})
         except Exception:
-            logger.warning(
-                "model/list failed; using default Codex model",
-                exc_info=True,
-            )
-            return _DEFAULT_MODEL
+            logger.warning("model/list failed; model settings unchecked", exc_info=True)
+            return None
+        models = codex_models(result)
+        self._advertised_efforts.update({m.id: m.efforts for m in models})
+        return models
 
-        visible_model_ids = self._visible_model_ids(result)
-        if visible_model_ids:
-            return visible_model_ids[0]
-        return _DEFAULT_MODEL
+    def _check_configured_effort(self, model: str) -> None:
+        effort = self.config.reasoning_effort
+        advertised = self._advertised_efforts.get(model)
+        if effort and advertised and effort not in advertised:
+            raise ValueError(
+                f"Codex does not offer reasoning_effort {effort!r} for model "
+                f"{model!r}; it offers: {', '.join(advertised)}"
+            )
+
+    def _accepted_efforts(self) -> tuple[str, ...]:
+        """Efforts the room's current model accepts, as Codex advertised them."""
+        model = self._selected_model
+        advertised = self._advertised_efforts.get(model) if model else None
+        return advertised or tuple(sorted(_REASONING_EFFORTS))
 
     async def _ensure_thread(
         self,
@@ -3039,15 +3067,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
-                    f"Use `/reasoning <{'|'.join(sorted(_REASONING_EFFORTS))}>` to override.",
+                    f"Use `/reasoning <{'|'.join(self._accepted_efforts())}>` to override.",
                     mentions=mention,
                 )
                 return True
-            if effort_arg not in _REASONING_EFFORTS:
+            accepted = self._accepted_efforts()
+            if effort_arg not in accepted:
                 await deliver_reply(
                     tools,
                     f"Invalid reasoning effort `{effort_arg}`. "
-                    f"Valid values: {', '.join(sorted(_REASONING_EFFORTS))}.",
+                    f"Valid values: {', '.join(accepted)}.",
                     mentions=mention,
                 )
                 return True
@@ -3707,17 +3736,119 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
     @staticmethod
     def _visible_model_ids(result: dict[str, Any]) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        models: list[str] = []
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            model_id = entry.get("id")
-            if not isinstance(model_id, str) or not model_id:
-                continue
-            if bool(entry.get("hidden", False)):
-                continue
-            models.append(model_id)
-        return models
+        return [model.id for model in codex_models(result)]
+
+    async def preflight(self) -> PreflightResult:
+        """Launch a throwaway app-server, handshake, check its login, close it."""
+        return await preflight(self.config)
+
+
+def codex_models(result: dict[str, Any]) -> list[HarnessModel]:
+    """Parse a ``model/list`` result into the visible models, in Codex's order.
+
+    Hidden models are left out, as Codex's own pickers do.
+    """
+    data = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(data, list):
+        return []
+    return [
+        _codex_model(entry)
+        for entry in data
+        if isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and entry["id"]
+        and not entry.get("hidden", False)
+    ]
+
+
+def _codex_model(entry: dict[str, Any]) -> HarnessModel:
+    efforts = tuple(
+        str(level["reasoningEffort"])
+        for level in entry.get("supportedReasoningEfforts") or ()
+        if isinstance(level, dict) and level.get("reasoningEffort")
+    )
+    return HarnessModel(
+        id=entry["id"],
+        label=str(entry.get("displayName") or entry["id"]),
+        provider="openai",
+        efforts=efforts,
+        default_effort=entry.get("defaultReasoningEffort"),
+        is_default=bool(entry.get("isDefault", False)),
+    )
+
+
+@asynccontextmanager
+async def _probe_client(config: CodexAdapterConfig) -> AsyncIterator[CodexStdioClient]:
+    """A throwaway, initialized app-server that no room owns.
+
+    Runs with the configured command and environment but no room workspace
+    and no skill roots, and is closed on every exit path, cancellation
+    included.
+    """
+    client = CodexStdioClient(command=config.codex_command, env=config.codex_env)
+    try:
+        await client.connect()
+        await client.initialize(
+            client_name=config.client_name,
+            client_title=config.client_title,
+            client_version=config.client_version,
+            experimental_api=config.experimental_api,
+        )
+        yield client
+    finally:
+        await client.close()
+
+
+async def list_models(config: CodexAdapterConfig) -> list[HarnessModel]:
+    """The models this Codex install offers the logged-in account.
+
+    ``model/list`` on a throwaway app-server; no thread or model turn.
+    Tested with Codex 0.156.1.
+    """
+    async with _probe_client(config) as client:
+        models: list[HarnessModel] = []
+        params: dict[str, Any] = {}
+        while True:
+            result = await client.request("model/list", params)
+            models.extend(codex_models(result))
+            cursor = result.get("nextCursor") if isinstance(result, dict) else None
+            if not cursor:
+                return models
+            params = {"cursor": cursor}
+
+
+async def preflight(config: CodexAdapterConfig) -> PreflightResult:
+    """Launch, handshake, and check the login of a throwaway Codex app-server."""
+    try:
+        async with _probe_client(config) as client:
+            return await _login_state(client)
+    except BandConnectionError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            return PreflightResult.failed(
+                str(exc),
+                "Install Codex (`npm install -g @openai/codex`) or set "
+                "CodexAdapterConfig.codex_command.",
+            )
+        return _handshake_failed(exc)
+    except Exception as exc:  # noqa: BLE001 -- any launch/handshake failure is the probe's answer, not a crash
+        return _handshake_failed(exc)
+
+
+def _handshake_failed(exc: Exception) -> PreflightResult:
+    return PreflightResult.failed(
+        f"Codex app-server did not complete its handshake: {exc}",
+        "Run `codex app-server` in a terminal to check the install, then retry.",
+    )
+
+
+async def _login_state(client: CodexStdioClient) -> PreflightResult:
+    """``account/read`` reports a missing login; a harness without it is not judged."""
+    try:
+        account = await client.request("account/read", {})
+    except CodexJsonRpcError:
+        return PreflightResult.passed()
+    if account.get("account") is None and account.get("requiresOpenaiAuth"):
+        return PreflightResult.failed(
+            "Codex is not logged in.", "Run `codex login`, then retry."
+        )
+    return PreflightResult.passed()

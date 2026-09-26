@@ -26,6 +26,7 @@ from typing_extensions import Unpack
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.harness import PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -380,6 +381,33 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     def _spawn_cwd(self, workspace: str | None) -> str | None:
         """The subprocess-level cwd to launch the ACP agent with, for this room's workspace."""
         return workspace
+
+    async def preflight(self) -> PreflightResult:
+        """Spawn a throwaway ACP agent, run ``initialize``, and close it.
+
+        Uses the configured command, environment, and ``auth_method`` (when
+        set, ``authenticate`` runs too). ACP reports no login state of its
+        own, so an agent that starts but is logged out passes here and
+        fails on its first turn. No room runtime, workspace, or session is
+        created.
+        """
+        runtime = self._build_runtime()
+        try:
+            await runtime.start()
+        except FileNotFoundError as exc:
+            return PreflightResult.failed(
+                f"ACP agent executable not found: {exc}",
+                "Install the agent CLI, or point the adapter's command at it.",
+            )
+        except Exception as exc:  # noqa: BLE001 -- any launch/handshake failure is the probe's answer, not a crash
+            return PreflightResult.failed(
+                f"ACP agent did not complete initialize: {exc}",
+                "Run the agent's command in a terminal to check its install "
+                "and login, then retry.",
+            )
+        finally:
+            await runtime.stop()
+        return PreflightResult.passed()
 
     def _runtime_client_factory(self) -> ACPCollectingClient:
         return BandACPClient(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2315,3 +2316,79 @@ class TestTurnRepliedInRoom:
             )
         ]
         assert not turn_replied_in_room(chunks)
+
+
+class SpawnRecord:
+    """A spawn seam whose context manager records whether it was exited."""
+
+    def __init__(self, conn: Any) -> None:
+        self.conn = conn
+        self.exited = False
+
+    def __call__(self, client: Any, *args: Any, **kwargs: Any) -> Any:
+        record = self
+
+        class Ctx:
+            async def __aenter__(self) -> tuple[Any, Any]:
+                return record.conn, MagicMock()
+
+            async def __aexit__(self, *exc: object) -> None:
+                record.exited = True
+
+        return Ctx()
+
+
+def _conn(initialize: Any = None) -> AsyncMock:
+    conn = AsyncMock()
+    conn.initialize = initialize or AsyncMock(return_value=MagicMock())
+    return conn
+
+
+class TestPreflight:
+    @pytest.mark.asyncio
+    async def test_missing_executable_is_named(self) -> None:
+        adapter = ACPClientAdapter(command="definitely-not-an-acp-agent-xyz")
+
+        result = await adapter.preflight()
+
+        assert result.ok is False
+        assert "executable not found" in (result.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_handshake_failure_is_reported_and_the_process_closed(self) -> None:
+        spawn = SpawnRecord(_conn(AsyncMock(side_effect=RuntimeError("bad init"))))
+        adapter = ACPClientAdapter(command="codex")
+        inject_acp_spawn(adapter, spawn)
+
+        result = await adapter.preflight()
+
+        assert (result.ok, "bad init" in (result.reason or ""), spawn.exited) == (
+            False,
+            True,
+            True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancellation_still_closes_the_process(self) -> None:
+        spawn = SpawnRecord(_conn(AsyncMock(side_effect=asyncio.CancelledError())))
+        adapter = ACPClientAdapter(command="codex")
+        inject_acp_spawn(adapter, spawn)
+
+        with pytest.raises(asyncio.CancelledError):
+            await adapter.preflight()
+        assert spawn.exited
+
+    @pytest.mark.asyncio
+    async def test_success_closes_and_leaves_room_state_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        spawn = SpawnRecord(_conn())
+        adapter = ACPClientAdapter(
+            command="codex", workspace_for_room=lambda room: str(tmp_path / room)
+        )
+        inject_acp_spawn(adapter, spawn)
+
+        result = await adapter.preflight()
+
+        assert (result.ok, spawn.exited) == (True, True)
+        assert (adapter._runtimes, adapter._workspace_rooms) == ({}, {})

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,11 @@ from band.adapters.codex import (
     CodexAdapterConfig,
     PendingApproval,
 )
+from band.adapters.codex import (
+    list_models as codex_list_models,
+)
+from band.core.exceptions import BandConnectionError
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -6727,3 +6733,224 @@ class TestNoReply:
         )
 
         assert [m["content"] for m in turn.tools.messages_sent] == ["Second answer"]
+
+
+_LISTED_MODELS = {
+    "data": [
+        {
+            "id": "gpt-6-sol",
+            "displayName": "GPT-6-Sol",
+            "hidden": False,
+            "isDefault": True,
+            "defaultReasoningEffort": "medium",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "medium"},
+                {"reasoningEffort": "max"},
+            ],
+        },
+        {"id": "internal-preview", "hidden": True},
+    ],
+    "nextCursor": None,
+}
+
+
+def _started_turn_effort(client: FakeCodexClient) -> Any:
+    return next(p for m, p in client.requests if m == "turn/start").get("effort")
+
+
+class TestReasoningEffort:
+    @pytest.mark.asyncio
+    async def test_advertised_effort_beyond_the_static_set_reaches_the_turn(
+        self,
+    ) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed()], model_list_result=_LISTED_MODELS
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="max"),
+        )
+        await _bootstrap_turn(adapter)
+        assert _started_turn_effort(client) == "max"
+
+    @pytest.mark.asyncio
+    async def test_effort_the_model_does_not_offer_fails_the_start(self) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed()], model_list_result=_LISTED_MODELS
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+        with pytest.raises(ValueError, match="does not offer reasoning_effort 'ultra'"):
+            await _bootstrap_turn(adapter)
+        assert "thread/start" not in _methods(client)
+
+    @pytest.mark.asyncio
+    async def test_effort_is_unchecked_when_no_list_is_available(self) -> None:
+        client = ModelListFailingClient(events=[_turn_completed()])
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+        await _bootstrap_turn(adapter)
+        assert _started_turn_effort(client) == "ultra"
+
+
+class ModelListFailingClient(FakeCodexClient):
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "model/list":
+            raise CodexJsonRpcError(code=-32601, message="Method not found")
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class ProbeClient(FakeCodexClient):
+    """A throwaway probe client: scripted replies, a record of its close."""
+
+    def __init__(
+        self,
+        *,
+        replies: dict[str, Any] | None = None,
+        connect_error: Exception | None = None,
+        initialize_error: BaseException | None = None,
+    ) -> None:
+        super().__init__()
+        self._replies = replies or {}
+        self._connect_error = connect_error
+        self._initialize_error = initialize_error
+
+    async def connect(self) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+        await super().connect()
+
+    async def initialize(self, **kwargs: Any) -> dict[str, Any]:
+        if self._initialize_error is not None:
+            raise self._initialize_error
+        return await super().initialize(**kwargs)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        self.requests.append((method, dict(params or {})))
+        reply = self._replies.get(method, {})
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+
+@pytest.fixture
+def probe_client(monkeypatch: pytest.MonkeyPatch) -> Callable[..., ProbeClient]:
+    def install(**kwargs: Any) -> ProbeClient:
+        client = ProbeClient(**kwargs)
+        monkeypatch.setattr(
+            "band.adapters.codex.CodexStdioClient", lambda **_kwargs: client
+        )
+        return client
+
+    return install
+
+
+def _missing_codex() -> BandConnectionError:
+    error = BandConnectionError("Codex CLI binary not found: 'codex'.")
+    error.__cause__ = FileNotFoundError("codex")
+    return error
+
+
+class TestProbes:
+    @pytest.mark.asyncio
+    async def test_list_models_returns_visible_models_and_closes(
+        self, probe_client
+    ) -> None:
+        client = probe_client(replies={"model/list": _LISTED_MODELS})
+
+        models = await codex_list_models(CodexAdapterConfig())
+
+        assert models == [
+            HarnessModel(
+                id="gpt-6-sol",
+                label="GPT-6-Sol",
+                provider="openai",
+                efforts=("medium", "max"),
+                default_effort="medium",
+                is_default=True,
+            )
+        ]
+        assert client.closed
+
+    @pytest.mark.asyncio
+    async def test_list_models_closes_the_client_on_cancellation(
+        self, probe_client
+    ) -> None:
+        client = probe_client(initialize_error=asyncio.CancelledError())
+        with pytest.raises(asyncio.CancelledError):
+            await codex_list_models(CodexAdapterConfig())
+        assert client.closed
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kwargs", "reason_part"),
+        [
+            ({"connect_error": _missing_codex()}, "binary not found"),
+            ({"initialize_error": RuntimeError("bad frame")}, "did not complete"),
+            (
+                {
+                    "replies": {
+                        "account/read": {"account": None, "requiresOpenaiAuth": True}
+                    }
+                },
+                "not logged in",
+            ),
+        ],
+        ids=["missing-executable", "handshake", "login-required"],
+    )
+    async def test_preflight_names_the_failure(
+        self, probe_client, kwargs: dict[str, Any], reason_part: str
+    ) -> None:
+        client = probe_client(**kwargs)
+
+        result = await CodexAdapter(CodexAdapterConfig()).preflight()
+
+        assert (
+            result.ok,
+            reason_part in (result.reason or ""),
+            bool(result.remedy),
+        ) == (
+            False,
+            True,
+            True,
+        )
+        assert client.closed or not client.connected
+
+    @pytest.mark.asyncio
+    async def test_preflight_passes_without_touching_room_state(
+        self, probe_client, tmp_path
+    ) -> None:
+        client = probe_client(
+            replies={"account/read": {"account": {"type": "chatgpt"}}}
+        )
+        adapter = CodexAdapter(
+            CodexAdapterConfig(
+                skill_roots=[str(tmp_path)],
+                workspace_for_room=lambda room: str(tmp_path / room),
+            )
+        )
+
+        result = await adapter.preflight()
+
+        assert result == PreflightResult.passed()
+        assert client.closed
+        assert "skills/extraRoots/set" not in _methods(client)
+        assert (adapter._room_clients, adapter._workspace_rooms) == ({}, {})
