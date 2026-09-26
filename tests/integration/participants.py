@@ -42,7 +42,7 @@ async def ensure_participant(
     logger.info("Ensured participant %s in room %s", participant_id, chat_id)
 
 
-async def ensure_in_room(
+async def ensure_agent_in_room(
     owner_client: AsyncRestClient,
     chat_id: str,
     participant_id: str,
@@ -130,7 +130,7 @@ async def absent_from_room(
 
     async def restore() -> None:
         if previous_role is not None:
-            await ensure_in_room(
+            await ensure_agent_in_room(
                 owner_client, chat_id, participant_id, role=previous_role
             )
 
