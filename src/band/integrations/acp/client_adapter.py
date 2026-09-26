@@ -1194,15 +1194,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             sections.append(live_message)
         return "\n\n".join(sections)
 
-    async def release_room_resources(self, room_id: str) -> None:
+    async def _release_loadable_session(self, room_id: str) -> None:
         """Stop an idle room's agent process, keeping its session to load.
 
-        Only when the agent advertised ``session/load``: the next turn's
-        fresh process then reloads the same session with its conversation.
-        An agent without it would come back with a blank session, so its
-        process is kept. A room whose session is still being set up is left
-        alone. If a later load fails, the adapter's existing fallback (a new
-        session plus a transcript replay) applies.
+        The building block for adapters whose agent has been shown to recall
+        a conversation across processes through ``session/load``; the generic
+        ACP adapter does not release (``release_room_resources`` stays the
+        default no-op). Only acts when the agent advertised ``session/load``
+        and the room's session is fully set up. If a later load fails, the
+        existing fallback (a new session plus a transcript replay) applies.
         """
         async with self._session_lock:
             runtime = self._runtimes.get(room_id)

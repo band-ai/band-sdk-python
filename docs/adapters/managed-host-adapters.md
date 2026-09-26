@@ -126,8 +126,8 @@ The release runs on the room's own processing loop, between turns: a turn in pro
 | Adapter | Releases | Resumes with | Verified |
 |---|---|---|---|
 | Codex | the room's app-server process | `thread/resume` with the room's thread id (Codex keeps threads on disk) | live, Codex 0.156.1: a fact from the first turn was recalled after release |
-| ACP adapters (OMP, Copilot CLI, Cursor, generic), when the agent advertises `session/load` | the room's ACP agent process | `session/load` with the room's session id; if the load fails, the existing fallback applies (new session plus transcript replay) | live, OMP 18.3.2; others unit-tested |
-| ACP agents without `session/load` | nothing (no-op) | — | a new process would start a blank session |
+| OMP (ACP) | the room's `omp acp` process, when it advertised `session/load` | `session/load` with the room's session id; if the load fails, the existing fallback applies (new session plus transcript replay) | live, OMP 18.3.2: a fact from the first turn was recalled after release |
+| Copilot CLI, Cursor, and generic ACP | nothing (no-op) | — | no cross-process recall proven here; an agent without `session/load` would also come back blank |
 | Claude SDK | nothing (no-op) | — | resume through the stored session id was not proven with a logged-in Claude Code here |
 | Copilot SDK, OpenCode, Letta, and the in-process framework adapters | nothing (no-op) | — | no per-room harness process that could be released and resumed |
 

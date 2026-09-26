@@ -844,7 +844,7 @@ async def test_released_room_reloads_its_session_without_replay() -> None:
         [first] = agent.sessions
         agent.knows_session(first["session_id"])
 
-        await session.adapter.release_room_resources("room-1")
+        await session.adapter._release_loadable_session("room-1")
         assert "room-1" not in session.adapter._runtimes
 
         reply = await session.send("What is my favorite color?")
@@ -860,6 +860,19 @@ async def test_released_room_reloads_its_session_without_replay() -> None:
 @pytest.mark.asyncio
 async def test_agent_without_session_load_keeps_its_process() -> None:
     agent = FakeACPAgent(supports_session_load=False).will_say("Noted.")
+
+    async with acp_adapter(agent) as session:
+        await session.send("My favorite color is blue.", bootstrap=True)
+        runtime = session.adapter._runtimes["room-1"]
+
+        await session.adapter._release_loadable_session("room-1")
+
+        assert session.adapter._runtimes["room-1"] is runtime
+
+
+@pytest.mark.asyncio
+async def test_generic_acp_adapter_does_not_release_idle_rooms() -> None:
+    agent = FakeACPAgent(supports_session_load=True).will_say("Noted.")
 
     async with acp_adapter(agent) as session:
         await session.send("My favorite color is blue.", bootstrap=True)
