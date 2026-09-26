@@ -652,6 +652,7 @@ dev = [
     { name = "langchain-text-splitters" },
     { name = "langgraph" },
     { name = "letta-client" },
+    { name = "looptime" },
     { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" } },
     { name = "openai" },
     { name = "opentelemetry-instrumentation-logging" },
@@ -686,6 +687,7 @@ dev-crewai = [
     { name = "band-testing-python" },
     { name = "crewai" },
     { name = "httpx" },
+    { name = "looptime" },
     { name = "nest-asyncio" },
     { name = "openai" },
     { name = "pillow" },
@@ -706,6 +708,7 @@ dev-parlant = [
     { name = "anthropic" },
     { name = "band-testing-python" },
     { name = "httpx" },
+    { name = "looptime" },
     { name = "openai" },
     { name = "parlant" },
     { name = "pydantic-settings" },
@@ -844,6 +847,9 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "letta-client", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "letta-client", marker = "extra == 'letta'", specifier = ">=0.1.0" },
+    { name = "looptime", marker = "extra == 'dev'", specifier = ">=0.7" },
+    { name = "looptime", marker = "extra == 'dev-crewai'", specifier = ">=0.7" },
+    { name = "looptime", marker = "extra == 'dev-parlant'", specifier = ">=0.7" },
     { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.28.1,<2" },
     { name = "mcp", marker = "extra == 'claude-sdk'", specifier = ">=1.28.1,<2" },
     { name = "mcp", marker = "extra == 'desktop'", specifier = ">=1.28.1,<2" },
@@ -4268,6 +4274,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/58/1b/0c74ad85f977743ba4c589e46e0cb138d6a6e69487830f4e86ebbdb145a3/logfire_api-4.32.1.tar.gz", hash = "sha256:5e8714b2bb5fb5d1f4a4a833941e4ca711b75d2c1f98e76c5ad680fe6991af6a", size = 78788, upload-time = "2026-04-15T14:11:58.788Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/ab/d5adeab6253c7ecd5904fc5ef3265859f218610caf4e1e55efe9aff6ac49/logfire_api-4.32.1-py3-none-any.whl", hash = "sha256:4b4c27cf6e27e8e26ef4b22a77f2a2988dd1d07e2d24ee70673ef34b234fb8a5", size = 124394, upload-time = "2026-04-15T14:11:56.157Z" },
+]
+
+[[package]]
+name = "looptime"
+version = "0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/3e/74b54612606b87eedd21820517d206c370888fea8c66d93c05f1f4d4388e/looptime-0.7.tar.gz", hash = "sha256:6b32eab62d2f11af9d2322a0d120054a38b9eb9380383a427a68155cf34963c4", size = 38328, upload-time = "2026-01-03T13:06:26.224Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/3c/2bec447bf2486dfe8ed9c99d01892d57388b3620883d2374b975f36f1963/looptime-0.7-py3-none-any.whl", hash = "sha256:efb3916196dbbe943a7f2853d79647e4476a5dd149306ce2736607d814930327", size = 21890, upload-time = "2026-01-03T13:06:24.785Z" },
 ]
 
 [[package]]
