@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
+from collections.abc import Callable
 
 import pytest
 from claude_agent_sdk.types import (
     PermissionResultAllow,
     PermissionResultDeny,
-    ToolPermissionContext,
 )
 
 from band.adapters.claude_sdk import ApprovalReply, ClaudeSDKAdapter, ClaudeSDKCommand
 from tests.adapters.claude_sdk.helpers import (
-    SEND_MESSAGE_MCP_NAME,
+    ClaudeApprovalRoom,
     register_pending_approval,
-    reply_to_approval,
-    wait_for_pending_approval,
 )
 
 
@@ -95,64 +92,6 @@ class TestApprovalCommandHandling:
         assert future.result() == ApprovalReply("decline", sender["id"])
 
     @pytest.mark.asyncio
-    async def test_approve_resolution_notice_failure_still_accepts(
-        self, mock_tools, sender
-    ):
-        """An approve's confirmation notice is best-effort: a failed send must
-        not turn an approved tool call into a decline."""
-        mock_tools.send_message = AsyncMock(
-            side_effect=[{"status": "sent"}, RuntimeError("network down")]
-        )
-        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5)
-        adapter._room_tools["room-1"] = mock_tools
-
-        decision = await reply_to_approval(adapter, mock_tools, "approve", sender)
-
-        assert isinstance(decision, PermissionResultAllow)
-
-    @pytest.mark.asyncio
-    async def test_a_reply_cancelled_mid_handling_still_resolves_the_approval(
-        self, mock_tools, sender
-    ):
-        """Cancelling the room loop while it handles a reply must not strand
-        the approval it claimed: the waiting tool call still gets the answer
-        rather than hanging past its own deadline."""
-        release_resolved_notice = asyncio.Event()
-
-        async def _send_message(
-            content: str, mentions: object = None
-        ) -> dict[str, str]:
-            if "resolved" in content:
-                await release_resolved_notice.wait()
-            return {"status": "sent"}
-
-        mock_tools.send_message = AsyncMock(side_effect=_send_message)
-        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5)
-        adapter._room_tools["room-1"] = mock_tools
-        pending_task = asyncio.create_task(
-            adapter._make_can_use_tool("room-1")(
-                SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
-            )
-        )
-        await wait_for_pending_approval(adapter)
-
-        command_task = asyncio.create_task(
-            adapter._handle_approval_command(
-                tools=mock_tools,
-                room_id="room-1",
-                command=ClaudeSDKCommand.APPROVE,
-                args="a-1",
-                sender=sender,
-            )
-        )
-        await asyncio.sleep(0.01)
-        command_task.cancel()
-        release_resolved_notice.set()
-
-        decision = await asyncio.wait_for(pending_task, timeout=1)
-        assert isinstance(decision, PermissionResultAllow)
-
-    @pytest.mark.asyncio
     async def test_approve_single_pending_no_token(
         self, adapter_with_approval, mock_tools, sender
     ):
@@ -224,145 +163,62 @@ class TestApprovalCommandHandling:
 
     @pytest.mark.asyncio
     async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
-        self, mock_tools
+        self, approval_room: Callable[..., ClaudeApprovalRoom]
     ) -> None:
         """A reply landing while the timeout notice is still being sent must
         not be told "resolved" for a decision that already timed out."""
-        sending_second_message = asyncio.Event()
-        release_second_message = asyncio.Event()
-        call_count = 0
-
-        async def _send_message(
-            content: str, mentions: object = None
-        ) -> dict[str, str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:
-                sending_second_message.set()
-                await release_second_message.wait()
-            return {"status": "sent"}
-
-        mock_tools.send_message = AsyncMock(side_effect=_send_message)
-
-        adapter = ClaudeSDKAdapter(
-            approval_mode="manual",
-            approval_wait_timeout_s=0.01,
-            approval_timeout_decision="decline",
+        room = approval_room(
+            approval_wait_timeout_s=0.01, approval_timeout_decision="decline"
         )
-        adapter._room_tools["room-1"] = mock_tools
-        adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
-        callback = adapter._make_can_use_tool("room-1")
+        timeout_notice = room.tools.hold_message("timed out")
+        decision = room.request()
 
-        pending_task = asyncio.create_task(
-            callback(SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext())
-        )
-        await sending_second_message.wait()
+        async with timeout_notice:
+            await room.reply(ClaudeSDKCommand.APPROVE, "a-1")
+            assert room.chat[-1] == "Unknown approval token `a-1`. Available: none."
 
-        await adapter._handle_approval_command(
-            tools=mock_tools,
-            room_id="room-1",
-            command=ClaudeSDKCommand.APPROVE,
-            args="a-1",
-            sender={"id": "u1", "name": "Bob"},
-        )
-        reply = mock_tools.send_message.call_args_list[-1].args[0]
-        release_second_message.set()
-
-        decision = await pending_task
-        assert isinstance(decision, PermissionResultDeny)
-        assert reply == "Unknown approval token `a-1`. Available: none."
+        assert isinstance(await decision, PermissionResultDeny)
 
     @pytest.mark.asyncio
-    async def test_a_reply_whose_notice_outlasts_the_deadline_still_wins(
-        self, mock_tools
+    async def test_an_approval_stands_however_its_resolved_notice_fares(
+        self, approval_room: Callable[..., ClaudeApprovalRoom]
     ) -> None:
-        """A reply claims the token, then its "resolved" notice is slow; the
-        wait deadline passing meanwhile must not override the human's
-        accept."""
-        sending_resolved_notice = asyncio.Event()
-        release_resolved_notice = asyncio.Event()
-
-        async def _send_message(
-            content: str, mentions: object = None
-        ) -> dict[str, str]:
-            if "resolved" in content:
-                sending_resolved_notice.set()
-                await release_resolved_notice.wait()
-            return {"status": "sent"}
-
-        mock_tools.send_message = AsyncMock(side_effect=_send_message)
-        adapter = ClaudeSDKAdapter(
-            approval_mode="manual",
-            approval_wait_timeout_s=0.05,
-            approval_timeout_decision="decline",
+        """The reply claims the approval, then its "resolved" notice is slow
+        enough to outlast the wait deadline and finally fails to send; neither
+        may turn the human's accept into a decline."""
+        room = approval_room(
+            approval_wait_timeout_s=0.05, approval_timeout_decision="decline"
         )
-        adapter._room_tools["room-1"] = mock_tools
-        adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
-        callback = adapter._make_can_use_tool("room-1")
-        pending_task = asyncio.create_task(
-            callback(SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext())
+        resolved_notice = room.tools.hold_message(
+            "resolved", error=RuntimeError("network down")
         )
-        await asyncio.sleep(0)
+        decision = room.request()
+        await room.until_pending()
 
-        command_task = asyncio.create_task(
-            adapter._handle_approval_command(
-                tools=mock_tools,
-                room_id="room-1",
-                command=ClaudeSDKCommand.APPROVE,
-                args="a-1",
-                sender={"id": "u1", "name": "Bob"},
-            )
-        )
-        await sending_resolved_notice.wait()
-        await asyncio.sleep(0.1)
-        release_resolved_notice.set()
-        await command_task
+        await room.reply(ClaudeSDKCommand.APPROVE, "a-1")
+        async with resolved_notice:
+            await asyncio.sleep(0.1)
 
-        assert isinstance(await pending_task, PermissionResultAllow)
+        assert isinstance(await decision, PermissionResultAllow)
 
     @pytest.mark.asyncio
     async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
-        self, mock_tools, sender
+        self, approval_room: Callable[..., ClaudeApprovalRoom]
     ) -> None:
         """The approver answered while the prompt send was still failing: their
         answer owns the approval, so it is honored and confirmed, not
         overridden by the undelivered-prompt decline."""
-        prompt_in_flight, fail_prompt = asyncio.Event(), asyncio.Event()
-
-        async def _send_message(
-            content: str, mentions: object = None
-        ) -> dict[str, str]:
-            if content.startswith("Approval requested"):
-                prompt_in_flight.set()
-                await fail_prompt.wait()
-                raise RuntimeError("network down")
-            return {"status": "sent"}
-
-        mock_tools.send_message = AsyncMock(side_effect=_send_message)
-        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5)
-        adapter._room_tools["room-1"] = mock_tools
-        pending_task = asyncio.create_task(
-            adapter._make_can_use_tool("room-1")(
-                SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
-            )
+        room = approval_room(approval_wait_timeout_s=5)
+        failing_prompt = room.tools.hold_message(
+            "Approval requested", error=RuntimeError("network down")
         )
-        await asyncio.wait_for(prompt_in_flight.wait(), 1)
+        decision = room.request()
 
-        await adapter._handle_approval_command(
-            tools=mock_tools,
-            room_id="room-1",
-            command=ClaudeSDKCommand.APPROVE,
-            args="",
-            sender=sender,
-        )
-        fail_prompt.set()
+        async with failing_prompt:
+            await room.reply(ClaudeSDKCommand.APPROVE)
 
-        assert isinstance(
-            await asyncio.wait_for(pending_task, 1), PermissionResultAllow
-        )
-        assert mock_tools.send_message.call_args.args[0] == (
-            "Approval `a-1` resolved as **accept**."
-        )
+        assert isinstance(await asyncio.wait_for(decision, 1), PermissionResultAllow)
+        assert room.chat[-1] == "Approval `a-1` resolved as **accept**."
 
     @pytest.mark.asyncio
     async def test_bare_approve_ignores_an_approval_already_being_answered(

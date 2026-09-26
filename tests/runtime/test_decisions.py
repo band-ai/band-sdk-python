@@ -1,13 +1,25 @@
-"""Tests for the shared chat-mediated decision registry."""
+"""Room-level flows through the shared chat-mediated decision registry.
+
+Each test drives ``DecisionRegistry`` the way the adapters do -- an asker
+waits on every ask, replies claim and resolve, and whoever removes an open
+ask resolves it -- then checks the one outcome every asker ends up with.
+"""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 
 import pytest
 
 from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
+
+Outcome = str | Timeout
+
+#: Short enough to keep the suite fast, long enough to order events around it.
+DEADLINE_S = 0.02
+PAST_DEADLINE_S = 3 * DEADLINE_S
 
 
 @dataclass
@@ -18,385 +30,226 @@ class Ask:
     )
 
 
-class TimeoutRecorder:
+class Room:
+    """An adapter's side of the registry: each ask gets a waiting asker, and
+    every open ask the registry hands back is resolved with why it went."""
+
+    def __init__(self, registry: DecisionRegistry[Ask]) -> None:
+        self.registry = registry
+        self.askers: dict[str, asyncio.Task[Outcome]] = {}
+
+    async def ask(
+        self,
+        name: str,
+        *,
+        key: str | None = None,
+        room_id: str | None = None,
+        timeout_s: float = 1.0,
+    ) -> DecisionEntry[Ask] | None:
+        ask = Ask(name)
+        registration = (
+            self.registry.register_minted(ask, room_id=room_id)
+            if key is None
+            else self.registry.register_keyed(ask, key=key)
+        )
+        if registration is None:
+            return None
+        for removed in registration.removed:
+            why = "evicted" if removed is registration.evicted else "replaced"
+            removed.payload.future.set_result(why)
+        self.askers[name] = asyncio.create_task(
+            self.registry.wait(registration.entry, ask.future, timeout_s=timeout_s)
+        )
+        await asyncio.sleep(0)
+        return registration.entry
+
+    def reply(self, token: str, answer: str) -> bool:
+        """A room reply: claim, then resolve with no await in between."""
+        if (entry := self.registry.try_claim(token)) is None:
+            return False
+        entry.payload.future.set_result(answer)
+        return True
+
+    def tear_down(self, room_id: str) -> None:
+        for entry in self.registry.cancel_room(room_id):
+            entry.payload.future.set_result("cancelled")
+
+    async def outcomes(self) -> dict[str, Outcome]:
+        return {name: await asker for name, asker in self.askers.items()}
+
+
+class Expiries:
+    """An ``on_timeout`` callback that records which asks expired."""
+
     def __init__(self) -> None:
-        self.expired: list[str] = []
+        self.names: list[str] = []
 
     async def __call__(self, entry: DecisionEntry[Ask]) -> None:
-        self.expired.append(entry.payload.name)
-
-
-def unclaimed_names(registry: DecisionRegistry[Ask]) -> list[str]:
-    return [entry.payload.name for entry in registry.unclaimed()]
-
-
-class TestMapping:
-    async def test_behaves_as_a_read_only_mapping_of_token_to_payload(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        a, b = Ask("a"), Ask("b")
-        registry.register(a, key="t-a")
-        registry.register(b, key="t-b")
-
-        assert dict(registry) == {"t-a": a, "t-b": b}
-        assert "t-a" in registry
-        assert registry.get("missing") is None
-
-    async def test_claimed_entries_stay_visible_until_forgotten(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        entry = registry.register(Ask("a"))
-        registry.try_claim(entry.token)
-        assert entry.token in registry
-
-        registry.forget(entry)
-        assert not registry
-
-    async def test_follows_core_removals_and_keeps_registration_order(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        entries = {name: registry.register(Ask(name), key=name) for name in "abc"}
-        registry.register(Ask("a-again"), key="a")
-
-        assert registry.withdraw(entries["b"]) is True
-        assert [(token, ask.name) for token, ask in registry.items()] == [
-            ("a", "a-again"),
-            ("c", "c"),
-        ]
-
-
-class TestRegister:
-    async def test_mints_a_distinct_token_per_unkeyed_registration(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        first = registry.register(Ask("a"))
-        second = registry.register(Ask("b"))
-        assert first.token != second.token
-
-    async def test_redelivered_key_replaces_the_unclaimed_entry_and_its_timer(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        recorder = TimeoutRecorder()
-        first = registry.register(Ask("first"), key="req-1")
-        assert first is not None
-        registry.start_timeout(first, 0.01, recorder)
-
-        second = registry.register(Ask("second"), key="req-1")
-        assert second is not None
-        registry.start_timeout(first, 0.01, recorder)
-        registry.start_timeout(second, 0.02, recorder)
-        await asyncio.sleep(0.05)
-
-        assert recorder.expired == ["second"]
-
-    async def test_redelivered_key_never_displaces_a_claimed_entry(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        registry.register(Ask("first"), key="req-1")
-        registry.try_claim("req-1")
-
-        assert registry.register(Ask("second"), key="req-1") is None
-        assert registry["req-1"].name == "first"
-
-
-class TestClaim:
-    async def test_only_the_first_claim_wins(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        entry = registry.register(Ask("a"))
-
-        assert [
-            registry.try_claim(entry.token),
-            registry.try_claim(entry.token),
-        ] == [entry, None]
-
-    async def test_a_claim_before_the_deadline_stops_the_timeout(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        recorder = TimeoutRecorder()
-        entry = registry.register(Ask("a"))
-        registry.start_timeout(entry, 0.01, recorder)
-
-        registry.try_claim(entry.token)
-        await asyncio.sleep(0.03)
-
-        assert recorder.expired == []
-
-    async def test_an_expired_timeout_owns_the_entry_so_a_late_reply_loses(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        recorder = TimeoutRecorder()
-        entry = registry.register(Ask("a"))
-        registry.start_timeout(entry, 0.01, recorder)
-        await asyncio.sleep(0.03)
-
-        assert recorder.expired == ["a"]
-        assert registry.try_claim(entry.token) is None
-
-
-class TestWithdraw:
-    async def test_drops_an_ask_nobody_has_claimed(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        entry = registry.register(Ask("a"))
-
-        assert registry.withdraw(entry) is True
-        assert entry.token not in registry
-
-    async def test_leaves_a_claimed_ask_to_its_claimant(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        entry = registry.register(Ask("a"))
-        registry.try_claim(entry.token)
-
-        assert registry.withdraw(entry) is False
-        assert entry.token in registry
-
-
-class TestSupersededRegistration:
-    """A keyed redelivery replaces an unclaimed ask under a new ticket, so
-    whoever still holds the old entry can no longer act on the new one."""
-
-    async def test_a_late_forget_or_withdraw_leaves_the_redelivery_intact(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        first = registry.register(Ask("first"), key="req-1")
-        assert first is not None
-        registry.register(Ask("second"), key="req-1")
-
-        registry.forget(first)
-
-        assert registry.withdraw(first) is False
-        assert unclaimed_names(registry) == ["second"]
-
-    async def test_the_replaced_waiter_times_out_while_the_redelivery_is_answered(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        first_ask, second_ask = Ask("first"), Ask("second")
-        first = registry.register(first_ask, key="req-1")
-        assert first is not None
-        first_waiter = asyncio.create_task(
-            registry.wait(first, first_ask.future, timeout_s=0.01)
-        )
-        await asyncio.sleep(0)
-
-        second = registry.register(second_ask, key="req-1")
-        assert second is not None
-        second_waiter = asyncio.create_task(
-            registry.wait(second, second_ask.future, timeout_s=1.0)
-        )
-
-        assert await first_waiter is Timeout.TIMED_OUT
-        assert registry.try_claim("req-1") is second
-        second_ask.future.set_result("accept")
-        assert await second_waiter == "accept"
-        assert not registry
-
-
-class TestEviction:
-    async def test_unbounded_registry_never_evicts(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        for index in range(50):
-            registry.register(Ask(str(index)))
-        assert registry.evict_oldest() is None
-
-    async def test_below_capacity_does_not_evict(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry(max_pending=2)
-        registry.register(Ask("a"))
-        assert registry.evict_oldest() is None
-
-    async def test_at_capacity_evicts_the_oldest_unclaimed_and_stops_its_timer(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry(max_pending=3)
-        recorder = TimeoutRecorder()
-        entries = {
-            name: registry.register(Ask(name), key=name)
-            for name in ("claimed", "oldest", "newest")
-        }
-        oldest = entries["oldest"]
-        assert oldest is not None
-        registry.start_timeout(oldest, 0.01, recorder)
-        registry.try_claim("claimed")
-
-        evicted = registry.evict_oldest()
-        await asyncio.sleep(0.03)
-
-        assert evicted is not None and evicted.payload.name == "oldest"
-        assert list(registry) == ["claimed", "newest"]
-        assert recorder.expired == []
-
-    async def test_at_capacity_with_every_entry_claimed_evicts_nothing(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry(max_pending=2)
-        for name in ("a", "b"):
-            registry.register(Ask(name), key=name)
-            registry.try_claim(name)
-
-        assert registry.evict_oldest() is None
-        assert list(registry) == ["a", "b"]
-
-
-class TestCancel:
-    async def test_cancel_room_drops_its_asks_but_hands_back_only_unclaimed_ones(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        open_ask = registry.register(Ask("open"), room_id="room-1")
-        claimed = registry.register(Ask("claimed"), room_id="room-1")
-        other_room = registry.register(Ask("other-room"), room_id="room-2")
-        registry.try_claim(claimed.token)
-
-        to_resolve = registry.cancel_room("room-1")
-
-        assert to_resolve == [open_ask]
-        assert list(registry) == [other_room.token]
-        assert [
-            entry.payload.name for entry in registry.unclaimed_in_room("room-2")
-        ] == ["other-room"]
-
-    async def test_stops_pending_timers(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        recorder = TimeoutRecorder()
-        entry = registry.register(Ask("a"))
-        registry.start_timeout(entry, 0.01, recorder)
-
-        registry.cancel_all()
-        await asyncio.sleep(0.03)
-
-        assert recorder.expired == []
-
-    async def test_never_interrupts_an_expiry_that_already_claimed_its_ask(
-        self,
-    ) -> None:
-        """The expiry owns an ask it claimed; cancelling everything mid
-        on_timeout (e.g. room teardown during the timeout's reply) must let
-        that reply finish."""
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        replying, release = asyncio.Event(), asyncio.Event()
-        replied: list[str] = []
-
-        async def reply_on_timeout(entry: DecisionEntry[Ask]) -> None:
-            replying.set()
-            await release.wait()
-            replied.append(entry.payload.name)
-
-        entry = registry.register(Ask("a"))
-        registry.start_timeout(entry, 0, reply_on_timeout)
-        await replying.wait()
-
-        assert registry.cancel_all() == []
-        release.set()
-        await asyncio.sleep(0)
-
-        assert replied == ["a"]
-
-
-class TestWait:
-    async def test_returns_the_reply_that_claimed_it(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        ask = Ask("a")
-        entry = registry.register(ask)
-
-        async def reply() -> None:
-            await asyncio.sleep(0.01)
-            assert registry.try_claim(entry.token) is not None
-            ask.future.set_result("accept")
-
-        replier = asyncio.create_task(reply())
-        assert await registry.wait(entry, ask.future, timeout_s=1.0) == "accept"
-        await replier
-        assert entry.token not in registry
-
-    async def test_times_out_when_nobody_replies_and_rejects_late_replies(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        ask = Ask("a")
-        entry = registry.register(ask)
-
-        assert await registry.wait(entry, ask.future, timeout_s=0.01) is (
-            Timeout.TIMED_OUT
-        )
-        assert entry.token not in registry
-        assert registry.try_claim(entry.token) is None
-
-    async def test_a_reply_that_claimed_before_the_deadline_wins_even_if_it_resolves_after(
-        self,
-    ) -> None:
-        """A reply handler claims, then awaits a slow room notice before
-        resolving; the deadline passing meanwhile must not override it."""
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        ask = Ask("a")
-        entry = registry.register(ask)
-        notice_sent = asyncio.Event()
-
-        async def slow_reply() -> None:
-            registry.try_claim(entry.token)
-            await notice_sent.wait()
-            ask.future.set_result("accept")
-
-        replier = asyncio.create_task(slow_reply())
-        waiter = asyncio.create_task(registry.wait(entry, ask.future, timeout_s=0.01))
-        await asyncio.sleep(0.03)
-        assert not waiter.done()
-
-        notice_sent.set()
-        assert await waiter == "accept"
-        await replier
-
-    async def test_evicting_a_waiter_resolves_it_with_the_forced_value(self) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry(max_pending=1)
-        first = Ask("first")
-        first_entry = registry.register(first)
-        first_waiter = asyncio.create_task(
-            registry.wait(first_entry, first.future, timeout_s=1.0)
-        )
-        await asyncio.sleep(0)
-
-        evicted = registry.evict_oldest()
-        assert evicted is not None
-        evicted.payload.future.set_result("decline")
-
-        assert await first_waiter == "decline"
-
-    async def test_a_cancelled_waiter_forgets_its_token_without_cancelling_the_future(
-        self,
-    ) -> None:
-        registry: DecisionRegistry[Ask] = DecisionRegistry()
-        ask = Ask("a")
-        entry = registry.register(ask)
-        waiter = asyncio.create_task(registry.wait(entry, ask.future, timeout_s=1.0))
-        await asyncio.sleep(0)
-
-        waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiter
-
-        assert entry.token not in registry
-        assert not ask.future.cancelled()
-
-    async def test_overlapping_asks_each_resolve_exactly_once(self) -> None:
-        """A room at capacity: asks keep arriving (evicting the oldest open
-        one), some get a reply, the rest time out -- every asker gets exactly
-        one outcome and the registry drains."""
-        registry: DecisionRegistry[Ask] = DecisionRegistry(max_pending=2)
-        waiters: dict[str, asyncio.Task[str | Timeout]] = {}
-        asks: dict[str, Ask] = {}
-
-        for name in ("a", "b", "c", "d"):
-            if (evicted := registry.evict_oldest()) is not None:
-                evicted.payload.future.set_result("evicted")
-            asks[name] = ask = Ask(name)
-            entry = registry.register(ask, key=name)
-            assert entry is not None
-            waiters[name] = asyncio.create_task(
-                registry.wait(entry, ask.future, timeout_s=0.05)
-            )
-            await asyncio.sleep(0)
-
-        assert registry.try_claim("d") is not None
-        asks["d"].future.set_result("accept")
-
-        outcomes = {name: await waiter for name, waiter in waiters.items()}
-        assert outcomes == {
-            "a": "evicted",
-            "b": "evicted",
-            "c": Timeout.TIMED_OUT,
-            "d": "accept",
-        }
-        assert not registry
+        self.names.append(entry.payload.name)
+
+
+@pytest.fixture
+async def open_room() -> AsyncIterator[Callable[..., Room]]:
+    rooms: list[Room] = []
+
+    def open_(*, max_pending: int | None = None) -> Room:
+        rooms.append(room := Room(DecisionRegistry(max_pending=max_pending)))
+        return room
+
+    yield open_
+    for room in rooms:
+        for asker in room.askers.values():
+            asker.cancel()
+
+
+@pytest.fixture
+def expiries() -> Expiries:
+    return Expiries()
+
+
+async def test_a_busy_room_gives_every_asker_exactly_one_outcome(
+    open_room: Callable[..., Room],
+) -> None:
+    """At capacity with a reply mid-flight: the oldest open ask is evicted
+    (never the claimed one), a redelivery supersedes its predecessor without
+    evicting, a redelivery of the claimed ask is refused, the claimant's
+    late answer still wins past the deadline, and the rest time out."""
+    room = open_room(max_pending=2)
+    await room.ask("a", key="a", timeout_s=DEADLINE_S)
+    await room.ask("b", key="b")
+    claimed = room.registry.try_claim("a")
+    assert claimed is not None
+
+    await room.ask("c1", key="c", timeout_s=DEADLINE_S)
+    await room.ask("c2", key="c", timeout_s=DEADLINE_S)
+    assert await room.ask("a-again", key="a") is None
+    assert list(room.registry) == ["a", "c"]
+
+    await asyncio.sleep(PAST_DEADLINE_S)
+    claimed.payload.future.set_result("accept")
+
+    assert await room.outcomes() == {
+        "a": "accept",
+        "b": "evicted",
+        "c1": "replaced",
+        "c2": Timeout.TIMED_OUT,
+    }
+    assert not room.registry
+    assert room.reply("c", "accept") is False
+
+
+async def test_tearing_down_a_room_resolves_only_its_open_asks(
+    open_room: Callable[..., Room],
+) -> None:
+    """Teardown resolves the room's open asks, leaves a claimed one to its
+    claimant, and never touches another room; an asker cancelled with its
+    turn drops its ask without cancelling the answer's future."""
+    room = open_room()
+    await room.ask("open", room_id="room-1")
+    claimed_ask = await room.ask("claimed", room_id="room-1")
+    await room.ask("elsewhere", room_id="room-2")
+    abandoned = await room.ask("abandoned", room_id="room-2")
+    assert claimed_ask is not None and abandoned is not None
+    claimed = room.registry.try_claim(claimed_ask.token)
+    assert claimed is not None
+
+    room.tear_down("room-1")
+    claimed.payload.future.set_result("accept")
+    room.askers.pop("abandoned").cancel()
+    await asyncio.sleep(0)
+
+    [survivor] = room.registry.unclaimed_in_room("room-2")
+    assert survivor.payload.name == "elsewhere"
+    assert room.reply(survivor.token, "decline")
+    assert await room.outcomes() == {
+        "open": "cancelled",
+        "claimed": "accept",
+        "elsewhere": "decline",
+    }
+    assert not abandoned.payload.future.cancelled()
+    assert not room.registry
+
+
+async def test_expiry_timers_race_replies_redeliveries_and_teardown(
+    expiries: Expiries,
+) -> None:
+    """A reply before the deadline stops that ask's timer; a redelivery drops
+    its predecessor's timer and a stale handle can't arm a new one; and
+    teardown during an expiry that already claimed its ask lets it finish."""
+    registry: DecisionRegistry[Ask] = DecisionRegistry()
+    replying, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_expiry(entry: DecisionEntry[Ask]) -> None:
+        replying.set()
+        await release.wait()
+        await expiries(entry)
+
+    def ask(name: str, key: str) -> DecisionEntry[Ask]:
+        registration = registry.register_keyed(Ask(name), key=key)
+        assert registration is not None
+        return registration.entry
+
+    registry.start_timeout(ask("answered", "p1"), DEADLINE_S, expiries)
+    first = ask("first", "p2")
+    registry.start_timeout(first, DEADLINE_S, expiries)
+    redelivery = ask("redelivery", "p2")
+    registry.start_timeout(first, DEADLINE_S, expiries)
+    registry.start_timeout(redelivery, DEADLINE_S, expiries)
+    registry.start_timeout(ask("slow", "p3"), 0, slow_expiry)
+    assert registry.try_claim("p1") is not None
+
+    await replying.wait()
+    await asyncio.sleep(PAST_DEADLINE_S)
+    assert expiries.names == ["redelivery"]
+
+    assert registry.cancel_all() == []
+    release.set()
+    await asyncio.sleep(0)
+    assert expiries.names == ["redelivery", "slow"]
+
+
+async def test_stale_handles_never_act_on_a_newer_registration() -> None:
+    """A handle outlives its registration -- replaced by a redelivery, or
+    issued by a room registry teardown has since replaced -- and every
+    operation through it must leave the newer registration alone."""
+    registry: DecisionRegistry[Ask] = DecisionRegistry()
+    old_ask = Ask("old")
+    old = registry.register_keyed(old_ask, key="k")
+    assert old is not None
+    replacement = registry.register_keyed(Ask("new"), key="k")
+    assert replacement is not None and replacement.replaced is old.entry
+
+    registry.forget(old.entry)
+    assert registry.withdraw(old.entry) is False
+    registry.start_timeout(old.entry, 0, Expiries())
+    assert await registry.wait(old.entry, old_ask.future, timeout_s=DEADLINE_S) is (
+        Timeout.TIMED_OUT
+    )
+
+    fresh: DecisionRegistry[Ask] = DecisionRegistry()
+    assert fresh.register_keyed(Ask("fresh"), key="k") is not None
+    fresh.forget(old.entry)
+    assert fresh.withdraw(old.entry) is False
+
+    assert [entry.payload.name for entry in registry.unclaimed()] == ["new"]
+    assert [entry.payload.name for entry in fresh.unclaimed()] == ["fresh"]
+
+
+async def test_a_failed_prompt_withdraws_the_ask_unless_a_reply_claimed_it() -> None:
+    """The prompt send failed: an unanswered ask is withdrawn so nobody waits
+    on it, but a reply that already claimed one owns its answer."""
+    registry: DecisionRegistry[Ask] = DecisionRegistry()
+    unanswered = registry.register_minted(Ask("unanswered")).entry
+    answered_ask = Ask("answered")
+    answered = registry.register_minted(answered_ask).entry
+    claimed = registry.try_claim(answered.token)
+    assert claimed is not None
+
+    assert registry.withdraw(unanswered) is True
+    assert registry.withdraw(answered) is False
+    claimed.payload.future.set_result("accept")
+
+    assert await registry.wait(answered, answered_ask.future, timeout_s=1.0) == (
+        "accept"
+    )
+    assert not registry

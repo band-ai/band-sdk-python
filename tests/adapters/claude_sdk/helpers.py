@@ -22,9 +22,15 @@ from claude_agent_sdk.types import (
     ToolPermissionContext,
 )
 
-from band.adapters.claude_sdk import ApprovalReply, ClaudeSDKAdapter, PendingApproval
+from band.adapters.claude_sdk import (
+    ApprovalReply,
+    ClaudeSDKAdapter,
+    ClaudeSDKCommand,
+    PendingApproval,
+)
 from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import missing_reply_error
+from band.testing import FakeAgentTools
 
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
@@ -91,7 +97,7 @@ def register_pending_approval(
         room_id,
         DecisionRegistry(max_pending=adapter.max_pending_approvals_per_room),
     )
-    registry.register(
+    registry.register_keyed(
         PendingApproval(
             tool_name=tool_name,
             tool_input=tool_input if tool_input is not None else {},
@@ -181,3 +187,50 @@ def blocking_turn() -> tuple[asyncio.Event, asyncio.Event, Callable[..., Any]]:
         await release.wait()
 
     return started, release, wait_for_response
+
+
+APPROVER = {"id": "u1", "name": "Bob"}
+
+
+class ClaudeApprovalRoom:
+    """A manual-approval Claude SDK room observed through its chat: each
+    ``request`` is a tool call awaiting the room's decision, and ``reply``
+    sends an approval command as :data:`APPROVER`."""
+
+    def __init__(self, adapter: ClaudeSDKAdapter, room_id: str = "room-1") -> None:
+        self.adapter = adapter
+        self.room_id = room_id
+        self.tools = FakeAgentTools()
+        self.requests: list[
+            asyncio.Task[PermissionResultAllow | PermissionResultDeny]
+        ] = []
+        adapter._room_tools[room_id] = self.tools
+        adapter._room_last_sender[room_id] = APPROVER
+
+    @property
+    def chat(self) -> list[str]:
+        return [message["content"] for message in self.tools.messages_sent]
+
+    def request(
+        self, tool_name: str = SEND_MESSAGE_MCP_NAME
+    ) -> asyncio.Task[PermissionResultAllow | PermissionResultDeny]:
+        self.requests.append(
+            request := asyncio.create_task(
+                self.adapter._make_can_use_tool(self.room_id)(
+                    tool_name, {}, ToolPermissionContext()
+                )
+            )
+        )
+        return request
+
+    async def until_pending(self) -> None:
+        await wait_for_pending_approval(self.adapter, self.room_id)
+
+    async def reply(self, command: ClaudeSDKCommand, token: str = "") -> None:
+        await self.adapter._handle_approval_command(
+            tools=self.tools,
+            room_id=self.room_id,
+            command=command,
+            args=token,
+            sender=APPROVER,
+        )

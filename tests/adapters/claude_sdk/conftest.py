@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.core.types import PlatformMessage
+from tests.adapters.claude_sdk.helpers import ClaudeApprovalRoom
 
 
 @pytest.fixture
@@ -38,3 +42,20 @@ def mock_tools():
     tools.lookup_peers = AsyncMock(return_value={"peers": []})
     tools.get_participants = AsyncMock(return_value=[])
     return tools
+
+
+@pytest.fixture
+async def approval_room() -> AsyncIterator[Callable[..., ClaudeApprovalRoom]]:
+    """Open a manual-approval room on a fresh adapter; tool calls still
+    awaiting a decision when the test ends are cancelled."""
+    rooms: list[ClaudeApprovalRoom] = []
+
+    def open_room(**adapter_config: Any) -> ClaudeApprovalRoom:
+        adapter = ClaudeSDKAdapter(approval_mode="manual", **adapter_config)
+        rooms.append(room := ClaudeApprovalRoom(adapter))
+        return room
+
+    yield open_room
+    for room in rooms:
+        for request in room.requests:
+            request.cancel()

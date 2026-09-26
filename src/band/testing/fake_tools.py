@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime
+from types import TracebackType
 from typing import Any, Literal
 
 import band_sdk_core
@@ -192,6 +194,33 @@ def _canonicalize_context_item(message: dict[str, Any]) -> dict[str, Any]:
     return context_item_to_dict(ChatMessage.model_validate(message))
 
 
+#: How long entering a :class:`HeldMessage` waits for its send to start.
+HOLD_START_TIMEOUT_S = 1.0
+
+
+class HeldMessage:
+    """A room message held in flight: entering the block waits until the
+    adapter starts sending it, and leaving lets it land -- or raise ``error``,
+    as a failed delivery would."""
+
+    def __init__(self, matching: str, error: Exception | None) -> None:
+        self.matching = matching
+        self.error = error
+        self.sending = asyncio.Event()
+        self.released = asyncio.Event()
+
+    async def __aenter__(self) -> None:
+        await asyncio.wait_for(self.sending.wait(), timeout=HOLD_START_TIMEOUT_S)
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.released.set()
+
+
 class FakeAgentTools:
     """
     Fake implementation of AgentToolsProtocol for testing.
@@ -283,6 +312,7 @@ class FakeAgentTools:
         self.participants_removed: list[ParticipantRemoveResult] = []
         self.tool_calls: list[dict[str, Any]] = []
         self.context_calls: list[dict[str, Any]] = []
+        self._held_messages: list[HeldMessage] = []
 
     @property
     def agent_id(self) -> str | None:
@@ -319,9 +349,30 @@ class FakeAgentTools:
         if self.send_message_error is not None:
             raise self.send_message_error
         self._require_mentions(mentions)
+        if (held := self._take_held_message(content)) is not None:
+            held.sending.set()
+            await held.released.wait()
+            if held.error is not None:
+                raise held.error
         if not has_visible_content(content):
             return None
         return self._record_message(content, mentions)
+
+    def hold_message(
+        self, matching: str, *, error: Exception | None = None
+    ) -> HeldMessage:
+        """Hold the next message containing ``matching`` in flight for an
+        ``async with`` block, so a test can interleave room traffic with a
+        slow -- or, given ``error``, failing -- send."""
+        held = HeldMessage(matching, error)
+        self._held_messages.append(held)
+        return held
+
+    def _take_held_message(self, content: str) -> HeldMessage | None:
+        held = next((h for h in self._held_messages if h.matching in content), None)
+        if held is not None:
+            self._held_messages.remove(held)
+        return held
 
     def _require_mentions(
         self, mentions: list[str] | list[dict[str, str]] | None

@@ -32,6 +32,7 @@ class TestPendingApprovalEviction:
         # Pre-populate one pending approval
         old_future = register_pending_approval(
             adapter,
+            token="a-old",
             tool_name="Old",
             created_at=datetime(2020, 1, 1, tzinfo=UTC),
         )

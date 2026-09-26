@@ -19,6 +19,10 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import (
     PlatformMessage,
 )
+from band.integrations.opencode import (
+    OpencodePermissionRequest,
+    OpencodeQuestionRequest,
+)
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
 
@@ -470,3 +474,27 @@ async def run_single_turn(
         is_session_bootstrap=True,
         room_id="room-1",
     )
+
+
+class AskFactory:
+    """OpenCode asks with unique ids and throwaway content, so a test names
+    only what it is about -- usually the id a room reply quotes back."""
+
+    def permission(
+        self, id: str | None = None, *, permission: str = "bash"
+    ) -> OpencodePermissionRequest:
+        return OpencodePermissionRequest(
+            id=id or _unique_id("perm"), permission=permission
+        )
+
+    def question(
+        self, id: str | None = None, *, questions: list[str] | None = None
+    ) -> OpencodeQuestionRequest:
+        texts = [f"Question {_unique_id('q')}?"] if questions is None else questions
+        return OpencodeQuestionRequest(
+            id=id or _unique_id("q"), questions=[{"question": t} for t in texts]
+        )
+
+
+def _unique_id(prefix: str) -> str:
+    return f"{prefix}-{uuid4().hex[:8]}"

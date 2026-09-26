@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict, deque
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -19,6 +20,7 @@ from band.adapters.codex import (
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
     TURN_IN_PROGRESS_MESSAGE,
+    ApprovalDecision,
     CodexAdapter,
     CodexAdapterConfig,
     CodexCommand,
@@ -326,21 +328,28 @@ async def run_codex_turn(
 async def _wait_for_pending_approval(
     adapter: CodexAdapter,
     room_id: str,
-    *,
+    *approval_ids: str,
     timeout_s: float = 2.0,
 ) -> None:
-    """Yield control until ``adapter`` records a pending approval for ``room_id``.
+    """Yield control until ``adapter`` records a pending approval for ``room_id``
+    -- every one of ``approval_ids``, when given.
 
     Replaces brittle ``asyncio.sleep(0.01)`` calls in approval tests —
     polls the adapter's in-memory state instead of racing a fixed delay.
     """
+
+    def registered() -> bool:
+        pending = adapter._pending_approvals.get(room_id, {})
+        return bool(pending) and set(approval_ids) <= pending.keys()
+
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:
-        if adapter._pending_approvals.get(room_id):
+        if registered():
             return
         await asyncio.sleep(0)
     raise AssertionError(
-        f"No pending approval registered for room {room_id!r} within {timeout_s}s"
+        f"Approvals {approval_ids or 'any'} not pending in room {room_id!r} "
+        f"within {timeout_s}s"
     )
 
 
@@ -3387,7 +3396,7 @@ class TestHistoryInjection:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()
         registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
-        registry.register(
+        registry.register_keyed(
             PendingApproval(
                 request_id=1,
                 method="item/tool/call",
@@ -5876,62 +5885,101 @@ class TestApprovalFromASequentialRoom:
         assert client.closed
 
 
+ROOM_ID = "room-1"
+
+
+class CodexApprovalRoom:
+    """One room's manual approvals on a started Codex adapter, observed
+    through the room's chat: each ask runs as its own turn, and replies go
+    through the room's approval commands."""
+
+    def __init__(self, adapter: CodexAdapter) -> None:
+        self.adapter = adapter
+        self.tools = FakeAgentTools()
+        self.asks: list[asyncio.Task[ApprovalDecision]] = []
+
+    @property
+    def pending(self) -> DecisionRegistry[PendingApproval]:
+        return self.adapter._pending_approvals[ROOM_ID]
+
+    def ask(
+        self, approval_id: str, *, request_id: int
+    ) -> asyncio.Task[ApprovalDecision]:
+        params = {"approvalId": approval_id, "command": "npm test"}
+        self.asks.append(
+            ask := asyncio.create_task(
+                self.adapter._resolve_manual_approval(
+                    tools=self.tools,
+                    msg=make_platform_message(room_id=ROOM_ID),
+                    room_id=ROOM_ID,
+                    event=_event_request(
+                        request_id, "item/commandExecution/requestApproval", params
+                    ),
+                    summary="npm test",
+                    params=params,
+                )
+            )
+        )
+        return ask
+
+    async def until_pending(self, *approval_ids: str) -> None:
+        await _wait_for_pending_approval(self.adapter, ROOM_ID, *approval_ids)
+
+    async def reply(self, command: CodexCommand, approval_id: str = "") -> str:
+        """Send an approval command to the room; the room's answer."""
+        await self.adapter._handle_approval_command(
+            tools=self.tools,
+            msg=make_platform_message(room_id=ROOM_ID),
+            room_id=ROOM_ID,
+            command=command,
+            args=approval_id,
+        )
+        return self.tools.messages_sent[-1]["content"]
+
+
+@pytest.fixture
+async def approval_room() -> AsyncIterator[Callable[..., Awaitable[CodexApprovalRoom]]]:
+    """Open a Codex room in manual approval mode; asks still waiting when the
+    test ends are cancelled."""
+    rooms: list[CodexApprovalRoom] = []
+
+    async def open_room(**config: Any) -> CodexApprovalRoom:
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                **{"approval_mode": "manual", "approval_wait_timeout_s": 5, **config}
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        rooms.append(room := CodexApprovalRoom(adapter))
+        return room
+
+    yield open_room
+    for room in rooms:
+        for ask in room.asks:
+            ask.cancel()
+
+
 class TestManualApprovalRaces:
     """Races between a room reply and the approval wait's own timeout."""
 
     @pytest.mark.asyncio
     async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
-        self,
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
     ) -> None:
         """The approval id is visible in the task event before the prompt
         send; a reply claiming it while that send fails owns the answer."""
-        prompt_in_flight, fail_prompt = asyncio.Event(), asyncio.Event()
-
-        class FailingPromptTools(FakeAgentTools):
-            async def send_message(
-                self, content: str, mentions: list[dict[str, str]] | None = None
-            ) -> Any:
-                if content.startswith("Approval requested"):
-                    prompt_in_flight.set()
-                    await fail_prompt.wait()
-                    raise RuntimeError("network down")
-                return await super().send_message(content, mentions)
-
-        tools = FailingPromptTools()
-        adapter = make_codex_adapter(
-            FakeCodexClient(events=[]),
-            config=CodexAdapterConfig(
-                approval_mode="manual", approval_wait_timeout_s=5
-            ),
+        room = await approval_room()
+        failing_prompt = room.tools.hold_message(
+            "Approval requested", error=RuntimeError("network down")
         )
-        await adapter.on_started("Agent", "A coding agent")
-        msg = make_platform_message(room_id="room-1")
-        params = {"approvalId": "approval-xyz", "command": "npm test"}
-        pending_task = asyncio.create_task(
-            adapter._resolve_manual_approval(
-                tools=tools,
-                msg=msg,
-                room_id="room-1",
-                event=_event_request(
-                    1, "item/commandExecution/requestApproval", params
-                ),
-                summary="npm test",
-                params=params,
-            )
-        )
-        await asyncio.wait_for(prompt_in_flight.wait(), 1)
+        decision = room.ask("approval-xyz", request_id=1)
 
-        await adapter._handle_approval_command(
-            tools=tools,
-            msg=msg,
-            room_id="room-1",
-            command=CodexCommand.APPROVE,
-            args="",
-        )
-        fail_prompt.set()
+        async with failing_prompt:
+            await room.reply(CodexCommand.APPROVE)
 
-        assert await asyncio.wait_for(pending_task, 1) == "accept"
-        assert events_of_type(tools, "error") == []
+        assert await asyncio.wait_for(decision, 1) == "accept"
+        assert events_of_type(room.tools, "error") == []
 
     @pytest.mark.asyncio
     async def test_cleanup_declines_a_turn_parked_on_a_human_instead_of_waiting(
@@ -5988,208 +6036,50 @@ class TestManualApprovalRaces:
 
     @pytest.mark.asyncio
     async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
-        self,
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
     ) -> None:
         """A reply landing while the timeout notice is still being sent must
         not be told "resolved" for a decision that already timed out."""
-        sending_second_message = asyncio.Event()
-        release_second_message = asyncio.Event()
-        call_count = 0
+        room = await approval_room(approval_wait_timeout_s=0.01)
+        timeout_notice = room.tools.hold_message("timed out")
+        decision = room.ask("approval-xyz", request_id=1)
 
-        class SlowSecondSendTools(FakeAgentTools):
-            async def send_message(
-                self, content: str, mentions: list[dict[str, str]] | None = None
-            ) -> Any:
-                nonlocal call_count
-                call_count += 1
-                if call_count == 2:
-                    sending_second_message.set()
-                    await release_second_message.wait()
-                return await super().send_message(content, mentions)
-
-        tools = SlowSecondSendTools()
-        adapter = make_codex_adapter(
-            FakeCodexClient(events=[]),
-            config=CodexAdapterConfig(
-                approval_mode="manual", approval_wait_timeout_s=0.01
-            ),
-        )
-        await adapter.on_started("Agent", "A coding agent")
-        msg = make_platform_message(room_id="room-1")
-        params = {"approvalId": "approval-xyz", "command": "rm -rf /"}
-
-        pending_task = asyncio.create_task(
-            adapter._resolve_manual_approval(
-                tools=tools,
-                msg=msg,
-                room_id="room-1",
-                event=_event_request(
-                    1, "item/commandExecution/requestApproval", params
-                ),
-                summary="rm -rf /",
-                params=params,
+        async with timeout_notice:
+            assert await room.reply(CodexCommand.APPROVE, "approval-xyz") == (
+                "No pending approvals to resolve."
             )
-        )
-        await sending_second_message.wait()
 
-        handled = await adapter._handle_approval_command(
-            tools=tools,
-            msg=msg,
-            room_id="room-1",
-            command=CodexCommand.APPROVE,
-            args="approval-xyz",
-        )
-        reply = tools.messages_sent[-1]["content"]
-        release_second_message.set()
-
-        decision = await pending_task
-        assert handled is True
-        assert decision == "decline"  # approval_timeout_decision, not the reply
-        assert reply == "No pending approvals to resolve."
+        assert await decision == "decline"  # approval_timeout_decision
 
     @pytest.mark.asyncio
-    async def test_a_reply_for_an_already_claimed_token_is_told_not_pending(
-        self,
+    async def test_redelivered_approvals_never_hang_evict_or_override_a_claim(
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
     ) -> None:
-        """A claim that got there first owns the approval: a second reply is
-        told it's no longer pending and cannot override the first answer."""
-        tools = FakeAgentTools()
-        adapter = make_codex_adapter(
-            FakeCodexClient(events=[]),
-            config=CodexAdapterConfig(
-                approval_mode="manual", approval_wait_timeout_s=5
-            ),
-        )
-        await adapter.on_started("Agent", "A coding agent")
-        msg = make_platform_message(room_id="room-1")
-        params = {"approvalId": "approval-xyz", "command": "rm -rf /"}
-        pending_task = asyncio.create_task(
-            adapter._resolve_manual_approval(
-                tools=tools,
-                msg=msg,
-                room_id="room-1",
-                event=_event_request(
-                    1, "item/commandExecution/requestApproval", params
-                ),
-                summary="rm -rf /",
-                params=params,
-            )
-        )
-        async with asyncio.timeout(1):
-            while "approval-xyz" not in adapter._pending_approvals.get("room-1", {}):
-                await asyncio.sleep(0)
-
-        registry = adapter._pending_approvals["room-1"]
-        assert registry.try_claim("approval-xyz") is not None
-        registry["approval-xyz"].future.set_result("decline")
-
-        handled = await adapter._handle_approval_command(
-            tools=tools,
-            msg=msg,
-            room_id="room-1",
-            command=CodexCommand.APPROVE,
-            args="approval-xyz",
-        )
-
-        assert handled is True
-        assert tools.messages_sent[-1]["content"] == (
-            "Approval `approval-xyz` is no longer pending."
-        )
-        assert await pending_task == "decline"
-
-    @staticmethod
-    def _ask(
-        adapter: CodexAdapter,
-        tools: FakeAgentTools,
-        *,
-        request_id: int,
-        approval_id: str,
-    ) -> asyncio.Task[str]:
-        params = {"approvalId": approval_id, "command": "npm test"}
-        return asyncio.create_task(
-            adapter._resolve_manual_approval(
-                tools=tools,
-                msg=make_platform_message(room_id="room-1"),
-                room_id="room-1",
-                event=_event_request(
-                    request_id, "item/commandExecution/requestApproval", params
-                ),
-                summary="npm test",
-                params=params,
-            )
-        )
-
-    @staticmethod
-    async def _until_pending(adapter: CodexAdapter, *approval_ids: str) -> None:
-        async with asyncio.timeout(1):
-            while not set(approval_ids) <= set(
-                adapter._pending_approvals.get("room-1", {})
-            ):
-                await asyncio.sleep(0)
-
-    @pytest.mark.asyncio
-    async def test_a_redelivery_of_a_claimed_approval_declines_without_waiting(
-        self,
-    ) -> None:
-        """The claimant owns the approval: its redelivery must neither wait
-        on an ask it doesn't own nor disturb the claimant's entry."""
-        tools = FakeAgentTools()
-        adapter = make_codex_adapter(
-            FakeCodexClient(events=[]),
-            config=CodexAdapterConfig(
-                approval_mode="manual", approval_wait_timeout_s=5
-            ),
-        )
-        await adapter.on_started("Agent", "A coding agent")
-        original = self._ask(adapter, tools, request_id=1, approval_id="approval-xyz")
-        await self._until_pending(adapter, "approval-xyz")
-        claimed = adapter._pending_approvals["room-1"].try_claim("approval-xyz")
+        """At capacity, with one approval claimed by a reply mid-resolution:
+        a second reply to it is told it's no longer pending; Codex re-sending
+        it declines at once without waiting; re-sending the open one
+        supersedes it (declining its asker) without evicting anything; and
+        both final answers stand."""
+        room = await approval_room(max_pending_approvals_per_room=2)
+        claimed_ask = room.ask("approval-a", request_id=1)
+        superseded = room.ask("approval-b", request_id=2)
+        await room.until_pending("approval-a", "approval-b")
+        claimed = room.pending.try_claim("approval-a")
         assert claimed is not None
 
-        redelivery = self._ask(adapter, tools, request_id=2, approval_id="approval-xyz")
+        assert await room.reply(CodexCommand.APPROVE, "approval-a") == (
+            "Approval `approval-a` is no longer pending."
+        )
+        refused = room.ask("approval-a", request_id=3)
+        redelivery = room.ask("approval-b", request_id=4)
 
-        assert await asyncio.wait_for(redelivery, 1) == "decline"
+        assert await asyncio.wait_for(refused, 1) == "decline"
+        assert await asyncio.wait_for(superseded, 1) == "decline"
+        assert list(room.pending) == ["approval-a", "approval-b"]
+        await room.reply(CodexCommand.DECLINE, "approval-b")
         claimed.payload.future.set_result("accept")
-        assert await asyncio.wait_for(original, 1) == "accept"
-
-    @pytest.mark.asyncio
-    async def test_a_redelivery_of_an_open_approval_replaces_it_without_evicting(
-        self,
-    ) -> None:
-        """A redelivered id supersedes its open predecessor -- resolved like an
-        eviction -- and leaves every other pending approval alone, even at
-        capacity. The redelivery is then answered normally."""
-        tools = FakeAgentTools()
-        adapter = make_codex_adapter(
-            FakeCodexClient(events=[]),
-            config=CodexAdapterConfig(
-                approval_mode="manual",
-                approval_wait_timeout_s=5,
-                max_pending_approvals_per_room=2,
-            ),
-        )
-        await adapter.on_started("Agent", "A coding agent")
-        other = self._ask(adapter, tools, request_id=1, approval_id="approval-a")
-        original = self._ask(adapter, tools, request_id=2, approval_id="approval-b")
-        await self._until_pending(adapter, "approval-a", "approval-b")
-
-        redelivery = self._ask(adapter, tools, request_id=3, approval_id="approval-b")
-
-        assert await asyncio.wait_for(original, 1) == "decline"
-        assert list(adapter._pending_approvals["room-1"]) == [
-            "approval-a",
-            "approval-b",
-        ]
-        await adapter._handle_approval_command(
-            tools=tools,
-            msg=make_platform_message(room_id="room-1"),
-            room_id="room-1",
-            command=CodexCommand.APPROVE,
-            args="approval-b",
-        )
-        assert await asyncio.wait_for(redelivery, 1) == "accept"
-        assert "approval-a" in adapter._pending_approvals["room-1"]
-        other.cancel()
+        assert await asyncio.wait_for(redelivery, 1) == "decline"
+        assert await asyncio.wait_for(claimed_ask, 1) == "accept"
 
 
 class TestTokenUsageCounterMonotonicity:
@@ -6657,7 +6547,7 @@ class TestCleanupOnCancel:
         wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
         registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
-        registry.register(
+        registry.register_keyed(
             PendingApproval(
                 request_id=42,
                 method="item/commandExecution/requestApproval",
