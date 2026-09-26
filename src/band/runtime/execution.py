@@ -554,13 +554,13 @@ class ExecutionContext:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()
 
-        # Signal stop and cancel the task
+        # Signal stop and cancel the task. asyncio.wait, not a bare await: the
+        # loop swallows its own CancelledError and returns, so a bare await
+        # would forward a cancel aimed at this stop() into the loop and lose
+        # it, and a cancelled stop() would then block on a pending release.
         self._is_running = False
         self._process_loop_task.cancel()
-        try:
-            await self._process_loop_task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.wait({self._process_loop_task})
         self._process_loop_task = None
 
         # Drain cancellation cleanup for a bounded time so a non-cooperative

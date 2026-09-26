@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
@@ -99,7 +100,9 @@ class Room:
         self.released.clear()
 
 
-@pytest.fixture
+# Function loop: the rooms run on the test's loop, and a teardown on the
+# default session loop could not stop them.
+@pytest_asyncio.fixture(loop_scope="function")
 async def room():
     rooms: list[Room] = []
 
@@ -109,6 +112,10 @@ async def room():
 
     yield make
     for r in rooms:
+        # A test that failed while holding a gate must not wedge the stop.
+        for gate in (r.release_gate, r.turn_gate):
+            if gate is not None:
+                gate.set()
         await r.ctx.stop()
 
 
@@ -239,6 +246,29 @@ async def test_cancelling_stop_mid_release_keeps_the_teardown_running(room) -> N
     stopping.cancel()
     with pytest.raises(asyncio.CancelledError):
         await stopping
+
+    assert r.ctx._release_task is not None, "the teardown must stay tracked"
+    r.release_gate.set()
+    await asyncio.wait_for(r.ctx.stop(), timeout=5.0)
+    assert (r.release_finished, r.ctx._release_task) == (True, None)
+
+
+async def test_a_stop_cancelled_while_the_loop_unwinds_is_not_swallowed(room) -> None:
+    """The room loop swallows its own cancellation; a cancel of stop() landing
+    while stop() waits on that loop must still end stop(), not be absorbed and
+    leave it blocked on the pending release."""
+    r = await _started(room())
+    r.release_gate = asyncio.Event()
+    await r.send("msg-1")
+    await r.wait_released()
+    stopping = asyncio.create_task(r.ctx.stop())
+    await asyncio.sleep(0)  # stop() runs until it waits on the cancelled loop
+    assert r.ctx._process_loop_task is not None
+    assert not r.ctx._process_loop_task.done()
+
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stopping, timeout=5.0)
 
     assert r.ctx._release_task is not None, "the teardown must stay tracked"
     r.release_gate.set()
