@@ -7175,6 +7175,26 @@ class TestIdleRelease:
         assert "The code word is PELICAN." in history
 
     @pytest.mark.asyncio
+    async def test_fallback_history_survives_a_rejected_turn_start(self) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed("turn-1")],
+            resume_error=CodexJsonRpcError(code=-32600, message="no rollout found"),
+        )
+        adapter = make_codex_adapter(client)
+        tools = await _bootstrap_turn(adapter)
+        await adapter.release_room_resources("room-1")
+        tools.set_room_context(_RECALL_TRANSCRIPT)
+        client._turn_start_error = CodexJsonRpcError(code=-32000, message="busy")
+        with pytest.raises(CodexJsonRpcError):
+            await _later_turn(adapter, tools)
+        client._events.append(_turn_completed("turn-2"))
+
+        await _later_turn(adapter, tools)
+
+        history = _history_item(_last_turn_input(client))
+        assert "The code word is PELICAN." in history
+
+    @pytest.mark.asyncio
     async def test_an_unexpected_resume_error_keeps_the_thread_for_retry(self) -> None:
         client = FakeCodexClient(
             events=[_turn_completed("turn-1")], resume_error=OSError("pipe closed")

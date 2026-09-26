@@ -140,6 +140,9 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
+        # Executions whose stop or room cleanup has not finished yet; a
+        # cancelled teardown stays here for the next stop() to complete.
+        self._tearing_down: dict[str, Execution] = {}
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -201,7 +204,7 @@ class AgentRuntime:
 
         # Stop all executions with timeout
         all_graceful = True
-        for room_id in list(self.executions.keys()):
+        for room_id in list({**self._tearing_down, **self.executions}):
             graceful = await self._destroy_execution(room_id, timeout=timeout)
             all_graceful = all_graceful and graceful
 
@@ -416,10 +419,24 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        if room_id not in self.executions:
-            return True
+        graceful = True
+        stale = self._tearing_down.get(room_id)
+        if stale is not None:
+            graceful = await self._tear_down(room_id, stale, timeout)
+        execution = self.executions.pop(room_id, None)
+        if execution is not None:
+            self._tearing_down[room_id] = execution
+            graceful = await self._tear_down(room_id, execution, timeout) and graceful
+        return graceful
 
-        execution = self.executions.pop(room_id)
+    async def _tear_down(
+        self, room_id: str, execution: Execution, timeout: float | None
+    ) -> bool:
+        """Stop ``execution`` and run room cleanup, then forget it.
+
+        The execution stays in ``_tearing_down`` until both finish, so a
+        caller cancelled mid-stop leaves it for a later stop to complete.
+        """
         graceful = await execution.stop(timeout=timeout)
 
         # Durable completion state is safe to release with the room. Pending
@@ -434,5 +451,7 @@ class AgentRuntime:
             except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning("Session cleanup callback failed for %s: %s", room_id, e)
 
+        if self._tearing_down.get(room_id) is execution:
+            del self._tearing_down[room_id]
         logger.debug("Destroyed execution for room %s", room_id)
         return graceful

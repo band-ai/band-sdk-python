@@ -837,6 +837,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 turn_started = await self._start_turn(turn_params)
                 if has_pending_prompt_injection:
                     self._prompt_injected_rooms.add(room_id)
+                self._needs_history_injection.discard(room_id)
+                self._raw_history_by_room.pop(room_id, None)
                 turn = (
                     turn_started.get("turn") if isinstance(turn_started, dict) else {}
                 )
@@ -1789,8 +1791,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             injected_system_prompt = True
 
         if room_id in self._needs_history_injection:
-            self._needs_history_injection.discard(room_id)
-            raw_history = self._raw_history_by_room.pop(room_id, None)
+            # Read, not consumed: the history is kept until turn/start is
+            # accepted, so a rejected turn's retry still carries it.
+            raw_history = self._raw_history_by_room.get(room_id)
             if raw_history:
                 context = self._format_history_context(raw_history)
                 if context:

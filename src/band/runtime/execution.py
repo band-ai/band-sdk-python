@@ -1178,27 +1178,10 @@ class ExecutionContext:
             return
         logger.info("ExecutionContext %s: releasing idle room resources", self.room_id)
         task = asyncio.ensure_future(callback(self.room_id))
-        self._track_release(task)
-        try:
-            # Shielded: cancelling the loop leaves the teardown running for
-            # stop() to finish.
-            await asyncio.shield(task)
-        except Exception:
-            logger.warning(
-                "ExecutionContext %s: idle resource release failed",
-                self.room_id,
-                exc_info=True,
-            )
-
-    def _track_release(self, task: asyncio.Task[None]) -> None:
-        """Own the release task until it finishes, however its awaiters end."""
         self._release_task = task
-
-        def forget(done: asyncio.Task[None]) -> None:
-            if self._release_task is done:
-                self._release_task = None
-
-        task.add_done_callback(forget)
+        # Shielded: cancelling the loop leaves the teardown running, and
+        # tracked, for stop() to finish.
+        await self._observe_release(task)
 
     async def _finish_pending_release(self) -> None:
         """Let a release that outlived the room loop finish its teardown.
@@ -1207,8 +1190,15 @@ class ExecutionContext:
         and still tracked for a later stop() to finish.
         """
         task = self._release_task
-        if task is None:
-            return
+        if task is not None:
+            await self._observe_release(task)
+
+    async def _observe_release(self, task: asyncio.Future[None]) -> None:
+        """Await the release and log its failure; forget it only once observed.
+
+        A caller cancelled mid-wait leaves the task tracked, finished or not,
+        so its outcome (including a failure) is seen by the next waiter.
+        """
         try:
             await asyncio.shield(task)
         except Exception:
@@ -1217,6 +1207,8 @@ class ExecutionContext:
                 self.room_id,
                 exc_info=True,
             )
+        if self._release_task is task:
+            self._release_task = None
 
     async def _retry_pending_processed_acks(self) -> bool:
         """Retry durable processed acks for locally completed messages."""

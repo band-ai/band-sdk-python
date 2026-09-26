@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.runtime.execution import ExecutionContext, ExecutionState
+from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
 from tests.adapters.test_claude_sdk_idle_release import ROOM, claude_room
 from tests.adapters.test_codex_adapter import (
@@ -242,6 +243,67 @@ async def test_cancelling_stop_mid_release_keeps_the_teardown_running(room) -> N
     r.release_gate.set()
     await asyncio.wait_for(r.ctx.stop(), timeout=5.0)
     assert (r.release_finished, r.ctx._release_task) == (True, None)
+
+
+def _runtime_over(r: Room, cleanups: list[str]) -> AgentRuntime:
+    """An AgentRuntime whose one room runs ``r``'s execution context."""
+
+    async def cleanup(room_id: str) -> None:
+        cleanups.append(room_id)
+
+    return AgentRuntime(
+        r.link,
+        "agent-1",
+        AsyncMock(),
+        execution_factory=lambda *_args, **_kwargs: r.ctx,
+        on_session_cleanup=cleanup,
+    )
+
+
+async def test_a_cancelled_runtime_stop_is_finished_by_the_next_stop(room) -> None:
+    r = room()
+    r.release_gate = asyncio.Event()
+    cleanups: list[str] = []
+    runtime = _runtime_over(r, cleanups)
+    await runtime._create_execution(ROOM)
+    await r.send("msg-1")
+    await r.wait_released()
+    stopping = asyncio.create_task(runtime.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    r.release_gate.set()
+    await asyncio.wait_for(runtime.stop(), timeout=5.0)
+
+    assert (r.release_finished, cleanups) == (True, [ROOM])
+
+
+async def test_a_release_failing_after_its_stop_was_cancelled_is_still_seen(
+    room, caplog
+) -> None:
+    r = room(release_error=RuntimeError("teardown failed"))
+    r.release_gate = asyncio.Event()
+    cleanups: list[str] = []
+    runtime = _runtime_over(r, cleanups)
+    await runtime._create_execution(ROOM)
+    await r.send("msg-1")
+    await r.wait_released()
+    stopping = asyncio.create_task(runtime.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+
+    r.release_gate.set()
+    await asyncio.wait_for(runtime.stop(), timeout=5.0)
+
+    failures = [
+        rec for rec in caplog.records if "idle resource release failed" in rec.message
+    ]
+    assert [str(rec.exc_info[1]) for rec in failures] == ["teardown failed"]
+    assert cleanups == [ROOM]
 
 
 class GatedCloseCodexClient(FakeCodexClient):
