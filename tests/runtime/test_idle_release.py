@@ -402,8 +402,18 @@ class GatedExecution:
         self.stop_gate = asyncio.Event()
         self.stop_errors: list[Exception] = []
         self.start_error: Exception | None = None
+        self.start_gate: asyncio.Event | None = None
+        self.start_entered = asyncio.Event()
+        self.start_cancelled = False
 
     async def start(self) -> None:
+        self.start_entered.set()
+        if self.start_gate is not None:
+            try:
+                await self.start_gate.wait()
+            except asyncio.CancelledError:
+                self.start_cancelled = True
+                raise
         if self.start_error is not None:
             raise self.start_error
 
@@ -427,11 +437,14 @@ class GenerationRuntime:
         self.cleanup_errors: list[Exception] = []
         self.build_errors: list[Exception] = []
         self.start_errors: list[Exception] = []
+        self.hold_starts = False
 
         def build(*_args: Any, **_kwargs: Any) -> GatedExecution:
             if self.build_errors:
                 raise self.build_errors.pop(0)
             execution = GatedExecution(len(self.generations))
+            if self.hold_starts:
+                execution.start_gate = asyncio.Event()
             if self.start_errors:
                 execution.start_error = self.start_errors.pop(0)
             self.generations.append(execution)
@@ -658,3 +671,35 @@ async def test_a_successor_that_fails_to_start_is_stopped_and_never_live() -> No
     assert failed.stop_calls == 1, "the failed candidate is released"
     assert (len(g.generations), g.runtime.executions[ROOM]) == (3, g.generations[2])
     assert g.cleanups == [(ROOM, None), (ROOM, None)]
+
+
+@pytest.mark.parametrize("departure", ["room_removed", "runtime_stop"])
+async def test_leaving_while_a_successor_starts_releases_it(departure: str) -> None:
+    g = GenerationRuntime()
+    await _leave_and_rejoin(g)
+    g.hold_starts = True
+    presence = g.runtime.presence
+    joining = asyncio.create_task(
+        presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    )
+    await wait_for_condition(lambda: len(g.generations) == 2, timeout=5.0)
+    candidate = g.generations[1]
+    await asyncio.wait_for(candidate.start_entered.wait(), timeout=5.0)
+    candidate.stop_gate.set()
+
+    match departure:
+        case "room_removed":
+            await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+        case "runtime_stop":
+            await g.runtime.stop()
+    await asyncio.wait_for(joining, timeout=5.0)
+
+    assert (candidate.start_cancelled, candidate.stop_calls) == (True, 1)
+    assert g.cleanups == [(ROOM, None), (ROOM, None)], "old room, then candidate"
+    assert len(g.generations) == 2, "no successor after departure"
+    runtime = g.runtime
+    assert (runtime.executions, runtime._teardowns, runtime._pending_creations) == (
+        {},
+        {},
+        {},
+    )
