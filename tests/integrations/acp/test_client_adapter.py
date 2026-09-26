@@ -2267,6 +2267,41 @@ class TestTurnRepliedInRoom:
         ]
         assert not turn_replied_in_room(chunks)
 
+    def test_no_reply_sealed_by_its_completed_result_settles_the_turn(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "band-band_no_reply", tool_call_id="tc-1", status="pending"
+            ),
+            self._chunk("tool_result", "", tool_call_id="tc-1", status="completed"),
+        ]
+        assert turn_replied_in_room(chunks)
+
+    @pytest.mark.parametrize(
+        "chunks_for",
+        [
+            pytest.param(
+                lambda c: [
+                    c(
+                        "tool_call",
+                        "band_no_reply",
+                        tool_call_id="tc-1",
+                        status="in_progress",
+                    )
+                ],
+                id="incomplete",
+            ),
+            pytest.param(
+                lambda c: [
+                    c("tool_call", "band_no_reply", status="in_progress"),
+                    c("tool_result", "", status="completed"),
+                ],
+                id="missing-id",
+            ),
+        ],
+    )
+    def test_unproven_no_reply_keeps_the_text_fallback(self, chunks_for) -> None:
+        assert not turn_replied_in_room(chunks_for(self._chunk))
+
     def test_foreign_mcp_servers_own_tool_never_counts(self) -> None:
         """A non-Band MCP server's own tool that happens to end in
         ``-band_send_message`` must not suppress the text fallback -- only the

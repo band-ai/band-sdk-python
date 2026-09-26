@@ -105,6 +105,12 @@ from band.runtime.tools import (
     mcp_tool_names,
     missing_reply_error,
 )
+from band.workspaces import (
+    WorkspaceResolver,
+    claim_room_workspace,
+    release_room_workspace,
+    resolve_room_workspace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +338,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
         setting_sources: list[str] | None = None,
         plugin_dirs: list[str] | None = None,
         cli_path: str | None = None,
@@ -376,6 +383,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 tuples. These are converted to MCP tools internally.
             cwd: Working directory for Claude Code sessions. If set, Claude Code
                 will operate in this directory (e.g., a mounted git repo).
+                Every room shares it.
+            workspace_for_room: Resolver from room id to an absolute workspace
+                path, giving each room its own Claude Code working directory.
+                Two rooms resolving to one path are refused. Mutually exclusive
+                with ``cwd``.
             plugin_dirs: Local Claude Code plugin folders to load (each maps
                 to ``{"type": "local", "path": ...}``); their skills load
                 without changing ``cwd`` or ``setting_sources``.
@@ -434,7 +446,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
+        if cwd is not None and workspace_for_room is not None:
+            raise ValueError("set either cwd or workspace_for_room, not both")
         self.cwd = cwd
+        self.workspace_for_room = workspace_for_room
+        # {room_id: resolved workspace} and its inverse ownership map, the one
+        # claim_room_workspace/release_room_workspace operate on.
+        self._room_workspaces: dict[str, str] = {}
+        self._workspace_rooms: dict[str, str] = {}
         self.plugin_dirs: list[str] = list(plugin_dirs or [])
         self.cli_path = cli_path
         self.env: dict[str, str] = dict(env or {})
@@ -604,6 +623,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
+            cwd_for_room=(
+                self._room_workspaces.__getitem__
+                if self.workspace_for_room is not None
+                else None
+            ),
         )
 
         logger.info(
@@ -759,38 +783,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if is_session_bootstrap:
             stored_session_id = history.session_id or self._session_ids.get(room_id)
 
-        # Get or create Claude SDK client for this room (optionally resuming)
+        self._claim_room_workspace(room_id)
         try:
-            client = await self._session_manager.get_or_create_session(
-                room_id, resume_session_id=stored_session_id
-            )
-        except Exception as resume_exc:
-            if stored_session_id:
-                logger.warning(
-                    "Room %s: Session resume failed (session_id=%s): %s. "
-                    "Creating new session",
-                    room_id,
-                    stored_session_id,
-                    resume_exc,
-                )
-                try:
-                    client = await self._session_manager.get_or_create_session(
-                        room_id, resume_session_id=None
-                    )
-                except Exception:
-                    logger.exception(
-                        "Room %s: Fresh session creation also failed", room_id
-                    )
-                    await tools.send_failure(
-                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    raise
-            else:
-                logger.exception("Room %s: Session creation failed", room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
+            client = await self._room_session(room_id, stored_session_id, tools)
+        except BaseException:
+            if not self._session_manager.has_session(room_id):
+                self._release_room_workspace(room_id)
+            raise
 
         # Add chat_id context (Claude needs this for tool calls) -- the label
         # must read "chat_id" (the model-facing name everywhere else), not
@@ -882,6 +881,58 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         finally:
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
+
+    async def _room_session(
+        self,
+        room_id: str,
+        stored_session_id: str | None,
+        tools: AgentToolsProtocol,
+    ) -> ClaudeSDKClient:
+        """Get or create the room's Claude client, falling back to a fresh
+        session when resuming the stored one fails."""
+        if self._session_manager is None:
+            raise RuntimeError("ClaudeSDKAdapter.on_started() has not run")
+        try:
+            return await self._session_manager.get_or_create_session(
+                room_id, resume_session_id=stored_session_id
+            )
+        except Exception as resume_exc:
+            if not stored_session_id:
+                logger.exception("Room %s: Session creation failed", room_id)
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
+                raise
+            logger.warning(
+                "Room %s: Session resume failed (session_id=%s): %s. "
+                "Creating new session",
+                room_id,
+                stored_session_id,
+                resume_exc,
+            )
+        try:
+            return await self._session_manager.get_or_create_session(
+                room_id, resume_session_id=None
+            )
+        except Exception:
+            logger.exception("Room %s: Fresh session creation also failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
+
+    def _claim_room_workspace(self, room_id: str) -> None:
+        """Resolve and claim the room's own workspace when ``workspace_for_room`` is set."""
+        if self.workspace_for_room is None or room_id in self._room_workspaces:
+            return
+        workspace = resolve_room_workspace(room_id, self.workspace_for_room)
+        claim_room_workspace(room_id, workspace, self._workspace_rooms)
+        self._room_workspaces[room_id] = workspace
+
+    def _release_room_workspace(self, room_id: str) -> None:
+        workspace = self._room_workspaces.pop(room_id, None)
+        if workspace is not None:
+            release_room_workspace(room_id, workspace, self._workspace_rooms)
 
     async def _run_turn(
         self,
@@ -1450,6 +1501,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
         self._turn_release.pop(room_id, None)
+        self._release_room_workspace(room_id)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     async def cleanup_all(self) -> None:
@@ -1473,6 +1525,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._pending_tool_names.clear()
         self._turn_release.clear()
         self._turn_tasks.clear()
+        self._room_workspaces.clear()
+        self._workspace_rooms.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow

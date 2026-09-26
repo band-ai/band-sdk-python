@@ -104,7 +104,8 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `fallback_model` | `str \| None` | `None` | Fallback model for Claude Code if the primary model is unavailable. Aliases are accepted. |
 | `max_thinking_tokens` | `int \| None` | `None` | Maximum tokens for Claude extended thinking. |
 | `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions" \| "dontAsk" \| "auto"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. See [Permission modes](#permission-modes). |
-| `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions. Must exist if provided. |
+| `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions, shared by every room. Must exist if provided. |
+| `workspace_for_room` | `Callable[[str], str] \| None` | `None` | Gives each room its own working directory: called with the room id, returns an absolute path (created if missing). Two live rooms resolving to the same path are refused; a room's claim is released when it leaves or its session fails to start. Mutually exclusive with `cwd`. Replaces prompt instructions naming each room's folder. |
 | `turn_timeout_s` | `float \| None` | `None` | Seconds one turn may run. On expiry the turn is interrupted and a `timeout` failure is posted to the room. `None` leaves turns unbounded. A manual approval wait counts toward it, so keep it above `approval_wait_timeout_s`. |
 
 ### Permission modes
