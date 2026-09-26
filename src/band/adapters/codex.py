@@ -12,11 +12,17 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
@@ -34,6 +40,7 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
     Capability,
@@ -66,6 +73,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
+from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -107,24 +115,99 @@ _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 # Codex-local slash commands, which surface their outcome in the room themselves.
 _SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({"setmodel", "setreasoning"})
 
-# Slash commands recognised by _extract_local_command().
-_LOCAL_COMMANDS: frozenset[str] = frozenset(
-    {
-        "help",
-        "status",
-        "model",
-        "models",
-        "reasoning",
-        "approvals",
-        "approve",
-        "approve-session",
-        "decline",
-        "sandbox",
-        "permissions",
-        "threads",
-        "thread",
-        "usage",
-    }
+
+class CodexCommand(StrEnum):
+    """The `/<word>` room commands this adapter handles itself, rather than
+    forwarding to Codex -- the single source for parsing, dispatch, and the
+    command names quoted back in room messages."""
+
+    HELP = "help"
+    STATUS = "status"
+    MODEL = "model"
+    MODELS = "models"
+    REASONING = "reasoning"
+    APPROVALS = "approvals"
+    APPROVE = "approve"
+    APPROVE_SESSION = "approve-session"
+    DECLINE = "decline"
+    SANDBOX = "sandbox"
+    PERMISSIONS = "permissions"
+    THREADS = "threads"
+    THREAD = "thread"
+    USAGE = "usage"
+
+
+# The decision each resolving approval command sends back to Codex.
+_APPROVAL_COMMAND_DECISIONS: dict[CodexCommand, ApprovalDecision] = {
+    CodexCommand.APPROVE: "accept",
+    CodexCommand.APPROVE_SESSION: "acceptForSession",
+    CodexCommand.DECLINE: "decline",
+}
+_APPROVAL_COMMANDS = frozenset({*_APPROVAL_COMMAND_DECISIONS, CodexCommand.APPROVALS})
+# Membership by plain string: Python 3.11's Enum rejects `"word" in CodexCommand`.
+_COMMAND_WORDS = frozenset(CodexCommand)
+
+APPROVAL_REQUESTED_TEMPLATE = (
+    "Approval requested ({summary}). Approval id: `{token}`. "
+    f"Reply `/{CodexCommand.APPROVE} {{token}}` or "
+    f"`/{CodexCommand.DECLINE} {{token}}` or "
+    f"`/{CodexCommand.APPROVE_SESSION} {{token}}` "
+    "(approve all similar for this session). "
+    f"Use `/{CodexCommand.APPROVALS}` to list pending approvals."
+)
+APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as `{decision}`."
+APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Applied `{decision}`."
+NO_APPROVALS_TO_RESOLVE_MESSAGE = "No pending approvals to resolve."
+TURN_IN_PROGRESS_MESSAGE = (
+    "Codex is still processing the previous request in this room."
+)
+
+
+class CodexSubcommand(StrEnum):
+    """Second words of `/model` and `/thread`."""
+
+    LIST = "list"
+    LS = "ls"
+    INFO = "info"
+    ARCHIVE = "archive"
+
+
+_MODEL_LIST_WORDS = frozenset({CodexSubcommand.LIST, CodexSubcommand.LS})
+
+
+class CodexSandboxMode(StrEnum):
+    """thread/start's kebab-case ``SandboxMode`` values -- also exactly what
+    ``/sandbox`` accepts."""
+
+    READ_ONLY = "read-only"
+    WORKSPACE_WRITE = "workspace-write"
+    DANGER_FULL_ACCESS = "danger-full-access"
+
+
+# Membership by plain string: Python 3.11's Enum rejects `"word" in CodexSandboxMode`.
+_SANDBOX_MODES = frozenset(CodexSandboxMode)
+# A sandbox kind expressible only as a turn/start sandboxPolicy, not a mode.
+_EXTERNAL_SANDBOX_KEY = "external-sandbox"
+_EXTERNAL_SANDBOX_POLICY_TYPE = "externalSandbox"
+# Config spellings accepted without the dashes, e.g. "readonly".
+_SANDBOX_KEY_ALIASES = {
+    key.replace("-", ""): key for key in (*CodexSandboxMode, _EXTERNAL_SANDBOX_KEY)
+}
+_SANDBOX_CONFIRM_FLAG = "--confirm"
+_SANDBOX_MODE_CHOICES = "|".join(CodexSandboxMode)
+
+_HELP_TEXT = (
+    "Codex commands: "
+    f"`/{CodexCommand.STATUS}`, `/{CodexCommand.MODEL}`, `/{CodexCommand.MODELS}`, "
+    f"`/{CodexCommand.MODEL} {CodexSubcommand.LIST}`, "
+    f"`/{CodexCommand.MODELS} {CodexSubcommand.LIST}`, `/{CodexCommand.MODEL} <id>`, "
+    f"`/{CodexCommand.REASONING} [effort]`, "
+    f"`/{CodexCommand.APPROVALS}`, `/{CodexCommand.APPROVE} <id>`, "
+    f"`/{CodexCommand.APPROVE_SESSION} <id>`, `/{CodexCommand.DECLINE} <id>`, "
+    f"`/{CodexCommand.THREADS}`, `/{CodexCommand.THREAD} {CodexSubcommand.INFO}`, "
+    f"`/{CodexCommand.THREAD} {CodexSubcommand.ARCHIVE}`, "
+    f"`/{CodexCommand.SANDBOX} <mode>`, `/{CodexCommand.PERMISSIONS}`, "
+    f"`/{CodexCommand.USAGE}`, `/{CodexCommand.HELP}`."
 )
 
 # Upper bound on cached task titles (room-lifecycle map used to preserve the
@@ -249,7 +332,7 @@ class PendingApproval:
     method: str
     summary: str
     created_at: datetime
-    future: asyncio.Future[str]
+    future: asyncio.Future[ApprovalDecision]
     session_key: str = ""
 
 
@@ -281,6 +364,34 @@ class RoomCodexClient:
     # commands (/approve, /decline) are handled outside this lock in
     # ``on_message`` so they can unblock a waiting turn.
     rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+
+
+class _WithoutCwdBinding(PydanticBaseSettingsSource):
+    """Drops ``cwd``'s implicit env binding from a settings source.
+
+    ``populate_by_name=True`` makes pydantic-settings honor a field's bare
+    name as an env alias alongside any explicit ``validation_alias`` -- which
+    for a field literally named ``cwd`` means the plain, generically-meaningful
+    ``CODEX_CWD`` is always live, however it's aliased. ``cwd`` exists on
+    ``CodexAdapterConfig`` only to reject the legacy explicit kwarg (see
+    ``CodexAdapter.__init__``), so an ambient ``CODEX_CWD`` set for something
+    unrelated (e.g. a Codex CLI convention, or this repo's own E2E harness)
+    must never silently populate it and trip that rejection.
+    """
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self._source = source
+
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:
+        return self._source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        values = dict(self._source())
+        values.pop("cwd", None)
+        return values
 
 
 class CodexAdapterConfig(BaseSettings):
@@ -327,6 +438,8 @@ class CodexAdapterConfig(BaseSettings):
     # version (model/list reports them), and the backend rejects unknown ones.
     reasoning_effort: str | None = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
+    # Explicit-kwarg-only (see settings_customise_sources): rejected outright
+    # in CodexAdapter.__init__ -- never populated from CODEX_CWD.
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = Field(default=None, exclude=True)
     approval_policy: str = "never"
@@ -366,7 +479,7 @@ class CodexAdapterConfig(BaseSettings):
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
-    max_pending_approvals_per_room: int = 50
+    max_pending_approvals_per_room: int = Field(default=50, ge=1)
     max_approval_audit_per_room: int = 100
     # Upper bound on session-level approvals retained per room
     # (``/approve-session`` patterns).  Evicted LRU-style when exceeded so a
@@ -377,6 +490,13 @@ class CodexAdapterConfig(BaseSettings):
     # _rpc_lock can't be held indefinitely if the underlying subprocess or
     # socket is unresponsive.  ``None`` disables the bound (legacy behavior).
     client_close_timeout_s: float | None = 10.0
+    # Upper bound for letting a released, still-running turn wind down on its
+    # own during cleanup (see _settle_turn) before it's force-cancelled.
+    # Deliberately not Optional like client_close_timeout_s above: that
+    # field's "disable the bound" is a legacy allowance for a rarely-slow
+    # transport close, not something a turn possibly stuck on real work
+    # should ever be allowed to defeat.
+    turn_settle_timeout_s: float = 10.0
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
     # ``"full_command"`` (default, more restrictive) — the key is the exact
@@ -416,8 +536,26 @@ class CodexAdapterConfig(BaseSettings):
             return value.split()
         return value
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Keep ``cwd`` constructible only via an explicit kwarg -- see
+        ``_WithoutCwdBinding``."""
+        return (
+            init_settings,
+            _WithoutCwdBinding(env_settings),
+            _WithoutCwdBinding(dotenv_settings),
+            file_secret_settings,
+        )
 
-class CodexAdapter(SimpleAdapter[CodexSessionState]):
+
+class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
@@ -478,7 +616,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
-        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
+        self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
+        # Rooms in on_cleanup: their turns decline approvals instead of
+        # parking on a human while holding the _rpc_lock cleanup needs.
+        self._closing_rooms: set[str] = set()
+        # A turn runs as a detached task so a manual approval can release
+        # on_message: Band dispatches one message per room at a time, so the
+        # reply that resolves the approval arrives only after on_message returns.
+        self._turn_release: dict[str, asyncio.Future[None]] = {}
+        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -689,12 +835,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._room_client(room_id)
         self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
-        if command is not None and command[0] in {
-            "approve",
-            "approve-session",
-            "decline",
-            "approvals",
-        }:
+        if command is not None and command[0] in _APPROVAL_COMMANDS:
             try:
                 handled = await self._handle_approval_command(
                     tools=tools,
@@ -708,6 +849,54 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if handled:
                 return
 
+        running = self._turn_tasks.get(room_id)
+        if running is not None and not running.done():
+            await tools.send_message(
+                TURN_IN_PROGRESS_MESSAGE, mentions=self._sender_mention(msg)
+            )
+            return
+
+        release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._turn_release[room_id] = release
+        turn = asyncio.create_task(
+            self._run_turn(
+                msg=msg,
+                tools=tools,
+                history=history,
+                participants_msg=participants_msg,
+                contacts_msg=contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
+                room_id=room_id,
+                command=command,
+            )
+        )
+        self._turn_tasks[room_id] = turn
+        turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
+        try:
+            await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            await self._cancel_turn(room_id)
+            raise
+        finally:
+            if self._turn_release.get(room_id) is release:
+                del self._turn_release[room_id]
+        if turn.done():
+            # No human was asked: the turn's outcome is on_message's own.
+            await turn
+
+    async def _run_turn(
+        self,
+        *,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        is_session_bootstrap: bool,
+        room_id: str,
+        command: tuple[CodexCommand, str] | None,
+    ) -> None:
+        """Run one turn to completion under this room's RPC lock."""
         async with self._rpc_lock:
             thread_id: str | None = None
             turn_id: str | None = None
@@ -906,6 +1095,53 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
+
+    def _release_turn(self, room_id: str) -> None:
+        """Let on_message return while the room's turn waits on a human."""
+        release = self._turn_release.get(room_id)
+        if release is not None and not release.done():
+            release.set_result(None)
+
+    def _forget_turn(self, room_id: str, task: asyncio.Task[None]) -> None:
+        if self._turn_tasks.get(room_id) is task:
+            del self._turn_tasks[room_id]
+        # A turn that fails after release already reported to the room;
+        # retrieving the exception keeps asyncio from logging it as lost.
+        if not task.cancelled():
+            task.exception()
+
+    async def _settle_turn(self, room_id: str) -> None:
+        """Let the room's detached turn wind down, then force-cancel it.
+
+        Once released, the turn is out of reach of the runtime's cancellation
+        of on_message, and it holds the RPC lock closing the room needs --
+        so this bound must always apply, unlike client_close_timeout_s's
+        legacy "None disables it" allowance for a separate, rarer stall.
+        """
+        turn = self._turn_tasks.get(room_id)
+        if turn is None:
+            return
+        done, _pending = await asyncio.wait(
+            {turn}, timeout=self.config.turn_settle_timeout_s
+        )
+        if turn not in done:
+            logger.warning(
+                "Room %s: turn still running after %ss; cancelling it",
+                room_id,
+                self.config.turn_settle_timeout_s,
+            )
+        await self._cancel_turn(room_id)
+
+    async def _cancel_turn(self, room_id: str) -> None:
+        """Cancel and await the room's detached turn, if one is running."""
+        turn = self._turn_tasks.get(room_id)
+        if turn is None or turn.done():
+            return
+        turn.cancel()
+        try:
+            await turn
+        except asyncio.CancelledError:
+            pass
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1272,6 +1508,17 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         self._active_room.set(room_id)
+        self._closing_rooms.add(room_id)
+        try:
+            # A turn parked on a human holds _rpc_lock; declining its pending
+            # approvals (and any it raises from now on) lets it finish.
+            self._clear_pending_approvals_for_room(room_id)
+            await self._settle_turn(room_id)
+            await self._close_room(room, room_id)
+        finally:
+            self._closing_rooms.discard(room_id)
+
+    async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:
             thread_id = self._room_threads.pop(room_id, None)
             if thread_id:
@@ -1279,7 +1526,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._prompt_injected_rooms.discard(room_id)
             self._raw_history_by_room.pop(room_id, None)
             self._needs_history_injection.discard(room_id)
-            self._clear_pending_approvals_for_room(room_id)
             self._approval_audit.pop(room_id, None)
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
@@ -1813,6 +2059,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if session_hit:
             decision: ApprovalDecision = "acceptForSession"
             decided_by = "session_policy"
+        elif room_id in self._closing_rooms:
+            decision = "decline"
+            decided_by = "room_cleanup"
         elif self.config.approval_mode == "manual":
             try:
                 decision = await self._resolve_manual_approval(
@@ -2009,7 +2258,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if not include_reply:
             return
 
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
 
         if turn_status == "completed":
             if (
@@ -2373,7 +2622,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         summary: str,
         params: dict[str, Any],
     ) -> ApprovalDecision:
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
         token = self._approval_token(event.id, params)
@@ -2386,26 +2635,31 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             future=loop.create_future(),
             session_key=self._session_approval_key(event.method, params),
         )
-        room_pending = self._pending_approvals.setdefault(room_id, {})
-        if len(room_pending) >= self.config.max_pending_approvals_per_room:
-            oldest_token = min(room_pending, key=lambda t: room_pending[t].created_at)
-            evicted = room_pending.pop(oldest_token)
-            if not evicted.future.done():
-                evicted.future.set_result("decline")
+        registry = self._pending_approvals.setdefault(
+            room_id,
+            DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
+        )
+        if (registration := registry.register_keyed(pending, key=token)) is None:
+            logger.warning(
+                "Approval %s in room %s was redelivered after a reply claimed it; "
+                "declining the redelivery",
+                token,
+                room_id,
+            )
+            return "decline"
+        entry = registration.entry
+        for removed in registration.removed:
+            removed.payload.future.set_result("decline")
+        if (evicted := registration.evicted) is not None:
             logger.warning(
                 "Evicted oldest pending approval %s in room %s (limit %s)",
-                oldest_token,
+                evicted.token,
                 room_id,
                 self.config.max_pending_approvals_per_room,
             )
-        room_pending[token] = pending
         try:
-            approval_msg = (
-                "Approval requested "
-                f"({summary}). Approval id: `{token}`. "
-                f"Reply `/approve {token}` or `/decline {token}` "
-                f"or `/approve-session {token}` (approve all similar for this session). "
-                "Use `/approvals` to list pending approvals."
+            approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
+                summary=summary, token=token
             )
             # Emit enriched metadata as a task event for UI rendering
             if Emit.TASK_EVENTS in self.features.emit:
@@ -2446,47 +2700,47 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             try:
                 await tools.send_message(approval_msg, mentions=mention)
             except Exception:
-                # The room was never notified, so waiting out the full
-                # approval_wait_timeout_s would misreport a Band delivery
-                # hiccup as a genuine human-decision timeout. Report it now,
-                # rather than letting it silently decline with no signal at
-                # all, same as every other failure path in this file. Re-raise
-                # (rather than returning "decline" here) so the caller's own
-                # except-block attributes this to "system_fallback" instead
-                # of crediting/blaming the human sender for a decision they
-                # were never actually notified about.
                 logger.exception(
                     "Failed to notify room %s about pending approval %s",
                     room_id,
                     token,
                 )
-                await tools.send_failure(
-                    AgentFailure(
-                        CODEX_PROVIDER,
-                        "Failed to notify the room about a pending approval "
-                        "request; defaulting to decline.",
+                # A reply that claimed it meanwhile (its id is in the task
+                # event above) owns the answer; wait for it below.
+                if registry.withdraw(entry):
+                    # The room was never notified, so waiting out the full
+                    # approval_wait_timeout_s would misreport a Band delivery
+                    # hiccup as a human-decision timeout. Re-raise (rather
+                    # than returning "decline") so the caller attributes it
+                    # to "system_fallback" instead of the human sender.
+                    await tools.send_failure(
+                        AgentFailure(
+                            CODEX_PROVIDER,
+                            "Failed to notify the room about a pending approval "
+                            "request; defaulting to decline.",
+                        )
                     )
-                )
-                raise
-            decision_raw = await asyncio.wait_for(
-                pending.future,
-                timeout=self.config.approval_wait_timeout_s,
+                    raise
+
+            self._release_turn(room_id)
+            decision = await registry.wait(
+                entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
             )
-            if decision_raw in {"accept", "acceptForSession"}:
-                return decision_raw  # type: ignore[return-value]
-            return "decline"
-        except TimeoutError:
+            if decision is not Timeout.TIMED_OUT:
+                return decision
             timeout_decision = self.config.approval_timeout_decision
             try:
                 await tools.send_message(
-                    f"Approval `{token}` timed out. Applied `{timeout_decision}`.",
+                    APPROVAL_TIMED_OUT_TEMPLATE.format(
+                        token=token, decision=timeout_decision
+                    ),
                     mentions=mention,
                 )
             except Exception:
                 logger.exception("Failed to send approval timeout notification")
             return timeout_decision
         finally:
-            self._clear_pending_approval(room_id, token)
+            self._clear_pending_approval(room_id, entry)
 
     async def _forward_raw_task_event(
         self,
@@ -2852,25 +3106,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         msg: PlatformMessage,
         history: CodexSessionState,
         room_id: str,
-        command: str,
+        command: CodexCommand,
         args: str,
     ) -> bool:
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        mention = self._sender_mention(msg)
 
-        if command == "help":
-            await deliver_reply(
-                tools,
-                "Codex commands: "
-                "`/status`, `/model`, `/models`, `/model list`, `/models list`, `/model <id>`, "
-                "`/reasoning [none|minimal|low|medium|high|xhigh]`, "
-                "`/approvals`, `/approve <id>`, `/approve-session <id>`, `/decline <id>`, "
-                "`/threads`, `/thread info`, `/thread archive`, "
-                "`/sandbox <mode>`, `/permissions`, `/usage`, `/help`.",
-                mentions=mention,
-            )
+        if command == CodexCommand.HELP:
+            await deliver_reply(tools, _HELP_TEXT, mentions=mention)
             return True
 
-        if command == "status":
+        if command == CodexCommand.STATUS:
             mapped_thread = self._room_threads.get(room_id) or history.thread_id or None
             usage = (
                 self._token_usage.get(mapped_thread or "") if mapped_thread else None
@@ -2891,7 +3136,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 f"- sandbox: {self._effective_sandbox(room_id) or 'default'}\n"
                 f"- reasoning_effort: {self.config.reasoning_effort or 'default'}\n"
                 f"- reasoning_summary: {self.config.reasoning_summary or 'default'}\n"
-                f"- pending_approvals: {len(self._pending_approvals.get(room_id, {}))}\n"
+                f"- pending_approvals: {self._open_approval_count(room_id)}\n"
                 f"- session_approvals: {session_approvals}\n"
                 f"- token_usage: {usage_line}\n"
                 f"- turn_task_markers: {self.config.emit_turn_task_markers}"
@@ -2899,7 +3144,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             await deliver_reply(tools, status_text, mentions=mention)
             return True
 
-        if command in {"model", "models"}:
+        if command in {CodexCommand.MODEL, CodexCommand.MODELS}:
             model_arg = args.strip()
             if not model_arg:
                 await deliver_reply(
@@ -2907,12 +3152,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     "Current model: "
                     f"`{self._selected_model or 'unknown'}` "
                     f"(configured: `{self.config.model or 'auto'}`). "
-                    "Use `/model list` to view available models or `/model <id>` to override.",
+                    f"Use `/{CodexCommand.MODEL} {CodexSubcommand.LIST}` to view available "
+                    f"models or `/{CodexCommand.MODEL} <id>` to override.",
                     mentions=mention,
                 )
                 return True
 
-            if model_arg.lower() in {"list", "ls"}:
+            if model_arg.lower() in _MODEL_LIST_WORDS:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
                 result = await self._client.request("model/list", {})
@@ -2945,7 +3191,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        if command == "reasoning":
+        if command == CodexCommand.REASONING:
             effort_arg = args.strip().lower()
             model_id, efforts = await self._current_model_efforts()
             supported = ", ".join(efforts)
@@ -2978,12 +3224,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return True
 
         # --- Phase 1: /sandbox and /permissions commands ---
-        if command == "sandbox":
+        if command == CodexCommand.SANDBOX:
             if self.config.sandbox_policy is not None:
                 await deliver_reply(
                     tools,
                     "Cannot override sandbox: a `sandbox_policy` is configured. "
-                    "Remove `sandbox_policy` from config to use per-room `/sandbox` overrides.",
+                    "Remove `sandbox_policy` from config to use per-room "
+                    f"`/{CodexCommand.SANDBOX}` overrides.",
                     mentions=mention,
                 )
                 return True
@@ -2993,20 +3240,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(
                     tools,
                     f"Current sandbox: `{effective}`. "
-                    "Use `/sandbox <read-only|workspace-write|danger-full-access>` to change.",
+                    f"Use `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}>` to change.",
                     mentions=mention,
                 )
                 return True
             # Parse tokens explicitly so "--confirm-anything-else" is surfaced
             # as an unknown mode instead of silently stripped away.
             tokens = mode_arg.split()
-            confirm_flag = "--confirm" in tokens
-            mode_tokens = [tok for tok in tokens if tok != "--confirm"]
+            confirm_flag = _SANDBOX_CONFIRM_FLAG in tokens
+            mode_tokens = [tok for tok in tokens if tok != _SANDBOX_CONFIRM_FLAG]
             if len(mode_tokens) != 1:
                 await deliver_reply(
                     tools,
-                    "Usage: `/sandbox <read-only|workspace-write|danger-full-access> "
-                    "[--confirm]`.",
+                    f"Usage: `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}> "
+                    f"[{_SANDBOX_CONFIRM_FLAG}]`.",
                     mentions=mention,
                 )
                 return True
@@ -3016,23 +3263,25 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(
                     tools,
                     f"Invalid sandbox mode `{mode_token}`. "
-                    "Valid: read-only, workspace-write, danger-full-access.",
+                    f"Valid: {', '.join(CodexSandboxMode)}.",
                     mentions=mention,
                 )
                 return True
-            if normalized == "danger-full-access" and not confirm_flag:
+            escalating = normalized == CodexSandboxMode.DANGER_FULL_ACCESS
+            if escalating and not confirm_flag:
                 await deliver_reply(
                     tools,
-                    "Escalating to `danger-full-access` removes all sandbox "
-                    "restrictions. Re-run with `--confirm` to proceed:\n"
-                    "`/sandbox danger-full-access --confirm`",
+                    f"Escalating to `{normalized}` removes all sandbox "
+                    f"restrictions. Re-run with `{_SANDBOX_CONFIRM_FLAG}` to proceed:\n"
+                    f"`/{CodexCommand.SANDBOX} {normalized} {_SANDBOX_CONFIRM_FLAG}`",
                     mentions=mention,
                 )
                 return True
-            if normalized == "danger-full-access":
+            if escalating:
                 logger.warning(
-                    "Sandbox escalated to danger-full-access via /sandbox command "
-                    "in room %s by %s",
+                    "Sandbox escalated to %s via /%s command in room %s by %s",
+                    normalized,
+                    CodexCommand.SANDBOX,
                     room_id,
                     msg.sender_name or msg.sender_type or "unknown",
                 )
@@ -3044,7 +3293,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return True
 
-        if command == "permissions":
+        if command == CodexCommand.PERMISSIONS:
             session_approved = self._session_approved.get(room_id) or ()
             audit = self._approval_audit.get(room_id, [])
             lines = ["Effective permissions:"]
@@ -3066,9 +3315,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return True
 
         # --- Phase 2: /threads, /thread info, /thread archive ---
-        if command in {"threads", "thread"}:
+        if command in {CodexCommand.THREADS, CodexCommand.THREAD}:
             subcommand = args.strip().lower()
-            if command == "threads" or not subcommand:
+            if command == CodexCommand.THREADS or not subcommand:
                 # List all room->thread mappings
                 if not self._room_threads:
                     await deliver_reply(
@@ -3082,7 +3331,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(tools, "\n".join(lines), mentions=mention)
                 return True
 
-            if subcommand == "info":
+            if subcommand == CodexSubcommand.INFO:
                 mapped_thread = self._room_threads.get(room_id)
                 if not mapped_thread:
                     await deliver_reply(
@@ -3104,7 +3353,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(tools, info_text, mentions=mention)
                 return True
 
-            if subcommand == "archive":
+            if subcommand == CodexSubcommand.ARCHIVE:
                 mapped_thread = self._room_threads.pop(room_id, None)
                 self._prompt_injected_rooms.discard(room_id)
                 self._token_usage.pop(mapped_thread or "", None)
@@ -3121,7 +3370,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return False
 
         # --- Phase 4: /usage command ---
-        if command == "usage":
+        if command == CodexCommand.USAGE:
             mapped_thread = self._room_threads.get(room_id)
             if not mapped_thread:
                 await deliver_reply(
@@ -3153,62 +3402,65 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
         room_id: str,
-        command: str,
+        command: CodexCommand,
         args: str,
     ) -> bool:
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
-        pending = self._pending_approvals.get(room_id, {})
+        mention = self._sender_mention(msg)
+        pending = self._pending_approvals.get(room_id) or DecisionRegistry()
 
-        if command == "approvals":
-            if not pending:
+        if command == CodexCommand.APPROVALS:
+            if not (open_entries := pending.unclaimed()):
                 await deliver_reply(tools, "No pending approvals.", mentions=mention)
                 return True
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
-            for token, item in list(pending.items()):
-                age_s = int((now - item.created_at).total_seconds())
-                lines.append(f"- {token}: {item.summary} ({age_s}s)")
+            for entry in open_entries:
+                age_s = int((now - entry.payload.created_at).total_seconds())
+                lines.append(f"- {entry.token}: {entry.payload.summary} ({age_s}s)")
             await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
-        if command not in {"approve", "decline", "approve-session"}:
+        if (decision_value := _APPROVAL_COMMAND_DECISIONS.get(command)) is None:
             return False
 
         if not pending:
             await deliver_reply(
                 tools,
-                "No pending approvals to resolve.",
+                NO_APPROVALS_TO_RESOLVE_MESSAGE,
                 mentions=mention,
             )
             return True
 
+        open_ids = sorted(entry.token for entry in pending.unclaimed())
         token = args.strip().split(" ", 1)[0] if args.strip() else ""
-        if token:
-            selected = pending.get(token)
-            if selected is None:
-                available = ", ".join(sorted(pending.keys()))
-                await deliver_reply(
-                    tools,
-                    f"Unknown approval id `{token}`. Pending: {available}",
-                    mentions=mention,
-                )
-                return True
-        elif len(pending) == 1:
-            token, selected = next(iter(pending.items()))
-        else:
-            available = ", ".join(sorted(pending.keys()))
+        if not token:
+            match open_ids:
+                case []:
+                    await deliver_reply(
+                        tools, NO_APPROVALS_TO_RESOLVE_MESSAGE, mentions=mention
+                    )
+                    return True
+                case [only]:
+                    token = only
+                case _:
+                    await deliver_reply(
+                        tools,
+                        "Multiple approvals pending. "
+                        f"Use `/{command} <id>`. Pending: {', '.join(open_ids)}",
+                        mentions=mention,
+                    )
+                    return True
+
+        if (selected := pending.get(token)) is None:
             await deliver_reply(
                 tools,
-                "Multiple approvals pending. "
-                f"Use `/{command} <id>`. Pending: {available}",
+                f"Unknown approval id `{token}`. "
+                f"Pending: {', '.join(open_ids) or 'none'}",
                 mentions=mention,
             )
             return True
 
-        if selected is None:
-            raise RuntimeError("No matching pending approval after token lookup")
-
-        is_session = command == "approve-session"
+        is_session = command == CodexCommand.APPROVE_SESSION
         # Session-level approval needs a non-empty key (e.g. a concrete command
         # string) so future requests can match.  Reject early so we never store
         # an empty string in _session_approved or report a misleading
@@ -3218,34 +3470,35 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 tools,
                 f"Approval `{token}` cannot be resolved as session-level: "
                 "this request has no command signature to match against. "
-                f"Use `/approve {token}` for a one-shot approval instead.",
+                f"Use `/{CodexCommand.APPROVE} {token}` for a one-shot approval instead.",
                 mentions=mention,
             )
             return True
 
-        decision_value: ApprovalDecision
-        if is_session:
-            decision_value = "acceptForSession"
-        elif command == "approve":
-            decision_value = "accept"
-        else:
-            decision_value = "decline"
-        if not selected.future.done():
-            selected.future.set_result(decision_value)
+        if pending.try_claim(token) is None:
+            await deliver_reply(
+                tools,
+                f"Approval `{token}` is no longer pending.",
+                mentions=mention,
+            )
+            return True
+
+        selected.future.set_result(decision_value)
 
         # Session-level: register the session key for auto-approval
         if is_session:
             self._record_session_approval(room_id, selected.session_key)
             await deliver_reply(
                 tools,
-                f"Approval `{token}` resolved as `acceptForSession` (session-level). "
-                f"Future `{selected.session_key}` requests will be auto-approved.",
+                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value)
+                + " This session-level approval auto-approves future "
+                f"`{selected.session_key}` requests.",
                 mentions=mention,
             )
         else:
             await deliver_reply(
                 tools,
-                f"Approval `{token}` resolved as `{decision_value}`.",
+                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value),
                 mentions=mention,
             )
         return True
@@ -3311,7 +3564,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             params["sandbox"] = sandbox_mode
             return
 
-        if self._canonical_sandbox_key(effective) == "external-sandbox":
+        if self._canonical_sandbox_key(effective) == _EXTERNAL_SANDBOX_KEY:
             # externalSandbox is only representable via sandboxPolicy on
             # turn/start; thread/start does not accept it.
             logger.debug(
@@ -3322,18 +3575,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
 
     # Codex app-server has two sandbox fields with different wire formats:
-    #   - thread/start.sandbox: SandboxMode enum, kebab-case strings
-    #     ("read-only", "workspace-write", "danger-full-access").
-    #   - turn/start.sandboxPolicy: SandboxPolicy tagged union, camelCase
-    #     type tags ("readOnly", "workspaceWrite", "dangerFullAccess",
-    #     "externalSandbox").
-    # This mapping bridges the two.  If the Codex protocol renames tags,
-    # update both this mapping and _canonical_sandbox_key's aliases.
-    # Reference: codex-app-server protocol types (thread/start, turn/start).
+    # thread/start.sandbox takes a kebab-case CodexSandboxMode, while
+    # turn/start.sandboxPolicy takes a camelCase SandboxPolicy type tag.
+    # This mapping bridges the two (see codex-app-server protocol types).
     _SANDBOX_MODE_TO_POLICY_TYPE: ClassVar[dict[str, str]] = {
-        "read-only": "readOnly",
-        "workspace-write": "workspaceWrite",
-        "danger-full-access": "dangerFullAccess",
+        CodexSandboxMode.READ_ONLY: "readOnly",
+        CodexSandboxMode.WORKSPACE_WRITE: "workspaceWrite",
+        CodexSandboxMode.DANGER_FULL_ACCESS: "dangerFullAccess",
     }
 
     def _apply_turn_sandbox(
@@ -3357,8 +3605,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 params["sandboxPolicy"] = {"type": policy_type}
             return
 
-        if self._canonical_sandbox_key(effective) == "external-sandbox":
-            params["sandboxPolicy"] = {"type": "externalSandbox"}
+        if self._canonical_sandbox_key(effective) == _EXTERNAL_SANDBOX_KEY:
+            params["sandboxPolicy"] = {"type": _EXTERNAL_SANDBOX_POLICY_TYPE}
             return
 
         logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
@@ -3372,11 +3620,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return self.config.sandbox
 
     @classmethod
-    def _normalize_sandbox_mode(cls, sandbox: str) -> str | None:
+    def _normalize_sandbox_mode(cls, sandbox: str) -> CodexSandboxMode | None:
         key = cls._canonical_sandbox_key(sandbox)
-        if key in {"read-only", "workspace-write", "danger-full-access"}:
-            return key
-        return None
+        return CodexSandboxMode(key) if key in _SANDBOX_MODES else None
 
     @classmethod
     def _normalize_sandbox_policy(
@@ -3391,25 +3637,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         camel = cls._SANDBOX_MODE_TO_POLICY_TYPE.get(key)
         if camel:
             normalized["type"] = camel
-        elif key == "external-sandbox":
-            # externalSandbox is represented only via sandboxPolicy.
-            normalized["type"] = "externalSandbox"
+        elif key == _EXTERNAL_SANDBOX_KEY:
+            normalized["type"] = _EXTERNAL_SANDBOX_POLICY_TYPE
         return normalized
 
     @staticmethod
     def _canonical_sandbox_key(value: str) -> str:
         compact = value.strip().lower().replace("_", "-").replace(" ", "")
-        aliases = {
-            "readonly": "read-only",
-            "read-only": "read-only",
-            "workspacewrite": "workspace-write",
-            "workspace-write": "workspace-write",
-            "dangerfullaccess": "danger-full-access",
-            "danger-full-access": "danger-full-access",
-            "externalsandbox": "external-sandbox",
-            "external-sandbox": "external-sandbox",
-        }
-        return aliases.get(compact, compact)
+        return _SANDBOX_KEY_ALIASES.get(compact, compact)
 
     @staticmethod
     def _extract_turn_error(turn_payload: dict[str, Any]) -> str:
@@ -3579,7 +3814,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return "\n".join(lines)
 
     @staticmethod
-    def _extract_local_command(content: str) -> tuple[str, str] | None:
+    def _sender_mention(msg: PlatformMessage) -> list[dict[str, str]]:
+        return [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+
+    @staticmethod
+    def _extract_local_command(content: str) -> tuple[CodexCommand, str] | None:
         """Return ``(command, args)`` when ``content`` opens with a slash command.
 
         A delivered room message always leads with the platform's ``@handle``
@@ -3596,10 +3835,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Split on any whitespace, so a tab- or newline-separated argument still
         # reaches the command it belongs to.
         parts = stripped.removeprefix("/").split(maxsplit=1)
-        command = parts[0].lower() if parts else ""
-        if command not in _LOCAL_COMMANDS:
+        word = parts[0].lower() if parts else ""
+        if word not in _COMMAND_WORDS:
             return None
-        return command, parts[1].strip() if len(parts) > 1 else ""
+        return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
 
     @staticmethod
     def _approval_token(request_id: int | str, params: dict[str, Any]) -> str:
@@ -3609,19 +3848,26 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 return value
         return f"req-{request_id}"
 
-    def _clear_pending_approval(self, room_id: str, token: str) -> None:
-        room_pending = self._pending_approvals.get(room_id)
-        if not room_pending:
+    def _open_approval_count(self, room_id: str) -> int:
+        registry = self._pending_approvals.get(room_id)
+        return registry.unclaimed_count() if registry else 0
+
+    def _clear_pending_approval(
+        self, room_id: str, entry: DecisionEntry[PendingApproval]
+    ) -> None:
+        registry = self._pending_approvals.get(room_id)
+        if registry is None:
             return
-        room_pending.pop(token, None)
-        if not room_pending:
+        registry.forget(entry)
+        if len(registry) == 0:
             self._pending_approvals.pop(room_id, None)
 
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
-        room_pending = self._pending_approvals.pop(room_id, {})
-        for item in room_pending.values():
-            if not item.future.done():
-                item.future.set_result("decline")
+        registry = self._pending_approvals.pop(room_id, None)
+        if registry is None:
+            return
+        for entry in registry.cancel_all():
+            entry.payload.future.set_result("decline")
 
     @staticmethod
     def _visible_model_ids(result: dict[str, Any]) -> list[str]:

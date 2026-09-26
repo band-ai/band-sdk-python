@@ -545,7 +545,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
             "effort": "high",
             "permission_mode": "bypassPermissions",
         },
-        skip_on_started_conformance=True,  # on_started creates real MCP server + ClaudeSessionManager; tested in test_claude_sdk_adapter
+        skip_on_started_conformance=True,  # on_started creates real MCP server + ClaudeSessionManager; tested in tests/adapters/claude_sdk/lifecycle/test_on_started.py
     )
 
 

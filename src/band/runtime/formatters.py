@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 # A room message is delivered to an agent only when it @mentions it, so the
 # platform prepends one normalized ``@[[uuid]]`` token per mention to the
@@ -34,6 +35,11 @@ def strip_leading_mentions(content: str, *, only_first: bool = False) -> str:
     skipping the entire block only makes matching more robust."""
     pattern = _LEADING_MENTION if only_first else _LEADING_MENTIONS
     return pattern.sub("", content, count=1)
+
+
+def format_tokens(tokens: Iterable[str]) -> str:
+    """Tokens a room can reply with, as a backticked, comma-separated list."""
+    return ", ".join(f"`{token}`" for token in tokens)
 
 
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
