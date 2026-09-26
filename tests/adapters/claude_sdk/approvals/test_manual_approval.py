@@ -11,6 +11,7 @@ from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
     APPROVAL_RESOLVED_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
+    APPROVAL_UNAUTHORIZED_MESSAGE,
 )
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 from tests.baseline.decisions import ModelDecision, ToolCall
@@ -18,7 +19,6 @@ from tests.baseline.decisions import ModelDecision, ToolCall
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 ADMIN = {"id": "admin-1", "name": "Admin"}
-NOT_AUTHORIZED = "You are not authorized to approve or decline tool use."
 DECLINED = "User declined tool use"
 LIST_FILES = ModelDecision.call("Bash", command="ls")
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
@@ -140,11 +140,13 @@ async def test_only_allowlisted_senders_decide_but_anyone_can_list(
         await room.settled()
 
     admin_outcome = (
-        [resolved("a-1", "accept"), "Listed."] if admin_decides else [NOT_AUTHORIZED]
+        [resolved("a-1", "accept"), "Listed."]
+        if admin_decides
+        else [APPROVAL_UNAUTHORIZED_MESSAGE]
     )
     assert room.chat == [
         prompt("a-1", "Bash: `ls`"),
-        *[NOT_AUTHORIZED] * 3,
+        *[APPROVAL_UNAUTHORIZED_MESSAGE] * 3,
         "Pending approvals:\n- `a-1`: Bash: `ls` (0s ago)",
         *admin_outcome,
     ]

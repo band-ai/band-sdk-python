@@ -172,6 +172,10 @@ APPROVAL_REQUESTED_TEMPLATE = (
 )
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
 APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Decision: **{decision}**."
+APPROVAL_UNKNOWN_TOKEN_TEMPLATE = (
+    "Unknown approval token `{token}`. Available: {available}."
+)
+APPROVAL_UNAUTHORIZED_MESSAGE = "You are not authorized to approve or decline tool use."
 
 # Commands recognised as local (not forwarded to Claude)
 _APPROVAL_CMDS = frozenset(
@@ -1701,7 +1705,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # --- /approve [token] | /decline [token] ---
         if not is_authorized_sender(self.approval_authorized_senders, sender["id"]):
             await tools.send_message(
-                "You are not authorized to approve or decline tool use.",
+                APPROVAL_UNAUTHORIZED_MESSAGE,
                 mentions=mention,
             )
             return
@@ -1725,8 +1729,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         if (selected := pending.get(token)) is None:
             await tools.send_message(
-                f"Unknown approval token `{token}`. "
-                f"Available: {format_tokens(open_tokens) or 'none'}.",
+                APPROVAL_UNKNOWN_TOKEN_TEMPLATE.format(
+                    token=token, available=format_tokens(open_tokens) or "none"
+                ),
                 mentions=mention,
             )
             return

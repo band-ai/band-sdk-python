@@ -51,6 +51,7 @@ PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
 _INVALID_DECISION = object()
 DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
+DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisions."
 
 
 ROOM_COMMAND = "/cursor"
@@ -551,7 +552,7 @@ class CursorACPAdapter(ACPClientAdapter):
         if not is_authorized_sender(
             self._config.decision_authorized_senders, msg.sender_id
         ):
-            reply = "You are not authorized to resolve Cursor decisions."
+            reply = DECISION_UNAUTHORIZED_MESSAGE
         elif self._pending_decisions.try_claim(token) is None:
             reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
         else:

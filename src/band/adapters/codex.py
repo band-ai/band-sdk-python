@@ -158,6 +158,7 @@ APPROVAL_REQUESTED_TEMPLATE = (
 )
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as `{decision}`."
 APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Applied `{decision}`."
+NO_APPROVALS_TO_RESOLVE_MESSAGE = "No pending approvals to resolve."
 TURN_IN_PROGRESS_MESSAGE = (
     "Codex is still processing the previous request in this room."
 )
@@ -3423,7 +3424,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if not pending:
             await deliver_reply(
                 tools,
-                "No pending approvals to resolve.",
+                NO_APPROVALS_TO_RESOLVE_MESSAGE,
                 mentions=mention,
             )
             return True
@@ -3434,7 +3435,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             match open_ids:
                 case []:
                     await deliver_reply(
-                        tools, "No pending approvals to resolve.", mentions=mention
+                        tools, NO_APPROVALS_TO_RESOLVE_MESSAGE, mentions=mention
                     )
                     return True
                 case [only]:

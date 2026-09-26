@@ -16,6 +16,7 @@ import pytest_asyncio
 from acp.schema import PermissionOption
 
 from band.adapters.cursor_acp import (
+    DECISION_UNAUTHORIZED_MESSAGE,
     DEFAULT_CURSOR_ACP_COMMAND,
     CursorACPAdapter,
     CursorACPAdapterConfig,
@@ -320,9 +321,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert not pending.done()
-        assert (
-            tools.messages[-1] == "You are not authorized to resolve Cursor decisions."
-        )
+        assert tools.messages[-1] == DECISION_UNAUTHORIZED_MESSAGE
 
         await adapter._handle_control_message(
             cast(

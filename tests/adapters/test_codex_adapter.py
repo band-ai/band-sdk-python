@@ -21,6 +21,7 @@ from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
+    NO_APPROVALS_TO_RESOLVE_MESSAGE,
     TURN_IN_PROGRESS_MESSAGE,
     ApprovalDecision,
     CodexAdapter,
@@ -5839,7 +5840,7 @@ class TestManualApprovalRaces:
 
         async with timeout_notice:
             assert await room.reply(CodexCommand.APPROVE, "approval-xyz") == (
-                "No pending approvals to resolve."
+                NO_APPROVALS_TO_RESOLVE_MESSAGE
             )
 
         assert await decision == "decline"  # approval_timeout_decision
