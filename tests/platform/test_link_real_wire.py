@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import sys
 from collections.abc import Callable
 
 import pytest
@@ -177,6 +178,13 @@ async def test_run_forever_leaves_host_signal_handlers_alone() -> None:
         signal.signal(signal.SIGTERM, previous)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the Phoenix client installs loop signal handlers only on POSIX; on "
+        "Windows os.kill(SIGINT) terminates the whole test process"
+    ),
+)
 async def test_script_mode_still_stops_on_sigint() -> None:
     async with fake_phoenix_server() as server:
         link = make_link(server.url)
