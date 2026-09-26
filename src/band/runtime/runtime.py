@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Delay between retries of a previous execution's failed stop before a
+# rejoined room's new execution is created.
+TEARDOWN_RETRY_DELAY_S = 1.0
+
 
 class ExecutionFactory(Protocol):
     """Factory type for custom execution implementations.
@@ -155,6 +159,11 @@ class AgentRuntime:
         # one in-flight attempt, a failed stop leaves it for a retry, and room
         # creation waits on it, so old cleanup never meets a rejoined room.
         self._teardowns: dict[str, RoomTeardown] = {}
+        # Admitted rooms waiting on a predecessor's failed stop. Each retries
+        # that stop in the background and creates the room's execution once it
+        # succeeds, so an admitted room is never left without one.
+        self._pending_creations: dict[str, asyncio.Task[None]] = {}
+        self._teardown_retry_delay_s = TEARDOWN_RETRY_DELAY_S
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -216,7 +225,9 @@ class AgentRuntime:
 
         # Stop all executions with timeout
         all_graceful = True
-        for room_id in list({**self._teardowns, **self.executions}):
+        for room_id in list(
+            {**self._pending_creations, **self._teardowns, **self.executions}
+        ):
             graceful = await self._destroy_execution(room_id, timeout=timeout)
             all_graceful = all_graceful and graceful
 
@@ -380,16 +391,19 @@ class AgentRuntime:
 
     # --- Execution management ---
 
-    async def _create_execution(self, room_id: str) -> Execution:
-        """Create and start execution context for a room."""
+    async def _create_execution(self, room_id: str) -> Execution | None:
+        """Create and start execution context for a room.
+
+        When the room's previous execution is still failing to stop, returns
+        None and keeps retrying that stop in the background; the execution is
+        created as soon as it succeeds.
+        """
         predecessor = self._teardowns.get(room_id)
         if predecessor is not None:
             await self._run_teardown(room_id, predecessor, timeout=None)
             if self._teardowns.get(room_id) is predecessor:
-                raise RuntimeError(
-                    f"Room {room_id}: the previous execution failed to stop; "
-                    "not creating a new one while it may still be running"
-                )
+                self._create_after_teardown(room_id)
+                return None
         if room_id in self.executions:
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]
@@ -426,6 +440,28 @@ class AgentRuntime:
         logger.debug("Created execution for room %s", room_id)
         return execution
 
+    def _create_after_teardown(self, room_id: str) -> None:
+        """Retry the room's failed predecessor stop until it succeeds, then
+        create its execution. At most one such retry runs per room."""
+        pending = self._pending_creations.get(room_id)
+        if pending is not None and not pending.done():
+            return
+        self._pending_creations[room_id] = asyncio.ensure_future(
+            self._retry_teardown_then_create(room_id)
+        )
+
+    async def _retry_teardown_then_create(self, room_id: str) -> None:
+        try:
+            while (teardown := self._teardowns.get(room_id)) is not None:
+                await asyncio.sleep(self._teardown_retry_delay_s)
+                await self._run_teardown(room_id, teardown, timeout=None)
+            await self._create_execution(room_id)
+        except Exception:
+            logger.exception("Creating the execution for room %s failed", room_id)
+        finally:
+            if self._pending_creations.get(room_id) is asyncio.current_task():
+                del self._pending_creations[room_id]
+
     async def _destroy_execution(
         self, room_id: str, timeout: float | None = None
     ) -> bool:
@@ -439,6 +475,9 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
+        pending = self._pending_creations.pop(room_id, None)
+        if pending is not None:
+            pending.cancel()
         teardown = self._teardowns.get(room_id)
         if teardown is None:
             execution = self.executions.pop(room_id, None)

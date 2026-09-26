@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -23,6 +23,7 @@ from tests.adapters.test_codex_adapter import (
     _turn_completed,
     make_codex_adapter,
 )
+from tests.conftest import make_room_added_event, make_room_removed_event
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
@@ -485,13 +486,29 @@ async def test_a_failed_stop_keeps_the_room_until_a_retry_stops_it() -> None:
 
     assert (first, old.stop_calls, g.cleanups) == (False, 1, [])
     assert g.runtime._teardowns[ROOM].execution is old
-    old.stop_errors.append(RuntimeError("still running"))
-    with pytest.raises(RuntimeError, match="failed to stop"):
-        await g.runtime._create_execution(ROOM)
-    assert (old.stop_calls, len(g.generations), g.cleanups) == (2, 1, [])
-
     second = await g.runtime._destroy_execution(ROOM)
+    assert (second, old.stop_calls, g.cleanups) == (True, 2, [(ROOM, None)])
 
-    assert (second, old.stop_calls, g.cleanups) == (True, 3, [(ROOM, None)])
-    new = await g.runtime._create_execution(ROOM)
-    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, new)
+
+async def test_a_rejoin_past_a_failing_stop_is_created_once_the_stop_succeeds() -> None:
+    g = GenerationRuntime()
+    g.runtime._teardown_retry_delay_s = 0.0
+    link = g.runtime.link
+    link.subscribe_room = AsyncMock()
+    link.unsubscribe_room = AsyncMock()
+    link.is_room_subscribed = MagicMock(return_value=True)
+    presence = g.runtime.presence
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    [old] = g.generations
+    old.stop_gate.set()
+    old.stop_errors.extend(RuntimeError("still running") for _ in range(3))
+    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+
+    assert ROOM in presence.roster.tracked_room_ids()
+    assert (ROOM in g.runtime.executions, g.cleanups) == (False, [])
+    pending = g.runtime._pending_creations[ROOM]
+    await asyncio.wait_for(pending, timeout=5.0)
+    assert (old.stop_calls, g.cleanups) == (4, [(ROOM, None)])
+    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
