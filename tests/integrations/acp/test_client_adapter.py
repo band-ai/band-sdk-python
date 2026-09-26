@@ -1268,11 +1268,14 @@ class TestACPCollectingClientCursorProfileExtensions:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         profile = CursorACPClientProfile()
+        client = ACPCollectingClient(profile=profile)
         method = "cursor/private-token"
 
-        with caplog.at_level(logging.DEBUG, logger=client_profiles.__name__):
-            await profile.ext_method(method, {})
-            await profile.ext_notification(method, {})
+        with caplog.at_level(logging.DEBUG):
+            await client.ext_notification(method, {})
+            profile.bind_session("session-1")
+            await client.ext_method(method, {})
+            await client.ext_notification(method, {})
 
         assert method not in caplog.text
 

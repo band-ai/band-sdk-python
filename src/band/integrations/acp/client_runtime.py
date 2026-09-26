@@ -765,7 +765,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             session_id = getattr(self._profile, "extension_session_id", None) or ""
         if not session_id:
             logger.debug(
-                "Dropping ext_notification %s: no resolvable session id", method
+                "Dropping extension notification: no resolvable session id"
             )
             return
 
