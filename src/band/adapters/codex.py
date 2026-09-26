@@ -73,7 +73,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.decisions import DecisionRegistry, Timeout
+from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -479,7 +479,7 @@ class CodexAdapterConfig(BaseSettings):
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
-    max_pending_approvals_per_room: int = 50
+    max_pending_approvals_per_room: int = Field(default=50, ge=1)
     max_approval_audit_per_room: int = 100
     # Upper bound on session-level approvals retained per room
     # (``/approve-session`` patterns).  Evicted LRU-style when exceeded so a
@@ -2640,7 +2640,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             room_id,
             DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
         )
-        if (evicted := registry.evict_oldest()) is not None:
+        # A redelivered id replaces its predecessor rather than growing the
+        # registry, so only a new id may evict another ask.
+        if token not in registry and (evicted := registry.evict_oldest()) is not None:
             evicted.payload.future.set_result("decline")
             logger.warning(
                 "Evicted oldest pending approval %s in room %s (limit %s)",
@@ -2648,7 +2650,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 room_id,
                 self.config.max_pending_approvals_per_room,
             )
-        registry.register(pending, key=token)
+        superseded = registry.get(token)
+        if (entry := registry.register(pending, key=token)) is None:
+            logger.warning(
+                "Approval %s in room %s was redelivered after a reply claimed it; "
+                "declining the redelivery",
+                token,
+                room_id,
+            )
+            return "decline"
+        if superseded is not None:
+            # Replacing an open ask removes it, so resolve it like an eviction.
+            superseded.future.set_result("decline")
         try:
             approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
                 summary=summary, token=token
@@ -2699,7 +2712,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 # A reply that claimed it meanwhile (its id is in the task
                 # event above) owns the answer; wait for it below.
-                if registry.withdraw(token):
+                if registry.withdraw(entry):
                     # The room was never notified, so waiting out the full
                     # approval_wait_timeout_s would misreport a Band delivery
                     # hiccup as a human-decision timeout. Re-raise (rather
@@ -2716,7 +2729,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
             self._release_turn(room_id)
             decision = await registry.wait(
-                token, pending.future, timeout_s=self.config.approval_wait_timeout_s
+                entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
             )
             if decision is not Timeout.TIMED_OUT:
                 return decision
@@ -2732,7 +2745,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 logger.exception("Failed to send approval timeout notification")
             return timeout_decision
         finally:
-            self._clear_pending_approval(room_id, token)
+            self._clear_pending_approval(room_id, entry)
 
     async def _forward_raw_task_event(
         self,
@@ -3838,13 +3851,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     def _open_approval_count(self, room_id: str) -> int:
         registry = self._pending_approvals.get(room_id)
-        return len(registry.unclaimed()) if registry else 0
+        return registry.unclaimed_count() if registry else 0
 
-    def _clear_pending_approval(self, room_id: str, token: str) -> None:
+    def _clear_pending_approval(
+        self, room_id: str, entry: DecisionEntry[PendingApproval]
+    ) -> None:
         registry = self._pending_approvals.get(room_id)
         if registry is None:
             return
-        registry.forget(token)
+        registry.forget(entry)
         if len(registry) == 0:
             self._pending_approvals.pop(room_id, None)
 

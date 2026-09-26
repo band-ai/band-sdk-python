@@ -6097,6 +6097,100 @@ class TestManualApprovalRaces:
         )
         assert await pending_task == "decline"
 
+    @staticmethod
+    def _ask(
+        adapter: CodexAdapter,
+        tools: FakeAgentTools,
+        *,
+        request_id: int,
+        approval_id: str,
+    ) -> asyncio.Task[str]:
+        params = {"approvalId": approval_id, "command": "npm test"}
+        return asyncio.create_task(
+            adapter._resolve_manual_approval(
+                tools=tools,
+                msg=make_platform_message(room_id="room-1"),
+                room_id="room-1",
+                event=_event_request(
+                    request_id, "item/commandExecution/requestApproval", params
+                ),
+                summary="npm test",
+                params=params,
+            )
+        )
+
+    @staticmethod
+    async def _until_pending(adapter: CodexAdapter, *approval_ids: str) -> None:
+        async with asyncio.timeout(1):
+            while not set(approval_ids) <= set(
+                adapter._pending_approvals.get("room-1", {})
+            ):
+                await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_a_redelivery_of_a_claimed_approval_declines_without_waiting(
+        self,
+    ) -> None:
+        """The claimant owns the approval: its redelivery must neither wait
+        on an ask it doesn't own nor disturb the claimant's entry."""
+        tools = FakeAgentTools()
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                approval_mode="manual", approval_wait_timeout_s=5
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        original = self._ask(adapter, tools, request_id=1, approval_id="approval-xyz")
+        await self._until_pending(adapter, "approval-xyz")
+        claimed = adapter._pending_approvals["room-1"].try_claim("approval-xyz")
+        assert claimed is not None
+
+        redelivery = self._ask(adapter, tools, request_id=2, approval_id="approval-xyz")
+
+        assert await asyncio.wait_for(redelivery, 1) == "decline"
+        claimed.payload.future.set_result("accept")
+        assert await asyncio.wait_for(original, 1) == "accept"
+
+    @pytest.mark.asyncio
+    async def test_a_redelivery_of_an_open_approval_replaces_it_without_evicting(
+        self,
+    ) -> None:
+        """A redelivered id supersedes its open predecessor -- resolved like an
+        eviction -- and leaves every other pending approval alone, even at
+        capacity. The redelivery is then answered normally."""
+        tools = FakeAgentTools()
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                approval_mode="manual",
+                approval_wait_timeout_s=5,
+                max_pending_approvals_per_room=2,
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        other = self._ask(adapter, tools, request_id=1, approval_id="approval-a")
+        original = self._ask(adapter, tools, request_id=2, approval_id="approval-b")
+        await self._until_pending(adapter, "approval-a", "approval-b")
+
+        redelivery = self._ask(adapter, tools, request_id=3, approval_id="approval-b")
+
+        assert await asyncio.wait_for(original, 1) == "decline"
+        assert list(adapter._pending_approvals["room-1"]) == [
+            "approval-a",
+            "approval-b",
+        ]
+        await adapter._handle_approval_command(
+            tools=tools,
+            msg=make_platform_message(room_id="room-1"),
+            room_id="room-1",
+            command=CodexCommand.APPROVE,
+            args="approval-b",
+        )
+        assert await asyncio.wait_for(redelivery, 1) == "accept"
+        assert "approval-a" in adapter._pending_approvals["room-1"]
+        other.cancel()
+
 
 class TestTokenUsageCounterMonotonicity:
     """CodexTokenUsage protection against non-monotonic cumulative updates."""

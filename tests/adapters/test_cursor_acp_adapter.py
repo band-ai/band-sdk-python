@@ -713,9 +713,9 @@ class TestCursorACPAdapterDecisions:
 
         assert handled is True
         assert tools.messages[-1] == f"Cursor decision `{token}` is not pending."
-        assert not claimed.future.done()
+        assert not claimed.payload.future.done()
 
-        claimed.future.set_result(None)
+        claimed.payload.future.set_result(None)
         assert await pending_task is None
 
     @pytest.mark.asyncio
@@ -742,7 +742,7 @@ class TestCursorACPAdapterDecisions:
         )
         tokens = {
             entry.payload.room_id: entry.token
-            for entry in adapter._pending_decisions.entries()
+            for entry in adapter._pending_decisions.unclaimed()
         }
 
         await adapter.on_cleanup("room-1")

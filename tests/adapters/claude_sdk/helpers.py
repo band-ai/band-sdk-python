@@ -89,10 +89,7 @@ def register_pending_approval(
     )
     registry = adapter._pending_approvals.setdefault(
         room_id,
-        DecisionRegistry(
-            max_pending=adapter.max_pending_approvals_per_room,
-            authorized_senders=adapter.approval_authorized_senders,
-        ),
+        DecisionRegistry(max_pending=adapter.max_pending_approvals_per_room),
     )
     registry.register(
         PendingApproval(

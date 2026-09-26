@@ -35,10 +35,16 @@ class TestApprovalAuthorization:
         assert future.result() == ApprovalReply("accept", authorized_sender["id"])
 
     @pytest.mark.asyncio
-    async def test_unauthorized_sender_rejected(self, mock_tools, unauthorized_sender):
+    @pytest.mark.parametrize(
+        "authorized_senders", [{"admin-1"}, set()], ids=["other-member", "empty-set"]
+    )
+    async def test_unauthorized_sender_rejected(
+        self, mock_tools, unauthorized_sender, authorized_senders
+    ):
+        """An empty allowlist admits nobody, not everybody."""
         adapter = ClaudeSDKAdapter(
             approval_mode="manual",
-            approval_authorized_senders={"admin-1"},
+            approval_authorized_senders=authorized_senders,
         )
         future = register_pending_approval(adapter)
         await adapter._handle_approval_command(

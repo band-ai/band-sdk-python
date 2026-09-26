@@ -53,7 +53,7 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
-from band_sdk_core import AgentFailure
+from band_sdk_core import AgentFailure, is_authorized_sender
 from typing_extensions import Unpack
 
 from band.converters.claude_sdk import (
@@ -91,7 +91,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     is_marked_terminal,
 )
-from band.runtime.decisions import DecisionRegistry, Timeout
+from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -415,8 +415,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self.approval_text_notifications = approval_text_notifications
         self.approval_wait_timeout_s = approval_wait_timeout_s
         self.approval_timeout_decision: ApprovalDecision = approval_timeout_decision
+        # Validated here because registries are built lazily, inside the
+        # approval callback, where a bad value would first surface.
+        if max_pending_approvals_per_room < 1:
+            raise ValueError("max_pending_approvals_per_room must be >= 1")
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
-        self.approval_authorized_senders: set[str] | None = approval_authorized_senders
+        self.approval_authorized_senders: frozenset[str] | None = (
+            None
+            if approval_authorized_senders is None
+            else frozenset(approval_authorized_senders)
+        )
 
         # send_message dedup window.  0 disables the wrapper.
         if send_message_dedup_ttl_seconds < 0:
@@ -1534,7 +1542,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 evicted.token,
                 self.max_pending_approvals_per_room,
             )
-        registry.register(pending, key=token)
+        if (entry := registry.register(pending, key=token)) is None:
+            # Per-room sequence tokens never repeat; never wait on an ask
+            # another claimant owns.
+            return PermissionResultDeny(
+                message="Approval token already in use, tool use declined"
+            )
 
         # Notify user — if we can't deliver the prompt, decline immediately
         # so the caller isn't left waiting for a timeout nobody will see.
@@ -1550,8 +1563,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 logger.warning("Room %s: Failed to send approval notification", room_id)
                 # A reply that claimed it meanwhile owns the answer; otherwise
                 # decline without a notice, so the missing-reply guard stays.
-                if registry.withdraw(token):
-                    self._clear_pending_approval(room_id, token)
+                if registry.withdraw(entry):
+                    self._clear_pending_approval(room_id, entry)
                     return PermissionResultDeny(
                         message="Could not deliver approval prompt, tool use declined"
                     )
@@ -1563,10 +1576,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         try:
             decision = await registry.wait(
-                token, pending.future, timeout_s=self.approval_wait_timeout_s
+                entry, pending.future, timeout_s=self.approval_wait_timeout_s
             )
         finally:
-            self._clear_pending_approval(room_id, token)
+            self._clear_pending_approval(room_id, entry)
 
         match decision:
             case Timeout.TIMED_OUT:
@@ -1684,7 +1697,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             return
 
         # --- /approve [token] | /decline [token] ---
-        if not pending.is_authorized(sender["id"]):
+        if not is_authorized_sender(self.approval_authorized_senders, sender["id"]):
             await tools.send_message(
                 "You are not authorized to approve or decline tool use.",
                 mentions=mention,
@@ -1741,7 +1754,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         session_id = self._session_ids.get(room_id, "—")
         registry = self._pending_approvals.get(room_id)
-        pending_count = len(registry.unclaimed()) if registry else 0
+        pending_count = registry.unclaimed_count() if registry else 0
 
         lines = [
             "**Claude SDK Status**",
@@ -1796,17 +1809,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         return f"a-{seq}"
 
     def _new_approval_registry(self) -> DecisionRegistry[PendingApproval]:
-        return DecisionRegistry(
-            max_pending=self.max_pending_approvals_per_room,
-            authorized_senders=self.approval_authorized_senders,
-        )
+        return DecisionRegistry(max_pending=self.max_pending_approvals_per_room)
 
-    def _clear_pending_approval(self, room_id: str, token: str) -> None:
+    def _clear_pending_approval(
+        self, room_id: str, entry: DecisionEntry[PendingApproval]
+    ) -> None:
         """Remove a single pending approval from a room."""
         registry = self._pending_approvals.get(room_id)
         if registry is None:
             return
-        registry.forget(token)
+        registry.forget(entry)
         if len(registry) == 0:
             self._pending_approvals.pop(room_id, None)
 

@@ -718,6 +718,77 @@ async def test_new_question_ask_survives_previous_answer() -> None:
     ]
 
 
+async def test_free_text_answers_the_next_question_while_an_answer_is_in_flight() -> (
+    None
+):
+    """Free text targets the oldest question still awaiting an answer, not one
+    whose answer is already being sent."""
+    client = BlockingReplyClient("question")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    for request_id in ("question-old", "question-new"):
+        await approvals.on_question_asked(
+            OpencodeQuestionRequest(id=request_id, questions=[{"question": "Who?"}])
+        )
+
+    old_reply = asyncio.create_task(approvals.try_handle_reply("old answer", "user-1"))
+    await client.reply_started.wait()
+    new_reply = asyncio.create_task(approvals.try_handle_reply("new answer", "user-1"))
+    client.allow_reply.set()
+
+    assert await old_reply
+    assert await new_reply
+    assert [reply["request_id"] for reply in client.question_replies] == [
+        "question-old",
+        "question-new",
+    ]
+
+
+async def test_bare_reject_skips_a_permission_whose_reply_is_in_flight() -> None:
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    approval = asyncio.create_task(
+        approvals.try_handle_reply("approve req-1", "user-1")
+    )
+    await client.reply_started.wait()
+
+    assert await approvals.try_handle_reply("reject", "user-1")
+    assert client.question_rejections == ["q-1"]
+    client.allow_reply.set()
+    assert await approval
+
+
+async def test_a_late_reply_never_forgets_the_same_id_asked_again() -> None:
+    """Teardown drops an ask whose reply is in flight and OpenCode asks the
+    same id again; the old reply finishing must leave the new ask pending."""
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    request = OpencodePermissionRequest(id="req-1", permission="bash")
+    await approvals.on_permission_asked(request)
+
+    old_reply = asyncio.create_task(
+        approvals.try_handle_reply("approve req-1", "user-1")
+    )
+    await client.reply_started.wait()
+    approvals.cancel()
+    await approvals.on_permission_asked(request)
+    client.allow_reply.set()
+    assert await old_reply
+
+    assert approvals.awaiting_human()
+    assert await approvals.try_handle_reply("approve req-1", "user-1")
+    assert [reply["permission_id"] for reply in client.permission_replies] == [
+        "req-1",
+        "req-1",
+    ]
+
+
 async def test_new_question_ask_survives_previous_rejection() -> None:
     client = BlockingReplyClient("reject")
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
@@ -1271,9 +1342,8 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="perm-1", permission="bash")
     )
-    entry = next(e for e in approvals._permissions.entries() if e.token == "perm-1")
-    timer = entry.timeout_task
-    assert timer is not None and not timer.done()
+    timer = approvals._permissions._timeouts["perm-1"]
+    assert not timer.done()
 
     # The client is gone by the time the human replies — a teardown or a serve
     # restart mid-approval, which sends the reply down the abandonment path.
