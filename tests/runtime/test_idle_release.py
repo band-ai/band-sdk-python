@@ -7,6 +7,7 @@ release callback running), never a bare sleep standing in for progress.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -14,7 +15,14 @@ import pytest
 
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.types import SessionConfig
-from tests.runtime.conftest import make_link_mock, platform_msg
+from tests.adapters.test_codex_adapter import (
+    FakeCodexClient,
+    _bootstrap_turn,
+    _turn_completed,
+    make_codex_adapter,
+)
+from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
+from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 _RELEASE_AFTER_S = 0.05
 
@@ -28,8 +36,11 @@ class Room:
         *,
         release_after_s: float | None = _RELEASE_AFTER_S,
         release_error: Exception | None = None,
+        adapter_release: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.link = make_link_mock()
+        self.release_gate: asyncio.Event | None = None
+        self.release_finished = False
         self.pending: list[Any] = []
 
         async def next_message(*_args: Any, **_kwargs: Any) -> Any:
@@ -43,6 +54,7 @@ class Room:
         self.releases: list[str] = []
         self.released = asyncio.Event()
         self._release_error = release_error
+        self._adapter_release = adapter_release
         self.ctx = ExecutionContext(
             room_id,
             self.link,
@@ -64,8 +76,13 @@ class Room:
     async def _on_release(self, room_id: str) -> None:
         self.releases.append(room_id)
         self.released.set()
+        if self.release_gate is not None:
+            await self.release_gate.wait()
+            self.release_finished = True
         if self._release_error is not None:
             raise self._release_error
+        if self._adapter_release is not None:
+            await self._adapter_release(room_id)
 
     async def send(self, msg_id: str) -> None:
         """Deliver one message through /next and wait until its turn starts."""
@@ -188,3 +205,87 @@ async def test_stop_before_expiry_leaves_no_pending_release(room) -> None:
 def test_a_non_positive_setting_is_refused() -> None:
     with pytest.raises(ValueError, match="release_idle_room_after_s"):
         SessionConfig(release_idle_room_after_s=0)
+
+
+async def test_stop_during_a_release_waits_for_its_teardown(room) -> None:
+    r = await _started(room())
+    r.release_gate = asyncio.Event()
+    await r.send("msg-1")
+    await r.wait_released()
+
+    stopping = asyncio.create_task(r.ctx.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not stopping.done(), "stop must wait for the pending teardown"
+
+    r.release_gate.set()
+    await asyncio.wait_for(stopping, timeout=5.0)
+
+    assert (r.release_finished, r.ctx.is_running) == (True, False)
+
+
+class GatedCloseCodexClient(FakeCodexClient):
+    """A Codex client whose close() waits for the test to let it finish."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.close_entered = asyncio.Event()
+        self.close_gate = asyncio.Event()
+
+    async def close(self) -> None:
+        self.close_entered.set()
+        await self.close_gate.wait()
+        await super().close()
+
+
+async def test_stopping_mid_codex_release_still_closes_the_app_server(room) -> None:
+    client = GatedCloseCodexClient(events=[_turn_completed()])
+    adapter = make_codex_adapter(client)
+    await _bootstrap_turn(adapter)
+    r = await _started(
+        room(room_id="room-1", adapter_release=adapter.release_room_resources)
+    )
+    await r.send("msg-1")
+    await asyncio.wait_for(client.close_entered.wait(), timeout=5.0)
+
+    stopping = asyncio.create_task(r.ctx.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+    client.close_gate.set()
+    await asyncio.wait_for(stopping, timeout=5.0)
+
+    room_client = adapter._room_clients["room-1"]
+    assert (client.closed, room_client.client) == (True, None)
+    assert adapter._released_threads == {"room-1": "thr-1"}
+
+
+async def test_stopping_mid_omp_release_still_stops_the_agent_process(room) -> None:
+    agent = FakeACPAgent(supports_session_load=True).will_say("Noted.")
+    async with acp_adapter(agent) as session:
+        await session.send("My favorite color is blue.", bootstrap=True)
+        runtime = session.adapter._runtimes["room-1"]
+        stop_entered, stop_gate = asyncio.Event(), asyncio.Event()
+        stop_completed = False
+        real_stop = runtime.stop
+
+        async def gated_stop() -> None:
+            nonlocal stop_completed
+            stop_entered.set()
+            await stop_gate.wait()
+            await real_stop()
+            stop_completed = True
+
+        runtime.stop = gated_stop  # type: ignore[method-assign]
+        r = await _started(
+            room(adapter_release=session.adapter._release_loadable_session)
+        )
+        await r.send("msg-1")
+        await asyncio.wait_for(stop_entered.wait(), timeout=5.0)
+
+        stopping = asyncio.create_task(r.ctx.stop())
+        await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+        stop_gate.set()
+        await asyncio.wait_for(stopping, timeout=5.0)
+
+        assert stop_completed
+        assert "room-1" not in session.adapter._runtimes

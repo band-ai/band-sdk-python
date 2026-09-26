@@ -75,7 +75,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.formatters import strip_leading_mentions
+from band.runtime.formatters import messages_before, strip_leading_mentions
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     image_block_placeholder,
@@ -818,6 +818,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     history=history,
                     tools=tools,
                     is_session_bootstrap=is_session_bootstrap,
+                    trigger_id=msg.id,
                 )
 
                 turn_input, has_pending_prompt_injection = self._build_turn_input(
@@ -1564,6 +1565,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         history: CodexSessionState,
         tools: AgentToolsProtocol,
         is_session_bootstrap: bool,
+        trigger_id: str | None = None,
     ) -> str:
         thread_id = self._room_threads.get(room_id)
         if thread_id:
@@ -1572,7 +1574,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
 
-        resume_id = self._released_threads.pop(room_id, None) or (
+        released_id = self._released_threads.get(room_id)
+        resume_id = released_id or (
             history.thread_id if is_session_bootstrap and history.has_thread() else None
         )
         if resume_id:
@@ -1588,6 +1591,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 thread_id = str(resumed.get("id") or resume_id)
                 if thread_id:
                     self._room_threads[room_id] = thread_id
+                    self._released_threads.pop(room_id, None)
                     self._raw_history_by_room.pop(room_id, None)
                     if Emit.TASK_EVENTS in self.features.emit:
                         await send_event_safe(
@@ -1615,8 +1619,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     resume_id,
                     exc,
                 )
+                # Settled: the thread is gone, so a fresh one starts below. A
+                # released room is past bootstrap, so its transcript is
+                # fetched here for the history injection.
+                self._released_threads.pop(room_id, None)
                 if self.config.inject_history_on_resume_failure:
                     self._needs_history_injection.add(room_id)
+                    if released_id:
+                        await self._stash_room_transcript(tools, room_id, trigger_id)
         else:
             # Not a bootstrap resume — clean up any stashed history
             self._raw_history_by_room.pop(room_id, None)
@@ -1660,6 +1670,30 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
 
         return thread_id
+
+    async def _stash_room_transcript(
+        self, tools: AgentToolsProtocol, room_id: str, trigger_id: str | None
+    ) -> None:
+        """Fetch the room transcript before ``trigger_id`` for history injection.
+
+        The runtime hands history over only on bootstrap; a released room's
+        failed resume happens later, so the fresh thread would otherwise
+        start without the conversation.
+        """
+        try:
+            context = await tools.fetch_room_context(room_id=room_id)
+        except Exception:
+            logger.warning(
+                "Room %s: could not fetch history for the fresh Codex thread",
+                room_id,
+                exc_info=True,
+            )
+            return
+        self._raw_history_by_room[room_id] = [
+            message
+            for message in messages_before(context.get("data") or [], trigger_id)
+            if message.get("id") != trigger_id
+        ]
 
     def _build_dynamic_tools(self, tools: AgentToolsProtocol) -> list[dict[str, Any]]:
         dynamic_tools: list[dict[str, Any]] = []

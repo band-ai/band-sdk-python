@@ -7107,3 +7107,60 @@ class TestIdleRelease:
         await adapter.on_cleanup("room-1")
 
         assert (adapter._released_threads, adapter._room_clients) == ({}, {})
+
+    @pytest.mark.asyncio
+    async def test_failed_resume_after_release_seeds_the_fresh_thread(self) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed("turn-1")],
+            resume_error=CodexJsonRpcError(code=-32600, message="no rollout found"),
+        )
+        adapter = make_codex_adapter(client)
+        tools = await _bootstrap_turn(adapter)
+        await adapter.release_room_resources("room-1")
+        tools.set_room_context(
+            [
+                {
+                    "id": "earlier",
+                    "content": "The code word is PELICAN.",
+                    "sender_id": "user-9",
+                    "sender_type": "User",
+                    "sender_name": "Alice",
+                    "message_type": "text",
+                },
+                {
+                    "id": "msg-1",
+                    "content": "Hello",
+                    "sender_id": "user-1",
+                    "sender_type": "User",
+                    "message_type": "text",
+                },
+            ]
+        )
+        client._events.append(_turn_completed("turn-2"))
+
+        await _later_turn(adapter, tools)
+
+        assert _methods(client).count("thread/start") == 2
+        texts = [item["text"] for item in _last_turn_input(client)]
+        history = next(t for t in texts if t.startswith("[Conversation History]"))
+        assert "The code word is PELICAN." in history
+        assert texts.index(history) < len(texts) - 1
+        assert adapter._released_threads == {}
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_resume_error_keeps_the_thread_for_retry(self) -> None:
+        client = FakeCodexClient(
+            events=[_turn_completed("turn-1")], resume_error=OSError("pipe closed")
+        )
+        adapter = make_codex_adapter(client)
+        tools = await _bootstrap_turn(adapter)
+        await adapter.release_room_resources("room-1")
+
+        with pytest.raises(OSError):
+            await _later_turn(adapter, tools)
+
+        assert adapter._released_threads == {"room-1": "thr-1"}
+
+
+def _last_turn_input(client: FakeCodexClient) -> list[dict[str, Any]]:
+    return [p for m, p in client.requests if m == "turn/start"][-1]["input"]

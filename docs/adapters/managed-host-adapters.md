@@ -121,11 +121,11 @@ assert [room.state for room in status.rooms] == ["idle"]
 
 Set `SessionConfig(release_idle_room_after_s=...)` to have the runtime ask the adapter to release a room's harness resources once the room has been idle that long after a turn. The room stays joined; its next message recreates the process and continues the same conversation. The default `None` releases nothing.
 
-The release runs on the room's own processing loop, between turns: a turn in progress is never released, a message that arrives first is processed first, and a room that never ran a turn is left alone. The next turn re-arms the timer. A failed release is logged and the room keeps serving. Leaving the room or stopping the agent needs no extra cleanup, since there is no separate timer task.
+The release runs on the room's own processing loop, between turns: a turn in progress is never released, a message that arrives first is processed first, and a room that never ran a turn is left alone. The next turn re-arms the timer. A failed release is logged and the room keeps serving. Leaving the room or stopping the agent needs no extra cleanup, since there is no separate timer task. Stopping the agent or leaving the room while a release is tearing a process down waits for that teardown to finish.
 
 | Adapter | Releases | Resumes with | Verified |
 |---|---|---|---|
-| Codex | the room's app-server process | `thread/resume` with the room's thread id (Codex keeps threads on disk) | live, Codex 0.156.1: a fact from the first turn was recalled after release |
+| Codex | the room's app-server process | `thread/resume` with the room's thread id (Codex keeps threads on disk); if the resume fails, a fresh thread starts with the room transcript injected | live, Codex 0.156.1: a fact from the first turn was recalled after release |
 | OMP (ACP) | the room's `omp acp` process, when it advertised `session/load` | `session/load` with the room's session id; if the load fails, the existing fallback applies (new session plus transcript replay) | live, OMP 18.3.2: a fact from the first turn was recalled after release |
 | Copilot CLI, Cursor, and generic ACP | nothing (no-op) | — | no cross-process recall proven here; an agent without `session/load` would also come back blank |
 | Claude SDK | nothing (no-op) | — | resume through the stored session id was not proven with a logged-in Claude Code here |

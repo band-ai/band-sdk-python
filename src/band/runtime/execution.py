@@ -357,6 +357,10 @@ class ExecutionContext:
         # release, so an untouched or already-released room is left alone.
         self._on_idle_release = on_idle_release
         self._idle_since: float | None = None
+        # The in-flight release, run as its own task so cancelling this room's
+        # loop (stop, leave) cannot abandon a teardown halfway; stop() waits
+        # for it before the room is cleaned up.
+        self._release_task: asyncio.Task[None] | None = None
 
     @property
     def thread_id(self) -> str:
@@ -568,6 +572,7 @@ class ExecutionContext:
         # room can't leak its refresh task. Idempotent: a no-op if not active
         # (the per-cycle finally normally clears it already).
         await self._working_reporter.stop()
+        await self._finish_pending_release()
         return graceful
 
     async def _wait_for_idle(self, timeout: float) -> bool:
@@ -1171,8 +1176,29 @@ class ExecutionContext:
         if callback is None:
             return
         logger.info("ExecutionContext %s: releasing idle room resources", self.room_id)
+        task = asyncio.ensure_future(callback(self.room_id))
+        self._release_task = task
         try:
-            await callback(self.room_id)
+            # Shielded: cancelling the loop leaves the teardown running for
+            # stop() to finish.
+            await asyncio.shield(task)
+        except Exception:
+            logger.warning(
+                "ExecutionContext %s: idle resource release failed",
+                self.room_id,
+                exc_info=True,
+            )
+        finally:
+            if task.done():
+                self._release_task = None
+
+    async def _finish_pending_release(self) -> None:
+        """Let a release that outlived the room loop finish its teardown."""
+        task, self._release_task = self._release_task, None
+        if task is None:
+            return
+        try:
+            await task
         except Exception:
             logger.warning(
                 "ExecutionContext %s: idle resource release failed",
