@@ -421,6 +421,7 @@ class GenerationRuntime:
     def __init__(self) -> None:
         self.generations: list[GatedExecution] = []
         self.cleanups: list[tuple[str, int | None]] = []
+        self.cleanup_errors: list[Exception] = []
 
         def build(*_args: Any, **_kwargs: Any) -> GatedExecution:
             self.generations.append(GatedExecution(len(self.generations)))
@@ -429,6 +430,8 @@ class GenerationRuntime:
         async def cleanup(room_id: str) -> None:
             live = self.runtime.executions.get(room_id)
             self.cleanups.append((room_id, getattr(live, "generation", None)))
+            if self.cleanup_errors:
+                raise self.cleanup_errors.pop(0)
 
         self.runtime = AgentRuntime(
             make_link_mock(),
@@ -581,3 +584,23 @@ async def test_leaving_cancels_a_pending_rejoin(departure: str) -> None:
     assert (pending.cancelled(), g.runtime._pending_creations) == (True, {})
     assert (old.stop_calls, g.cleanups) == (3, [(ROOM, None)])
     assert (len(g.generations), ROOM in g.runtime.executions) == (1, False)
+
+
+async def test_a_failed_cleanup_is_retried_before_the_room_is_recreated() -> None:
+    g = GenerationRuntime()
+    g.runtime._teardown_retry_delay_s = 0.0
+    _admit_rooms(g.runtime.link)
+    presence = g.runtime.presence
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    [old] = g.generations
+    old.stop_gate.set()
+    g.cleanup_errors.extend(RuntimeError("process still closing") for _ in range(2))
+    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+
+    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+
+    assert (ROOM in g.runtime.executions, len(g.generations)) == (False, 1)
+    await asyncio.wait_for(g.runtime._pending_creations[ROOM], timeout=5.0)
+    assert old.stop_calls == 1, "a cleanup retry must not stop the execution again"
+    assert g.cleanups == [(ROOM, None)] * 3, "no new execution before cleanup succeeds"
+    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])

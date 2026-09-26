@@ -68,6 +68,9 @@ class RoomTeardown:
     execution: Execution
     attempt: asyncio.Task[bool] | None = None
     immediate: asyncio.Event = field(default_factory=asyncio.Event)
+    # The stop's graceful result once it has returned; a retry after a failed
+    # cleanup reuses it instead of stopping the execution again.
+    stopped: bool | None = None
 
 
 class AgentRuntime:
@@ -134,7 +137,10 @@ class AgentRuntime:
             execution_factory: Optional factory for custom Execution implementations
             room_filter: Optional filter to decide which rooms to join
             session_config: Configuration for ExecutionContext
-            on_session_cleanup: Optional callback for session cleanup (receives room_id)
+            on_session_cleanup: Optional callback for session cleanup (receives
+                room_id). If it raises, the room's teardown stays owned and the
+                callback is called again on the next teardown attempt, so it
+                must be safe to retry after a partial failure.
             on_participant_added: Optional callback for participant_added events
             on_idle_release: Optional callback (receives room_id) run when a
                 room has been idle for ``SessionConfig.release_idle_room_after_s``
@@ -499,8 +505,8 @@ class AgentRuntime:
         """Join the room's in-flight teardown attempt, starting one if needed.
 
         Shielded: a cancelled caller leaves the attempt running for the next
-        caller. An attempt whose stop raised is logged and retried by the next
-        caller; the execution stays owned until a stop returns.
+        caller. An attempt whose stop or cleanup raised is logged and retried
+        by the next caller; the execution stays owned until both succeed.
         """
         if timeout is None:
             teardown.immediate.set()
@@ -511,7 +517,7 @@ class AgentRuntime:
         try:
             return await asyncio.shield(attempt)
         except Exception:
-            logger.warning("Stopping execution for %s failed", room_id, exc_info=True)
+            logger.warning("Tearing down room %s failed", room_id, exc_info=True)
             return False
 
     @staticmethod
@@ -549,24 +555,21 @@ class AgentRuntime:
     ) -> bool:
         """Stop the execution, then run room cleanup and forget the teardown.
 
-        A raising stop propagates before any cleanup, keeping the teardown
-        (and its execution) for a retry.
+        A raising stop or cleanup propagates, keeping the teardown (and its
+        execution) owned for a retry; a retry after a failed cleanup runs only
+        the cleanup again.
         """
-        graceful = await self._stop_execution(teardown, timeout)
+        if teardown.stopped is None:
+            teardown.stopped = await self._stop_execution(teardown, timeout)
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
         # retries only the ack instead of replaying handler side effects.
         self._claim_registry.discard_completed(room_id)
-
-        # Call cleanup callback (for adapter to clean up checkpointer, etc.)
         if self._on_session_cleanup:
-            try:
-                await self._on_session_cleanup(room_id)
-            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
-                logger.warning("Session cleanup callback failed for %s: %s", room_id, e)
+            await self._on_session_cleanup(room_id)
 
         if self._teardowns.get(room_id) is teardown:
             del self._teardowns[room_id]
         logger.debug("Destroyed execution for room %s", room_id)
-        return graceful
+        return teardown.stopped
