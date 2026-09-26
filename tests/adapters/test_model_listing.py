@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from acp.schema import SessionConfigOptionSelect, SessionConfigSelectOption
 
 from band.adapters import copilot_acp
 from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
@@ -59,11 +62,94 @@ async def test_omp_listing_is_parsed_from_the_cli(tmp_path: Path) -> None:
     ]
 
 
-async def test_omp_listing_failure_names_the_command(tmp_path: Path) -> None:
-    omp = _fake_omp(tmp_path, stdout="{}", exit_code=3)
+def _select(
+    option_id: str, current: str, values: list[str]
+) -> SessionConfigOptionSelect:
+    return SessionConfigOptionSelect(
+        id=option_id,
+        name=option_id,
+        type="select",
+        current_value=current,
+        options=[SessionConfigSelectOption(value=v, name=v.upper()) for v in values],
+    )
 
-    with pytest.raises(RuntimeError, match="models --json` exited 3: omp failed"):
-        await omp_list_models(OmpACPAdapterConfig(command=(omp, "acp")))
+
+class FakeOmpSession:
+    """A spawn seam for the ACP fallback: one session advertising ``options``."""
+
+    def __init__(
+        self, options: list[Any], *, new_session_error: BaseException | None = None
+    ):
+        self.conn = AsyncMock()
+        self.conn.initialize = AsyncMock(return_value=MagicMock())
+        self.conn.new_session = AsyncMock(
+            side_effect=new_session_error,
+            return_value=SimpleNamespace(session_id="probe", config_options=options),
+        )
+        self.exited = False
+
+    def __call__(self, client: Any, *args: Any, **kwargs: Any) -> Any:
+        session = self
+
+        class Ctx:
+            async def __aenter__(self) -> tuple[Any, Any]:
+                return session.conn, MagicMock()
+
+            async def __aexit__(self, *exc: object) -> None:
+                session.exited = True
+
+        return Ctx()
+
+
+@pytest.fixture
+def omp_without_listing(tmp_path: Path) -> OmpACPAdapterConfig:
+    """An ``omp`` whose ``models --json`` subcommand fails."""
+    omp = _fake_omp(tmp_path, stdout="unknown command: models", exit_code=2)
+    return OmpACPAdapterConfig(command=(omp, "acp"))
+
+
+async def test_omp_falls_back_to_the_acp_session_selects(
+    omp_without_listing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spawn = FakeOmpSession(
+        [
+            _select("model", "openai/gpt-6", ["anthropic/claude-5", "openai/gpt-6"]),
+            _select("thinking", "auto", ["off", "auto", "high"]),
+        ]
+    )
+    monkeypatch.setattr(
+        "band.integrations.acp.client_runtime.spawn_agent_process", spawn
+    )
+
+    models = await omp_list_models(omp_without_listing)
+
+    assert models == [
+        HarnessModel(
+            id="anthropic/claude-5", label="ANTHROPIC/CLAUDE-5", provider="anthropic"
+        ),
+        HarnessModel(
+            id="openai/gpt-6",
+            label="OPENAI/GPT-6",
+            provider="openai",
+            efforts=("off", "auto", "high"),
+            default_effort="auto",
+            is_default=True,
+        ),
+    ]
+    assert spawn.exited
+
+
+async def test_omp_fallback_closes_its_session_process_on_cancellation(
+    omp_without_listing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spawn = FakeOmpSession([], new_session_error=asyncio.CancelledError())
+    monkeypatch.setattr(
+        "band.integrations.acp.client_runtime.spawn_agent_process", spawn
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await omp_list_models(omp_without_listing)
+    assert spawn.exited
 
 
 class FakeCopilotClient:
@@ -119,11 +205,36 @@ async def test_copilot_listing_uses_the_configured_cli_and_auth(fake_copilot) ->
         )
     ]
     client = fake_copilot.last
-    assert (client.connection.path, client.env, client.stopped) == (
+    assert (client.connection.path, client.env["GITHUB_TOKEN"], client.stopped) == (
         "/opt/copilot",
-        {"GITHUB_TOKEN": "ghp_x"},
+        "ghp_x",
         True,
     )
+
+
+async def test_copilot_listing_keeps_the_host_environment_under_overrides(
+    fake_copilot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BAND_TEST_SENTINEL", "inherited")
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient")
+    config = CopilotACPAdapterConfig(
+        github_token="configured", env={"HTTPS_PROXY": "http://proxy:3128"}
+    )
+
+    await copilot_acp.list_models(config)
+
+    env = fake_copilot.last.env
+    assert (
+        env["BAND_TEST_SENTINEL"],
+        env["PATH"],
+        env["GITHUB_TOKEN"],
+        env["HTTPS_PROXY"],
+    ) == ("inherited", os.environ["PATH"], "configured", "http://proxy:3128")
+
+
+async def test_copilot_listing_without_overrides_inherits_as_is(fake_copilot) -> None:
+    await copilot_acp.list_models()
+    assert fake_copilot.last.env is None
 
 
 @pytest.mark.parametrize(

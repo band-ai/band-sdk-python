@@ -1422,6 +1422,7 @@ class TestSessionPersistence:
         the failure must surface without leaking the raw exception text."""
         adapter = ClaudeSDKAdapter()
         mock_manager = AsyncMock()
+        mock_manager.has_session = MagicMock(return_value=False)
         mock_manager.get_or_create_session = AsyncMock(
             side_effect=Exception("Session setup failed")
         )
@@ -1459,6 +1460,7 @@ class TestSessionPersistence:
         without leaking the raw exception text."""
         adapter = ClaudeSDKAdapter()
         mock_manager = AsyncMock()
+        mock_manager.has_session = MagicMock(return_value=False)
         mock_manager.get_or_create_session = AsyncMock(
             side_effect=[Exception("Resume failed"), Exception("Fresh session failed")]
         )

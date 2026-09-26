@@ -95,7 +95,7 @@ Each coding adapter module has an async `list_models(...)` that asks the harness
 |---|---|---|---|
 | `band.adapters.claude_sdk` | `list_models(adapter)` | `get_server_info()["models"]` | Claude Code 2.1.280 |
 | `band.adapters.codex` | `list_models(CodexAdapterConfig(...))` | app-server `model/list`, hidden models left out | Codex 0.156.1 |
-| `band.adapters.omp_acp` | `list_models(OmpACPAdapterConfig(...))` | `omp models --json`; `id` is the `provider/model` selector | OMP 18.3.2 |
+| `band.adapters.omp_acp` | `list_models(OmpACPAdapterConfig(...))` | `omp models --json`, falling back to a throwaway ACP session's `model`/`thinking` `configOptions` when that command is unavailable; `id` is the `provider/model` selector | OMP 18.3.2 |
 | `band.adapters.copilot_acp` | `list_models(CopilotACPAdapterConfig(...))` | `github-copilot-sdk` `list_models()` (needs the `copilot_sdk` extra) | Copilot CLI 1.0.88, github-copilot-sdk 1.0.14 |
 
 A harness that rejects or lacks the call raises a clear error rather than returning an empty list. Hosts that kept listing code per harness, a Codex `-c model_reasoning_effort` override in `codex_command`, or `--model`/`--reasoning-effort` spliced into Copilot's `command` can use these and the typed settings instead.

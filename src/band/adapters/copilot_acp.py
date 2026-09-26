@@ -26,6 +26,7 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -174,6 +175,17 @@ def _command_with_model_flags(config: CopilotACPAdapterConfig) -> list[str]:
     return command
 
 
+def _probe_env(config: CopilotACPAdapterConfig) -> dict[str, str] | None:
+    """The listing client's full child environment.
+
+    ``CopilotClient`` hands ``env`` to the subprocess as-is, so the host's
+    environment (PATH, HOME, proxy and cert settings) is copied under the
+    configured overrides rather than replaced by them. ``None`` inherits.
+    """
+    overrides = _spawn_env(config)
+    return None if overrides is None else {**os.environ, **overrides}
+
+
 async def list_models(
     config: CopilotACPAdapterConfig | None = None,
 ) -> list[HarnessModel]:
@@ -195,7 +207,7 @@ async def list_models(
     config = config or CopilotACPAdapterConfig()
     client = CopilotClient(
         connection=StdioRuntimeConnection(path=config.command[0]),
-        env=_spawn_env(config),
+        env=_probe_env(config),
     )
     try:
         await client.start()

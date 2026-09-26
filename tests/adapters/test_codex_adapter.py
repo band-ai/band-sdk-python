@@ -17,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
+    _REASONING_EFFORTS,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
     CodexAdapter,
@@ -6795,6 +6796,65 @@ class TestReasoningEffort:
         )
         await _bootstrap_turn(adapter)
         assert _started_turn_effort(client) == "ultra"
+
+    @pytest.mark.asyncio
+    async def test_selected_model_on_a_later_page_is_validated(self) -> None:
+        page_two = {"data": _LISTED_MODELS["data"], "nextCursor": None}
+        client = PagedModelListClient(
+            events=[_turn_completed()],
+            pages=[{"data": [{"id": "gpt-5.5"}], "nextCursor": "page-2"}, page_two],
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="ultra"),
+        )
+
+        with pytest.raises(ValueError, match="offers: medium, max"):
+            await _bootstrap_turn(adapter)
+        assert [p for m, p in client.requests if m == "model/list"] == [
+            {},
+            {"cursor": "page-2"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_catalog_does_not_inherit_another_rooms(self) -> None:
+        client = PagedModelListClient(
+            events=[_turn_completed()], pages=[_LISTED_MODELS, {"data": []}]
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="max"),
+        )
+        wire_codex_room(adapter, client, "room-1", initialized=False)
+        await adapter._ensure_client_ready()
+        assert adapter._accepted_efforts() == ("medium", "max")
+
+        wire_codex_room(adapter, client, "room-2", initialized=False)
+        await adapter._ensure_client_ready()
+
+        assert adapter._accepted_efforts() == tuple(sorted(_REASONING_EFFORTS))
+
+
+class PagedModelListClient(FakeCodexClient):
+    """Answers successive ``model/list`` calls from ``pages`` in order."""
+
+    def __init__(self, *, pages: list[dict[str, Any]], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pages = deque(pages)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "model/list":
+            self.requests.append((method, dict(params or {})))
+            return self._pages.popleft()
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
 
 
 class ModelListFailingClient(FakeCodexClient):

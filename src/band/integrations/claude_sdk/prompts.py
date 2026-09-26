@@ -15,7 +15,7 @@ except ImportError:
     SystemPromptPreset = None  # type: ignore[assignment,misc]
 
 from band.core.types import AdapterFeatures, Capability
-from band.runtime.tools import CHAT_ID_FIELD_NAME
+from band.runtime.tools import CHAT_ID_FIELD_NAME, BandTool, get_tool_description
 
 
 def generate_claude_sdk_agent_prompt(
@@ -36,6 +36,8 @@ def generate_claude_sdk_agent_prompt(
         System prompt configuration dict
     """
     features = features or AdapterFeatures()
+    # Tool text comes from the master schema (runtime/tools), never retyped here.
+    no_reply_description = get_tool_description(BandTool.NO_REPLY)
 
     # Capability-gated sections
     memory_section = ""
@@ -148,13 +150,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 - `message_type`: "thought" (reasoning), "error" (problems), "task" (progress)
 - Use to share your thinking process or report errors
 
-**mcp__band__band_no_reply** - End your turn without posting anything, when the message needs no answer from you (addressed to someone else, an FYI, or already answered)
-```json
-{{
-  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
-  "reason": "Addressed to another agent"
-}}
-```
+**mcp__band__band_no_reply** - {no_reply_description}
 
 **mcp__band__band_create_chatroom** - Create a new chat room
 ```json

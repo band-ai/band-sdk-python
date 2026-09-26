@@ -285,6 +285,9 @@ class RoomCodexClient:
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
+    # {model id: advertised efforts} from this room's last successful
+    # model/list; ``None`` until one succeeds (unknown, not empty).
+    model_catalog: dict[str, tuple[str, ...]] | None = None
     # Serializes this room's turn processing so only one turn/RPC call is in
     # flight at a time for this room. A pending manual approval blocks
     # further turns in this room only, for up to ``approval_wait_timeout_s``
@@ -545,8 +548,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
         self._workspace_rooms: dict[str, str] = {}
-        # {model id: efforts} from the last model/list, adapter-wide.
-        self._advertised_efforts: dict[str, tuple[str, ...]] = {}
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
         )
@@ -1473,44 +1474,61 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
         model/list runs when no model is pinned (its first visible model is
         the default) or when a reasoning effort is configured, since that is
-        the only source of the model's accepted efforts. A failed listing
-        falls back to the pinned or default model and skips the check.
+        the only source of the model's accepted efforts. Each run replaces
+        this room's catalog; a failed listing leaves it unknown, so the
+        pinned or default model is used and the effort goes unchecked.
         """
         state = self._require_active_client_state()
         pinned = state.model_override or self.config.model
         models: list[HarnessModel] | None = None
         if not pinned or self.config.reasoning_effort:
-            models = await self._fetch_models()
+            models = await self._fetch_room_catalog(state)
         selected = pinned or (models[0].id if models else _DEFAULT_MODEL)
-        self._check_configured_effort(selected)
+        self._check_configured_effort(state, selected)
         return selected
 
-    async def _fetch_models(self) -> list[HarnessModel] | None:
+    async def _fetch_room_catalog(
+        self, state: RoomCodexClient
+    ) -> list[HarnessModel] | None:
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         try:
-            result = await self._client.request("model/list", {})
+            models = await fetch_codex_models(self._client)
         except Exception:
             logger.warning("model/list failed; model settings unchecked", exc_info=True)
+            state.model_catalog = None
             return None
-        models = codex_models(result)
-        self._advertised_efforts.update({m.id: m.efforts for m in models})
+        state.model_catalog = {model.id: model.efforts for model in models}
         return models
 
-    def _check_configured_effort(self, model: str) -> None:
+    def _check_configured_effort(self, state: RoomCodexClient, model: str) -> None:
+        """Refuse a configured effort the room's catalog says ``model`` lacks.
+
+        Skipped when the catalog is unknown, does not list ``model``, or
+        lists it without ``supportedReasoningEfforts``.
+        """
         effort = self.config.reasoning_effort
-        advertised = self._advertised_efforts.get(model)
-        if effort and advertised and effort not in advertised:
+        offered = self._advertised_efforts(state, model)
+        if effort and offered and effort not in offered:
             raise ValueError(
                 f"Codex does not offer reasoning_effort {effort!r} for model "
-                f"{model!r}; it offers: {', '.join(advertised)}"
+                f"{model!r}; it offers: {', '.join(offered)}"
             )
 
     def _accepted_efforts(self) -> tuple[str, ...]:
         """Efforts the room's current model accepts, as Codex advertised them."""
-        model = self._selected_model
-        advertised = self._advertised_efforts.get(model) if model else None
-        return advertised or tuple(sorted(_REASONING_EFFORTS))
+        state = self._require_active_client_state()
+        offered = self._advertised_efforts(state, state.selected_model)
+        return offered or tuple(sorted(_REASONING_EFFORTS))
+
+    @staticmethod
+    def _advertised_efforts(
+        state: RoomCodexClient, model: str | None
+    ) -> tuple[str, ...]:
+        """This room's advertised efforts for ``model``; empty when not known."""
+        if state.model_catalog is None or model is None:
+            return ()
+        return state.model_catalog.get(model, ())
 
     async def _ensure_thread(
         self,
@@ -3030,8 +3048,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if model_arg.lower() in {"list", "ls"}:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
-                result = await self._client.request("model/list", {})
-                models = self._visible_model_ids(result)
+                models = [m.id for m in await fetch_codex_models(self._client)]
                 if models:
                     preview = ", ".join(models[:10])
                     if len(models) > 10:
@@ -3734,10 +3751,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if not item.future.done():
                 item.future.set_result("decline")
 
-    @staticmethod
-    def _visible_model_ids(result: dict[str, Any]) -> list[str]:
-        return [model.id for model in codex_models(result)]
-
     async def preflight(self) -> PreflightResult:
         """Launch a throwaway app-server, handshake, check its login, close it."""
         return await preflight(self.config)
@@ -3799,6 +3812,23 @@ async def _probe_client(config: CodexAdapterConfig) -> AsyncIterator[CodexStdioC
         await client.close()
 
 
+async def fetch_codex_models(client: CodexClientProtocol) -> list[HarnessModel]:
+    """Every visible model from ``model/list``, following ``nextCursor``.
+
+    The one listing path for probes and room startup alike. Raises on a
+    failed request; an empty list is a successful, empty catalog.
+    """
+    models: list[HarnessModel] = []
+    params: dict[str, Any] = {}
+    while True:
+        result = await client.request("model/list", params)
+        models.extend(codex_models(result))
+        cursor = result.get("nextCursor") if isinstance(result, dict) else None
+        if not cursor:
+            return models
+        params = {"cursor": cursor}
+
+
 async def list_models(config: CodexAdapterConfig) -> list[HarnessModel]:
     """The models this Codex install offers the logged-in account.
 
@@ -3806,15 +3836,7 @@ async def list_models(config: CodexAdapterConfig) -> list[HarnessModel]:
     Tested with Codex 0.156.1.
     """
     async with _probe_client(config) as client:
-        models: list[HarnessModel] = []
-        params: dict[str, Any] = {}
-        while True:
-            result = await client.request("model/list", params)
-            models.extend(codex_models(result))
-            cursor = result.get("nextCursor") if isinstance(result, dict) else None
-            if not cursor:
-                return models
-            params = {"cursor": cursor}
+        return await fetch_codex_models(client)
 
 
 async def preflight(config: CodexAdapterConfig) -> PreflightResult:
