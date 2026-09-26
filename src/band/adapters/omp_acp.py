@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,15 +17,18 @@ from acp.schema import (
     ElicitationFormCapabilities,
     PermissionOption,
 )
+from acp.transports import default_environment
 from pydantic import JsonValue
 from typing_extensions import Unpack
 
+from band.core.harness import HarnessModel
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
     DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
     PermissionResolver,
     SpawnProcess,
+    _resolve_launcher,
     resolve_turn_timeout,
 )
 from band.integrations.acp.client_runtime import (
@@ -250,8 +255,55 @@ class OmpACPAdapter(ACPClientAdapter):
         return handler
 
 
+async def list_models(config: OmpACPAdapterConfig | None = None) -> list[HarnessModel]:
+    """The models this OMP install offers, from ``omp models --json``.
+
+    Runs the configured ``omp`` executable with the configured environment;
+    no ACP session or model turn. The subprocess is killed if the call is
+    cancelled. Tested with OMP 18.3.2.
+    """
+    config = config or OmpACPAdapterConfig()
+    [omp] = _resolve_launcher([config.command[0]])
+    proc = await asyncio.create_subprocess_exec(
+        omp,
+        "models",
+        "--json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**default_environment(), **(config.env or {})},
+    )
+    try:
+        stdout, stderr = await proc.communicate()
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"`{omp} models --json` exited {proc.returncode}: "
+            f"{stderr.decode(errors='replace').strip()}"
+        )
+    return omp_models(json.loads(stdout))
+
+
+def omp_models(listing: dict[str, Any]) -> list[HarnessModel]:
+    """Parse ``omp models --json``; ``id`` is the ``provider/model`` selector."""
+    return [
+        HarnessModel(
+            id=str(entry.get("selector") or entry["id"]),
+            label=str(entry.get("name") or entry["id"]),
+            provider=entry.get("provider"),
+            efforts=tuple(entry.get("thinking") or ()),
+        )
+        for entry in listing.get("models") or []
+        if isinstance(entry, dict) and entry.get("id")
+    ]
+
+
 __all__ = [
     "DEFAULT_OMP_ACP_COMMAND",
     "OmpACPAdapter",
     "OmpACPAdapterConfig",
+    "list_models",
+    "omp_models",
 ]

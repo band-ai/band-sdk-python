@@ -104,7 +104,7 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `workspace_for_room` | `Callable[[str], str] | None` | `None` | Optional override for a room workspace. By default, the adapter creates `./.band-workspaces/<room-id>`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
-| `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
+| `reasoning_effort` | `str \| None` | `None` | Reasoning effort, any value Codex advertises for the model (e.g. `"max"`). When Codex returns its model list, a value it does not offer for the selected model fails the room start; when the list is unavailable the value is sent unchecked. Replaces a `-c model_reasoning_effort=...` override in `codex_command`. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
 | `turn_timeout_s` | `float` | `180.0` | Maximum seconds to wait for one Codex turn. |
