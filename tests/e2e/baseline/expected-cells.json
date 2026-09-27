@@ -2053,7 +2053,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "agno",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2062,7 +2067,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "anthropic",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2071,7 +2081,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "claude_sdk",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2080,7 +2095,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "codex",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2089,7 +2109,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "copilot_acp",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2098,7 +2123,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "copilot_sdk",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2107,7 +2137,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "crewai",
       "lanes": [
-        "crewai"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2116,7 +2151,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "gemini",
       "lanes": [
-        "google"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2125,7 +2165,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "google_adk",
       "lanes": [
-        "google"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2134,7 +2179,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "langgraph",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2143,7 +2193,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "letta",
       "lanes": [
-        "letta"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2152,7 +2207,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "omp_acp",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2161,7 +2221,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "opencode",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2170,7 +2235,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "pydantic_ai",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2179,7 +2249,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2188,7 +2263,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "agno",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2197,7 +2277,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "anthropic",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2206,7 +2291,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "claude_sdk",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2215,7 +2305,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "codex",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2224,7 +2319,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "copilot_acp",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2233,7 +2333,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "copilot_sdk",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2242,7 +2347,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "crewai",
       "lanes": [
-        "crewai"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2251,7 +2361,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "gemini",
       "lanes": [
-        "google"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2260,7 +2375,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "langgraph",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2269,7 +2389,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "letta",
       "lanes": [
-        "letta"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2278,7 +2403,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "omp_acp",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2287,7 +2417,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "opencode",
       "lanes": [
-        "backends"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2296,7 +2431,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "pydantic_ai",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
@@ -2305,7 +2445,12 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
       ],
       "status": "na",
       "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"

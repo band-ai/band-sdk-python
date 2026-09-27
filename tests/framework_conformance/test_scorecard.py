@@ -449,6 +449,33 @@ def test_gate_honors_a_lane_pin_over_the_adapters_home_lane() -> None:
     assert pinned_ran.missing[0].test == cell.test
 
 
+def test_environment_gated_na_is_expected_in_every_lane() -> None:
+    class FileCell(FakeMatrixItem):
+        def get_closest_marker(self, name: str) -> object | None:
+            if name == ENV_GATED_MARKER:
+                return SimpleNamespace()
+            if name == "skipif":
+                return SimpleNamespace(kwargs={"reason": "file transfer unavailable"})
+            return super().get_closest_marker(name)
+
+    item = FileCell(f"m.py::t[{_ADAPTER_A}]", _ADAPTER_A)
+    cell = next(c for c in expected_cells([item]) if c.adapter == _ADAPTER_A)
+    assert cell.status == "na"
+    assert str(_LANE_B.id) in cell.lanes
+    result = gate_manifest(
+        {
+            (str(_LANE_B.id), "ubuntu"): [
+                ScorecardRow(cell.test, cell.adapter, "na", cell.reason)
+            ]
+        },
+        [cell],
+        {str(_LANE_B.id): ("ubuntu",)},
+        str(_LANE_B.id),
+        "ubuntu",
+    )
+    assert result.ok is True
+
+
 def test_gate_summary_reports_totals_and_names_the_culprit() -> None:
     rows = [
         ScorecardRow("t", _ADAPTER_A, "pass"),

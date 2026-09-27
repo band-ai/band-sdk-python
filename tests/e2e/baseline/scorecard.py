@@ -241,9 +241,9 @@ def expected_cells(items: Iterable[pytest.Item]) -> list[ExpectedCell]:
     for item in items:
         test, adapter = _row_key(item.nodeid)
         target = _resolve_expected_lane(item, lane_of)
-        lanes = (target,) if target is not None else all_lanes
         env_gated = item.get_closest_marker(ENV_GATED_MARKER)
         status: Literal["pass", "na"] = "na" if env_gated else "pass"
+        lanes = all_lanes if env_gated or target is None else (target,)
         skipif = item.get_closest_marker("skipif") if env_gated else None
         reason = skipif.kwargs.get("reason") if skipif is not None else None
         cells[(test, adapter)] = ExpectedCell(test, adapter, lanes, status, reason)
