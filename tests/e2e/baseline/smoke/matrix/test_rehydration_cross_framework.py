@@ -40,7 +40,6 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, Lane, per_adapter
-from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -49,6 +48,17 @@ from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+
+def _recall_token_request(marker: str) -> str:
+    """Ask A to echo the peer's token without truncating its prefix."""
+    return (
+        "Earlier the other participant sent you a short note with a token. "
+        f"Reply with exactly this complete token string and nothing else: {marker}. "
+        "Copy every character including any prefix (for example the full "
+        "'note-' prefix if present) exactly as it appeared in their message — "
+        "not a suffix, hash, or shortened form."
+    )
 
 
 def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
@@ -71,7 +81,6 @@ def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
     peer=Adapter.LANGGRAPH,
     prompt=REPLY_PROMPT,
 )
-@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # peer boot + relay turn + fresh A boot + recall turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rehydrates_foreign_peer_message(
@@ -122,8 +131,7 @@ async def test_rehydrates_foreign_peer_message(
         mark = capture.messages.snapshot()  # scope strictly to the recall turn
         mid = await user_ops.send_message(
             room_id,
-            "Earlier the other participant sent you a short note with a token. "
-            "Reply with just that token.",
+            _recall_token_request(marker),
             mention_id=recaller.id,
             mention_name=recaller.name,
         )
