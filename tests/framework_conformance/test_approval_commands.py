@@ -47,6 +47,7 @@ def test_approval_commands_write_and_append_with_host_shell(tmp_path: Path) -> N
 
 def test_approval_closure_requires_reply_after_the_last_request_and_notice() -> None:
     dialect = DIALECTS[Adapter.OPENCODE]
+    closing_reply = "turn-finished"
     request = APPROVAL_REQUESTED_TEMPLATE.format(
         permission="bash", patterns="cat approval.txt", request_id="follow-up"
     )
@@ -68,5 +69,19 @@ def test_approval_closure_requires_reply_after_the_last_request_and_notice() -> 
         message(request),
         message(notice.text),
     ]
-    assert not dialect.settled(before_close, notice)
-    assert dialect.settled([*before_close, message("The command finished.")], notice)
+    assert not dialect.settled(before_close, notice, closing_reply=closing_reply)
+    assert not dialect.settled(
+        [*before_close, message("Checking the next command.")],
+        notice,
+        closing_reply=closing_reply,
+    )
+    assert not dialect.settled(
+        [*before_close, message("OpenCode completed the turn without a text reply.")],
+        notice,
+        closing_reply=closing_reply,
+    )
+    assert dialect.settled(
+        [*before_close, message(closing_reply)],
+        notice,
+        closing_reply=closing_reply,
+    )

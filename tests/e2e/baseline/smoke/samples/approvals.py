@@ -100,11 +100,13 @@ def marker_command(marker: str, target: Path) -> str:
     return f'echo {marker} > "{target.name}"'
 
 
-def command_request(marker: str, target: Path) -> str:
+def command_request(marker: str, target: Path, *, done: str) -> str:
     """Ask for exactly one shell command whose only effect is writing ``marker``."""
     return (
         f"Use your shell tool to run exactly `{marker_command(marker, target)}`. "
-        "You must execute it with the tool, not answer from memory."
+        "You must execute it with the tool, not answer from memory. "
+        "Do not run a second shell command to check the result. "
+        f"After the tool attempt is resolved, finish with exactly `{done}`."
     )
 
 
@@ -122,13 +124,14 @@ def repeat_request(command: str, done: str) -> str:
     )
 
 
-def commands_request(*commands: str) -> str:
+def commands_request(*commands: str, done: str) -> str:
     """Ask for each command as its own tool call, none retried after a decline."""
     listed = " and ".join(f"`{command}`" for command in commands)
     return (
         f"Use your shell tool to run exactly these commands: {listed}. Run each one "
         "as its own separate tool call, never combined into one command. If a "
-        "command is declined, do not retry it; just say so and continue."
+        "command is declined, do not retry it. Do not run any further shell "
+        f"commands. When both attempts are resolved, finish with exactly `{done}`."
     )
 
 
@@ -275,10 +278,12 @@ class ApprovalDialect:
         return list(found.values())
 
     def settled(
-        self, since_request: list[MessageCreatedPayload], *notices: Notice
+        self,
+        since_request: list[MessageCreatedPayload],
+        *notices: Notice,
+        closing_reply: str,
     ) -> bool:
-        """Whether the turn has played out past its decisions: every notice is shown
-        and the agent has closed the turn with a reply that is none of them."""
+        """Whether every notice is shown and the requested final reply followed it."""
         contents = [m.content or "" for m in since_request]
         if not all(notice.streamed_in(contents) for notice in notices):
             return False
@@ -292,7 +297,7 @@ class ApprovalDialect:
             default=-1,
         )
         return any(
-            content.strip()
+            closing_reply in content
             and self.request.search(content) is None
             and not any(notice.text in content for notice in notices)
             for content in contents[last_control + 1 :]

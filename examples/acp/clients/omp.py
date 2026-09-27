@@ -73,6 +73,7 @@ async def main() -> None:
 
     config = OmpACPAdapterConfig(
         cwd=settings.acp_agent_cwd,
+        model=settings.omp_model,
         env=omp_provider_env(model=settings.omp_model, api_key=api_key),
         inject_band_tools=True,
     )

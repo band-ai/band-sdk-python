@@ -64,6 +64,19 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
 
+
+def readback_commands(target: Path) -> frozenset[str]:
+    """The one optional read-only follow-up seen from coding agents after a write."""
+    return frozenset(
+        {
+            f"cat {target.name}",
+            f'cat "{target.name}"',
+            f'Get-Content "{target.name}"',
+            f'Get-Content -LiteralPath "{target}"',
+        }
+    )
+
+
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 # Sequential live barriers: the request, then the decided turn's closing reply.
 BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=2)
@@ -106,11 +119,10 @@ class ApprovalRoom:
         cursor = await self.say(self.dialect.reply(outcome, request))
         self.answered_requests.add(request["token"])
         logger.info(
-            "Approval decision adapter=%s request=%s permission=%s patterns=%s outcome=%s",
+            "Approval decision adapter=%s request=%s permission=%s outcome=%s",
             self.adapter_id,
             request["token"],
             request.groupdict().get("permission", ""),
-            request.groupdict().get("patterns", ""),
             outcome,
         )
         return cursor
@@ -130,14 +142,24 @@ class ApprovalRoom:
             deadline_s=self.budget.deadline_s,
         )
 
-    async def closed(self, *notices: Notice, since: int) -> None:
+    async def closed(
+        self,
+        *notices: Notice,
+        since: int,
+        closing_reply: str,
+        allowed_followup_commands: frozenset[str] = frozenset(),
+    ) -> None:
         """Decline extra requests and wait for the decided turn to close."""
         expected_notices = list(notices)
+        unexpected_requests: list[str] = []
+        known_followups = 0
         while True:
             await self.capture.wait_until(
                 lambda _msgs: (
                     self.dialect.settled(
-                        self.capture.messages.since(since), *expected_notices
+                        self.capture.messages.since(since),
+                        *expected_notices,
+                        closing_reply=closing_reply,
                     )
                     or any(
                         request["token"] not in self.answered_requests
@@ -156,24 +178,38 @@ class ApprovalRoom:
                 if request["token"] not in self.answered_requests
             ]
             if not pending and self.dialect.settled(
-                self.capture.messages.since(since), *expected_notices
+                self.capture.messages.since(since),
+                *expected_notices,
+                closing_reply=closing_reply,
             ):
                 break
             for request in pending:
+                readback = (
+                    request.groupdict().get("permission") == "bash"
+                    and request.groupdict().get("patterns") in allowed_followup_commands
+                    and known_followups == 0
+                )
+                if readback:
+                    known_followups += 1
+                else:
+                    unexpected_requests.append(request["token"])
                 logger.info(
-                    "Declining follow-up approval adapter=%s request=%s permission=%s patterns=%s",
+                    "Declining follow-up approval adapter=%s request=%s permission=%s",
                     self.adapter_id,
                     request["token"],
                     request.groupdict().get("permission", ""),
-                    request.groupdict().get("patterns", ""),
                 )
                 await self.decide(Outcome.DECLINE, request)
                 expected_notices.append(self.dialect.notice(Outcome.DECLINE, request))
+            if unexpected_requests:
+                for notice in expected_notices:
+                    await notice.assert_shown(self.capture, self.agent.id)
+                pytest.fail(f"Unexpected follow-up approvals: {unexpected_requests}")
         logger.info(
-            "Approval turn closed adapter=%s requests=%s final_reply=%s",
+            "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
             self.adapter_id,
             sorted(self.answered_requests),
-            self.said_since(since)[-1],
+            len(self.said_since(since)[-1]),
         )
         for notice in expected_notices:
             await notice.assert_shown(self.capture, self.agent.id)
@@ -184,22 +220,22 @@ class ApprovalRoom:
                 if call.name.casefold() not in ("bash", "powershell"):
                     continue
                 logger.info(
-                    "Approval shell call adapter=%s request=%s tool=%s args=%s",
+                    "Approval shell call adapter=%s request=%s tool=%s arg_keys=%s",
                     self.adapter_id,
                     call.tool_call_id,
                     call.name,
-                    call.args,
+                    sorted(call.args),
                 )
             for result in results:
                 if result.name.casefold() not in ("bash", "powershell"):
                     continue
                 logger.info(
-                    "Approval shell result adapter=%s request=%s tool=%s error=%s output=%s",
+                    "Approval shell result adapter=%s request=%s tool=%s error=%s output_length=%s",
                     self.adapter_id,
                     result.tool_call_id,
                     result.name,
                     result.is_error,
-                    result.output,
+                    len(result.output),
                 )
 
     def said_since(self, since: int) -> list[str]:
@@ -269,6 +305,7 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
     """Approve runs the command, decline and an expired wait don't; a reply sent
     after the wait expired is told the ask is gone, and still runs nothing."""
     marker = unique_marker("approval")
+    done = unique_marker("closed")
     async with approval_room(
         cell,
         user_ops,
@@ -278,13 +315,20 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
         wait_timeout_s=_wait_timeout_s(outcome),
     ) as (room, workdir):
         target = workdir / "approval.txt"
-        await room.say(command_request(marker, target))
+        await room.say(command_request(marker, target, done=done))
         [request] = await room.requests(1)
         after_request = room.capture.messages.snapshot()
 
         if outcome is not Outcome.TIMEOUT:
             await room.decide(outcome, request)
-        await room.closed(room.dialect.notice(outcome, request), since=after_request)
+        await room.closed(
+            room.dialect.notice(outcome, request),
+            since=after_request,
+            closing_reply=done,
+            allowed_followup_commands=(
+                readback_commands(target) if outcome is Outcome.APPROVE else frozenset()
+            ),
+        )
 
         if outcome is Outcome.TIMEOUT:
             late = await room.say(room.dialect.reply(Outcome.APPROVE, request))
@@ -293,7 +337,9 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
             assert not any(approved in said for said in room.said_since(late))
 
         if outcome is Outcome.APPROVE:
-            assert target.read_text().splitlines() == [marker]
+            assert [line.rstrip() for line in target.read_text().splitlines()] == [
+                marker
+            ]
         else:
             assert not target.exists(), f"{outcome} still ran the gated command"
 
@@ -315,7 +361,8 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
         commands = [
             marker_command(marker, target) for target, marker in markers.items()
         ]
-        start = await room.say(commands_request(*commands))
+        done = unique_marker("closed")
+        start = await room.say(commands_request(*commands, done=done))
         [approved] = await room.requests(1, since=start)
         await room.decide(Outcome.APPROVE, approved)
         declined = (await room.requests(2, since=start))[1]
@@ -324,12 +371,13 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
             room.dialect.notice(Outcome.APPROVE, approved),
             room.dialect.notice(Outcome.DECLINE, declined),
             since=start,
+            closing_reply=done,
         )
         # Inside the block: leaving it deletes the workdir.
         landed = {t: m for t, m in markers.items() if t.exists()}
         assert len(landed) == 1, f"expected exactly one command to run, got {landed}"
         [(target, marker)] = landed.items()
-        assert target.read_text().splitlines() == [marker]
+        assert [line.rstrip() for line in target.read_text().splitlines()] == [marker]
 
 
 @per_adapter(*REFUSING)
@@ -344,6 +392,7 @@ async def test_only_an_authorized_member_decides_an_ask(
     """A room member outside the approver list is refused and the command stays
     parked; the approver's reply then runs it."""
     marker = unique_marker("approver")
+    done = unique_marker("closed")
     owner_id = await user_ops.whoami()
     async with (
         approval_room(
@@ -359,7 +408,7 @@ async def test_only_an_authorized_member_decides_an_ask(
         await user_ops.add_participant(room.room_id, second_user_id)
         assert second_user_id in await user_ops.list_participant_ids(room.room_id)
         target = workdir / "approval.txt"
-        await room.say(command_request(marker, target))
+        await room.say(command_request(marker, target, done=done))
         [request] = await room.requests(1)
         approve = room.dialect.reply(Outcome.APPROVE, request)
         resolved = room.dialect.notice(Outcome.APPROVE, request)
@@ -371,7 +420,12 @@ async def test_only_an_authorized_member_decides_an_ask(
         assert not target.exists(), "a refused approver's reply ran the command"
 
         approved = await room.decide(Outcome.APPROVE, request)
-        await room.closed(resolved, since=approved)
+        await room.closed(
+            resolved,
+            since=approved,
+            closing_reply=done,
+            allowed_followup_commands=readback_commands(target),
+        )
         assert target.read_text().strip() == marker
 
 
@@ -401,7 +455,10 @@ async def test_a_session_approval_covers_a_repeat_of_the_same_command(
 
         asked = room.dialect.find_requests(room.capture.messages.since(start))
         assert [match["token"] for match in asked] == [request["token"]]
-        assert target.read_text().splitlines() == [marker, marker]
+        assert [line.rstrip() for line in target.read_text().splitlines()] == [
+            marker,
+            marker,
+        ]
 
 
 @per_adapter(*ASKING)
