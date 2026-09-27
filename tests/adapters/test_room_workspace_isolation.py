@@ -46,6 +46,17 @@ def test_custom_workspace_is_created_on_first_resolution(tmp_path: Path) -> None
     assert workspace.is_dir()
 
 
+def test_relative_custom_workspace_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="must return an absolute path"):
+        resolve_room_workspace("room-a", lambda _room_id: "workspace")
+
+    assert not (tmp_path / "workspace").exists()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
 @pytest.mark.parametrize("workspace", [r"\workspace", "/workspace"])
 @pytest.mark.asyncio
