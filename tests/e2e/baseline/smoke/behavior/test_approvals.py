@@ -110,7 +110,7 @@ class ApprovalRoom:
     dialect: ApprovalDialect
     user_ops: UserOps
     budget: SlowTurnBudget
-    answered_requests: set[str] = field(default_factory=set)
+    handled_requests: set[str] = field(default_factory=set)
 
     async def say(self, text: str, *, sender: UserOps | None = None) -> int:
         """Post ``text`` to the agent; return a cursor at what came before it."""
@@ -123,7 +123,7 @@ class ApprovalRoom:
     async def decide(self, outcome: Outcome, request: re.Match[str]) -> int:
         """Answer one request as the room owner."""
         cursor = await self.say(self.dialect.reply(outcome, request))
-        self.answered_requests.add(request["token"])
+        self.handled_requests.add(request["token"])
         logger.info(
             "Approval decision adapter=%s request=%s permission=%s outcome=%s",
             self.adapter_id,
@@ -132,6 +132,10 @@ class ApprovalRoom:
             outcome,
         )
         return cursor
+
+    def expect_timeout(self, request: re.Match[str]) -> None:
+        """Account for an unanswered request whose expiry notice is expected."""
+        self.handled_requests.add(request["token"])
 
     async def requests(self, count: int, *, since: int = 0) -> list[re.Match[str]]:
         """The first ``count`` approval requests posted after ``since``."""
@@ -165,7 +169,7 @@ class ApprovalRoom:
                 await self._wait_for_reply_or_request(
                     since, expected_notices, cursor_reply
                 )
-                pending = self._unanswered_requests(self.capture.messages.since(since))
+                pending = self._unhandled_requests(self.capture.messages.since(since))
                 if not pending and self.dialect.settled(
                     self.capture.messages.since(since),
                     *expected_notices,
@@ -184,7 +188,7 @@ class ApprovalRoom:
                         )
                         if message.sender_id == self.agent.id
                     ]
-                    pending = self._unanswered_requests(durable)
+                    pending = self._unhandled_requests(durable)
                     if not pending and self.dialect.settled(
                         durable, *expected_notices, closing_reply=None
                     ):
@@ -214,23 +218,17 @@ class ApprovalRoom:
                         self.dialect.notice(Outcome.DECLINE, request)
                     )
                 if unexpected_requests:
-                    for notice in expected_notices:
-                        await notice.assert_shown(self.capture, self.agent.id)
                     pytest.fail(
                         f"Unexpected follow-up approvals: {unexpected_requests}"
                     )
                 if self.adapter_id is Adapter.OPENCODE and any(
                     NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
                 ):
-                    if await self.capture.usage(sender_id=self.agent.id):
-                        pytest.fail(
-                            "OpenCode ended the approval turn without a text reply"
-                        )
-                    await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
+                    pytest.fail("OpenCode ended the approval turn without a text reply")
         logger.info(
             "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
             self.adapter_id,
-            sorted(self.answered_requests),
+            sorted(self.handled_requests),
             len(self.said_since(since)[-1]),
         )
         for notice in expected_notices:
@@ -260,13 +258,13 @@ class ApprovalRoom:
                     len(result.output),
                 )
 
-    def _unanswered_requests(
+    def _unhandled_requests(
         self, messages: list[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:
         return [
             request
             for request in self.dialect.find_requests(messages)
-            if request["token"] not in self.answered_requests
+            if request["token"] not in self.handled_requests
         ]
 
     async def _wait_for_reply_or_request(
@@ -279,7 +277,7 @@ class ApprovalRoom:
                     *notices,
                     closing_reply=closing_reply,
                 )
-                or bool(self._unanswered_requests(self.capture.messages.since(since)))
+                or bool(self._unhandled_requests(self.capture.messages.since(since)))
                 or any(
                     NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
                 )
@@ -370,6 +368,8 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
 
         if outcome is not Outcome.TIMEOUT:
             await room.decide(outcome, request)
+        else:
+            room.expect_timeout(request)
         await room.closed(
             room.dialect.notice(outcome, request),
             since=after_request,

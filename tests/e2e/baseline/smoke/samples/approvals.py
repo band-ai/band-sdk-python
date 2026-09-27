@@ -109,6 +109,7 @@ def command_request(marker: str, target: Path, *, done: str) -> str:
     return (
         f"Use your shell tool to run exactly `{marker_command(marker, target)}`. "
         "You must execute it with the tool, not answer from memory. "
+        "If permission is declined or expires, do not retry with another tool or shell. "
         "Do not run a second shell command to check the result. "
         f"After the tool attempt is resolved, finish with exactly `{done}`."
     )
