@@ -166,5 +166,14 @@ async def test_recalls_after_rejoin(
             mention_id=identity.id,
             mention_name=identity.name,
         )
-        replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+        try:
+            replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+        except TimeoutError as exc:
+            results = await capture.tool_results(
+                sender_id=identity.id, include_memory=True
+            )
+            raise TimeoutError(
+                f"{exc}; observed tool results: "
+                f"{[(result.name, result.is_error) for result in results]}"
+            ) from exc
         replies.assert_contains_any([note])
