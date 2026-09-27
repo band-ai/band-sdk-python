@@ -207,7 +207,7 @@ async def test_memory_survives_adapter_rehydration(
     # (opencode reports a tool call once, on the first frame it sees, which for a
     # PENDING frame carries no arguments yet) and to whether the model chose to
     # filter server-side rather than list and read.
-    replies.assert_contains_any([marker])
+    replies.assert_contains_exact(marker)
     mem.calls.assert_list_called()
     mem.calls.assert_get_called()
     mem.stored.assert_stored(content=marker)

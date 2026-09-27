@@ -181,6 +181,14 @@ def test_assert_at_most_raises_above_ceiling_naming_contents() -> None:
         replies.assert_at_most(2)
 
 
+def test_exact_content_assertion_rejects_changed_marker_case() -> None:
+    replies = Replies([_reply("The marker is Rehydratemem-a1b2c3d4.")])
+
+    replies.assert_contains_exact("Rehydratemem-a1b2c3d4")
+    with pytest.raises(AssertionError, match="exact value"):
+        replies.assert_contains_exact("rehydratemem-a1b2c3d4")
+
+
 # --- running_members (shared concurrent-start machinery) ----------------------
 
 
