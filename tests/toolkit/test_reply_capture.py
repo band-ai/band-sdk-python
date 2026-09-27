@@ -22,6 +22,7 @@ tree which is skipped unless ``E2E_TESTS_ENABLED``.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -61,6 +62,18 @@ def _processed(message_id: str, recipient_id: str) -> MessageCreatedPayload:
         updated_at="2026-01-01T00:00:00Z",
         metadata={"delivery_status": {recipient_id: {"status": "processed"}}},
     )
+
+
+def test_reply_capture_log_omits_message_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    capture = ReplyCapture(ROOM)
+    with caplog.at_level(logging.INFO, logger="tests.e2e.baseline.toolkit.capture"):
+        capture._on_message(_reply(AGENT, "private approval command"))
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Captured agent reply message=m-reply length=24"
+    ]
 
 
 async def _drain() -> None:

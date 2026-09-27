@@ -150,15 +150,20 @@ class UserOps:
             if error.status_code != 409 or not await self.has_contact(other_id):
                 raise
 
-    async def _establish_contact(
-        self, other: UserOps, other_profile: UserDetails
-    ) -> None:
+    async def _accept_pending_contact(self, other: UserOps, other_id: str) -> bool:
         owner_id = await self.whoami()
         if request_id := await other._received_request_from(owner_id):
             await other._approve_contact_request(request_id, owner_id)
-            return
-        if request_id := await self._received_request_from(other_profile.id):
-            await self._approve_contact_request(request_id, other_profile.id)
+            return True
+        if request_id := await self._received_request_from(other_id):
+            await self._approve_contact_request(request_id, other_id)
+            return True
+        return False
+
+    async def _establish_contact(
+        self, other: UserOps, other_profile: UserDetails
+    ) -> None:
+        if await self._accept_pending_contact(other, other_profile.id):
             return
 
         try:
@@ -172,15 +177,11 @@ class UserOps:
                 raise
             if await self.has_contact(other_profile.id):
                 return
-            if request_id := await other._received_request_from(owner_id):
-                await other._approve_contact_request(request_id, owner_id)
-                return
-            if request_id := await self._received_request_from(other_profile.id):
-                await self._approve_contact_request(request_id, other_profile.id)
+            if await self._accept_pending_contact(other, other_profile.id):
                 return
             raise
         if not await self.has_contact(other_profile.id):
-            await other._approve_contact_request(request.data.id, owner_id)
+            await other._approve_contact_request(request.data.id, await self.whoami())
 
     async def lookup_peers(
         self,

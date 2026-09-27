@@ -91,6 +91,8 @@ class BaselineRun(BaseSettings):
     # to this path at session end. Empty = don't emit (the local default). CI sets one
     # path per lane; a final job merges them (see scorecard.py).
     scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
+    # Emit content-free approval phase records in focused first-attempt runs.
+    first_attempt_diagnostics: bool = False  # BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS
 
 
 class LLMCredentials(BaseSettings):

@@ -22,7 +22,7 @@ set -uo pipefail
 mkdir -p artifacts/attempts
 pytest_args=()
 if [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" = "true" ]; then
-  pytest_args+=(-p no:rerunfailures --log-cli-level=INFO)
+  pytest_args+=(-p no:rerunfailures --log-cli-level=WARNING)
 fi
 if [ -n "${BAND_E2E_TEST_SELECTOR:-}" ] && \
   [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" != "true" ]; then

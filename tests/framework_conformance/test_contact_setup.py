@@ -19,6 +19,9 @@ class ContactState:
     pending: dict[str, tuple[str, str]] = field(default_factory=dict)
     approvals: list[str] = field(default_factory=list)
     create_auto_accepts_inverse: bool = False
+    create_barrier: asyncio.Barrier | None = None
+    create_attempts: int = 0
+    create_conflicts: int = 0
 
     def connected(self, first: str, second: str) -> bool:
         return frozenset({first, second}) in self.contacts
@@ -52,6 +55,9 @@ class ContactAPI:
         return SimpleNamespace(data=received, metadata=SimpleNamespace(total_pages=1))
 
     async def create_contact_request(self, *, contact_request: Any) -> SimpleNamespace:
+        self.state.create_attempts += 1
+        if self.state.create_barrier is not None:
+            await self.state.create_barrier.wait()
         recipient = contact_request.recipient_handle
         if self.state.create_auto_accepts_inverse:
             self.state.pending["inverse"] = (recipient, self.owner)
@@ -68,8 +74,10 @@ class ContactAPI:
             self.state.accept(self.owner, recipient)
             return SimpleNamespace(data=SimpleNamespace(id=inverse))
         if self.state.connected(self.owner, recipient):
+            self.state.create_conflicts += 1
             raise ApiError(status_code=409)
         if (self.owner, recipient) in self.state.pending.values():
+            self.state.create_conflicts += 1
             raise ApiError(status_code=409)
         self.state.pending["new"] = (self.owner, recipient)
         return SimpleNamespace(data=SimpleNamespace(id="new"))
@@ -131,7 +139,7 @@ async def test_contact_setup_reuses_both_pending_directions_and_preserves_access
 
 
 async def test_concurrent_contact_setup_keeps_shared_relationship() -> None:
-    state = ContactState()
+    state = ContactState(create_barrier=asyncio.Barrier(2))
     owner, second = user(state, "owner"), user(state, "second")
 
     async def setup() -> None:
@@ -139,4 +147,6 @@ async def test_concurrent_contact_setup_keeps_shared_relationship() -> None:
             assert state.connected("owner", "second")
 
     await asyncio.gather(setup(), setup())
+    assert state.create_attempts == 2
+    assert state.create_conflicts == 1
     assert state.connected("owner", "second")

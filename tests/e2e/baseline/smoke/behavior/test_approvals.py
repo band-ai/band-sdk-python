@@ -68,6 +68,11 @@ from tests.e2e.baseline.toolkit.provisioning import (
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
+APPROVAL_LOG_LEVEL = (
+    logging.WARNING
+    if BaselineSettings().run.first_attempt_diagnostics
+    else logging.INFO
+)
 TERMINAL_POLL_INTERVAL_S = 0.5
 
 
@@ -124,7 +129,8 @@ class ApprovalRoom:
         """Answer one request as the room owner."""
         cursor = await self.say(self.dialect.reply(outcome, request))
         self.handled_requests.add(request["token"])
-        logger.info(
+        logger.log(
+            APPROVAL_LOG_LEVEL,
             "Approval decision adapter=%s request=%s permission=%s outcome=%s",
             self.adapter_id,
             request["token"],
@@ -181,6 +187,12 @@ class ApprovalRoom:
                     if not await self.capture.usage(sender_id=self.agent.id):
                         await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
                         continue
+                    logger.log(
+                        APPROVAL_LOG_LEVEL,
+                        "Approval terminal usage adapter=%s requests=%s",
+                        self.adapter_id,
+                        sorted(self.handled_requests),
+                    )
                     durable = [
                         message
                         for message in await self.user_ops.list_messages(
@@ -207,7 +219,8 @@ class ApprovalRoom:
                         known_followups += 1
                     else:
                         unexpected_requests.append(request["token"])
-                    logger.info(
+                    logger.log(
+                        APPROVAL_LOG_LEVEL,
                         "Declining follow-up approval adapter=%s request=%s permission=%s",
                         self.adapter_id,
                         request["token"],
@@ -221,11 +234,16 @@ class ApprovalRoom:
                     pytest.fail(
                         f"Unexpected follow-up approvals: {unexpected_requests}"
                     )
-                if self.adapter_id is Adapter.OPENCODE and any(
-                    NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
-                ):
+                if self._opencode_missing_text_reply(since):
+                    logger.log(
+                        APPROVAL_LOG_LEVEL,
+                        "Approval no-text fallback adapter=%s requests=%s",
+                        self.adapter_id,
+                        sorted(self.handled_requests),
+                    )
                     pytest.fail("OpenCode ended the approval turn without a text reply")
-        logger.info(
+        logger.log(
+            APPROVAL_LOG_LEVEL,
             "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
             self.adapter_id,
             sorted(self.handled_requests),
@@ -239,7 +257,8 @@ class ApprovalRoom:
             for call in calls:
                 if call.name.casefold() not in ("bash", "powershell"):
                     continue
-                logger.info(
+                logger.log(
+                    APPROVAL_LOG_LEVEL,
                     "Approval shell call adapter=%s request=%s tool=%s arg_keys=%s",
                     self.adapter_id,
                     call.tool_call_id,
@@ -249,7 +268,8 @@ class ApprovalRoom:
             for result in results:
                 if result.name.casefold() not in ("bash", "powershell"):
                     continue
-                logger.info(
+                logger.log(
+                    APPROVAL_LOG_LEVEL,
                     "Approval shell result adapter=%s request=%s tool=%s error=%s output_length=%s",
                     self.adapter_id,
                     result.tool_call_id,
@@ -278,11 +298,14 @@ class ApprovalRoom:
                     closing_reply=closing_reply,
                 )
                 or bool(self._unhandled_requests(self.capture.messages.since(since)))
-                or any(
-                    NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
-                )
+                or self._opencode_missing_text_reply(since)
             ),
             deadline_s=self.budget.deadline_s,
+        )
+
+    def _opencode_missing_text_reply(self, since: int) -> bool:
+        return self.adapter_id is Adapter.OPENCODE and any(
+            NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
         )
 
     def said_since(self, since: int) -> list[str]:
