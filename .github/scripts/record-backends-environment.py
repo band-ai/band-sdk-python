@@ -28,19 +28,24 @@ def copilot_cli_version() -> str:
 
 
 def cursor_cli_version(settings: BaselineSettings) -> str:
-    binary = (
-        settings.backends.cursor_command.split()[0]
+    command = (
+        settings.backends.cursor_command.split()
         if settings.backends.cursor_command.strip()
-        else "agent"
+        else ["agent", "acp"]
     )
-    if (cli := shutil.which(binary)) is None:
+    if command[-1] == "acp":
+        command[-1] = "--version"
+    else:
+        command.append("--version")
+    if (cli := shutil.which(command[0])) is None:
         return "unavailable"
-    command: str | list[str] = [cli, "--version"]
+    command[0] = cli
+    invocation: str | list[str] = command
     if pathlib.Path(cli).suffix.lower() in {".cmd", ".bat"}:
-        command = f'"{cli}" --version'
+        invocation = subprocess.list2cmdline(command)
     completed = subprocess.run(
-        command,
-        shell=isinstance(command, str),
+        invocation,
+        shell=isinstance(invocation, str),
         capture_output=True,
         text=True,
         check=False,

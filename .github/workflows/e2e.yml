@@ -273,8 +273,18 @@ jobs:
         if (-not (Test-Path $agentCommand)) {
           throw 'Cursor agent command was not installed'
         }
+        $versions = @(Get-ChildItem -Path (Join-Path $agentDir 'versions') -Directory)
+        if ($versions.Count -ne 1) {
+          throw 'Expected one installed Cursor CLI version'
+        }
+        $node = Join-Path $versions[0].FullName 'node.exe'
+        $entrypoint = Join-Path $versions[0].FullName 'index.js'
+        if (-not (Test-Path $node) -or -not (Test-Path $entrypoint)) {
+          throw 'Cursor CLI runtime was not installed'
+        }
         Add-Content -Path $env:GITHUB_PATH -Value $agentDir
-        Add-Content -Path $env:GITHUB_ENV -Value "CURSOR_COMMAND=$agentCommand acp"
+        # Bypass agent.cmd's PowerShell layer for ACP's bidirectional stdio.
+        Add-Content -Path $env:GITHUB_ENV -Value "CURSOR_COMMAND=$node $entrypoint acp"
 
     - name: Verify Cursor CLI (Linux)
       if: matrix.lane == 'backends' && matrix.os == 'ubuntu'
