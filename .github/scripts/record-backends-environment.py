@@ -27,8 +27,13 @@ def copilot_cli_version() -> str:
     return completed.stdout.strip()
 
 
-def cursor_cli_version() -> str:
-    if (cli := shutil.which("agent")) is None:
+def cursor_cli_version(settings: BaselineSettings) -> str:
+    binary = (
+        settings.backends.cursor_command.split()[0]
+        if settings.backends.cursor_command.strip()
+        else "agent"
+    )
+    if (cli := shutil.which(binary)) is None:
         return "unavailable"
     command: str | list[str] = [cli, "--version"]
     if pathlib.Path(cli).suffix.lower() in {".cmd", ".bat"}:
@@ -47,7 +52,7 @@ def main() -> None:
     settings = BaselineSettings()
     metadata = {
         "copilot_cli": copilot_cli_version(),
-        "cursor_cli": cursor_cli_version(),
+        "cursor_cli": cursor_cli_version(settings),
         "os": platform.platform(),
         "copilot_auth": {
             "mode": "byok",

@@ -266,14 +266,23 @@ jobs:
       run: |
         irm 'https://cursor.com/install?win32=true' | iex
         $agentDir = Join-Path $env:LOCALAPPDATA 'cursor-agent'
-        if (-not (Test-Path (Join-Path $agentDir 'agent.cmd')) -and
-            -not (Test-Path (Join-Path $agentDir 'agent.exe'))) {
+        $agentCommand = Join-Path $agentDir 'agent.exe'
+        if (-not (Test-Path $agentCommand)) {
+          $agentCommand = Join-Path $agentDir 'agent.cmd'
+        }
+        if (-not (Test-Path $agentCommand)) {
           throw 'Cursor agent command was not installed'
         }
         Add-Content -Path $env:GITHUB_PATH -Value $agentDir
+        Add-Content -Path $env:GITHUB_ENV -Value "CURSOR_COMMAND=$agentCommand acp"
 
-    - name: Verify Cursor CLI
-      if: matrix.lane == 'backends'
+    - name: Verify Cursor CLI (Linux)
+      if: matrix.lane == 'backends' && matrix.os == 'ubuntu'
+      run: agent --version
+
+    - name: Verify Cursor CLI (Windows)
+      if: matrix.lane == 'backends' && matrix.os == 'windows'
+      shell: powershell
       run: agent --version
 
     - name: Install Bun and OMP (omp_acp)
