@@ -85,6 +85,7 @@ class ApprovalRoom:
     """One manual-approval agent in its own room, driven by the room's humans."""
 
     agent: ProvisionedAgent
+    adapter_id: Adapter
     room_id: str
     capture: ReplyCapture
     dialect: ApprovalDialect
@@ -106,7 +107,7 @@ class ApprovalRoom:
         self.answered_requests.add(request["token"])
         logger.info(
             "Approval decision adapter=%s request=%s permission=%s patterns=%s outcome=%s",
-            self.agent.adapter_id,
+            self.adapter_id,
             request["token"],
             request.groupdict().get("permission", ""),
             request.groupdict().get("patterns", ""),
@@ -161,7 +162,7 @@ class ApprovalRoom:
             for request in pending:
                 logger.info(
                     "Declining follow-up approval adapter=%s request=%s permission=%s patterns=%s",
-                    self.agent.adapter_id,
+                    self.adapter_id,
                     request["token"],
                     request.groupdict().get("permission", ""),
                     request.groupdict().get("patterns", ""),
@@ -170,28 +171,35 @@ class ApprovalRoom:
                 expected_notices.append(self.dialect.notice(Outcome.DECLINE, request))
         logger.info(
             "Approval turn closed adapter=%s requests=%s final_reply=%s",
-            self.agent.adapter_id,
+            self.adapter_id,
             sorted(self.answered_requests),
             self.said_since(since)[-1],
         )
         for notice in expected_notices:
             await notice.assert_shown(self.capture, self.agent.id)
-        if self.agent.adapter_id == Adapter.OPENCODE:
+        if self.adapter_id in (Adapter.CLAUDE_SDK, Adapter.OPENCODE):
             calls = await self.capture.tool_calls(sender_id=self.agent.id)
             results = await self.capture.tool_results(sender_id=self.agent.id)
             for call in calls:
+                if call.name.casefold() not in ("bash", "powershell"):
+                    continue
                 logger.info(
-                    "OpenCode approval tool call request=%s tool=%s args=%s",
+                    "Approval shell call adapter=%s request=%s tool=%s args=%s",
+                    self.adapter_id,
                     call.tool_call_id,
                     call.name,
                     call.args,
                 )
             for result in results:
+                if result.name.casefold() not in ("bash", "powershell"):
+                    continue
                 logger.info(
-                    "OpenCode approval tool result request=%s tool=%s error=%s",
+                    "Approval shell result adapter=%s request=%s tool=%s error=%s output=%s",
+                    self.adapter_id,
                     result.tool_call_id,
                     result.name,
                     result.is_error,
+                    result.output,
                 )
 
     def said_since(self, since: int) -> list[str]:
@@ -229,7 +237,15 @@ async def approval_room(
             )
             async with reply_capture(room_id) as capture:
                 yield (
-                    ApprovalRoom(agent, room_id, capture, dialect, user_ops, budget),
+                    ApprovalRoom(
+                        agent,
+                        Adapter(cell.adapter_id),
+                        room_id,
+                        capture,
+                        dialect,
+                        user_ops,
+                        budget,
+                    ),
                     root,
                 )
 
