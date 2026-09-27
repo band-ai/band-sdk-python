@@ -76,12 +76,17 @@ def test_approval_closure_requires_reply_after_the_last_request_and_notice() -> 
         closing_reply=closing_reply,
     )
     assert not dialect.settled(
+        [*before_close, message(f"I will finish with {closing_reply} after checking.")],
+        notice,
+        closing_reply=closing_reply,
+    )
+    assert not dialect.settled(
         [*before_close, message("OpenCode completed the turn without a text reply.")],
         notice,
         closing_reply=closing_reply,
     )
     assert dialect.settled(
-        [*before_close, message(closing_reply)],
+        [*before_close, message(f"@[[agent]] {closing_reply}")],
         notice,
         closing_reply=closing_reply,
     )

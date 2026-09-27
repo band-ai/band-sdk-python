@@ -73,6 +73,7 @@ from band.integrations.acp.cursor import (
     ROOM_COMMAND,
     CursorCommandWord,
 )
+from band.runtime.formatters import strip_leading_mentions
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
@@ -297,7 +298,7 @@ class ApprovalDialect:
             default=-1,
         )
         return any(
-            closing_reply in content
+            strip_leading_mentions(content).strip() == closing_reply
             and self.request.search(content) is None
             and not any(notice.text in content for notice in notices)
             for content in contents[last_control + 1 :]
