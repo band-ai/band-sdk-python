@@ -176,6 +176,23 @@ class ApprovalRoom:
         )
         for notice in expected_notices:
             await notice.assert_shown(self.capture, self.agent.id)
+        if self.agent.adapter_id == Adapter.OPENCODE:
+            calls = await self.capture.tool_calls(sender_id=self.agent.id)
+            results = await self.capture.tool_results(sender_id=self.agent.id)
+            for call in calls:
+                logger.info(
+                    "OpenCode approval tool call request=%s tool=%s args=%s",
+                    call.tool_call_id,
+                    call.name,
+                    call.args,
+                )
+            for result in results:
+                logger.info(
+                    "OpenCode approval tool result request=%s tool=%s error=%s",
+                    result.tool_call_id,
+                    result.name,
+                    result.is_error,
+                )
 
     def said_since(self, since: int) -> list[str]:
         return [m.content or "" for m in self.capture.messages.since(since)]

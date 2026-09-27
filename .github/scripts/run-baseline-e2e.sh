@@ -20,9 +20,13 @@ set -uo pipefail
 : "${FINAL:?FINAL scorecard path is required}"
 
 mkdir -p artifacts/attempts
-BAND_E2E_SCORECARD_JSON="$ATTEMPT1" uv run pytest tests/e2e/baseline/ -v -s --no-cov
+pytest_args=()
+if [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" = "true" ]; then
+  pytest_args+=(-p no:rerunfailures --log-cli-level=INFO)
+fi
+BAND_E2E_SCORECARD_JSON="$ATTEMPT1" uv run pytest tests/e2e/baseline/ -v -s --no-cov "${pytest_args[@]}"
 code=$?
-if [ "$code" -ne 0 ]; then
+if [ "$code" -ne 0 ] && [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" != "true" ]; then
   # A retry only helps for one-off flakiness (a rate-limit window, a cold start).
   # If a large fraction of attempt 1 already failed, that reads as a systemic
   # outage (a degraded provider) instead -- retrying would just re-run every

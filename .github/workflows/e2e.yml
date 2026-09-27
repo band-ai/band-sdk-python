@@ -84,6 +84,10 @@ on:
           - all
           - ubuntu
           - windows
+      first_attempt_diagnostics:
+        description: "Run one attempt without pytest or lane retries and log turn phases."
+        type: boolean
+        default: false
 
 # Concurrency is scoped per (event kind, lane, OS) on the e2e job below — NOT
 # workflow-wide. A fresh dispatch cancels only the same lane+OS still in flight
@@ -287,6 +291,7 @@ jobs:
         ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
         ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
+        BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
       run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
