@@ -606,9 +606,9 @@ def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
     mention of the peer whose body carries the value it recalled from its own context,
     and the peer responds."""
     return (
-        f"Ask {peer_name} (id {peer_id}) to confirm the value you just remembered: "
-        f"call band_send_message with mentions=['{peer_id}'] and content that states "
-        "the complete value token from my previous message, copied exactly. Do not "
-        "refer to it as 'the value' without stating it. Use the id as the mention "
-        "identifier; then report their reply back to me."
+        "Recall the complete value token from my previous message. "
+        f"{peer_name} did not receive that message, so include the exact token "
+        f"when you ask them to confirm it: call band_send_message with "
+        f"mentions=['{peer_id}'] and content that spells out the token. "
+        "Use the id as the mention identifier, then report their reply back to me."
     )
