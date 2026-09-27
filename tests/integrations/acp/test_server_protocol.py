@@ -149,12 +149,20 @@ async def test_interleaved_rooms_keep_failure_and_completion_separate_over_acp_w
     failure = AgentFailure(
         "peer",
         "Bearer secret-token",
-        detail={"token=private-key": {"nested": "token=private-value"}},
+        detail={
+            "token=private-key": {"nested": "token=private-value"},
+            "headers": {"Authorization": "ApiKey sk-live-value"},
+            "token_count": 12,
+        },
     )
     expected = AgentFailure(
         "peer",
         "Bearer [REDACTED]",
-        detail={"token=[REDACTED]": {"nested": "token=[REDACTED]"}},
+        detail={
+            "token=[REDACTED]": {"nested": "token=[REDACTED]"},
+            "headers": {"Authorization": "[REDACTED]"},
+            "token_count": 12,
+        },
     ).to_extension_data()
 
     async with protocol_pair(adapter) as (conn, client):
