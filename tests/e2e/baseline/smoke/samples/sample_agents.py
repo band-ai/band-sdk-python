@@ -159,7 +159,10 @@ LIVENESS_REPLY_PROMPT = (
     "complete token from their message exactly in your reply."
 )
 REMEMBER = "Please remember this note: {note}. Confirm you remember it."
-RECALL = "What was the note I asked you to remember? Reply with just it."
+RECALL = (
+    "What was the note I asked you to remember? Call band_send_message to reply "
+    "with the complete note exactly as written, preserving every character."
+)
 
 
 def liveness_probe(marker: str) -> str:
