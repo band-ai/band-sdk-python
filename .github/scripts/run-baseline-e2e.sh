@@ -24,6 +24,14 @@ pytest_args=()
 if [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" = "true" ]; then
   pytest_args+=(-p no:rerunfailures --log-cli-level=INFO)
 fi
+if [ -n "${BAND_E2E_TEST_SELECTOR:-}" ] && \
+  [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" != "true" ]; then
+  echo "BAND_E2E_TEST_SELECTOR requires first-attempt diagnostics." >&2
+  exit 2
+fi
+if [ -n "${BAND_E2E_TEST_SELECTOR:-}" ]; then
+  pytest_args+=(-k "$BAND_E2E_TEST_SELECTOR")
+fi
 BAND_E2E_SCORECARD_JSON="$ATTEMPT1" uv run pytest tests/e2e/baseline/ -v -s --no-cov "${pytest_args[@]}"
 code=$?
 if [ "$code" -ne 0 ] && [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" != "true" ]; then
