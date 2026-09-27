@@ -134,7 +134,7 @@ def failure_event(
     """An error event with optional room failure metadata."""
     return replace(
         make_platform_message(content, message_type=MessageType.ERROR),
-        metadata=metadata or {},
+        metadata={} if metadata is None else metadata,
     )
 
 

@@ -9,6 +9,7 @@ import pytest
 from acp.exceptions import RequestError
 from band_sdk_core import AgentFailure
 
+from band.agent import Agent
 from band.core.types import MessageType
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
@@ -32,6 +33,11 @@ def prompt(server: ACPServer) -> asyncio.Task[object]:
     return asyncio.create_task(
         server.prompt(session_id="session-1", prompt=[{"text": "Hello"}])
     )
+
+
+def assert_default_room_failure(error: RequestError) -> None:
+    assert error.code == -32603
+    assert error.data == AgentFailure("band", "Peer failed").to_extension_data()
 
 
 @pytest.mark.asyncio
@@ -75,6 +81,7 @@ async def test_error_rejects_with_redacted_core_projection(
     "metadata",
     [
         {},
+        [],
         {"failure": "broken"},
         {"failure": {"provider": " ", "message": "x"}},
         {"failure": {"provider": "peer", "message": "x", "code": 42}},
@@ -111,7 +118,7 @@ async def test_blank_error_uses_generic_fallback(mock_rest_client: MagicMock) ->
 
 
 @pytest.mark.asyncio
-async def test_error_wins_over_slow_update_and_later_cancel(
+async def test_server_rejects_before_slow_update_and_later_cancel(
     mock_rest_client: MagicMock,
 ) -> None:
     adapter, server = running_server(mock_rest_client)
@@ -127,12 +134,14 @@ async def test_error_wins_over_slow_update_and_later_cancel(
     await wait_for_pending_prompt(adapter, "room-123")
     delivery = asyncio.create_task(deliver_server_message(adapter, failure_event()))
     await entered.wait()
-    await adapter.cancel_prompt("session-1")
-    with pytest.raises(RequestError) as raised:
-        await asyncio.wait_for(task, 0.2)
-    assert raised.value.code == -32603
-    release.set()
-    await delivery
+    try:
+        await adapter.cancel_prompt("session-1")
+        with pytest.raises(RequestError) as raised:
+            await asyncio.wait_for(task, 1)
+        assert_default_room_failure(raised.value)
+    finally:
+        release.set()
+        await delivery
 
 
 @pytest.mark.asyncio
@@ -141,8 +150,10 @@ async def test_error_wins_if_prompt_send_fails_afterward(
 ) -> None:
     adapter, server = running_server(mock_rest_client)
     release = asyncio.Event()
+    entered = asyncio.Event()
 
     async def failed_participants(**kwargs: object) -> None:
+        entered.set()
         await release.wait()
         raise RuntimeError("REST failed")
 
@@ -150,12 +161,12 @@ async def test_error_wins_if_prompt_send_fails_afterward(
         side_effect=failed_participants
     )
     task = prompt(server)
-    await wait_for_pending_prompt(adapter, "room-123")
+    await entered.wait()
     await deliver_server_message(adapter, failure_event())
     release.set()
     with pytest.raises(RequestError) as raised:
         await task
-    assert raised.value.code == -32603
+    assert_default_room_failure(raised.value)
 
 
 @pytest.mark.asyncio
@@ -171,7 +182,7 @@ async def test_failed_error_update_does_not_change_prompt_failure(
     await deliver_server_message(adapter, failure_event())
     with pytest.raises(RequestError) as raised:
         await task
-    assert raised.value.code == -32603
+    assert_default_room_failure(raised.value)
 
 
 @pytest.mark.asyncio
@@ -193,7 +204,7 @@ async def test_text_grace_yields_to_error(
     await deliver_server_message(adapter, failure_event())
     with pytest.raises(RequestError) as raised:
         await task
-    assert raised.value.code == -32603
+    assert_default_room_failure(raised.value)
 
 
 @pytest.mark.asyncio
@@ -210,8 +221,9 @@ async def test_old_text_timer_cannot_complete_next_prompt(
         adapter, make_platform_message("Part", message_type=MessageType.TEXT)
     )
     await deliver_server_message(adapter, failure_event())
-    with pytest.raises(RequestError):
+    with pytest.raises(RequestError) as raised:
         await first
+    assert_default_room_failure(raised.value)
 
     second = prompt(server)
     await wait_for_pending_prompt(adapter, "room-123")
@@ -222,25 +234,47 @@ async def test_old_text_timer_cannot_complete_next_prompt(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal", ["cancel", "cleanup", "shutdown"])
-async def test_non_success_terminal_outcomes(
-    mock_rest_client: MagicMock, terminal: str
-) -> None:
+async def test_room_cleanup_fails_pending_prompt(mock_rest_client: MagicMock) -> None:
     adapter, server = running_server(mock_rest_client)
     task = prompt(server)
     await wait_for_pending_prompt(adapter, "room-123")
-    match terminal:
-        case "cancel":
-            await adapter.cancel_prompt("session-1")
-            assert (await task).stop_reason == "cancelled"
-        case "cleanup":
-            await adapter.on_cleanup("room-123")
-        case "shutdown":
-            await adapter.cleanup_all()
-    if terminal != "cancel":
-        with pytest.raises(RequestError) as raised:
-            await task
-        assert raised.value.code == -32603
+    await adapter.on_cleanup("room-123")
+    with pytest.raises(RequestError) as raised:
+        await task
+    assert raised.value.code == -32603
+    assert (
+        raised.value.data
+        == AgentFailure(
+            "band", "Band room closed before prompt completed."
+        ).to_extension_data()
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_stop_fails_pending_prompt(mock_rest_client: MagicMock) -> None:
+    adapter, server = running_server(mock_rest_client)
+    runtime = MagicMock()
+    runtime.agent_name = "TestBot"
+    runtime.agent_description = "ACP test agent"
+    runtime.feature_flags = None
+    runtime.initialize = AsyncMock()
+    runtime.start = AsyncMock()
+    runtime.stop = AsyncMock(return_value=True)
+    agent = Agent(runtime=runtime, adapter=adapter)
+    await agent.start()
+
+    task = prompt(server)
+    await wait_for_pending_prompt(adapter, "room-123")
+    await agent.stop()
+    with pytest.raises(RequestError) as raised:
+        await task
+    assert raised.value.code == -32603
+    assert (
+        raised.value.data
+        == AgentFailure(
+            "band", "Band agent stopped before prompt completed."
+        ).to_extension_data()
+    )
 
 
 @pytest.mark.asyncio
@@ -309,8 +343,9 @@ async def test_other_room_remains_independent(mock_rest_client: MagicMock) -> No
     await wait_for_pending_prompt(adapter, "room-123")
     await wait_for_pending_prompt(adapter, "room-2")
     await deliver_server_message(adapter, failure_event())
-    with pytest.raises(RequestError):
+    with pytest.raises(RequestError) as raised:
         await first
+    assert_default_room_failure(raised.value)
     assert not second.done()
     await deliver_server_message(
         adapter, make_platform_message("Other done", room_id="room-2")
