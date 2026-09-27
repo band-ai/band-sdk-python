@@ -26,7 +26,7 @@ import pytest
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
-    REPLY_PROMPT,
+    LIVENESS_REPLY_PROMPT,
     liveness_probe,
     unique_marker,
 )
@@ -40,7 +40,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 LOOP_CEILING = 5
 
 
-@per_adapter(prompt=REPLY_PROMPT)
+@per_adapter(prompt=LIVENESS_REPLY_PROMPT)
 @flaky_model("the peer-driven reply is a model decision")
 @pytest.mark.timeout(extra=180)  # a peer turn, then a follow-up probe turn
 @pytest.mark.asyncio(loop_scope="session")

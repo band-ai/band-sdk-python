@@ -62,6 +62,13 @@ def test_as_callable_carries_band_terminal_marker() -> None:
     assert getattr(call, "band_terminal", False) is True
 
 
+def test_provisioned_agent_failure_repr_redacts_api_key() -> None:
+    agent = ProvisionedAgent(id="agent-id", api_key="private-agent-key", name="agent")
+
+    assert "agent-id" in repr(agent)
+    assert "private-agent-key" not in repr(agent)
+
+
 def test_as_callable_defaults_non_terminal() -> None:
     def plain(args: SampleInput) -> str:
         return args.text

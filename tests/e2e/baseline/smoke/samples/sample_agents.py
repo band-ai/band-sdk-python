@@ -153,6 +153,11 @@ REPLY_PROMPT = (
     "sentence. When asked to remember something, acknowledge it; when later asked "
     "what it was, state it exactly."
 )
+LIVENESS_REPLY_PROMPT = (
+    REPLY_PROMPT
+    + " When another participant asks you to confirm you are active, include the "
+    "complete token from their message exactly in your reply."
+)
 REMEMBER = "Please remember this note: {note}. Confirm you remember it."
 RECALL = "What was the note I asked you to remember? Reply with just it."
 
@@ -519,8 +524,10 @@ def custom_prompt_with_marker(marker: str) -> str:
 # invitable — the identity + roster read.
 ROSTER_LOOKUP_PAGE_SIZE = 20
 ROSTER_PROBE = (
-    "First, tell me your own name. Call band_get_participants and list the exact "
-    "name of each other room participant. Then call band_lookup_peers with "
+    "First, tell me your full registered name as plain text, not an @mention or "
+    "truncated handle. Call band_get_participants and list the exact name of "
+    "every other room participant from that result, including agents. Do not "
+    "omit the agent participant. Then call band_lookup_peers with "
     f"page_size={ROSTER_LOOKUP_PAGE_SIZE} and list "
     f"the exact name of an invitable test agent beginning with {NAME_PREFIX}. "
     "Report the names from both tool results in your reply."
