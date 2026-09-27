@@ -22,10 +22,12 @@ def redact_credentials(text: str) -> str:
 
 def redact_credentials_deep(value: Any) -> Any:
     """Redact every string in a nested JSON-like value."""
-    if isinstance(value, str):
-        return redact_credentials(value)
-    if isinstance(value, dict):
-        return {key: redact_credentials_deep(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [redact_credentials_deep(item) for item in value]
-    return value
+    match value:
+        case str() as text:
+            return redact_credentials(text)
+        case dict() as mapping:
+            return {key: redact_credentials_deep(item) for key, item in mapping.items()}
+        case list() as items:
+            return [redact_credentials_deep(item) for item in items]
+        case _:
+            return value
