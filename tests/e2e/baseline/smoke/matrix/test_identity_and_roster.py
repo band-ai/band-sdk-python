@@ -141,11 +141,11 @@ async def test_reports_peer_description_from_passive_roster(
     role, decoy = await asyncio.gather(
         resource_manager.provision_agent(
             "role",
-            description=f"Handles exclusively {unique_marker('descrole')} inquiries.",
+            description=f"Handles exclusively {unique_marker('descrole')} inquiries",
         ),
         resource_manager.provision_agent(
             "decoy",
-            description=f"Handles exclusively {unique_marker('descdecoy')} inquiries.",
+            description=f"Handles exclusively {unique_marker('descdecoy')} inquiries",
         ),
     )
     room_id = await resource_manager.provision_room(

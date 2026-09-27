@@ -539,10 +539,11 @@ ROSTER_PROBE = (
 # descriptions (never in this prompt), so quoting them without tools proves the
 # always-injected participants list carried those descriptions.
 PASSIVE_ROSTER_DESCRIPTIONS_PROBE = (
-    "Do not call band_get_participants or band_lookup_peers. Look only at the "
-    "room participants list already in your context. Quote the description of "
-    "every agent participant other than yourself, with each agent's name. "
-    "Use band_send_message to deliver the answer."
+    "Use the ## Current Participants list already supplied in this turn. "
+    "For every other agent participant, copy that agent's registered "
+    "description exactly and pair it with the agent's name. The descriptions "
+    "are in the supplied list; no roster tool call is needed. Use "
+    "band_send_message to deliver the report."
 )
 
 
