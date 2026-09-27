@@ -173,7 +173,7 @@ class TestForeignAgentRehydration:
     while the model never saw the full token.
     """
 
-    def test_keeps_peer_agent_line_drops_own(self):
+    def test_peer_agent_line_survives_verbatim(self):
         marker = "note-DEADBEEF"
         converter = AgnoHistoryConverter(agent_name="Me")
         raw = [

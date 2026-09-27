@@ -51,13 +51,17 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 def _recall_token_request(marker: str) -> str:
-    """Ask A to echo the peer's token without truncating its prefix."""
+    """Ask A to echo the peer's token without truncating its prefix.
+
+    Derives only the opaque token's prefix from ``marker`` so the recall turn
+    cannot leak the full value — the model must read it from rehydrated context.
+    """
+    token_prefix = f"{marker.partition('-')[0]}-"
     return (
         "Earlier the other participant sent you a short note with a token. "
-        f"Reply with exactly this complete token string and nothing else: {marker}. "
-        "Copy every character including any prefix (for example the full "
-        "'note-' prefix if present) exactly as it appeared in their message — "
-        "not a suffix, hash, or shortened form."
+        "Reply with exactly that complete token string and nothing else. "
+        f"Copy every character including the full '{token_prefix}' prefix exactly "
+        "as it appeared in their message — not a suffix, hash, or shortened form."
     )
 
 
