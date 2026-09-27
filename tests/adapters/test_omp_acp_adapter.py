@@ -40,6 +40,11 @@ from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestOmpACPAdapterConstruction:
+    def test_model_is_selected_on_the_omp_command_line(self) -> None:
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(model="google/gemini-2.5-flash"))
+
+        assert "--model=google/gemini-2.5-flash" in adapter._command
+
     def test_default_command_gets_final_always_ask(self) -> None:
         adapter = OmpACPAdapter()
         assert adapter._command[-2:] == [

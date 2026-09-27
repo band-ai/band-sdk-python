@@ -26,17 +26,17 @@ Run with:
 
 from __future__ import annotations
 
+import logging
 import re
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
-from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvals import (
@@ -61,6 +61,8 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+logger = logging.getLogger(__name__)
 
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 # Sequential live barriers: the request, then the decided turn's closing reply.
@@ -88,12 +90,27 @@ class ApprovalRoom:
     dialect: ApprovalDialect
     user_ops: UserOps
     budget: SlowTurnBudget
+    answered_requests: set[str] = field(default_factory=set)
 
     async def say(self, text: str, *, sender: UserOps | None = None) -> int:
         """Post ``text`` to the agent; return a cursor at what came before it."""
         cursor = self.capture.messages.snapshot()
         await (sender or self.user_ops).send_message(
             self.room_id, text, mention_id=self.agent.id, mention_name=self.agent.name
+        )
+        return cursor
+
+    async def decide(self, outcome: Outcome, request: re.Match[str]) -> int:
+        """Answer one request as the room owner."""
+        cursor = await self.say(self.dialect.reply(outcome, request))
+        self.answered_requests.add(request["token"])
+        logger.info(
+            "Approval decision adapter=%s request=%s permission=%s patterns=%s outcome=%s",
+            self.agent.adapter_id,
+            request["token"],
+            request.groupdict().get("permission", ""),
+            request.groupdict().get("patterns", ""),
+            outcome,
         )
         return cursor
 
@@ -113,14 +130,51 @@ class ApprovalRoom:
         )
 
     async def closed(self, *notices: Notice, since: int) -> None:
-        """Wait until every notice is shown and the agent has closed the turn."""
-        await self.capture.wait_until(
-            lambda _msgs: self.dialect.settled(
-                self.capture.messages.since(since), *notices
-            ),
-            deadline_s=self.budget.deadline_s,
+        """Decline extra requests and wait for the decided turn to close."""
+        expected_notices = list(notices)
+        while True:
+            await self.capture.wait_until(
+                lambda _msgs: (
+                    self.dialect.settled(
+                        self.capture.messages.since(since), *expected_notices
+                    )
+                    or any(
+                        request["token"] not in self.answered_requests
+                        for request in self.dialect.find_requests(
+                            self.capture.messages.since(since)
+                        )
+                    )
+                ),
+                deadline_s=self.budget.deadline_s,
+            )
+            pending = [
+                request
+                for request in self.dialect.find_requests(
+                    self.capture.messages.since(since)
+                )
+                if request["token"] not in self.answered_requests
+            ]
+            if not pending and self.dialect.settled(
+                self.capture.messages.since(since), *expected_notices
+            ):
+                break
+            for request in pending:
+                logger.info(
+                    "Declining follow-up approval adapter=%s request=%s permission=%s patterns=%s",
+                    self.agent.adapter_id,
+                    request["token"],
+                    request.groupdict().get("permission", ""),
+                    request.groupdict().get("patterns", ""),
+                )
+                await self.decide(Outcome.DECLINE, request)
+                expected_notices.append(self.dialect.notice(Outcome.DECLINE, request))
+        logger.info(
+            "Approval turn closed adapter=%s requests=%s final_reply=%s",
+            self.agent.adapter_id,
+            sorted(self.answered_requests),
+            self.said_since(since)[-1],
         )
-        for notice in notices:
+        for notice in expected_notices:
             await notice.assert_shown(self.capture, self.agent.id)
 
     def said_since(self, since: int) -> list[str]:
@@ -171,7 +225,6 @@ def _wait_timeout_s(outcome: Outcome) -> float:
 
 @per_adapter(Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.CURSOR_ACP, Adapter.OPENCODE)
 @pytest.mark.parametrize("outcome", list(Outcome))
-@flaky_infra("a live coding-agent turn that must reach a shell tool use can time out")
 @pytest.mark.timeout(extra=BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_the_room_reply_decides_whether_the_gated_command_runs(
@@ -197,7 +250,7 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
         after_request = room.capture.messages.snapshot()
 
         if outcome is not Outcome.TIMEOUT:
-            await room.say(room.dialect.reply(outcome, request))
+            await room.decide(outcome, request)
         await room.closed(room.dialect.notice(outcome, request), since=after_request)
 
         if outcome is Outcome.TIMEOUT:
@@ -207,13 +260,12 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
             assert not any(approved in said for said in room.said_since(late))
 
         if outcome is Outcome.APPROVE:
-            assert target.read_text().strip() == marker
+            assert target.read_text().splitlines() == [marker]
         else:
             assert not target.exists(), f"{outcome} still ran the gated command"
 
 
 @per_adapter(Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.CURSOR_ACP, Adapter.OPENCODE)
-@flaky_infra("a live coding-agent turn that must reach a shell tool use can time out")
 @pytest.mark.timeout(extra=THREE_BARRIERS.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_each_of_two_gated_commands_is_decided_on_its_own(
@@ -232,9 +284,9 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
         ]
         start = await room.say(commands_request(*commands))
         [approved] = await room.requests(1, since=start)
-        await room.say(room.dialect.reply(Outcome.APPROVE, approved))
+        await room.decide(Outcome.APPROVE, approved)
         declined = (await room.requests(2, since=start))[1]
-        await room.say(room.dialect.reply(Outcome.DECLINE, declined))
+        await room.decide(Outcome.DECLINE, declined)
         await room.closed(
             room.dialect.notice(Outcome.APPROVE, approved),
             room.dialect.notice(Outcome.DECLINE, declined),
@@ -244,11 +296,10 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
         landed = {t: m for t, m in markers.items() if t.exists()}
         assert len(landed) == 1, f"expected exactly one command to run, got {landed}"
         [(target, marker)] = landed.items()
-        assert target.read_text().strip() == marker
+        assert target.read_text().splitlines() == [marker]
 
 
 @per_adapter(*REFUSING)
-@flaky_infra("a live coding-agent turn that must reach a shell tool use can time out")
 @pytest.mark.timeout(extra=THREE_BARRIERS.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_only_an_authorized_member_decides_an_ask(
@@ -261,15 +312,19 @@ async def test_only_an_authorized_member_decides_an_ask(
     parked; the approver's reply then runs it."""
     marker = unique_marker("approver")
     owner_id = await user_ops.whoami()
-    async with approval_room(
-        cell,
-        user_ops,
-        reply_capture,
-        label="approver",
-        budget=THREE_BARRIERS,
-        approvers=frozenset({owner_id}),
-    ) as (room, workdir):
-        await user_ops.add_participant(room.room_id, await second_user_ops.whoami())
+    async with (
+        approval_room(
+            cell,
+            user_ops,
+            reply_capture,
+            label="approver",
+            budget=THREE_BARRIERS,
+            approvers=frozenset({owner_id}),
+        ) as (room, workdir),
+        user_ops.contact_with(second_user_ops) as second_user_id,
+    ):
+        await user_ops.add_participant(room.room_id, second_user_id)
+        assert second_user_id in await user_ops.list_participant_ids(room.room_id)
         target = workdir / "approval.txt"
         await room.say(command_request(marker, target))
         [request] = await room.requests(1)
@@ -282,13 +337,12 @@ async def test_only_an_authorized_member_decides_an_ask(
         assert not any(resolved.text in said for said in room.said_since(refused))
         assert not target.exists(), "a refused approver's reply ran the command"
 
-        approved = await room.say(approve)
+        approved = await room.decide(Outcome.APPROVE, request)
         await room.closed(resolved, since=approved)
         assert target.read_text().strip() == marker
 
 
 @per_adapter(*REMEMBERING)
-@flaky_infra("a live coding-agent turn that must reach a shell tool use can time out")
 @pytest.mark.timeout(extra=BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a_session_approval_covers_a_repeat_of_the_same_command(
@@ -314,11 +368,10 @@ async def test_a_session_approval_covers_a_repeat_of_the_same_command(
 
         asked = room.dialect.find_requests(room.capture.messages.since(start))
         assert [match["token"] for match in asked] == [request["token"]]
-        assert target.read_text().strip() == marker * 2
+        assert target.read_text().splitlines() == [marker, marker]
 
 
 @per_adapter(*ASKING)
-@flaky_infra("a live coding-agent turn that must reach its question tool can time out")
 @pytest.mark.timeout(extra=BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a_question_is_answered_in_free_text_from_the_room(

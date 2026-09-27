@@ -202,13 +202,14 @@ stdio server through `ACPClientAdapter`. The spawn command always ends with
 `--approval-mode always-ask` (overlays / global config cannot widen approvals),
 and the adapter advertises only form-elicitation client capabilities — never
 filesystem or terminal. Provider credentials are passed only via the child
-`env` (see `omp_provider_env` in `band.integrations.omp`); do not log keys.
+`env` (see `omp_provider_env` in `band.integrations.omp`); the model is selected
+with OMP's `--model` flag, not an `OMP_MODEL` child variable. Do not log keys.
 
 Registered in the baseline matrix under the `backends` lane, gated on
 `Dep.OMP` (Bun >= 1.3.14, a working `omp` / `omp acp`, and the provider API key
-for the selected `OMP_MODEL`). Each matrix spawn uses a disposable cwd and a
-fresh `PI_CODING_AGENT_DIR`. Excluded from framework-conformance as a bridge.
+for the selected `OMP_MODEL`). The baseline defaults to `openai/gpt-5.4-mini`;
+each matrix spawn uses a disposable cwd and a fresh `PI_CODING_AGENT_DIR`.
+Excluded from framework-conformance as a bridge.
 
 - Example: `examples/acp/clients/omp.py`.
 - Pin used by CI: `@oh-my-pi/pi-coding-agent@18.2.8` (see `.github/scripts/setup-omp.sh`).
-

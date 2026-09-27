@@ -25,6 +25,7 @@ from typing import Any
 from band import create_room_workspace_resolver
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
+from band.integrations.omp import omp_provider_env
 from band.testing import feature_kwargs
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
@@ -34,6 +35,11 @@ from tests.e2e.baseline.toolkit.adapters import (
     adapter,
 )
 from tests.e2e.baseline.toolkit.deps import Dep
+from tests.e2e.baseline.toolkit.omp_credentials import (
+    omp_command,
+    omp_model,
+    omp_provider_api_key,
+)
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 # Spelled out rather than derived from the Capability enum: an adapter's
@@ -563,17 +569,8 @@ def omp_agent_home_dir(work_dir: str) -> str:
 
 
 def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
-    """Hermetic OMP child env: model, provider key, and isolated agent state dir."""
-    from band.integrations.omp import (  # noqa: PLC0415 -- keep builder imports lazy like sibling adapters
-        DEFAULT_OMP_MODEL,
-        omp_provider_env,
-    )
-    from tests.e2e.baseline.toolkit.omp_credentials import (  # noqa: PLC0415
-        omp_provider_api_key,
-    )
-
-    model = s.backends.omp_model.strip() or DEFAULT_OMP_MODEL
-    env = omp_provider_env(model=model, api_key=omp_provider_api_key(s))
+    """Hermetic OMP child env: provider key and isolated agent state dir."""
+    env = omp_provider_env(model=omp_model(s), api_key=omp_provider_api_key(s))
     env["PI_CODING_AGENT_DIR"] = agent_home
     return env
 
@@ -598,13 +595,12 @@ def _build_omp_acp(
 
     sandbox = tempfile.mkdtemp(prefix="band-e2e-omp-acp-")
     config_kwargs: dict[str, Any] = {
+        "command": omp_command(s),
         "custom_section": prompt or "",
         "cwd": sandbox,
+        "model": omp_model(s),
         "env": omp_acp_env(s, omp_agent_home_dir(sandbox)),
     }
-    if s.backends.omp_command.strip():
-        config_kwargs["command"] = tuple(s.backends.omp_command.split())
-
     built_features = feature_kwargs(features)
     if "emit" in built_features:
         built_features["emit"] &= OmpACPAdapter.SUPPORTED_EMIT

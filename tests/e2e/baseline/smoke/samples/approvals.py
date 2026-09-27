@@ -50,17 +50,6 @@ from band.adapters.codex import (
     CodexCommand,
     CodexSandboxMode,
 )
-from band.adapters.cursor_acp import (
-    DECISION_NOT_PENDING_TEMPLATE,
-    DECISION_RESOLVED_TEMPLATE,
-    DECISION_TIMED_OUT_TEMPLATE,
-    DECISION_UNAUTHORIZED_MESSAGE,
-    PERMISSION_REQUESTED_TEMPLATE,
-    ROOM_COMMAND,
-    CursorACPAdapter,
-    CursorACPAdapterConfig,
-    CursorCommandWord,
-)
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
@@ -75,6 +64,15 @@ from band.adapters.opencode.approvals import (
 from band.client.streaming import MessageCreatedPayload
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType
+from band.integrations.acp.cursor import (
+    DECISION_NOT_PENDING_TEMPLATE,
+    DECISION_RESOLVED_TEMPLATE,
+    DECISION_TIMED_OUT_TEMPLATE,
+    DECISION_UNAUTHORIZED_MESSAGE,
+    PERMISSION_REQUESTED_TEMPLATE,
+    ROOM_COMMAND,
+    CursorCommandWord,
+)
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
@@ -99,7 +97,7 @@ class Outcome(StrEnum):
 
 def marker_command(marker: str, target: Path) -> str:
     """The one shell command whose only effect is writing ``marker`` to ``target``."""
-    return f"printf %s {marker} > {target}"
+    return f'echo {marker}> "{target}"'
 
 
 def command_request(marker: str, target: Path) -> str:
@@ -112,7 +110,7 @@ def command_request(marker: str, target: Path) -> str:
 
 def appending_command(marker: str, target: Path) -> str:
     """A shell command that appends ``marker`` to ``target``, so each run shows."""
-    return f"printf %s {marker} >> {target}"
+    return f'echo {marker}>> "{target}"'
 
 
 def repeat_request(command: str, done: str) -> str:
@@ -282,12 +280,23 @@ class ApprovalDialect:
         """Whether the turn has played out past its decisions: every notice is shown
         and the agent has closed the turn with a reply that is none of them."""
         contents = [m.content or "" for m in since_request]
-        closed = any(
-            self.request.search(content) is None
-            and not any(notice.text in content for notice in notices)
-            for content in contents
+        if not all(notice.streamed_in(contents) for notice in notices):
+            return False
+        last_control = max(
+            (
+                index
+                for index, content in enumerate(contents)
+                if self.request.search(content)
+                or any(notice.text in content for notice in notices)
+            ),
+            default=-1,
         )
-        return closed and all(notice.streamed_in(contents) for notice in notices)
+        return any(
+            content.strip()
+            and self.request.search(content) is None
+            and not any(notice.text in content for notice in notices)
+            for content in contents[last_control + 1 :]
+        )
 
 
 def _claude_sdk(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
@@ -353,6 +362,11 @@ def _codex_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
 
 
 def _cursor(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
+    from band.adapters.cursor_acp import (  # noqa: PLC0415
+        CursorACPAdapter,
+        CursorACPAdapterConfig,
+    )
+
     config_kwargs: dict[str, Any] = {
         "api_key": settings.backends.cursor_api_key,
         "custom_section": SHELL_PROMPT,

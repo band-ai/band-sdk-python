@@ -96,6 +96,7 @@ class OmpACPAdapterConfig:
     """
 
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
+    model: str | None = None
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = None
     env: dict[str, str] | None = None
@@ -124,7 +125,7 @@ class OmpACPAdapter(ACPClientAdapter):
                 raise ValueError("set either cwd or workspace_for_room, not both")
             workspace_for_room = create_room_workspace_resolver(config.cwd)
         super().__init__(
-            command=finalize_omp_command(config.command),
+            command=finalize_omp_command(config.command, model=config.model),
             env=config.env,
             workspace_for_room=workspace_for_room,
             mcp_servers=config.mcp_servers,

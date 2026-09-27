@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band.integrations.omp import DEFAULT_OMP_MODEL
 from tests.paths import ENV_TEST_FILE
 
 # Load .env.test into os.environ (idempotent, non-overriding) — the single
@@ -170,9 +171,9 @@ class Backends(BaseSettings):
     cursor_api_key: str = ""  # CURSOR_API_KEY
 
     # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
-    # provider-qualified OMP_MODEL; override the binary + args via OMP_COMMAND.
+    # provider-qualified OMP_MODEL (passed as --model); override binary/args via OMP_COMMAND.
     omp_command: str = ""  # OMP_COMMAND
-    omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
+    omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
     # Copilot-hosted auth for the single non-BYOK smoke
     # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix

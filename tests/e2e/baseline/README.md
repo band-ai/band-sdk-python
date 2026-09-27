@@ -261,7 +261,9 @@ fixture-closure / platform-touching cases under `guards/`.
 
 - `second_user_ops` drives a second human (`BAND_API_KEY_USER_2`), for scenarios
   where who sends a message matters (e.g. an approver allowlist). It fails, never
-  skips, without the key (`Dep.SECOND_USER`).
+  skips, without the key (`Dep.SECOND_USER`). Approval tests establish an accepted
+  contact before inviting this user. Shared CI identities retain that contact
+  across jobs; no test removes a relationship another job may need.
 
 - `reply_capture` and `judge` pre-bind their plumbing (the WS observer; the judge
   model + key), so tests pass only the test-specific arguments.
