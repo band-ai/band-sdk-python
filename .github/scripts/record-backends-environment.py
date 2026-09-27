@@ -13,6 +13,7 @@ import shutil
 import subprocess
 
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.deps import cli_binary
 
 
 def copilot_cli_version() -> str:
@@ -28,11 +29,7 @@ def copilot_cli_version() -> str:
 
 
 def cursor_cli_version(settings: BaselineSettings) -> str:
-    binary = (
-        settings.backends.cursor_command.split()[0]
-        if settings.backends.cursor_command.strip()
-        else "agent"
-    )
+    binary = cli_binary(settings.backends.cursor_command, "agent")
     if (cli := shutil.which(binary)) is None:
         return "unavailable"
     command: str | list[str] = [cli, "--version"]

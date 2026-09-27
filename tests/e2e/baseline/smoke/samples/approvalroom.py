@@ -23,12 +23,19 @@ class ApprovalRoom:
     user_ops: UserOps
     budget: SlowTurnBudget
 
-    async def say(self, text: str, *, sender: UserOps | None = None) -> int:
-        """Post to the agent and return the preceding capture cursor."""
+    async def send(
+        self, text: str, *, sender: UserOps | None = None
+    ) -> tuple[int, str]:
+        """Post to the agent and return the capture cursor and message id."""
         cursor = self.capture.messages.snapshot()
-        await (sender or self.user_ops).send_message(
+        message_id = await (sender or self.user_ops).send_message(
             self.room_id, text, mention_id=self.agent.id, mention_name=self.agent.name
         )
+        return cursor, message_id
+
+    async def say(self, text: str, *, sender: UserOps | None = None) -> int:
+        """Post to the agent and return the preceding capture cursor."""
+        cursor, _ = await self.send(text, sender=sender)
         return cursor
 
     async def requests(self, count: int, *, since: int = 0) -> list[re.Match[str]]:

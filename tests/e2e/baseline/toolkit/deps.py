@@ -186,14 +186,14 @@ def _google_available(settings: BaselineSettings) -> bool:
     )
 
 
-def _cli_binary(command: str, default_binary: str) -> str:
+def cli_binary(command: str, default_binary: str) -> str:
     """The CLI binary an override ``command`` names, else ``default_binary``."""
     return command.split()[0] if command.strip() else default_binary
 
 
 def _cli_on_path(command: str, default_binary: str) -> bool:
     """Whether the CLI binary (from an override ``command`` or ``default_binary``) is on PATH."""
-    return shutil.which(_cli_binary(command, default_binary)) is not None
+    return shutil.which(cli_binary(command, default_binary)) is not None
 
 
 def _codex_cli_available(settings: BaselineSettings) -> bool:
@@ -280,7 +280,7 @@ def _cursor_cli_available(settings: BaselineSettings) -> bool:
     if not _cli_on_path(command, "agent"):
         return False
     return bool(settings.backends.cursor_api_key) or _cursor_logged_in(
-        _cli_binary(command, "agent")
+        cli_binary(command, "agent")
     )
 
 
