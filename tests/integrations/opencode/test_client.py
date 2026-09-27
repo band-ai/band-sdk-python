@@ -191,20 +191,19 @@ async def test_get_session_raises_http_status_error_on_404(
         await client.close()
 
 
-async def test_directory_and_workspace_set_query_params_and_headers(
+async def test_remote_directory_and_workspace_set_query_params_and_headers(
     fake_server: FakeOpencodeServer,
 ) -> None:
-    client = make_client(
-        fake_server, directory="/tmp/project", workspace="my-workspace"
-    )
+    directory = "/remote/workspace-link/../project"
+    client = make_client(fake_server, directory=directory, workspace="my-workspace")
     try:
         await client.create_session()
         request = fake_server.requests[-1]
         assert request["query"] == {
-            "directory": "/tmp/project",
+            "directory": directory,
             "workspace": "my-workspace",
         }
-        assert request["headers"]["x-opencode-directory"] == "/tmp/project"
+        assert request["headers"]["x-opencode-directory"] == directory
         assert request["headers"]["x-opencode-workspace"] == "my-workspace"
     finally:
         await client.close()

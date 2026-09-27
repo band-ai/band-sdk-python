@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -18,6 +20,18 @@ from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.testing import FakeAgentTools
 from band.workspaces import resolve_room_workspace
+
+
+def _make_directory_alias(alias: Path, target: Path) -> None:
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return
+    alias.symlink_to(target, target_is_directory=True)
 
 
 def test_default_workspace_is_created_per_room(
@@ -64,6 +78,26 @@ async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
         codex._room_client("room-b")
     with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
         await acp._runtime_for("room-b")
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_clients_use_the_physical_custom_workspace(
+    tmp_path: Path,
+) -> None:
+    physical = tmp_path / "physical-workspace"
+    alias = tmp_path / "workspace-link"
+    physical.mkdir()
+    _make_directory_alias(alias, physical)
+
+    def resolver(_room_id: str) -> str:
+        return str(alias)
+
+    expected = str(physical.resolve())
+    codex = CodexAdapter(CodexAdapterConfig(workspace_for_room=resolver))
+    acp = ACPClientAdapter(command="codex", workspace_for_room=resolver)
+
+    assert codex._room_client("room-a").workspace == expected
+    assert (await acp._runtime_for("room-a"))._cwd == expected
 
 
 @pytest.mark.asyncio
