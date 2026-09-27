@@ -26,11 +26,9 @@ Run with:
 
 from __future__ import annotations
 
-import re
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -39,11 +37,10 @@ from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
 from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
     AgentSetup,
-    ApprovalDialect,
-    Notice,
     Outcome,
     appending_command,
     command_request,
@@ -54,10 +51,9 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 )
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
-from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
-    ProvisionedAgent,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -76,55 +72,6 @@ PATIENT_WAIT_S = THREE_BARRIERS.deadline_s * 2
 REFUSING = tuple(a for a, dialect in DIALECTS.items() if dialect.refusal)
 REMEMBERING = tuple(a for a, dialect in DIALECTS.items() if dialect.session_approval)
 ASKING = tuple(a for a, dialect in DIALECTS.items() if dialect.question)
-
-
-@dataclass
-class ApprovalRoom:
-    """One manual-approval agent in its own room, driven by the room's humans."""
-
-    agent: ProvisionedAgent
-    room_id: str
-    capture: ReplyCapture
-    dialect: ApprovalDialect
-    user_ops: UserOps
-    budget: SlowTurnBudget
-
-    async def say(self, text: str, *, sender: UserOps | None = None) -> int:
-        """Post ``text`` to the agent; return a cursor at what came before it."""
-        cursor = self.capture.messages.snapshot()
-        await (sender or self.user_ops).send_message(
-            self.room_id, text, mention_id=self.agent.id, mention_name=self.agent.name
-        )
-        return cursor
-
-    async def requests(self, count: int, *, since: int = 0) -> list[re.Match[str]]:
-        """The first ``count`` approval requests posted after ``since``."""
-        asked = await self.capture.wait_until(
-            lambda msgs: len(self.dialect.find_requests(msgs[since:])) >= count,
-            deadline_s=self.budget.deadline_s,
-        )
-        return self.dialect.find_requests(asked[since:])[:count]
-
-    async def shown(self, text: str, *, since: int) -> None:
-        """Wait until an agent message after ``since`` shows ``text``."""
-        await self.capture.wait_until(
-            lambda msgs: any(text in (m.content or "") for m in msgs[since:]),
-            deadline_s=self.budget.deadline_s,
-        )
-
-    async def closed(self, *notices: Notice, since: int) -> None:
-        """Wait until every notice is shown and the agent has closed the turn."""
-        await self.capture.wait_until(
-            lambda _msgs: self.dialect.settled(
-                self.capture.messages.since(since), *notices
-            ),
-            deadline_s=self.budget.deadline_s,
-        )
-        for notice in notices:
-            await notice.assert_shown(self.capture, self.agent.id)
-
-    def said_since(self, since: int) -> list[str]:
-        return [m.content or "" for m in self.capture.messages.since(since)]
 
 
 @asynccontextmanager

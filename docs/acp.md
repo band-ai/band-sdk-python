@@ -152,6 +152,13 @@ to the subprocess; otherwise authenticate the CLI with `agent login`. See the
 wire contract and [the Cursor example](../examples/acp/clients/cursor.py) for the
 SDK entry point.
 
+The live baseline runs `cursor_acp` in the `backends` lane on Ubuntu and Windows.
+CI installs the native Cursor CLI and passes `E2E_CURSOR_API_KEY` as `CURSOR_API_KEY`
+only while running the baseline tests. Local runs may use a stored `agent login`.
+The compound smoke tests exercise manual permission and plan decisions, project
+changes, and sequential room recovery. Cursor's plan/agent mode is selected from
+each session's live advertised catalog before its first prompt.
+
 ## Optional Dependency
 
 ```toml
@@ -211,4 +218,3 @@ fresh `PI_CODING_AGENT_DIR`. Excluded from framework-conformance as a bridge.
 
 - Example: `examples/acp/clients/omp.py`.
 - Pin used by CI: `@oh-my-pi/pi-coding-agent@18.2.8` (see `.github/scripts/setup-omp.sh`).
-

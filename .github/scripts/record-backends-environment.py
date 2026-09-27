@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 """Record the backends lane's environment for the scorecard evidence.
 
-Writes the validated Copilot CLI version, the OS and the BYOK model, read from
-the same settings the builder uses so the record can't drift from the run.
+Writes backend CLI versions and non-secret run metadata.
 """
 
 from __future__ import annotations
@@ -28,10 +27,27 @@ def copilot_cli_version() -> str:
     return completed.stdout.strip()
 
 
+def cursor_cli_version() -> str:
+    if (cli := shutil.which("agent")) is None:
+        return "unavailable"
+    command: str | list[str] = [cli, "--version"]
+    if pathlib.Path(cli).suffix.lower() in {".cmd", ".bat"}:
+        command = f'"{cli}" --version'
+    completed = subprocess.run(
+        command,
+        shell=isinstance(command, str),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else "unavailable"
+
+
 def main() -> None:
     settings = BaselineSettings()
     metadata = {
         "copilot_cli": copilot_cli_version(),
+        "cursor_cli": cursor_cli_version(),
         "os": platform.platform(),
         "copilot_auth": {
             "mode": "byok",

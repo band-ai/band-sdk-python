@@ -57,9 +57,11 @@ from band.adapters.cursor_acp import (
     DECISION_UNAUTHORIZED_MESSAGE,
     PERMISSION_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
+    ApprovalMode,
     CursorACPAdapter,
     CursorACPAdapterConfig,
     CursorCommandWord,
+    PlanMode,
 )
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import (
@@ -74,7 +76,9 @@ from band.adapters.opencode.approvals import (
 )
 from band.client.streaming import MessageCreatedPayload
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import MessageType
+from band.core.types import Capability, MessageType
+from band.integrations.acp.session_config import SessionConfigResolver
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
@@ -352,21 +356,38 @@ def _codex_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
             return Notice(CODEX_TIMED_OUT.format(token=token, decision="decline"))
 
 
-def _cursor(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
+def cursor_test_adapter(
+    settings: BaselineSettings,
+    setup: AgentSetup,
+    *,
+    approval_mode: ApprovalMode = "manual",
+    plan_mode: PlanMode = "auto_accept",
+    resolve_session_config: SessionConfigResolver | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
+    custom_section: str = SHELL_PROMPT,
+    capabilities: set[Capability] | None = None,
+) -> CursorACPAdapter:
     config_kwargs: dict[str, Any] = {
         "api_key": settings.backends.cursor_api_key,
-        "custom_section": SHELL_PROMPT,
-        "cwd": str(setup.workdir),
-        "approval_mode": "manual",
-        # Only the permission is under test; other decisions resolve themselves.
+        "custom_section": custom_section,
+        "approval_mode": approval_mode,
+        # Questions resolve automatically; tests configure permission and plan decisions.
         "question_mode": "auto_first",
-        "plan_mode": "auto_accept",
+        "plan_mode": plan_mode,
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
+        "resolve_session_config": resolve_session_config,
     }
+    if workspace_for_room is None:
+        config_kwargs["cwd"] = str(setup.workdir)
+    else:
+        config_kwargs["workspace_for_room"] = workspace_for_room
     if settings.backends.cursor_command.strip():
         config_kwargs["command"] = tuple(settings.backends.cursor_command.split())
-    return CursorACPAdapter(config=CursorACPAdapterConfig(**config_kwargs))
+    return CursorACPAdapter(
+        config=CursorACPAdapterConfig(**config_kwargs),
+        capabilities=capabilities,
+    )
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:
@@ -495,7 +516,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         workdir_root=lambda settings: settings.backends.codex_cwd,
     ),
     Adapter.CURSOR_ACP: ApprovalDialect(
-        build=_cursor,
+        build=cursor_test_adapter,
         request=template_pattern(PERMISSION_REQUESTED_TEMPLATE),
         reply=_cursor_reply,
         notice=_cursor_notice,

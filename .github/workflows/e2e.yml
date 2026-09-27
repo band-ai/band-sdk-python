@@ -37,8 +37,9 @@ name: E2E (baseline)
 #                  isolated from core; shares the `dev` extra).
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
-#                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
-#                  (copilot CLI over ACP; Anthropic BYOK, no GitHub auth).
+#                  (local `opencode serve`, Zen free model), CopilotACPAdapter
+#                  (copilot CLI over ACP; Anthropic BYOK), and CursorACPAdapter
+#                  (agent CLI over ACP; Cursor API key).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -252,6 +253,29 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
 
+    - name: Install Cursor CLI (Linux)
+      if: matrix.lane == 'backends' && matrix.os == 'ubuntu'
+      run: |
+        curl -fsS https://cursor.com/install | bash
+        test -x "$HOME/.local/bin/agent"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Install Cursor CLI (Windows)
+      if: matrix.lane == 'backends' && matrix.os == 'windows'
+      shell: powershell
+      run: |
+        irm 'https://cursor.com/install?win32=true' | iex
+        $agentDir = Join-Path $env:LOCALAPPDATA 'cursor-agent'
+        if (-not (Test-Path (Join-Path $agentDir 'agent.cmd')) -and
+            -not (Test-Path (Join-Path $agentDir 'agent.exe'))) {
+          throw 'Cursor agent command was not installed'
+        }
+        Add-Content -Path $env:GITHUB_PATH -Value $agentDir
+
+    - name: Verify Cursor CLI
+      if: matrix.lane == 'backends'
+      run: agent --version
+
     - name: Install Bun and OMP (omp_acp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
@@ -284,6 +308,7 @@ jobs:
     # Bash resolving the shebang (see the codex step's comment above).
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       env:
+        CURSOR_API_KEY: ${{ secrets.E2E_CURSOR_API_KEY }}
         ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
         ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
