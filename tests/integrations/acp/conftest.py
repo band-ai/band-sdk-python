@@ -66,7 +66,9 @@ class ACPEditor:
 
     def awaiting_reply(self, room_id: str) -> ACPEditor:
         self._room_id = room_id
-        self._bridge._pending_prompts[room_id] = PendingACPPrompt(session_id=room_id)
+        self._bridge._pending_prompts[room_id] = PendingACPPrompt(
+            session_id=room_id, posted=True
+        )
         return self
 
     async def forward_tool_activity(self, reply: Reply) -> None:
@@ -200,14 +202,15 @@ def make_tool_result_message(
 async def wait_for_pending_prompt(
     adapter: BandACPServerAdapter, room_id: str
 ) -> PendingACPPrompt:
-    """Wait until a pending prompt is registered for a room.
+    """Wait until a pending prompt has been posted to a room.
 
     ``handle_prompt`` blocks until the peer replies, so tests dispatch it as
-    a task and use this to wait for the prompt to reach the room.
+    a task and use this to wait for the prompt to reach the room. Registration
+    alone is earlier: room events before the post belong to the previous turn.
     """
     while True:
         pending = adapter._pending_prompts.get(room_id)
-        if pending is not None:
+        if pending is not None and pending.posted:
             return pending
         await asyncio.sleep(0)
 

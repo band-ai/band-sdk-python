@@ -252,7 +252,7 @@ class TestBandACPServerAdapterOnMessage:
         msg = make_platform_message("Hello from peer", room_id="room-123")
 
         # Set up pending prompt
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -283,7 +283,7 @@ class TestBandACPServerAdapterOnMessage:
         tools = FakeAgentTools()
         msg = make_platform_message("Done", room_id="room-123", message_type="text")
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -320,7 +320,7 @@ class TestBandACPServerAdapterOnMessage:
             "Part 2", room_id="room-123", message_type="text"
         )
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -359,7 +359,7 @@ class TestBandACPServerAdapterOnMessage:
             "Thinking...", room_id="room-123", message_type="thought"
         )
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -385,7 +385,7 @@ class TestBandACPServerAdapterOnMessage:
         tools = FakeAgentTools()
         msg = make_tool_call_message(name="get_weather", tool_call_id="tc-1")
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -412,7 +412,7 @@ class TestBandACPServerAdapterOnMessage:
             "72F sunny", room_id="room-123", message_type="tool_result"
         )
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -439,7 +439,7 @@ class TestBandACPServerAdapterOnMessage:
             "Thinking about it...", room_id="room-123", message_type="thought"
         )
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -469,7 +469,7 @@ class TestBandACPServerAdapterOnMessage:
             name="search", args={"q": "test"}, tool_call_id="tc-99"
         )
 
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_message(
@@ -571,7 +571,9 @@ class TestBandACPServerAdapterCleanup:
     async def test_on_cleanup_removes_pending_prompts(self) -> None:
         """Should remove pending prompt for room."""
         adapter = BandACPServerAdapter()
-        adapter._pending_prompts["room-123"] = PendingACPPrompt(session_id="session-1")
+        adapter._pending_prompts["room-123"] = PendingACPPrompt(
+            session_id="session-1", posted=True
+        )
 
         await adapter.on_cleanup("room-123")
 
@@ -584,7 +586,9 @@ class TestBandACPServerAdapterCleanup:
         adapter._session_to_room["session-1"] = "room-123"
         adapter._room_to_session["room-123"] = "session-1"
         adapter._session_modes["session-1"] = "code"
-        adapter._pending_prompts["room-123"] = PendingACPPrompt(session_id="session-1")
+        adapter._pending_prompts["room-123"] = PendingACPPrompt(
+            session_id="session-1", posted=True
+        )
 
         await adapter.on_cleanup("room-123")
 
@@ -605,7 +609,9 @@ class TestBandACPServerAdapterCleanup:
     async def test_on_cleanup_twice(self) -> None:
         """Should handle cleanup called twice for same room."""
         adapter = BandACPServerAdapter()
-        adapter._pending_prompts["room-123"] = PendingACPPrompt(session_id="session-1")
+        adapter._pending_prompts["room-123"] = PendingACPPrompt(
+            session_id="session-1", posted=True
+        )
         adapter._session_to_room["session-1"] = "room-123"
         adapter._room_to_session["room-123"] = "session-1"
 
@@ -620,7 +626,7 @@ class TestBandACPServerAdapterCleanup:
     async def test_on_cleanup_with_pending_prompts(self) -> None:
         """Should clean up even with active pending prompts."""
         adapter = BandACPServerAdapter()
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.on_cleanup("room-123")
@@ -637,7 +643,7 @@ class TestBandACPServerAdapterCancelPrompt:
         """Should set done_event to unblock handle_prompt."""
         adapter = BandACPServerAdapter()
         adapter._session_to_room["session-1"] = "room-123"
-        pending = PendingACPPrompt(session_id="session-1")
+        pending = PendingACPPrompt(session_id="session-1", posted=True)
         adapter._pending_prompts["room-123"] = pending
 
         await adapter.cancel_prompt("session-1")

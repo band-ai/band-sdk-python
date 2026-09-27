@@ -468,6 +468,15 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         if pending.done_event.is_set():
             return False
 
+        async with self._state_lock:
+            if (
+                pending.done_event.is_set()
+                or self._pending_prompts.get(room_id) is not pending
+            ):
+                return False
+            # Room events before this point belong to the previous turn.
+            pending.posted = True
+
         sent = await post_message(
             rest=self.rest,
             room_id=room_id,
@@ -511,9 +520,12 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             async with self._state_lock:
                 self._rehydrate(history)
 
-        # Find pending prompt for this room
+        # Find pending prompt for this room. Events that arrive before the
+        # prompt is posted are not its reply.
         async with self._state_lock:
             pending = self._pending_prompts.get(room_id)
+            if pending is not None and not pending.posted:
+                pending = None
 
         if pending and pending.outcome is not None:
             return
@@ -544,6 +556,8 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                 )
 
             if msg.message_type == MessageType.TEXT:
+                pending.reply_started = True
+            if pending.reply_started:
                 await self._schedule_prompt_completion(room_id, pending)
         elif self._acp_client and self._push_handler:
             # No pending prompt — push unsolicited update

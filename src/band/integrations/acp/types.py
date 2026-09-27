@@ -218,12 +218,16 @@ class PendingACPPrompt:
         done_event: Signals when the prompt has ended.
         outcome: The first terminal result, once settled.
         completion_task: Debounced completion task for multi-message replies.
+        posted: True once this prompt is committed to the room send.
+        reply_started: True once a text reply has opened the grace window.
     """
 
     session_id: str
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
     outcome: PromptOutcome | None = None
     completion_task: asyncio.Task[None] | None = None
+    posted: bool = False
+    reply_started: bool = False
 
     def finish(self, outcome: PromptOutcome | None) -> None:
         """Stop the grace timer and mark the prompt as ended."""

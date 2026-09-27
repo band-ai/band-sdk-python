@@ -7,6 +7,7 @@ from enum import StrEnum
 from band_sdk_core import AgentFailure
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from band.core.content import has_visible_content
 from band.core.protocols import FailureMetadataKey
 from band.core.redaction import redact_credentials, redact_credentials_deep
 from band.core.types import PlatformMessage, metadata_to_dict
@@ -33,7 +34,6 @@ def decode_failure(msg: PlatformMessage) -> AgentFailure:
         not isinstance(provider, str)
         or not provider.strip()
         or not isinstance(message, str)
-        or not message.strip()
         or (code is not None and not isinstance(code, str))
     ):
         return _fallback_failure(msg)
@@ -42,6 +42,11 @@ def decode_failure(msg: PlatformMessage) -> AgentFailure:
         detail = _JSON_VALUE.validate_python(raw.get("detail"))
     except ValidationError:
         return _fallback_failure(msg)
+
+    # ``to_failure_event`` keeps a blank ``message`` and puts the readable
+    # fallback in the event content. That is still a valid Core failure.
+    if not has_visible_content(message):
+        message = msg.content.strip() or "Band peer reported a failure."
 
     return AgentFailure(
         provider,

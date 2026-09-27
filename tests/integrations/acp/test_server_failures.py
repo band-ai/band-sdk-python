@@ -17,6 +17,7 @@ from tests.integrations.acp.conftest import (
     deliver_server_message,
     failure_event,
     make_platform_message,
+    make_tool_call_message,
     wait_for_pending_prompt,
 )
 
@@ -104,6 +105,41 @@ async def test_malformed_failure_uses_safe_fallback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["", "   "])
+async def test_blank_failure_message_keeps_core_failure(
+    mock_rest_client: MagicMock, message: str
+) -> None:
+    adapter, server = running_server(mock_rest_client)
+    task = prompt(server)
+    await wait_for_pending_prompt(adapter, "room-123")
+    await deliver_server_message(
+        adapter,
+        failure_event(
+            {
+                "failure": {
+                    "provider": "codex",
+                    "message": message,
+                    "code": "timeout",
+                    "detail": {"retry": 1},
+                }
+            },
+            content="codex failed without an error message.",
+        ),
+    )
+    with pytest.raises(RequestError) as raised:
+        await task
+    assert (
+        raised.value.data
+        == AgentFailure(
+            "codex",
+            "codex failed without an error message.",
+            code="timeout",
+            detail={"retry": 1},
+        ).to_extension_data()
+    )
+
+
+@pytest.mark.asyncio
 async def test_blank_error_uses_generic_fallback(mock_rest_client: MagicMock) -> None:
     adapter, server = running_server(mock_rest_client)
     task = prompt(server)
@@ -145,7 +181,41 @@ async def test_server_rejects_before_slow_update_and_later_cancel(
 
 
 @pytest.mark.asyncio
-async def test_error_wins_if_prompt_send_fails_afterward(
+async def test_room_event_before_post_does_not_drop_the_prompt(
+    mock_rest_client: MagicMock,
+) -> None:
+    adapter, server = running_server(mock_rest_client)
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    participants = mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value
+    push = MagicMock()
+    push.handle_push_event = AsyncMock()
+    adapter.set_push_handler(push)
+
+    async def delayed_participants(**kwargs: object) -> object:
+        entered.set()
+        await release.wait()
+        return participants
+
+    mock_rest_client.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        side_effect=delayed_participants
+    )
+    task = prompt(server)
+    await entered.wait()
+    await deliver_server_message(adapter, failure_event())
+    assert not task.done()
+    push.handle_push_event.assert_awaited_once()
+    release.set()
+    await wait_for_pending_prompt(adapter, "room-123")
+    mock_rest_client.agent_api_messages.create_agent_chat_message.assert_awaited()
+    await deliver_server_message(
+        adapter, make_platform_message("Done", message_type=MessageType.TEXT)
+    )
+    assert (await task).stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_lookup_failure_is_not_hidden_by_an_earlier_room_event(
     mock_rest_client: MagicMock,
 ) -> None:
     adapter, server = running_server(mock_rest_client)
@@ -163,15 +233,11 @@ async def test_error_wins_if_prompt_send_fails_afterward(
     task = prompt(server)
     await entered.wait()
     await deliver_server_message(adapter, failure_event())
-    try:
-        with pytest.raises(RequestError) as raised:
-            await asyncio.wait_for(asyncio.shield(task), 1)
-        assert_default_room_failure(raised.value)
-    finally:
-        release.set()
-        if not task.done():
-            with pytest.raises(RequestError):
-                await task
+    assert not task.done()
+    release.set()
+    with pytest.raises(RuntimeError, match="REST failed"):
+        await task
+    mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -188,6 +254,27 @@ async def test_failed_error_update_does_not_change_prompt_failure(
     with pytest.raises(RequestError) as raised:
         await task
     assert_default_room_failure(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_tool_activity_after_text_keeps_the_prompt_open(
+    mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS", 0.05
+    )
+    adapter, server = running_server(mock_rest_client)
+    task = prompt(server)
+    await wait_for_pending_prompt(adapter, "room-123")
+    await deliver_server_message(
+        adapter, make_platform_message("Looking into it", message_type=MessageType.TEXT)
+    )
+    await asyncio.sleep(0.03)
+    await deliver_server_message(adapter, make_tool_call_message())
+    await asyncio.sleep(0.03)
+    assert not task.done()
+    await asyncio.sleep(0.08)
+    assert (await task).stop_reason == "end_turn"
 
 
 @pytest.mark.asyncio
