@@ -20,7 +20,7 @@ def resolve_room_workspace(
     """Return a room's absolute workspace, creating the safe default on demand."""
     if workspace_for_room is not None:
         workspace = workspace_for_room(room_id)
-        if not isinstance(workspace, str) or not os.path.isabs(workspace):
+        if not isinstance(workspace, str) or not Path(workspace).is_absolute():
             raise ValueError("workspace_for_room must return an absolute path")
         resolved_workspace = os.path.realpath(workspace)
         Path(resolved_workspace).mkdir(parents=True, exist_ok=True)
