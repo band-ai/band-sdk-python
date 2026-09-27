@@ -517,9 +517,10 @@ def custom_prompt_with_marker(marker: str) -> str:
 # (band_get_participants / band_lookup_peers) to report who is present and who is
 # invitable — the identity + roster read.
 ROSTER_PROBE = (
-    "First, tell me your own name. Then use your tools to tell me, by name, who "
-    "else is in this room right now, and who you could still invite that isn't "
-    "here yet."
+    "First, tell me your own name. Call band_get_participants and list the exact "
+    "name of each other room participant. Then call band_lookup_peers and list "
+    "the exact name of a peer who is not in this room but could be invited. "
+    "Report the names from both tool results in your reply."
 )
 
 

@@ -36,7 +36,7 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter(runs_tool_loop=True)
+@per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
 @flaky_model("small-model wording of names is non-deterministic")
 @pytest.mark.timeout(extra=120)  # a turn with two platform-tool reads
 @pytest.mark.asyncio(loop_scope="session")
@@ -70,6 +70,11 @@ async def test_reports_identity_and_roster(
             room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
         )
         replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        await capture.wait_for_processed(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+
+    calls.assert_fired(RosterTool.GET_PARTICIPANTS)
+    calls.assert_fired(RosterTool.LOOKUP_PEERS)
 
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.

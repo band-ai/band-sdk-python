@@ -49,7 +49,8 @@ async def test_peer_initiated_delegation_with_self_recall(
 ) -> None:
     """B recalls a seeded value, routes it to A by mention, and A responds."""
     value = unique_marker("value")
-    async with cell.run_many(2) as (agent_a, agent_b):
+    # Short names keep the platform's capped agent handles unambiguous.
+    async with cell.run_many(2, labels=["peer-a", "peer-b"]) as (agent_a, agent_b):
         room_id = await resource_manager.provision_room(
             title=f"e2e-peer-delegation-{cell.adapter_id}",
             participants=[agent_a.id, agent_b.id],

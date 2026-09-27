@@ -442,10 +442,8 @@ def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
     email renders plain GFM — tables, bold, bullets — the same as the web UI, just
     with no `<style>`/inline-CSS support, so a table is the highest-fidelity "glance"
     layout available without a custom HTML email. Also deliberately carries no
-    PASS/FAIL header: a matrix-leg crash the cell-level grid can't see (no OS
-    dimension on `ScorecardRow`) can override `result.ok`'s verdict, so a caller with
-    that broader context should render its own header rather than trust one built
-    from cell data alone.
+    PASS/FAIL header: a matrix-leg crash can override `result.ok`'s verdict, so a
+    caller with that broader context should render its own header.
     """
     counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
     lines = [
