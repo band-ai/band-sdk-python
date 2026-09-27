@@ -96,8 +96,8 @@ class Outcome(StrEnum):
 
 
 def marker_command(marker: str, target: Path) -> str:
-    """The one shell command whose only effect is writing ``marker`` to ``target``."""
-    return f'echo {marker}> "{target}"'
+    """Write ``marker`` to ``target`` in the agent's configured workdir."""
+    return f'echo {marker} > "{target.name}"'
 
 
 def command_request(marker: str, target: Path) -> str:
@@ -109,8 +109,8 @@ def command_request(marker: str, target: Path) -> str:
 
 
 def appending_command(marker: str, target: Path) -> str:
-    """A shell command that appends ``marker`` to ``target``, so each run shows."""
-    return f'echo {marker}>> "{target}"'
+    """Append ``marker`` in the configured workdir, so each run shows."""
+    return f'echo {marker} >> "{target.name}"'
 
 
 def repeat_request(command: str, done: str) -> str:

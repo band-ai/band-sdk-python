@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 from band.adapters.opencode.approvals import APPROVAL_REQUESTED_TEMPLATE
@@ -21,10 +22,25 @@ def test_approval_commands_write_and_append_with_host_shell(tmp_path: Path) -> N
     marker = "approval-marker"
     target.write_text("old", encoding="utf-8")
 
-    subprocess.run(marker_command(marker, target), shell=True, check=True)
-    subprocess.run(appending_command(marker, target), shell=True, check=True)
+    subprocess.run(marker_command(marker, target), shell=True, check=True, cwd=tmp_path)
+    subprocess.run(
+        appending_command(marker, target), shell=True, check=True, cwd=tmp_path
+    )
 
     assert target.read_text(encoding="utf-8").splitlines() == [marker, marker]
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["pwsh", "-NoProfile", "-Command", marker_command(marker, target)],
+            check=True,
+            cwd=tmp_path,
+        )
+        subprocess.run(
+            ["pwsh", "-NoProfile", "-Command", appending_command(marker, target)],
+            check=True,
+            cwd=tmp_path,
+        )
+        assert target.read_text(encoding="utf-8").splitlines() == [marker, marker]
 
 
 def test_approval_closure_requires_reply_after_the_last_request_and_notice() -> None:
