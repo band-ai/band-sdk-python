@@ -30,6 +30,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     PASSIVE_ROSTER_DESCRIPTIONS_PROBE,
     ROSTER_LOOKUP_PAGE_SIZE,
     ROSTER_PROBE,
+    TOOL_AGENT,
     unique_marker,
 )
 from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
@@ -52,7 +53,7 @@ def lookup_peer_names(results: ToolResults) -> set[str]:
     return {name for result in results for name in name_pattern.findall(result.output)}
 
 
-@per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
+@per_adapter(runs_tool_loop=True, **TOOL_AGENT, **EXECUTION_REPORTING)
 @flaky_model("small-model wording of names is non-deterministic")
 @pytest.mark.timeout(extra=120)  # a turn with two platform-tool reads
 @pytest.mark.asyncio(loop_scope="session")
