@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
 from band.adapters.opencode.approvals import APPROVAL_REQUESTED_TEMPLATE
 from band.client.streaming import MessageCreatedPayload
 from tests.e2e.baseline.smoke.samples.approvals import (
@@ -81,9 +82,19 @@ def test_approval_closure_requires_reply_after_the_last_request_and_notice() -> 
         closing_reply=closing_reply,
     )
     assert not dialect.settled(
-        [*before_close, message("OpenCode completed the turn without a text reply.")],
+        [*before_close, message(NO_TEXT_REPLY_MESSAGE)],
         notice,
         closing_reply=closing_reply,
+    )
+    assert not dialect.settled(
+        [*before_close, message(NO_TEXT_REPLY_MESSAGE)],
+        notice,
+        closing_reply=None,
+    )
+    assert dialect.settled(
+        [*before_close, message("The shell tool was declined.")],
+        notice,
+        closing_reply=None,
     )
     assert dialect.settled(
         [*before_close, message(f"@[[agent]] {closing_reply}")],

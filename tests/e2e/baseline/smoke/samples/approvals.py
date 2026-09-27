@@ -19,6 +19,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from band_rest import ChatMessage
+
 from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE as CLAUDE_REQUESTED,
 )
@@ -51,6 +53,7 @@ from band.adapters.codex import (
     CodexSandboxMode,
 )
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
 from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
@@ -263,13 +266,13 @@ class ApprovalDialect:
     )
 
     def find_request(
-        self, messages: list[MessageCreatedPayload]
+        self, messages: list[MessageCreatedPayload | ChatMessage]
     ) -> re.Match[str] | None:
         """The first approval request among ``messages``, if the agent posted one."""
         return next(iter(self.find_requests(messages)), None)
 
     def find_requests(
-        self, messages: list[MessageCreatedPayload]
+        self, messages: list[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:
         """Every distinct approval request among ``messages``, in order."""
         found: dict[str, re.Match[str]] = {}
@@ -280,9 +283,9 @@ class ApprovalDialect:
 
     def settled(
         self,
-        since_request: list[MessageCreatedPayload],
+        since_request: list[MessageCreatedPayload | ChatMessage],
         *notices: Notice,
-        closing_reply: str,
+        closing_reply: str | None,
     ) -> bool:
         """Whether every notice is shown and the requested final reply followed it."""
         contents = [m.content or "" for m in since_request]
@@ -298,7 +301,11 @@ class ApprovalDialect:
             default=-1,
         )
         return any(
-            strip_leading_mentions(content).strip() == closing_reply
+            (
+                strip_leading_mentions(content).strip() == closing_reply
+                if closing_reply is not None
+                else bool(content.strip()) and NO_TEXT_REPLY_MESSAGE not in content
+            )
             and self.request.search(content) is None
             and not any(notice.text in content for notice in notices)
             for content in contents[last_control + 1 :]

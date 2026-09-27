@@ -26,6 +26,7 @@ Run with:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import tempfile
@@ -35,7 +36,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from band_rest import ChatMessage
 
+from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
+from band.client.streaming import MessageCreatedPayload
+from band.core.types import MessageType
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
@@ -63,6 +68,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
+TERMINAL_POLL_INTERVAL_S = 0.5
 
 
 def readback_commands(target: Path) -> frozenset[str]:
@@ -153,58 +159,74 @@ class ApprovalRoom:
         expected_notices = list(notices)
         unexpected_requests: list[str] = []
         known_followups = 0
-        while True:
-            await self.capture.wait_until(
-                lambda _msgs: (
-                    self.dialect.settled(
-                        self.capture.messages.since(since),
-                        *expected_notices,
-                        closing_reply=closing_reply,
-                    )
-                    or any(
-                        request["token"] not in self.answered_requests
-                        for request in self.dialect.find_requests(
-                            self.capture.messages.since(since)
+        cursor_reply = closing_reply if self.adapter_id is Adapter.CURSOR_ACP else None
+        async with asyncio.timeout(self.budget.deadline_s):
+            while True:
+                await self._wait_for_reply_or_request(
+                    since, expected_notices, cursor_reply
+                )
+                pending = self._unanswered_requests(self.capture.messages.since(since))
+                if not pending and self.dialect.settled(
+                    self.capture.messages.since(since),
+                    *expected_notices,
+                    closing_reply=cursor_reply,
+                ):
+                    if self.adapter_id is Adapter.CURSOR_ACP:
+                        break
+                    # These adapters persist usage only after their model turn ends.
+                    if not await self.capture.usage(sender_id=self.agent.id):
+                        await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
+                        continue
+                    durable = [
+                        message
+                        for message in await self.user_ops.list_messages(
+                            self.room_id, message_type=MessageType.TEXT
                         )
+                        if message.sender_id == self.agent.id
+                    ]
+                    pending = self._unanswered_requests(durable)
+                    if not pending and self.dialect.settled(
+                        durable, *expected_notices, closing_reply=None
+                    ):
+                        break
+                    if not pending:
+                        await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
+                        continue
+                for request in pending:
+                    readback = (
+                        request.groupdict().get("permission") == "bash"
+                        and request.groupdict().get("patterns")
+                        in allowed_followup_commands
+                        and known_followups == 0
                     )
-                ),
-                deadline_s=self.budget.deadline_s,
-            )
-            pending = [
-                request
-                for request in self.dialect.find_requests(
-                    self.capture.messages.since(since)
-                )
-                if request["token"] not in self.answered_requests
-            ]
-            if not pending and self.dialect.settled(
-                self.capture.messages.since(since),
-                *expected_notices,
-                closing_reply=closing_reply,
-            ):
-                break
-            for request in pending:
-                readback = (
-                    request.groupdict().get("permission") == "bash"
-                    and request.groupdict().get("patterns") in allowed_followup_commands
-                    and known_followups == 0
-                )
-                if readback:
-                    known_followups += 1
-                else:
-                    unexpected_requests.append(request["token"])
-                logger.info(
-                    "Declining follow-up approval adapter=%s request=%s permission=%s",
-                    self.adapter_id,
-                    request["token"],
-                    request.groupdict().get("permission", ""),
-                )
-                await self.decide(Outcome.DECLINE, request)
-                expected_notices.append(self.dialect.notice(Outcome.DECLINE, request))
-            if unexpected_requests:
-                for notice in expected_notices:
-                    await notice.assert_shown(self.capture, self.agent.id)
-                pytest.fail(f"Unexpected follow-up approvals: {unexpected_requests}")
+                    if readback:
+                        known_followups += 1
+                    else:
+                        unexpected_requests.append(request["token"])
+                    logger.info(
+                        "Declining follow-up approval adapter=%s request=%s permission=%s",
+                        self.adapter_id,
+                        request["token"],
+                        request.groupdict().get("permission", ""),
+                    )
+                    await self.decide(Outcome.DECLINE, request)
+                    expected_notices.append(
+                        self.dialect.notice(Outcome.DECLINE, request)
+                    )
+                if unexpected_requests:
+                    for notice in expected_notices:
+                        await notice.assert_shown(self.capture, self.agent.id)
+                    pytest.fail(
+                        f"Unexpected follow-up approvals: {unexpected_requests}"
+                    )
+                if self.adapter_id is Adapter.OPENCODE and any(
+                    NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
+                ):
+                    if await self.capture.usage(sender_id=self.agent.id):
+                        pytest.fail(
+                            "OpenCode ended the approval turn without a text reply"
+                        )
+                    await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
         logger.info(
             "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
             self.adapter_id,
@@ -237,6 +259,33 @@ class ApprovalRoom:
                     result.is_error,
                     len(result.output),
                 )
+
+    def _unanswered_requests(
+        self, messages: list[MessageCreatedPayload | ChatMessage]
+    ) -> list[re.Match[str]]:
+        return [
+            request
+            for request in self.dialect.find_requests(messages)
+            if request["token"] not in self.answered_requests
+        ]
+
+    async def _wait_for_reply_or_request(
+        self, since: int, notices: list[Notice], closing_reply: str | None
+    ) -> None:
+        await self.capture.wait_until(
+            lambda _msgs: (
+                self.dialect.settled(
+                    self.capture.messages.since(since),
+                    *notices,
+                    closing_reply=closing_reply,
+                )
+                or bool(self._unanswered_requests(self.capture.messages.since(since)))
+                or any(
+                    NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
+                )
+            ),
+            deadline_s=self.budget.deadline_s,
+        )
 
     def said_since(self, since: int) -> list[str]:
         return [m.content or "" for m in self.capture.messages.since(since)]
