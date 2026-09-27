@@ -104,7 +104,7 @@ class TestACPServerPrompt:
     async def test_prompt_extracts_text_and_delegates(self) -> None:
         """Should extract text from content blocks and delegate to adapter."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value="end_turn")
         server = ACPServer(adapter)
 
         prompt_blocks = [{"text": "Hello world"}]
@@ -117,7 +117,7 @@ class TestACPServerPrompt:
     async def test_prompt_multiple_text_blocks(self) -> None:
         """Should concatenate text from multiple blocks."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value="end_turn")
         server = ACPServer(adapter)
 
         prompt_blocks = [
@@ -134,7 +134,7 @@ class TestACPServerPrompt:
     async def test_prompt_skips_non_text_blocks(self) -> None:
         """Should skip content blocks without text."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value="end_turn")
         server = ACPServer(adapter)
 
         prompt_blocks = [
@@ -152,7 +152,7 @@ class TestACPServerPrompt:
     async def test_prompt_with_object_blocks(self) -> None:
         """Should handle content blocks as objects (not just dicts)."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value="end_turn")
         server = ACPServer(adapter)
 
         # Simulate object-style content blocks (TextContentBlock)

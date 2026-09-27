@@ -15,9 +15,13 @@ from acp import (
     update_plan,
     update_tool_call,
 )
+from acp.schema import AgentMessageChunk
+from band_sdk_core import AgentFailure
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
+from band.core.redaction import redact_credentials
 from band.core.types import PlatformMessage, is_usage_event
+from band.integrations.acp.failure import decode_failure
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,9 @@ class EventConverter:
     """
 
     @staticmethod
-    def convert(msg: PlatformMessage) -> Any | None:
+    def convert(
+        msg: PlatformMessage, *, failure: AgentFailure | None = None
+    ) -> Any | None:
         """Convert a PlatformMessage to an ACP session_update chunk.
 
         Args:
@@ -50,7 +56,12 @@ class EventConverter:
             case "tool_result":
                 return EventConverter._convert_tool_result(msg)
             case "error":
-                return update_agent_message_text(f"[Error] {msg.content}")
+                failure = failure or decode_failure(msg)
+                return AgentMessageChunk(
+                    sessionUpdate="agent_message_chunk",
+                    content=text_block(f"[Error] {redact_credentials(msg.content)}"),
+                    field_meta=failure.to_extension_data(),
+                )
             case "task":
                 # Usage records ride task events (USAGE_EVENT_TYPE) but are not
                 # lifecycle tasks — don't render them as a (never-completing) plan

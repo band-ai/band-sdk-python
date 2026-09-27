@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -127,6 +128,30 @@ def make_platform_message(
     )
 
 
+def failure_event(
+    metadata: object = None, content: str = "Peer failed"
+) -> PlatformMessage:
+    """An error event with optional room failure metadata."""
+    return replace(
+        make_platform_message(content, message_type="error"), metadata=metadata or {}
+    )
+
+
+async def deliver_server_message(
+    adapter: BandACPServerAdapter, msg: PlatformMessage
+) -> None:
+    """Deliver one room message through the ACP server adapter."""
+    await adapter.on_message(
+        msg,
+        FakeAgentTools(),
+        ACPSessionState(),
+        None,
+        None,
+        is_session_bootstrap=False,
+        room_id=msg.room_id,
+    )
+
+
 def make_tool_call_message(
     name: str = "get_weather",
     args: dict | None = None,
@@ -203,7 +228,7 @@ async def release_pending_prompt(
     pending = await asyncio.wait_for(
         wait_for_pending_prompt(adapter, room_id), timeout=timeout
     )
-    pending.done_event.set()
+    await adapter._finish_pending_prompt(room_id, expected=pending, outcome="end_turn")
 
 
 @pytest.fixture

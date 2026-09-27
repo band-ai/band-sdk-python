@@ -6,9 +6,16 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any, Literal, cast
 
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, JsonValue
+
+PromptOutcome = Literal["end_turn", "cancelled"] | AgentFailure
+
+
+class ConcurrentPromptError(ValueError):
+    """A room already has an active ACP prompt."""
 
 
 class ToolCallRoomEvent(BaseModel):
@@ -195,11 +202,11 @@ class PendingACPPrompt:
     Attributes:
         session_id: The ACP session identifier.
         done_event: Signals when the prompt has been fully answered.
-        terminal_message_seen: Tracks whether a terminal room message has arrived.
+        outcome: The first terminal result, once settled.
         completion_task: Debounced completion task for multi-message replies.
     """
 
     session_id: str
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
-    terminal_message_seen: bool = False
+    outcome: PromptOutcome | None = None
     completion_task: asyncio.Task[None] | None = None

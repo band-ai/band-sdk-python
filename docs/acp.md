@@ -48,9 +48,10 @@ BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 
 1. Editor connects via stdio -> `ACPServer.on_connect()` stores client ref
 2. `new_session(cwd, mcp_servers)` -> creates Band room, stores cwd/mcp_servers per session
-3. `prompt(blocks, session_id)` -> extracts text/image/resource content, sends to room, waits for `done_event`
+3. `prompt(blocks, session_id)` -> extracts text/image/resource content, sends to room, waits for a terminal outcome; another prompt in that room is rejected with `invalid_params`
 4. `on_message()` receives peer response -> `EventConverter.convert()` -> `session_update` back to editor
-5. `on_cleanup(room_id)` -> removes all session state, unblocks pending prompts
+5. Completed text returns `end_turn`; explicit `session/cancel` returns `cancelled`. A Band `error` rejects the prompt with JSON-RPC `internal_error` and Core failure projection directly in `error.data`. Room cleanup or agent shutdown also fails a pending prompt. The first terminal outcome wins.
+6. Error updates carry the same projection on the inner agent-message chunk's `_meta`, including unsolicited errors in mapped rooms. Their readable `[Error]` text is best effort and credential-redacted, as are projected message and nested detail fields. A slow update never delays rejection.
 
 ## Live, causally-ordered emission (Client Adapter)
 
@@ -211,4 +212,3 @@ fresh `PI_CODING_AGENT_DIR`. Excluded from framework-conformance as a bridge.
 
 - Example: `examples/acp/clients/omp.py`.
 - Pin used by CI: `@oh-my-pi/pi-coding-agent@18.2.8` (see `.github/scripts/setup-omp.sh`).
-
