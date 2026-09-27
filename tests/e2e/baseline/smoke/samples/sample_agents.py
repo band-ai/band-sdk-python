@@ -524,13 +524,14 @@ def custom_prompt_with_marker(marker: str) -> str:
 # invitable — the identity + roster read.
 ROSTER_LOOKUP_PAGE_SIZE = 20
 ROSTER_PROBE = (
-    "First, tell me your full registered name as plain text, not an @mention or "
-    "truncated handle. Call band_get_participants and list the exact name of "
+    "First, find your full registered name as plain text, not an @mention or "
+    "truncated handle. Call band_get_participants and include the exact name of "
     "every other room participant from that result, including agents. Do not "
     "omit the agent participant. Then call band_lookup_peers with "
-    f"page_size={ROSTER_LOOKUP_PAGE_SIZE} and list "
+    f"page_size={ROSTER_LOOKUP_PAGE_SIZE} and include "
     f"the exact name of an invitable test agent beginning with {NAME_PREFIX}. "
-    "Report the names from both tool results in your reply."
+    "Call band_send_message to report your full name and the names from both "
+    "tool results to this room."
 )
 
 
@@ -593,7 +594,8 @@ def remember_fact_instruction(fact: str) -> str:
 RECALL_ALL_FACTS = (
     "List every fact I have asked you to remember in this conversation so far. "
     "Scan the whole conversation, including the middle turns, and copy each full "
-    "fact token exactly, one per line. Do not omit any fact."
+    "fact token exactly, one per line. Do not omit any fact. Send the list to "
+    "this room with band_send_message."
 )
 
 
