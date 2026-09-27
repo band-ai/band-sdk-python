@@ -607,8 +607,8 @@ def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
     and the peer responds."""
     return (
         "Recall the complete value token from my previous message. "
-        f"{peer_name} did not receive that message, so include the exact token "
-        f"when you ask them to confirm it: call band_send_message with "
-        f"mentions=['{peer_id}'] and content that spells out the token. "
-        "Use the id as the mention identifier, then report their reply back to me."
+        f"{peer_name} did not receive that message. First send the exact token "
+        f"to {peer_name} with band_send_message(content containing the token, "
+        f"mentions=['{peer_id}']). Do not address that first message to me. "
+        "Wait for the peer's response, then report it back to me."
     )

@@ -78,7 +78,8 @@ async def test_peer_initiated_delegation_with_self_recall(
             )
             # Coupled: B mentioned A (metadata) in a message carrying the recalled value
             # — a real peer-initiated routing mention off B's own context.
-            replies_b = await capture.wait_for_reply(deleg_mid, agent_b.id, since=mark)
+            await capture.wait_for_processed(deleg_mid, agent_b.id)
+            replies_b = capture.messages.since(mark).from_sender(agent_b.id)
             routed = replies_b.mentioning(agent_a.id)
             routed.assert_contains_exact(value)
             routed_message = next(
