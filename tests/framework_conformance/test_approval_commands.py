@@ -27,7 +27,9 @@ def test_approval_commands_write_and_append_with_host_shell(tmp_path: Path) -> N
         appending_command(marker, target), shell=True, check=True, cwd=tmp_path
     )
 
-    assert target.read_text(encoding="utf-8").splitlines() == [marker, marker]
+    # cmd.exe includes the space before redirection in echo's output.
+    expected = f"{marker} " if sys.platform == "win32" else marker
+    assert target.read_text(encoding="utf-8").splitlines() == [expected, expected]
 
     if sys.platform == "win32":
         subprocess.run(
