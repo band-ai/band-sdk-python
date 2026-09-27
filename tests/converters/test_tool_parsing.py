@@ -52,6 +52,17 @@ class TestParseToolCall:
         assert result is None
         assert "missing tool_call_id" in caplog.text
 
+    def test_observation_reads_uncorrelated_result(self):
+        content = '{"name": "search", "output": {"data": [{"name": "peer-a"}]}}'
+
+        result = parse_tool_result(content, require_call_id=False)
+
+        assert result is not None
+        assert result.name == "search"
+        assert "peer-a" in result.output
+        assert result.output_data == {"data": [{"name": "peer-a"}]}
+        assert result.tool_call_id == ""
+
     def test_returns_none_for_missing_name(self, caplog):
         """Missing name returns None with warning."""
         content = '{"args": {}, "tool_call_id": "call_123"}'

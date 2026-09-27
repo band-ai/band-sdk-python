@@ -5,8 +5,8 @@ Two complementary probes:
 * ``test_reports_identity_and_roster`` — the agent must use platform tools
   (``band_get_participants`` / ``band_lookup_peers``) to report who is in the
   room and who is invitable. Every expected value is *self-sourced* so assertions
-  can't drift (agent name, in-room peer name, out-of-room name in the live
-  platform roster). Concurrent runs may add other valid invitable peers.
+  can't drift (agent name, in-room peer name, out-of-room name from its lookup
+  result). Concurrent runs may add other valid invitable peers.
 * ``test_reports_peer_description_from_passive_roster`` — the agent must answer
   from the always-injected participants list alone (no roster tools), including
   each peer's ``description``. Guards the passive roster's description
@@ -20,6 +20,7 @@ UUID and the user's display name stay out under the floors-only policy.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -33,8 +34,27 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
 from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.observations.tool_calls import RosterTool
+from tests.e2e.baseline.toolkit.observations.tool_results import ToolResults
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+
+def lookup_peer_names(results: ToolResults) -> set[str]:
+    """Names the agent could read from its successful peer lookup results."""
+    names: set[str] = set()
+    for result in results:
+        output = result.output_data
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(output, dict) or not isinstance(output.get("data"), list):
+            continue
+        for peer in output["data"]:
+            if isinstance(peer, dict) and isinstance(peer.get("name"), str):
+                names.add(peer["name"])
+    return names
 
 
 @per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
@@ -73,10 +93,15 @@ async def test_reports_identity_and_roster(
         replies = await capture.wait_for_reply(mid, agent.id, since=mark)
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
+        lookup_results = (await capture.tool_results(sender_id=agent.id)).named(
+            RosterTool.LOOKUP_PEERS
+        )
 
     calls.assert_fired(RosterTool.GET_PARTICIPANTS)
     calls.assert_fired(RosterTool.LOOKUP_PEERS)
-    offered_names = {peer.name for peer in roster if peer.name}
+    lookup_results.assert_succeeded(RosterTool.LOOKUP_PEERS)
+    offered_names = lookup_peer_names(lookup_results) - {agent.name, member.name}
+    assert offered_names, "agent lookup returned no out-of-room peer names"
 
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.

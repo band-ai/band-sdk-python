@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from band_rest import ChatMessage
 
@@ -34,6 +35,7 @@ class ToolResult:
 
     name: str
     output: str
+    output_data: Any
     tool_call_id: str
     is_error: bool
     raw: ChatMessage
@@ -42,16 +44,17 @@ class ToolResult:
     def from_event(cls, message: ChatMessage) -> ToolResult | None:
         """Build a ``ToolResult`` from a ``tool_result`` event's JSON content.
 
-        Tolerant of shape drift: ``parse_tool_result`` returns ``None`` (logged,
-        not raised) for a non-JSON or nameless payload, so a single odd event
-        never breaks inspection.
+    Observation does not pair results with provider tool calls, so it can read
+    results from frameworks that emit no call ID; history conversion still
+    requires one for correlation.
         """
-        parsed = parse_tool_result(message.content)
+        parsed = parse_tool_result(message.content, require_call_id=False)
         if parsed is None:
             return None
         return cls(
             name=parsed.name,
             output=parsed.output,
+            output_data=parsed.output_data,
             tool_call_id=parsed.tool_call_id,
             is_error=parsed.is_error,
             raw=message,
