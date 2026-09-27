@@ -53,12 +53,17 @@ class ApprovalRoom:
 
     async def closed(self, *notices: Notice, since: int) -> None:
         """Wait for decision notices and the closing reply."""
-        await self.capture.wait_until(
-            lambda _msgs: self.dialect.settled(
-                self.capture.messages.since(since), *notices
-            ),
-            deadline_s=self.budget.deadline_s,
-        )
+        try:
+            await self.capture.wait_until(
+                lambda _msgs: self.dialect.settled(
+                    self.capture.messages.since(since), *notices
+                ),
+                deadline_s=self.budget.deadline_s,
+            )
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"{error}; room messages: {self.said_since(since)}"
+            ) from error
         for notice in notices:
             await notice.assert_shown(self.capture, self.agent.id)
 
