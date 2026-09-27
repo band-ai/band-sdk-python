@@ -6,6 +6,7 @@ import asyncio
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -573,8 +574,9 @@ async def test_sequential_rooms_keep_their_work_after_restart(
         )
 
     handled: dict[str, str] = {}
+    boundaries: dict[str, datetime] = {}
     async with running_agent(identity, adapter(), cell.settings):
-        for room_id in rooms:
+        for expected_count, room_id in enumerate(rooms, start=1):
             marker = markers[room_id]
             async with reply_capture(room_id) as capture:
                 mid = await user_ops.send_message(
@@ -591,8 +593,10 @@ async def test_sequential_rooms_keep_their_work_after_restart(
                 replies.assert_contains_any([marker])
                 assert (workspaces[room_id] / "note.txt").read_text().strip() == marker
                 stored = await _stored_memories(capture, identity)
+                assert len(stored) == expected_count
                 assert len(stored.where(content=marker)) == 1
                 handled[room_id] = mid
+                boundaries[room_id] = capture.turn_boundary()
 
     offline = {
         room_id: await user_ops.send_message(
@@ -619,11 +623,18 @@ async def test_sequential_rooms_keep_their_work_after_restart(
                 replies.assert_contains_any([markers[room_id]])
                 other = next(other for other in rooms if other != room_id)
                 replies.assert_contains_none([markers[other]])
+        stored = await _stored_memories(first, identity)
+        assert len(stored) == len(rooms)
         for room_id in rooms:
+            calls = await captures[room_id].tool_calls(
+                sender_id=identity.id,
+                since=boundaries[room_id],
+                include_memory=True,
+            )
+            assert not calls, f"Cursor used tools to recall the room marker: {calls}"
             assert DeliveryStatus.PROCESSING not in captures[room_id].delivery_history(
                 handled[room_id], identity.id
             )
             marker = markers[room_id]
-            stored = await _stored_memories(captures[room_id], identity)
             assert len(stored.where(content=marker)) == 1
             assert (workspaces[room_id] / "note.txt").read_text().strip() == marker

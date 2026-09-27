@@ -16,23 +16,11 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.deps import cli_binary
 
 
-def copilot_cli_version() -> str:
-    if (cli := shutil.which("copilot")) is None:
-        return "unavailable"
-    # On Windows the npm shim is copilot.cmd, a batch file CreateProcess can't
-    # run without cmd.exe; the command is a resolved local path plus a literal
-    # flag, so shell=True carries no injection risk.
-    completed = subprocess.run(
-        f'"{cli}" --version', shell=True, capture_output=True, text=True, check=False
-    )
-    return completed.stdout.strip()
-
-
-def cursor_cli_version(settings: BaselineSettings) -> str:
-    binary = cli_binary(settings.backends.cursor_command, "agent")
+def cli_version(binary: str) -> str:
     if (cli := shutil.which(binary)) is None:
         return "unavailable"
     command: str | list[str] = [cli, "--version"]
+    # Windows batch shims need cmd.exe to launch.
     if pathlib.Path(cli).suffix.lower() in {".cmd", ".bat"}:
         command = f'"{cli}" --version'
     completed = subprocess.run(
@@ -48,8 +36,10 @@ def cursor_cli_version(settings: BaselineSettings) -> str:
 def main() -> None:
     settings = BaselineSettings()
     metadata = {
-        "copilot_cli": copilot_cli_version(),
-        "cursor_cli": cursor_cli_version(settings),
+        "copilot_cli": cli_version("copilot"),
+        "cursor_cli": cli_version(
+            cli_binary(settings.backends.cursor_command, "agent")
+        ),
         "os": platform.platform(),
         "copilot_auth": {
             "mode": "byok",
