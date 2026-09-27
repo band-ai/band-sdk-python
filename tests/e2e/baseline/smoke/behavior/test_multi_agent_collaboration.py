@@ -185,7 +185,22 @@ async def test_coordinator_delegates_to_two_specialists(
             text = " ".join(m.content.lower() for m in messages)
             return ACCESS_CODES[PANEL_KEY].lower() in text and FORECAST_FRAGMENT in text
 
-        await capture.wait_until(both_results_in, deadline_s=cascade_deadline)
+        try:
+            await capture.wait_until(both_results_in, deadline_s=cascade_deadline)
+        except TimeoutError as exc:
+            lookup_calls, weather_calls = await asyncio.gather(
+                capture.tool_calls(sender_id=lookup_spec.id),
+                capture.tool_calls(sender_id=weather_spec.id),
+            )
+            replies = [
+                (message.sender_id, message.content[:500])
+                for message in capture.messages
+            ]
+            raise TimeoutError(
+                f"{exc}; replies: {replies}; "
+                f"lookup calls: {[call.name for call in lookup_calls]}; "
+                f"weather calls: {[call.name for call in weather_calls]}"
+            ) from exc
 
         lookup_calls, weather_calls = await asyncio.gather(
             capture.tool_calls(sender_id=lookup_spec.id),

@@ -86,7 +86,17 @@ async def test_reports_identity_and_roster(
         mid = await user_ops.send_message(
             room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
         )
-        replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        try:
+            replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        except TimeoutError as exc:
+            calls, results = await asyncio.gather(
+                capture.tool_calls(sender_id=agent.id),
+                capture.tool_results(sender_id=agent.id),
+            )
+            raise TimeoutError(
+                f"{exc}; tool calls: {[call.name for call in calls]}; "
+                f"tool results: {[(result.name, result.is_error) for result in results]}"
+            ) from exc
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
         lookup_results = (await capture.tool_results(sender_id=agent.id)).named(
