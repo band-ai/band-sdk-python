@@ -344,9 +344,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         """
         if not self._preflight_enabled:
             return
-        probe = self._client_factory(self.config)
+        probe = self._default_client_factory(self.config)
         try:
             await probe.health()
+            if self.config.directory:
+                await self._warn_on_directory_alias(probe)
         except httpx.HTTPError as exc:
             raise BandConnectionError(
                 f"OpenCode server not reachable at {self.config.base_url}: {exc}. "
@@ -355,6 +357,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             ) from exc
         finally:
             await probe.close()
+
+    async def _warn_on_directory_alias(self, probe: HttpOpencodeClient) -> None:
+        try:
+            server_directory = await probe.get_server_directory()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "Could not check OpenCode server directory at %s: %s",
+                self.config.base_url,
+                exc,
+            )
+            return
+
+        if server_directory == self.config.directory:
+            return
+        logger.warning(
+            "OpenCode resolves configured directory %r to %r on its server. "
+            "Use the server path in file requests to avoid false "
+            "external_directory approvals; linked paths may still lead outside the workspace.",
+            self.config.directory,
+            server_directory,
+        )
 
     def _agent_mcp_server_name(self, agent_identity: str) -> str:
         """Return a stable, serve-global MCP name for one Band identity."""
@@ -593,7 +616,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     def _default_client_factory(
         self, config: OpencodeAdapterConfig
-    ) -> OpencodeClientProtocol:
+    ) -> HttpOpencodeClient:
         return HttpOpencodeClient(
             base_url=config.base_url,
             directory=config.directory,

@@ -61,3 +61,14 @@ Four invariants are easy to break and expensive to rediscover:
 
 `turn_timeout_s` bounds *compute*: time parked on a manual approval is excluded,
 since the ask carries its own `approval_wait_timeout_s` expiry.
+
+## Symlinked server workspaces
+
+`directory` is a path on the OpenCode server, which may be on another machine.
+Band forwards it unchanged. At startup, Band asks the server for its resolved
+directory and logs a warning if it differs from the configured path. Use the
+server-reported path when referring to files in prompts or tool arguments: an
+alias-spelled path may otherwise trigger a false `external_directory` approval.
+Band does not automatically approve these requests because a link inside the
+workspace can point outside it. If `directory` is unset, Band cannot compare
+the server's workdir to a configured path.

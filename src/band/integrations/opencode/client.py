@@ -110,6 +110,16 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         response = await self._client.get("/global/health")
         response.raise_for_status()
 
+    async def get_server_directory(self) -> str:
+        """Ask OpenCode how it resolves this client's directory on its host."""
+        response = await self._client.get("/path", params=self._query_params())
+        response.raise_for_status()
+        paths = response.json()
+        directory = paths.get("directory") if isinstance(paths, dict) else None
+        if not isinstance(directory, str):
+            raise ValueError("OpenCode /path response has no directory")
+        return directory
+
     async def create_session(
         self,
         *,

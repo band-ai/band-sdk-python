@@ -9,6 +9,7 @@ a real ASGI request/response cycle rather than a hand-rolled mock.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import quote
@@ -20,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.integrations.opencode.client import HttpOpencodeClient
 
 
@@ -29,9 +31,13 @@ class FakeOpencodeServer:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.sse_frames: list[dict[str, str]] = []
+        self.server_directory: str = "/remote/project"
+        self.path_status: int = 200
         self.known_session_ids: set[str] = {"sess-existing"}
         self.app = Starlette(
             routes=[
+                Route("/global/health", self._health, methods=["GET"]),
+                Route("/path", self._get_paths, methods=["GET"]),
                 Route("/session", self._create_session, methods=["POST"]),
                 Route("/session/{session_id}", self._get_session, methods=["GET"]),
                 Route(
@@ -78,6 +84,16 @@ class FakeOpencodeServer:
     async def _create_session(self, request: Request) -> Response:
         await self._record(request)
         return JSONResponse({"id": "sess-new", "title": "created"})
+
+    async def _health(self, request: Request) -> Response:
+        await self._record(request)
+        return JSONResponse({"healthy": True})
+
+    async def _get_paths(self, request: Request) -> Response:
+        await self._record(request)
+        if self.path_status != 200:
+            return JSONResponse({"error": "not found"}, status_code=self.path_status)
+        return JSONResponse({"directory": self.server_directory})
 
     async def _get_session(self, request: Request) -> Response:
         await self._record(request)
@@ -145,6 +161,20 @@ def make_client(fake_server: FakeOpencodeServer, **kwargs: Any) -> HttpOpencodeC
     )
 
 
+async def start_adapter_with_server(
+    fake_server: FakeOpencodeServer,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: str,
+) -> None:
+    adapter = OpencodeAdapter(config=OpencodeAdapterConfig(directory=directory))
+    monkeypatch.setattr(
+        adapter,
+        "_default_client_factory",
+        lambda _config: make_client(fake_server, directory=directory),
+    )
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+
+
 async def test_create_session_omits_title_when_not_given(
     fake_server: FakeOpencodeServer,
 ) -> None:
@@ -207,6 +237,68 @@ async def test_remote_directory_and_workspace_set_query_params_and_headers(
         assert request["headers"]["x-opencode-workspace"] == "my-workspace"
     finally:
         await client.close()
+
+
+async def test_server_directory_lookup_keeps_remote_path_raw(
+    fake_server: FakeOpencodeServer,
+) -> None:
+    directory = "/remote/workspace-link/../project"
+    client = make_client(fake_server, directory=directory, workspace="my-workspace")
+    try:
+        assert await client.get_server_directory() == fake_server.server_directory
+        request = fake_server.requests[-1]
+        assert request["path"] == "/path"
+        assert request["query"] == {
+            "directory": directory,
+            "workspace": "my-workspace",
+        }
+        assert request["headers"]["x-opencode-directory"] == directory
+    finally:
+        await client.close()
+
+
+async def test_adapter_warns_on_server_directory_alias_without_changing_requests(
+    fake_server: FakeOpencodeServer,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = "/remote/workspace-link"
+
+    with caplog.at_level(logging.WARNING):
+        await start_adapter_with_server(fake_server, monkeypatch, directory)
+
+    assert fake_server.requests[-1]["path"] == "/path"
+    assert fake_server.requests[-1]["query"]["directory"] == directory
+    assert fake_server.requests[-1]["headers"]["x-opencode-directory"] == directory
+    assert fake_server.server_directory in caplog.text
+    assert "external_directory" in caplog.text
+
+
+async def test_adapter_does_not_warn_when_server_directory_matches(
+    fake_server: FakeOpencodeServer,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = fake_server.server_directory
+
+    with caplog.at_level(logging.WARNING):
+        await start_adapter_with_server(fake_server, monkeypatch, directory)
+
+    assert "external_directory" not in caplog.text
+
+
+async def test_directory_lookup_failure_does_not_block_startup(
+    fake_server: FakeOpencodeServer,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_server.path_status = 404
+    directory = "/remote/workspace-link"
+
+    with caplog.at_level(logging.WARNING):
+        await start_adapter_with_server(fake_server, monkeypatch, directory)
+
+    assert "Could not check OpenCode server directory" in caplog.text
 
 
 async def test_non_ascii_directory_header_is_percent_encoded(
