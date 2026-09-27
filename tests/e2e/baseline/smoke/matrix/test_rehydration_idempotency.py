@@ -89,6 +89,7 @@ async def test_handled_work_not_redrained_on_restart(
                 mention_name=identity.name,
             )
             await capture.wait_for_processed(invite_mid, identity.id)
+            mark = capture.messages.snapshot()
             handled_mid = await user_ops.send_message(
                 room_id,
                 liveness_probe(handled),
@@ -96,7 +97,7 @@ async def test_handled_work_not_redrained_on_restart(
                 mention_name=identity.name,
             )
             # Pre-restart: the marked probe was answered.
-            replies = await capture.wait_for_reply(handled_mid, identity.id)
+            replies = await capture.wait_for_reply(handled_mid, identity.id, since=mark)
             replies.assert_contains_any([handled])
         # ...and the completed invite put Echo in the room.
         after_invite = await user_ops.list_participant_ids(room_id)
