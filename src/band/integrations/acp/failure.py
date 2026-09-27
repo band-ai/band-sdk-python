@@ -23,31 +23,36 @@ class ACPFailureProvider(StrEnum):
 def decode_failure(msg: PlatformMessage) -> AgentFailure:
     """Invert the room failure shape from ``to_failure_event`` safely."""
     raw = metadata_to_dict(msg.metadata).get(FailureMetadataKey.FAILURE)
-    if isinstance(raw, dict):
-        provider = raw.get("provider")
-        message = raw.get("message")
-        code = raw.get("code")
-        if (
-            isinstance(provider, str)
-            and provider.strip()
-            and isinstance(message, str)
-            and message.strip()
-            and (code is None or isinstance(code, str))
-        ):
-            try:
-                detail = _JSON_VALUE.validate_python(raw.get("detail"))
-            except ValidationError:
-                pass
-            else:
-                try:
-                    return AgentFailure(
-                        provider,
-                        redact_credentials(message),
-                        code=code,
-                        detail=redact_credentials_deep(detail),
-                    )
-                except (TypeError, ValueError):
-                    pass
+    if not isinstance(raw, dict):
+        return _fallback_failure(msg)
+
+    provider = raw.get("provider")
+    message = raw.get("message")
+    code = raw.get("code")
+    if (
+        not isinstance(provider, str)
+        or not provider.strip()
+        or not isinstance(message, str)
+        or not message.strip()
+        or (code is not None and not isinstance(code, str))
+    ):
+        return _fallback_failure(msg)
+
+    try:
+        detail = _JSON_VALUE.validate_python(raw.get("detail"))
+    except ValidationError:
+        return _fallback_failure(msg)
+
+    return AgentFailure(
+        provider,
+        redact_credentials(message),
+        code=code,
+        detail=redact_credentials_deep(detail),
+    )
+
+
+def _fallback_failure(msg: PlatformMessage) -> AgentFailure:
+    """Use redacted event content when structured failure metadata is malformed."""
     return AgentFailure(
         ACPFailureProvider.BAND,
         redact_credentials(msg.content.strip() or "Band peer reported a failure."),
