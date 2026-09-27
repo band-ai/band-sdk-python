@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Pinned: an unpinned global install lets the CLI float between runs, so a server
 # behaviour change lands as an unrelated-looking lane failure. Bump deliberately.
-OPENCODE_VERSION="${OPENCODE_VERSION:-1.18.4}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-$(cat "$(dirname "$0")/opencode-version")}"
 
 npm install -g "opencode-ai@${OPENCODE_VERSION}"
 
