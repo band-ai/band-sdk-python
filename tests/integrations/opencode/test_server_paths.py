@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from typing import Any
 
 import httpx
@@ -27,6 +28,14 @@ _MODEL_ID = "model"
 _MODEL_NAME = f"{_PROVIDER_ID}/{_MODEL_ID}"
 _READ_TOOL = "read"
 _EXTERNAL_PERMISSION = "external_directory"
+
+
+class LocalModelServer(ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer's reverse DNS lookup can stall on CI runners.
+        TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
 
 
 def _directory_alias(alias: Path, target: Path) -> None:
@@ -97,7 +106,7 @@ def _model_server(target: Path) -> Iterator[str]:
         def log_message(self, _format: str, *_args: object) -> None:
             return
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LocalModelServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -229,6 +238,7 @@ async def test_server_distinguishes_link_spelling_from_physical_and_external_pat
     (external_directory / "outside.txt").write_text("outside through link")
     external_alias = physical / "external-link"
     _directory_alias(external_alias, external_directory)
+    alias_permission = None if sys.platform == "win32" else _EXTERNAL_PERMISSION
 
     with (
         _model_server(inside) as model_url,
@@ -245,11 +255,13 @@ async def test_server_distinguishes_link_spelling_from_physical_and_external_pat
         _model_server(alias / "inside.txt") as model_url,
         _opencode_server(physical, model_url) as base_url,
     ):
-        assert await _permission_for_read(base_url, alias, alias / "inside.txt") == (
-            _EXTERNAL_PERMISSION
+        assert (
+            await _permission_for_read(base_url, alias, alias / "inside.txt")
+            == alias_permission
         )
-        assert await _permission_for_read(base_url, physical, alias / "inside.txt") == (
-            _EXTERNAL_PERMISSION
+        assert (
+            await _permission_for_read(base_url, physical, alias / "inside.txt")
+            == alias_permission
         )
 
     with (
