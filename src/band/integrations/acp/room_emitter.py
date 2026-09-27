@@ -18,6 +18,8 @@ from band.runtime.tools import is_room_posting_tool
 
 logger = logging.getLogger(__name__)
 
+ACP_SESSION_CLOSED_EVENT = "ACP client session"
+
 
 def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
     """True when the turn posted to the room via a Band messaging tool.
@@ -178,7 +180,7 @@ class RoomTurnEmitter:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
         await send_event_safe(
             self._tools,
-            content="ACP client session",
+            content=ACP_SESSION_CLOSED_EVENT,
             message_type="task",
             metadata={
                 "acp_client_session_id": self._session_id,

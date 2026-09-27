@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-import runpy
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -24,7 +24,8 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-from band.core.types import Capability
+from band.core.types import Capability, MessageType
+from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
 from band.integrations.acp.session_config import (
     ACPConfigRequest,
     SessionConfigResolver,
@@ -59,12 +60,59 @@ RECOVERY_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=4)
 CURSOR_MODE_OPTION_ID = "mode"
 MAX_PERMISSION_REQUESTS = 8
 PROJECT_TEST_TIMEOUT_S = 30
+TURN_POLL_INTERVAL_S = 0.5
 BACKUP_FILE_NAME = "backup.txt"
 PLAN_REQUEST = re.compile(
     rf"(?P<plan>.*) needs approval\. Reply .*?"
     rf"{re.escape(ROOM_COMMAND)} {CursorCommandWord.ACCEPT} (?P<token>[\w-]+)",
     re.DOTALL,
 )
+
+
+@dataclass(frozen=True)
+class TurnCheckpoint:
+    cursor: int
+    closed_count: int
+    text_ids: frozenset[str]
+
+
+async def _closed_turn_count(room: ApprovalRoom) -> int:
+    tasks = await room.capture.tasks(sender_id=room.agent.id)
+    return sum(task.content == ACP_SESSION_CLOSED_EVENT for task in tasks)
+
+
+async def _start_turn(room: ApprovalRoom, text: str) -> TurnCheckpoint:
+    closed_count = await _closed_turn_count(room)
+    messages = await room.user_ops.list_messages(
+        room.room_id, message_type=MessageType.TEXT
+    )
+    cursor = await room.say(text)
+    return TurnCheckpoint(cursor, closed_count, frozenset(m.id for m in messages))
+
+
+async def _wait_for_turn_close(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> None:
+    async def wait() -> None:
+        while await _closed_turn_count(room) <= checkpoint.closed_count:
+            await asyncio.sleep(TURN_POLL_INTERVAL_S)
+
+    try:
+        await asyncio.wait_for(wait(), timeout=room.budget.deadline_s)
+    except TimeoutError:
+        pytest.fail(
+            f"Cursor turn did not close after the decision: "
+            f"{room.said_since(checkpoint.cursor)}"
+        )
+
+
+async def _new_agent_text(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> list[str]:
+    messages = await room.user_ops.list_messages(
+        room.room_id, message_type=MessageType.TEXT
+    )
+    return [
+        message.content or ""
+        for message in messages
+        if message.id not in checkpoint.text_ids and message.sender_id == room.agent.id
+    ]
 
 
 def _project(root: Path) -> Path:
@@ -97,16 +145,14 @@ def _project_state(root: Path) -> dict[str, bytes]:
     return {
         str(path.relative_to(root)): path.read_bytes()
         for path in root.rglob("*")
-        if path.is_file()
+        if path.is_file() and "__pycache__" not in path.relative_to(root).parts
     }
 
 
-async def _project_tests(root: Path) -> tuple[int, str]:
+async def _run_project_command(root: Path, *args: str) -> tuple[int, str]:
     process = await asyncio.create_subprocess_exec(
         sys.executable,
-        "-m",
-        "unittest",
-        "discover",
+        *args,
         cwd=root,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -118,9 +164,27 @@ async def _project_tests(root: Path) -> tuple[int, str]:
     except TimeoutError:
         process.kill()
         await process.communicate()
-        pytest.fail(f"Project unittest did not finish within {PROJECT_TEST_TIMEOUT_S}s")
+        pytest.fail(
+            f"Project command did not finish within {PROJECT_TEST_TIMEOUT_S}s: {args}"
+        )
     assert process.returncode is not None
     return process.returncode, (stdout + stderr).decode(errors="replace")
+
+
+async def _project_tests(root: Path) -> tuple[int, str]:
+    return await _run_project_command(root, "-m", "unittest", "discover")
+
+
+async def _assert_repaired_project(root: Path) -> None:
+    result, output = await _run_project_command(
+        root,
+        "-c",
+        "from calculator import total; actual = total(2, 3); "
+        "assert actual == 5, f'{actual} != 5'",
+    )
+    assert result == 0, output
+    result, output = await _project_tests(root)
+    assert result == 0, output
 
 
 def _select_mode(mode: str) -> SessionConfigResolver:
@@ -169,18 +233,17 @@ async def _plan_request(room: ApprovalRoom, *, since: int) -> tuple[str, str]:
 async def _decide_plan(
     room: ApprovalRoom,
     *,
-    since: int,
-    message_id: str,
+    checkpoint: TurnCheckpoint,
     accept: bool,
     reply_marker: str,
 ) -> str:
-    token, plan = await _plan_request(room, since=since)
+    token, plan = await _plan_request(room, since=checkpoint.cursor)
     word = CursorCommandWord.ACCEPT if accept else CursorCommandWord.REJECT
     after_decision = await room.say(f"{ROOM_COMMAND} {word} {token}")
     notice = DECISION_RESOLVED_TEMPLATE.format(kind="plan", token=token)
     await room.shown(notice, since=after_decision)
     try:
-        messages = await room.capture.wait_until(
+        await room.capture.wait_until(
             lambda items, cursor=after_decision: any(
                 PLAN_REQUEST.search(item.content or "")
                 or reply_marker in (item.content or "")
@@ -193,11 +256,14 @@ async def _decide_plan(
             f"Cursor did not finish the plan decision: "
             f"{room.said_since(after_decision)}"
         )
-    assert not any(
-        PLAN_REQUEST.search(item.content or "") for item in messages[after_decision:]
-    ), "Cursor requested another plan without separate human review"
-    await room.capture.wait_for_processed(
-        message_id, room.agent.id, deadline_s=room.budget.deadline_s
+    await _wait_for_turn_close(room, checkpoint)
+    requests = [
+        match["token"]
+        for content in await _new_agent_text(room, checkpoint)
+        if (match := PLAN_REQUEST.search(content))
+    ]
+    assert requests == [token], (
+        f"Cursor requested another plan without separate human review: {requests}"
     )
     return plan
 
@@ -205,12 +271,11 @@ async def _decide_plan(
 async def _decide_permissions_until_reply(
     room: ApprovalRoom,
     *,
-    since: int,
-    message_id: str,
+    checkpoint: TurnCheckpoint,
     reply_marker: str,
     deny_first_tool: str | None = None,
 ) -> int:
-    [request] = await room.requests(1, since=since)
+    [request] = await room.requests(1, since=checkpoint.cursor)
     denied = 0
     for _ in range(MAX_PERMISSION_REQUESTS):
         if deny_first_tool is not None and denied == 0:
@@ -242,21 +307,19 @@ async def _decide_permissions_until_reply(
             )
         requests = room.dialect.find_requests(messages[after_decision:])
         if not requests:
-            await room.capture.wait_for_processed(
-                message_id, room.agent.id, deadline_s=room.budget.deadline_s
-            )
+            await _wait_for_turn_close(room, checkpoint)
             return denied
         if deny_first_tool is not None and not is_room_posting_tool(
             requests[0]["tool"].partition(":")[0]
         ):
             pytest.fail(
                 "Cursor requested another permission after the denied action: "
-                f"{room.said_since(since)}"
+                f"{room.said_since(checkpoint.cursor)}"
             )
         request = requests[0]
     pytest.fail(
         f"Cursor requested permission more than {MAX_PERMISSION_REQUESTS} times: "
-        f"{room.said_since(since)}"
+        f"{room.said_since(checkpoint.cursor)}"
     )
 
 
@@ -305,17 +368,17 @@ async def test_repairs_a_failing_project_after_a_human_gate(
             user_ops,
             REPAIR_BUDGET,
         )
-        start, message_id = await room.send(
+        checkpoint = await _start_turn(
+            room,
             "Before reading or changing any project file, use one shell command "
             f"to copy calculator.py to {BACKUP_FILE_NAME}. Do not edit the project until "
             "that command is decided. Only after the copy "
             f"succeeds, {_store_completion_memory(marker)} If I "
-            f"deny the copy, do not retry; reply with {denied_reply}."
+            f"deny the copy, do not retry; reply with {denied_reply}.",
         )
         denied = await _decide_permissions_until_reply(
             room,
-            since=start,
-            message_id=message_id,
+            checkpoint=checkpoint,
             reply_marker=denied_reply,
             deny_first_tool=BACKUP_FILE_NAME,
         )
@@ -323,25 +386,23 @@ async def test_repairs_a_failing_project_after_a_human_gate(
         assert _project_state(root) == original_state
         assert len(await _stored_memories(capture, agent)) == 0
 
-        start, message_id = await room.send(
+        checkpoint = await _start_turn(
+            room,
             "Skip the backup. Diagnose and repair calculator.py so the "
             "existing unittest passes. Use one shell tool call for the edit "
             "and test run. "
             f"{_store_completion_memory(marker)} Then report the result "
-            f"with {report}."
+            f"with {report}.",
         )
         assert source.read_text() == original
         await _decide_permissions_until_reply(
             room,
-            since=start,
-            message_id=message_id,
+            checkpoint=checkpoint,
             reply_marker=report,
         )
         assert source.read_text() != original
         assert (root / "test_calculator.py").read_bytes() == original_tests
-        assert runpy.run_path(str(source))["total"](2, 3) == 5
-        exit_code, output = await _project_tests(root)
-        assert exit_code == 0, output
+        await _assert_repaired_project(root)
         stored = await _stored_memories(capture, agent)
         assert len(stored) == 1
         stored.assert_stored(content=marker)
@@ -390,17 +451,17 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
             user_ops,
             PLAN_BUDGET,
         )
-        start, message_id = await room.send(
+        checkpoint = await _start_turn(
+            room,
             "Read calculator.py and test_calculator.py in this workspace. "
             "Plan a multi-step repair of the failing calculator test. Submit "
             "the plan for human review with cursor/create_plan, not just a "
             "chat outline. Do not implement yet. If I reject it, do not "
-            f"request another plan; reply with {rejected_reply}."
+            f"request another plan; reply with {rejected_reply}.",
         )
         rejected_plan = await _decide_plan(
             room,
-            since=start,
-            message_id=message_id,
+            checkpoint=checkpoint,
             accept=False,
             reply_marker=rejected_reply,
         )
@@ -418,15 +479,15 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
             user_ops,
             PLAN_BUDGET,
         )
-        start, message_id = await room.send(
+        checkpoint = await _start_turn(
+            room,
             "Revise the plan to keep the change limited to calculator.py and "
             "its test, then request human review with cursor/create_plan again. "
-            f"If I accept it, reply with {accepted_reply}. Do not implement yet."
+            f"If I accept it, reply with {accepted_reply}. Do not implement yet.",
         )
         accepted_plan = await _decide_plan(
             room,
-            since=start,
-            message_id=message_id,
+            checkpoint=checkpoint,
             accept=True,
             reply_marker=accepted_reply,
         )
@@ -452,22 +513,27 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
             user_ops,
             PLAN_BUDGET,
         )
-        start, message_id = await room.send(
+        checkpoint = await _start_turn(
+            room,
             "Implement the accepted calculator repair, run its unittest in "
             "the same shell tool call, and report the result with "
-            f"{implementation_reply}."
+            f"{implementation_reply}.",
         )
         assert source.read_text() == original
         await _decide_permissions_until_reply(
             room,
-            since=start,
-            message_id=message_id,
+            checkpoint=checkpoint,
             reply_marker=implementation_reply,
         )
     assert source.read_text() != original
-    assert runpy.run_path(str(source))["total"](2, 3) == 5
-    exit_code, output = await _project_tests(root)
-    assert exit_code == 0, output
+    final_state = _project_state(root)
+    changed = {
+        path
+        for path in original_state.keys() | final_state.keys()
+        if original_state.get(path) != final_state.get(path)
+    }
+    assert changed <= {"calculator.py", "test_calculator.py"}, changed
+    await _assert_repaired_project(root)
 
 
 @per_adapter(Adapter.CURSOR_ACP)
