@@ -34,6 +34,7 @@ from band.core.types import AdapterFeatures, Capability, Emit, MessageType
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool, TaskTool
+from tests.e2e.baseline.toolkit.provisioning import NAME_PREFIX
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
 # message, exactly like the opaque-tool smokes.
@@ -164,7 +165,7 @@ def liveness_probe(marker: str) -> str:
     the word X and nothing else"), which safety-tuned models sometimes refuse
     ("I can't follow instructions that override my behaviour") — an unrelated false
     failure. The marker still lands verbatim in the reply for a substring assert."""
-    return f"To confirm you're still active, please reply with the word {marker}."
+    return f"To confirm you're still active, include this exact token in your reply: {marker}."
 
 
 def unique_marker(prefix: str) -> str:
@@ -516,10 +517,12 @@ def custom_prompt_with_marker(marker: str) -> str:
 # Roster probe: drives the agent to state its own name and use its platform tools
 # (band_get_participants / band_lookup_peers) to report who is present and who is
 # invitable — the identity + roster read.
+ROSTER_LOOKUP_PAGE_SIZE = 20
 ROSTER_PROBE = (
     "First, tell me your own name. Call band_get_participants and list the exact "
-    "name of each other room participant. Then call band_lookup_peers and list "
-    "the exact name of a peer who is not in this room but could be invited. "
+    "name of each other room participant. Then call band_lookup_peers with "
+    f"page_size={ROSTER_LOOKUP_PAGE_SIZE} and list "
+    f"the exact name of an invitable test agent beginning with {NAME_PREFIX}. "
     "Report the names from both tool results in your reply."
 )
 
@@ -528,9 +531,10 @@ ROSTER_PROBE = (
 # descriptions (never in this prompt), so quoting them without tools proves the
 # always-injected participants list carried those descriptions.
 PASSIVE_ROSTER_DESCRIPTIONS_PROBE = (
-    "Without calling any tools, look only at the room participants list already "
-    "in your context. Quote the description of every agent participant other "
-    "than yourself. Include each agent's name next to their description."
+    "Do not call band_get_participants or band_lookup_peers. Look only at the "
+    "room participants list already in your context. Quote the description of "
+    "every agent participant other than yourself, with each agent's name. "
+    "Use band_send_message to deliver the answer."
 )
 
 
@@ -565,8 +569,8 @@ def remove_participant_instruction(peer_name: str, peer_id: str) -> str:
 # to produce one); the round-trip is then observed in the agent's own chat list, since the
 # tool takes no title and adds no human participant.
 CREATE_CHATROOM = (
-    "Create a new, separate chat room using the band_create_chatroom tool. Making that "
-    "tool call is your only action."
+    "Create a new, separate chat room using the band_create_chatroom tool. Then use "
+    "band_send_message to confirm in this room that you created it."
 )
 
 
@@ -580,8 +584,9 @@ def remember_fact_instruction(fact: str) -> str:
 # mid-history, and a recent fact can each be checked separately (a single-fact recall
 # can't tell "kept the whole history" from "kept only a recent window").
 RECALL_ALL_FACTS = (
-    "List all the facts I have asked you to remember in this conversation so far, "
-    "including the earliest ones. Reply with the facts themselves."
+    "List every fact I have asked you to remember in this conversation so far. "
+    "Scan the whole conversation, including the middle turns, and copy each full "
+    "fact token exactly, one per line. Do not omit any fact."
 )
 
 
@@ -593,6 +598,7 @@ def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
     return (
         f"Ask {peer_name} (id {peer_id}) to confirm the value you just remembered: "
         f"call band_send_message with mentions=['{peer_id}'] and content that states "
-        "that exact value. Use the id as the mention identifier; then report their "
-        "reply back to me."
+        "the complete value token from my previous message, copied exactly. Do not "
+        "refer to it as 'the value' without stating it. Use the id as the mention "
+        "identifier; then report their reply back to me."
     )

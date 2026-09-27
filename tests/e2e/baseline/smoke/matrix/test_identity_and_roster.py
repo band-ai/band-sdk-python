@@ -20,7 +20,7 @@ UUID and the user's display name stay out under the floors-only policy.
 from __future__ import annotations
 
 import asyncio
-import json
+import re
 
 import pytest
 
@@ -28,6 +28,7 @@ from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     PASSIVE_ROSTER_DESCRIPTIONS_PROBE,
+    ROSTER_LOOKUP_PAGE_SIZE,
     ROSTER_PROBE,
     unique_marker,
 )
@@ -35,26 +36,20 @@ from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.observations.tool_calls import RosterTool
 from tests.e2e.baseline.toolkit.observations.tool_results import ToolResults
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import (
+    NAME_PREFIX,
+    ProvisionedAgent,
+    ResourceManager,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 def lookup_peer_names(results: ToolResults) -> set[str]:
-    """Names the agent could read from its successful peer lookup results."""
-    names: set[str] = set()
-    for result in results:
-        output = result.output_data
-        if isinstance(output, str):
-            try:
-                output = json.loads(output)
-            except json.JSONDecodeError:
-                continue
-        if not isinstance(output, dict) or not isinstance(output.get("data"), list):
-            continue
-        for peer in output["data"]:
-            if isinstance(peer, dict) and isinstance(peer.get("name"), str):
-                names.add(peer["name"])
-    return names
+    """Test-agent names present in actual lookup output, independent of encoding."""
+    name_pattern = re.compile(
+        rf"[\"']name[\"']\s*:\s*[\"']({re.escape(NAME_PREFIX)}[0-9a-f]+-[a-zA-Z0-9_-]+)[\"']"
+    )
+    return {name for result in results for name in name_pattern.findall(result.output)}
 
 
 @per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
@@ -98,10 +93,12 @@ async def test_reports_identity_and_roster(
         )
 
     calls.assert_fired(RosterTool.GET_PARTICIPANTS)
-    calls.assert_fired(RosterTool.LOOKUP_PEERS)
+    calls.assert_fired(
+        RosterTool.LOOKUP_PEERS, with_args={"page_size": ROSTER_LOOKUP_PAGE_SIZE}
+    )
     lookup_results.assert_succeeded(RosterTool.LOOKUP_PEERS)
     offered_names = lookup_peer_names(lookup_results) - {agent.name, member.name}
-    assert offered_names, "agent lookup returned no out-of-room peer names"
+    assert offered_names, "agent lookup returned no out-of-room test-agent names"
 
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.

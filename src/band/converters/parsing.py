@@ -37,7 +37,6 @@ class ParsedToolResult:
     output: str
     tool_call_id: str
     is_error: bool = False
-    output_data: Any = None
 
 
 def parse_tool_call(content: str) -> ParsedToolCall | None:
@@ -141,11 +140,9 @@ def parse_tool_result(
         )
         return None
 
-    output_data = event.get(ToolEventKey.OUTPUT, "")
     return ParsedToolResult(
         name=tool_name,
-        output=str(output_data),
+        output=str(event.get(ToolEventKey.OUTPUT, "")),
         tool_call_id=tool_call_id,
         is_error=bool(event.get(ToolEventKey.IS_ERROR, False)),
-        output_data=output_data,
     )

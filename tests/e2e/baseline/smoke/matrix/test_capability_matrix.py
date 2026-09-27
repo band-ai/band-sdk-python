@@ -168,6 +168,9 @@ async def test_memory_survives_adapter_rehydration(
         )
         await capture.wait_for_processed(mid, identity.id)
         stored_turn = await capture.memory(identity, scope=MemoryListScope.AGENT)
+        store_results = await capture.tool_results(
+            sender_id=identity.id, include_memory=True
+        )
 
     store_contents = [
         call.args.get("content")
@@ -177,9 +180,11 @@ async def test_memory_survives_adapter_rehydration(
     assert any(
         isinstance(content, str) and marker in content for content in store_contents
     ), f"store tool input lost the exact marker {marker!r}: {store_contents}"
+    store_results.assert_succeeded(MemoryTool.STORE.value)
     persisted_contents = [record.content for record in stored_turn.stored]
     assert any(marker in content for content in persisted_contents), (
-        f"persisted memory lost the exact marker {marker!r}: {persisted_contents}"
+        f"persisted memory lost the exact marker {marker!r}: {persisted_contents}; "
+        f"store results: {[result.output for result in store_results.named(MemoryTool.STORE.value)]}"
     )
 
     retrieval_room_id = await resource_manager.provision_room(
