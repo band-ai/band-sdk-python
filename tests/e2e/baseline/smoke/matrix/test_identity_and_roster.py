@@ -5,7 +5,8 @@ Two complementary probes:
 * ``test_reports_identity_and_roster`` — the agent must use platform tools
   (``band_get_participants`` / ``band_lookup_peers``) to report who is in the
   room and who is invitable. Every expected value is *self-sourced* so assertions
-  can't drift (agent name, in-room peer name, out-of-room invitable name).
+  can't drift (agent name, in-room peer name, out-of-room name returned by the
+  agent's lookup). Concurrent runs may add other valid invitable peers.
 * ``test_reports_peer_description_from_passive_roster`` — the agent must answer
   from the always-injected participants list alone (no roster tools), including
   each peer's ``description``. Guards the passive roster's description
@@ -72,15 +73,27 @@ async def test_reports_identity_and_roster(
         replies = await capture.wait_for_reply(mid, agent.id, since=mark)
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
+        lookup_results = (await capture.tool_results(sender_id=agent.id)).named(
+            RosterTool.LOOKUP_PEERS
+        )
 
     calls.assert_fired(RosterTool.GET_PARTICIPANTS)
     calls.assert_fired(RosterTool.LOOKUP_PEERS)
+    lookup_results.assert_succeeded(RosterTool.LOOKUP_PEERS)
+    offered_names = {
+        peer.name
+        for peer in roster
+        if peer.name and any(peer.name in result.output for result in lookup_results)
+    }
+    assert offered_names, (
+        "agent lookup returned no invitable names from the live roster"
+    )
 
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.
     replies.assert_contains_any([agent.name])  # identity (only the SDK knows it)
     replies.assert_contains_any([member.name])  # roster (via band_get_participants)
-    replies.assert_contains_any([invitable.name])  # invitable (via band_lookup_peers)
+    replies.assert_contains_any(offered_names)  # invitable (via band_lookup_peers)
 
 
 @per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
