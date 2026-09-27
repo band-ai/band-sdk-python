@@ -308,7 +308,7 @@ def store_memory_instruction(marker: str) -> str:
     content carries ``marker`` verbatim, with an exact valid system/type combo."""
     return (
         "Call band_store_memory exactly once with these exact arguments: "
-        f"content = a short sentence that includes the exact token {marker}; "
+        f"content = 'The memory marker is {marker}.' (copy this content verbatim); "
         f"system = {MemorySystem.LONG_TERM.value}; "
         f"type = {MemoryType.SEMANTIC.value}; "
         f"segment = {MemorySegment.USER.value}; "
@@ -591,6 +591,7 @@ def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
     and the peer responds."""
     return (
         f"Ask {peer_name} (id {peer_id}) to confirm the value you just remembered: "
-        f"send one band_send_message that mentions {peer_name} and states that exact "
-        "value, then report their reply back to me."
+        f"call band_send_message with mentions=['{peer_id}'] and content that states "
+        "that exact value. Use the id as the mention identifier; then report their "
+        "reply back to me."
     )

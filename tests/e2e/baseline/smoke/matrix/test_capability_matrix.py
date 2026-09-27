@@ -167,6 +167,20 @@ async def test_memory_survives_adapter_rehydration(
             mention_name=identity.name,
         )
         await capture.wait_for_processed(mid, identity.id)
+        stored_turn = await capture.memory(identity, scope=MemoryListScope.AGENT)
+
+    store_contents = [
+        call.args.get("content")
+        for call in stored_turn.calls
+        if call.name == MemoryTool.STORE.value
+    ]
+    assert any(
+        isinstance(content, str) and marker in content for content in store_contents
+    ), f"store tool input lost the exact marker {marker!r}: {store_contents}"
+    persisted_contents = [record.content for record in stored_turn.stored]
+    assert any(marker in content for content in persisted_contents), (
+        f"persisted memory lost the exact marker {marker!r}: {persisted_contents}"
+    )
 
     retrieval_room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-retrieve-{cell.adapter_id}", participants=[identity.id]
