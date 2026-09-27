@@ -129,11 +129,11 @@ def make_platform_message(
 
 
 def failure_event(
-    metadata: object = None, content: str = "Peer failed"
+    metadata: object = None, content: str = "Peer failed", *, room_id: str = "room-123"
 ) -> PlatformMessage:
     """An error event with optional room failure metadata."""
     return replace(
-        make_platform_message(content, message_type=MessageType.ERROR),
+        make_platform_message(content, room_id=room_id, message_type=MessageType.ERROR),
         metadata={} if metadata is None else metadata,
     )
 

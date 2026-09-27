@@ -6,6 +6,7 @@ import asyncio
 import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,15 +28,22 @@ from tests.integrations.acp.conftest import (
 )
 
 
+@dataclass(frozen=True)
+class ReceivedUpdate:
+    session_id: str
+    chunk: object
+    notification_fields: dict[str, Any]
+
+
 class RecordingClient:
     def __init__(self) -> None:
-        self.updates: list[tuple[object, dict[str, Any]]] = []
+        self.updates: list[ReceivedUpdate] = []
         self.received = asyncio.Event()
 
     async def session_update(
         self, *, session_id: str, update: object, **kwargs: Any
     ) -> None:
-        self.updates.append((update, kwargs))
+        self.updates.append(ReceivedUpdate(session_id, update, kwargs))
         self.received.set()
 
     async def wait_for_updates(self, count: int) -> None:
@@ -97,19 +105,21 @@ async def test_failure_and_concurrent_prompt_over_acp_wire(
         assert rejected.value.code == -32603
         assert rejected.value.data == failure.to_extension_data()
         await client.wait_for_updates(1)
-        update, notification_fields = client.updates[0]
-        assert update.content.text == "[Error] Broken"
-        assert update.field_meta == failure.to_extension_data()
-        assert notification_fields == {}
+        received = client.updates[0]
+        assert received.session_id == "session-1"
+        assert received.chunk.content.text == "[Error] Broken"
+        assert received.chunk.field_meta == failure.to_extension_data()
+        assert received.notification_fields == {}
 
         await deliver_server_message(
             adapter,
             failure_event({"failure": failure.to_dict()}, content="Broken again"),
         )
         await client.wait_for_updates(2)
-        update, notification_fields = client.updates[1]
-        assert update.field_meta == failure.to_extension_data()
-        assert notification_fields == {}
+        received = client.updates[1]
+        assert received.session_id == "session-1"
+        assert received.chunk.field_meta == failure.to_extension_data()
+        assert received.notification_fields == {}
 
         cancelled = asyncio.create_task(
             conn.prompt(session_id="session-1", prompt=[text_block("Cancel")])
@@ -126,3 +136,75 @@ async def test_failure_and_concurrent_prompt_over_acp_wire(
             adapter, make_platform_message("Done", message_type=MessageType.TEXT)
         )
         assert (await completed).stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_interleaved_rooms_keep_failure_and_completion_separate_over_acp_wire(
+    mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS", 1.0
+    )
+    adapter = BandACPServerAdapter(rest_client=mock_rest_client)
+    failure = AgentFailure(
+        "peer", "Bearer secret-token", detail={"nested": "token=private-value"}
+    )
+    expected = AgentFailure(
+        "peer", "Bearer [REDACTED]", detail={"nested": "token=[REDACTED]"}
+    ).to_extension_data()
+
+    async with protocol_pair(adapter) as (conn, client):
+        first_session = (await conn.new_session(cwd="/workspace/first")).session_id
+        second_session = (await conn.new_session(cwd="/workspace/second")).session_id
+        first_room = adapter._session_to_room[first_session]
+        second_room = adapter._session_to_room[second_session]
+        first = asyncio.create_task(
+            conn.prompt(session_id=first_session, prompt=[text_block("First")])
+        )
+        second = asyncio.create_task(
+            conn.prompt(session_id=second_session, prompt=[text_block("Second")])
+        )
+        await wait_for_pending_prompt(adapter, first_room)
+        await wait_for_pending_prompt(adapter, second_room)
+        posts = mock_rest_client.agent_api_messages.create_agent_chat_message
+        async with asyncio.timeout(5):
+            while posts.await_count < 2:
+                await asyncio.sleep(0)
+        assert posts.await_count == 2
+        assert {call.kwargs["chat_id"] for call in posts.await_args_list} == {
+            first_room,
+            second_room,
+        }
+
+        await deliver_server_message(
+            adapter, make_platform_message("Partial", room_id=first_room)
+        )
+        await client.wait_for_updates(1)
+        assert client.updates[0].session_id == first_session
+        assert client.updates[0].chunk.content.text == "Partial"
+
+        await deliver_server_message(
+            adapter,
+            failure_event(
+                {"failure": failure.to_dict()},
+                content="token=room-secret",
+                room_id=first_room,
+            ),
+        )
+        with pytest.raises(RequestError) as rejected:
+            await first
+        assert rejected.value.code == -32603
+        assert rejected.value.data == expected
+        assert not second.done()
+        await client.wait_for_updates(2)
+        assert client.updates[1].session_id == first_session
+        assert client.updates[1].chunk.content.text == "[Error] token=[REDACTED]"
+        assert client.updates[1].chunk.field_meta == expected
+
+        await deliver_server_message(
+            adapter, make_platform_message("Second done", room_id=second_room)
+        )
+        assert (await second).stop_reason == "end_turn"
+        await client.wait_for_updates(3)
+        assert client.updates[2].session_id == second_session
+        assert client.updates[2].chunk.content.text == "Second done"
