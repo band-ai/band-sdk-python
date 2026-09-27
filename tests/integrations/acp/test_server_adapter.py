@@ -175,7 +175,13 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._session_to_room["session-1"] = "room-123"
 
         # Make pending prompt complete immediately via on_message
-        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
+        task = asyncio.create_task(
+            release_pending_prompt(
+                adapter,
+                "room-123",
+                mock_rest_client.agent_api_messages.create_agent_chat_message,
+            )
+        )
         await adapter.handle_prompt("session-1", "Hello world")
         await task
 
@@ -191,7 +197,13 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._session_to_room["session-1"] = "room-123"
 
         # Complete immediately
-        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
+        task = asyncio.create_task(
+            release_pending_prompt(
+                adapter,
+                "room-123",
+                mock_rest_client.agent_api_messages.create_agent_chat_message,
+            )
+        )
         await adapter.handle_prompt("session-1", "Test")
         await task
 
@@ -750,7 +762,13 @@ class TestBandACPServerAdapterRouting:
         router = AgentRouter(slash_commands={"codex": "codex"})
         adapter.set_router(router)
 
-        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
+        task = asyncio.create_task(
+            release_pending_prompt(
+                adapter,
+                "room-123",
+                mock_rest_client.agent_api_messages.create_agent_chat_message,
+            )
+        )
         await adapter.handle_prompt("session-1", "/codex fix bug")
         await task
 
@@ -771,7 +789,13 @@ class TestBandACPServerAdapterRouting:
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
-        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
+        task = asyncio.create_task(
+            release_pending_prompt(
+                adapter,
+                "room-123",
+                mock_rest_client.agent_api_messages.create_agent_chat_message,
+            )
+        )
         await adapter.handle_prompt("session-1", "Hello")
         await task
 
@@ -794,7 +818,13 @@ class TestBandACPServerAdapterRouting:
             }
         ]
 
-        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
+        task = asyncio.create_task(
+            release_pending_prompt(
+                adapter,
+                "room-123",
+                mock_rest_client.agent_api_messages.create_agent_chat_message,
+            )
+        )
         await adapter.handle_prompt("session-1", "Check the repo")
         await task
 

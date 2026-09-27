@@ -20,7 +20,7 @@ import pytest
 
 from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from band.integrations.acp.types import ACPSessionState, ACPStopReason, PendingACPPrompt
+from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,  # re-exported for tests importing from conftest
@@ -218,9 +218,13 @@ def has_pending_prompt(adapter: BandACPServerAdapter, room_id: str) -> bool:
 
 
 async def release_pending_prompt(
-    adapter: BandACPServerAdapter, room_id: str, *, timeout: float = 0.5
+    adapter: BandACPServerAdapter,
+    room_id: str,
+    sent: AsyncMock,
+    *,
+    timeout: float = 0.5,
 ) -> None:
-    """Wait for a pending prompt to register, then resolve it.
+    """Wait for an outgoing prompt, then resolve it.
 
     Dispatch this as a background task before awaiting the call that
     registers the prompt (``handle_prompt``), so that blocking call
@@ -229,9 +233,18 @@ async def release_pending_prompt(
     pending = await asyncio.wait_for(
         wait_for_pending_prompt(adapter, room_id), timeout=timeout
     )
-    await adapter._finish_pending_prompt(
-        room_id, expected=pending, outcome=ACPStopReason.END_TURN
-    )
+    await wait_for_prompt_post(sent, timeout=timeout)
+    await adapter.cancel_prompt(pending.session_id)
+
+
+async def wait_for_prompt_post(sent: AsyncMock, *, timeout: float = 0.5) -> None:
+    """Wait for the mocked Band REST boundary to receive a prompt post."""
+
+    async def posted() -> None:
+        while not sent.await_count:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(posted(), timeout=timeout)
 
 
 @pytest.fixture

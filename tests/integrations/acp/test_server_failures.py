@@ -163,10 +163,15 @@ async def test_error_wins_if_prompt_send_fails_afterward(
     task = prompt(server)
     await entered.wait()
     await deliver_server_message(adapter, failure_event())
-    release.set()
-    with pytest.raises(RequestError) as raised:
-        await task
-    assert_default_room_failure(raised.value)
+    try:
+        with pytest.raises(RequestError) as raised:
+            await asyncio.wait_for(asyncio.shield(task), 1)
+        assert_default_room_failure(raised.value)
+    finally:
+        release.set()
+        if not task.done():
+            with pytest.raises(RequestError):
+                await task
 
 
 @pytest.mark.asyncio
@@ -309,8 +314,14 @@ async def test_cancel_during_participant_lookup_does_not_post_prompt(
     task = prompt(server)
     await entered.wait()
     await adapter.cancel_prompt("session-1")
-    release.set()
-    assert (await task).stop_reason == "cancelled"
+    try:
+        assert (
+            await asyncio.wait_for(asyncio.shield(task), 1)
+        ).stop_reason == "cancelled"
+    finally:
+        release.set()
+        if not task.done():
+            await task
     mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_awaited()
 
 

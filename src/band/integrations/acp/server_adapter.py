@@ -54,6 +54,14 @@ _PROMPT_TIMEOUT_SECONDS = 300
 _PROMPT_COMPLETION_GRACE_SECONDS = 0.25
 
 
+def _observe_prompt_send(task: asyncio.Task[bool]) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.debug("Prompt send task ended with an error: %s", error)
+
+
 class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
     """Bridge between ACP protocol and Band platform.
 
@@ -378,17 +386,25 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             # Read routing state while holding lock
             current_mode = self.get_session_mode(session_id)
 
+        send_task = asyncio.create_task(
+            self._send_prompt(room_id, session_id, text, current_mode, pending)
+        )
+        send_task.add_done_callback(_observe_prompt_send)
+        settled_task = asyncio.create_task(pending.done_event.wait())
         try:
+            await asyncio.wait(
+                {send_task, settled_task}, return_when=asyncio.FIRST_COMPLETED
+            )
             try:
-                sent = await self._send_prompt(
-                    room_id, session_id, text, current_mode, pending
-                )
+                if pending.outcome is None:
+                    sent = await send_task
+                    if sent:
+                        logger.debug(
+                            "Sent prompt to room %s, awaiting response", room_id
+                        )
             except Exception:
                 if pending.outcome is None:
                     raise
-            else:
-                if sent:
-                    logger.debug("Sent prompt to room %s, awaiting response", room_id)
             try:
                 await asyncio.wait_for(
                     pending.done_event.wait(), timeout=_PROMPT_TIMEOUT_SECONDS
@@ -403,6 +419,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                 raise
         finally:
             await self._finish_pending_prompt(room_id, expected=pending)
+            send_task.cancel()
+            settled_task.cancel()
+            await asyncio.gather(settled_task, return_exceptions=True)
 
         if pending.outcome is None:
             raise RuntimeError("ACP prompt completed without a terminal outcome")

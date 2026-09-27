@@ -687,6 +687,7 @@ class TestGatewayResponses:
             "detail": {
                 "codex_additional_details": {
                     "raw": ["upstream said: token=sk-live-nested-secret"],
+                    "token=sk-live-key-secret": "diagnostic value",
                 },
             },
         }
@@ -704,6 +705,7 @@ class TestGatewayResponses:
         assert event.status.state == TaskState.TASK_STATE_FAILED
         detail = event.metadata["failure"]["detail"]
         assert "sk-live-nested-secret" not in str(detail)
+        assert "sk-live-key-secret" not in str(detail)
 
     @pytest.mark.asyncio
     async def test_drops_non_dict_peer_failure_metadata(self) -> None:

@@ -51,7 +51,7 @@ BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 3. `prompt(blocks, session_id)` -> extracts text/image/resource content, sends to room, waits for a terminal outcome; another prompt in that room is rejected with `invalid_params`
 4. `on_message()` receives peer response -> `EventConverter.convert()` -> `session_update` back to editor
 5. Completed text returns `end_turn`; explicit `session/cancel` returns `cancelled`. A Band `error` rejects the prompt with JSON-RPC `internal_error` and Core failure projection directly in `error.data`. Room cleanup or agent shutdown also fails a pending prompt. The first terminal outcome wins.
-6. Error updates carry the same projection on the inner agent-message chunk's `_meta`, including unsolicited errors in mapped rooms. Their readable `[Error]` text is best effort and credential-redacted, as are projected message and nested detail fields. The server settles the prompt before awaiting the update. The installed ACP Python client waits for queued update handlers before surfacing a prompt error, so a slow client handler can still delay its local `prompt()` call.
+6. Error updates carry the same projection on the inner agent-message chunk's `_meta`, including unsolicited errors in mapped rooms. Their readable `[Error]` text is best effort and credential-redacted, as are projected message and nested detail keys and values. A terminal outcome releases the prompt even if its Band REST send is still pending. The installed ACP Python client waits for queued update handlers before surfacing a prompt error, so a slow client handler can still delay its local `prompt()` call.
 
 ## Live, causally-ordered emission (Client Adapter)
 

@@ -147,10 +147,14 @@ async def test_interleaved_rooms_keep_failure_and_completion_separate_over_acp_w
     )
     adapter = BandACPServerAdapter(rest_client=mock_rest_client)
     failure = AgentFailure(
-        "peer", "Bearer secret-token", detail={"nested": "token=private-value"}
+        "peer",
+        "Bearer secret-token",
+        detail={"token=private-key": {"nested": "token=private-value"}},
     )
     expected = AgentFailure(
-        "peer", "Bearer [REDACTED]", detail={"nested": "token=[REDACTED]"}
+        "peer",
+        "Bearer [REDACTED]",
+        detail={"token=[REDACTED]": {"nested": "token=[REDACTED]"}},
     ).to_extension_data()
 
     async with protocol_pair(adapter) as (conn, client):
