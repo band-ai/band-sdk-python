@@ -30,10 +30,20 @@ from band.client.rest import (
 )
 from band.converters.a2a_gateway import GatewayHistoryConverter
 from band.core.content import BLANK_CONTENT_ERROR
-from band.core.protocols import FAILURE_CODE_TIMEOUT, AgentToolsProtocol
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    AgentToolsProtocol,
+    FailureMetadataKey,
+)
 from band.core.redaction import redact_credentials, redact_credentials_deep
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    Capability,
+    Emit,
+    FeatureKwargs,
+    MessageType,
+    PlatformMessage,
+)
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -585,14 +595,16 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         self, pending: PendingA2ATask, msg: PlatformMessage
     ) -> None:
         """Translate Band's message category into an A2A task intent."""
-        if msg.message_type == "error":
+        if msg.message_type == MessageType.ERROR:
             # The peer's own adapter already built this AgentFailure (see
             # to_failure_event) -- relay it rather than re-tagging its
             # provider as "a2a-gateway", but still redact credentials the
             # peer's own message may embed before it reaches an external
             # A2A client, same as this gateway's own exception path.
             failure = (
-                msg.metadata.get("failure") if isinstance(msg.metadata, dict) else None
+                msg.metadata.get(FailureMetadataKey.FAILURE)
+                if isinstance(msg.metadata, dict)
+                else None
             )
             if isinstance(failure, dict):
                 failure = redact_credentials_deep(failure)

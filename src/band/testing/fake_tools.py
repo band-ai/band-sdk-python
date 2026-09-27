@@ -49,7 +49,7 @@ from band.client.rest import (
 )
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
-from band.core.protocols import to_failure_event
+from band.core.protocols import FailureMetadataKey, to_failure_event
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import (
     Capability,
@@ -1153,7 +1153,7 @@ def reported_failures(tools: FakeAgentTools) -> list[dict[str, Any]]:
     the ``send_failure`` shape, and that isn't what this helper reports on.
     """
     return [
-        e["metadata"]["failure"]
+        e["metadata"][FailureMetadataKey.FAILURE]
         for e in events_of_type(tools, MessageType.ERROR)
-        if "failure" in e["metadata"]
+        if FailureMetadataKey.FAILURE in e["metadata"]
     ]

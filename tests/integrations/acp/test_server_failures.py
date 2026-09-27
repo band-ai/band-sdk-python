@@ -9,6 +9,7 @@ import pytest
 from acp.exceptions import RequestError
 from band_sdk_core import AgentFailure
 
+from band.core.types import MessageType
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from tests.integrations.acp.conftest import (
@@ -184,10 +185,10 @@ async def test_text_grace_yields_to_error(
     task = prompt(server)
     await wait_for_pending_prompt(adapter, "room-123")
     await deliver_server_message(
-        adapter, make_platform_message("Part", message_type="text")
+        adapter, make_platform_message("Part", message_type=MessageType.TEXT)
     )
     await deliver_server_message(
-        adapter, make_platform_message("Thinking", message_type="thought")
+        adapter, make_platform_message("Thinking", message_type=MessageType.THOUGHT)
     )
     await deliver_server_message(adapter, failure_event())
     with pytest.raises(RequestError) as raised:
@@ -206,7 +207,7 @@ async def test_old_text_timer_cannot_complete_next_prompt(
     first = prompt(server)
     await wait_for_pending_prompt(adapter, "room-123")
     await deliver_server_message(
-        adapter, make_platform_message("Part", message_type="text")
+        adapter, make_platform_message("Part", message_type=MessageType.TEXT)
     )
     await deliver_server_message(adapter, failure_event())
     with pytest.raises(RequestError):
@@ -255,6 +256,31 @@ async def test_cancel_before_error_keeps_cancelled_outcome(
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_participant_lookup_does_not_post_prompt(
+    mock_rest_client: MagicMock,
+) -> None:
+    adapter, server = running_server(mock_rest_client)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    participants = mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value
+
+    async def delayed_participants(**kwargs: object) -> object:
+        entered.set()
+        await release.wait()
+        return participants
+
+    mock_rest_client.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        side_effect=delayed_participants
+    )
+    task = prompt(server)
+    await entered.wait()
+    await adapter.cancel_prompt("session-1")
+    release.set()
+    assert (await task).stop_reason == "cancelled"
+    mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_second_same_room_prompt_does_not_replace_first(
     mock_rest_client: MagicMock,
 ) -> None:
@@ -265,7 +291,7 @@ async def test_second_same_room_prompt_does_not_replace_first(
         await server.prompt(session_id="session-1", prompt=[{"text": "Second"}])
     assert raised.value.code == -32602
     await deliver_server_message(
-        adapter, make_platform_message("Done", message_type="text")
+        adapter, make_platform_message("Done", message_type=MessageType.TEXT)
     )
     assert (await first).stop_reason == "end_turn"
     mock_rest_client.agent_api_messages.create_agent_chat_message.assert_awaited_once()

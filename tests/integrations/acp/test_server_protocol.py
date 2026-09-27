@@ -15,6 +15,7 @@ from acp.agent.connection import AgentSideConnection
 from acp.exceptions import RequestError
 from band_sdk_core import AgentFailure
 
+from band.core.types import MessageType
 from band.integrations.acp.push_handler import ACPPushHandler
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
@@ -122,6 +123,6 @@ async def test_failure_and_concurrent_prompt_over_acp_wire(
         )
         await wait_for_pending_prompt(adapter, "room-123")
         await deliver_server_message(
-            adapter, make_platform_message("Done", message_type="text")
+            adapter, make_platform_message("Done", message_type=MessageType.TEXT)
         )
         assert (await completed).stop_reason == "end_turn"

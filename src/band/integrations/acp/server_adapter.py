@@ -22,11 +22,12 @@ from band.converters.acp_server import ACPServerHistoryConverter
 from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import PlatformMessage
+from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.event_converter import EventConverter
-from band.integrations.acp.failure import decode_failure
+from band.integrations.acp.failure import ACPFailureProvider, decode_failure
 from band.integrations.acp.types import (
     ACPSessionState,
+    ACPStopReason,
     ConcurrentPromptError,
     PendingACPPrompt,
     PromptOutcome,
@@ -379,12 +380,15 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
         try:
             try:
-                await self._send_prompt(room_id, session_id, text, current_mode)
+                sent = await self._send_prompt(
+                    room_id, session_id, text, current_mode, pending
+                )
             except Exception:
                 if pending.outcome is None:
                     raise
             else:
-                logger.debug("Sent prompt to room %s, awaiting response", room_id)
+                if sent:
+                    logger.debug("Sent prompt to room %s, awaiting response", room_id)
             try:
                 await asyncio.wait_for(
                     pending.done_event.wait(), timeout=_PROMPT_TIMEOUT_SECONDS
@@ -405,8 +409,13 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         return pending.outcome
 
     async def _send_prompt(
-        self, room_id: str, session_id: str, text: str, current_mode: str | None
-    ) -> None:
+        self,
+        room_id: str,
+        session_id: str,
+        text: str,
+        current_mode: str | None,
+        pending: PendingACPPrompt,
+    ) -> bool:
         """Route and post one editor prompt to its Band room."""
         cleaned_text = text
         target_peer: str | None = None
@@ -437,6 +446,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             ]
         mention_text = " ".join(f"@{m.name}" for m in mentions)
 
+        if pending.done_event.is_set():
+            return False
+
         sent = await post_message(
             rest=self.rest,
             room_id=room_id,
@@ -451,6 +463,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             # now rather than wait out the full timeout for a reply to a
             # message that was never sent.
             raise ValueError(BLANK_CONTENT_ERROR)
+        return True
 
     async def on_message(
         self,
@@ -486,7 +499,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         if pending and pending.outcome is not None:
             return
 
-        if pending and msg.message_type == "error":
+        if pending and msg.message_type == MessageType.ERROR:
             failure = decode_failure(msg)
             claimed = await self._finish_pending_prompt(
                 room_id, expected=pending, outcome=failure
@@ -511,7 +524,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                     update=chunk,
                 )
 
-            if msg.message_type == "text":
+            if msg.message_type == MessageType.TEXT:
                 await self._schedule_prompt_completion(room_id, pending)
         elif self._acp_client and self._push_handler:
             # No pending prompt — push unsolicited update
@@ -535,7 +548,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._settle_prompt_locked(
                 room_id,
                 outcome=AgentFailure(
-                    "band", "Band room closed before prompt completed."
+                    ACPFailureProvider.BAND, "Band room closed before prompt completed."
                 ),
             )
             # Clean session mappings for this room
@@ -555,7 +568,8 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                 self._settle_prompt_locked(
                     room_id,
                     outcome=AgentFailure(
-                        "band", "Band agent stopped before prompt completed."
+                        ACPFailureProvider.BAND,
+                        "Band agent stopped before prompt completed.",
                     ),
                 )
 
@@ -567,7 +581,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """
         async with self._state_lock:
             room_id = self._session_to_room.get(session_id)
-            if room_id and self._settle_prompt_locked(room_id, outcome="cancelled"):
+            if room_id and self._settle_prompt_locked(
+                room_id, outcome=ACPStopReason.CANCELLED
+            ):
                 logger.info("Cancelled prompt for session %s", session_id)
 
     def _rehydrate(self, history: ACPSessionState) -> None:
@@ -700,8 +716,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         async with self._state_lock:
             if self._pending_prompts.get(room_id) is not pending:
                 return
-            if pending.outcome is not None:
-                return
             if pending.completion_task is not None:
                 pending.completion_task.cancel()
             pending.completion_task = asyncio.create_task(
@@ -713,7 +727,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
     ) -> None:
         """Complete a prompt after a short quiet period."""
         await asyncio.sleep(_PROMPT_COMPLETION_GRACE_SECONDS)
-        await self._finish_pending_prompt(room_id, expected=pending, outcome="end_turn")
+        await self._finish_pending_prompt(
+            room_id, expected=pending, outcome=ACPStopReason.END_TURN
+        )
 
     async def _finish_pending_prompt(
         self,
@@ -738,14 +754,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         pending = self._pending_prompts.get(room_id)
         if pending is None or (expected is not None and pending is not expected):
             return None
-        if pending.outcome is not None:
-            return None
         self._pending_prompts.pop(room_id)
-        if pending.completion_task is not None:
-            if pending.completion_task is not asyncio.current_task():
-                pending.completion_task.cancel()
-            pending.completion_task = None
-        if outcome is not None:
-            pending.outcome = outcome
-            pending.done_event.set()
+        pending.finish(outcome)
         return pending

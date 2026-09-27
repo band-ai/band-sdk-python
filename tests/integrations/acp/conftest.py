@@ -20,7 +20,7 @@ import pytest
 
 from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
+from band.integrations.acp.types import ACPSessionState, ACPStopReason, PendingACPPrompt
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,  # re-exported for tests importing from conftest
@@ -110,7 +110,7 @@ def acp_editor(mock_acp_client: AsyncMock) -> ACPEditor:
 def make_platform_message(
     content: str,
     room_id: str = "room-123",
-    message_type: str = "text",
+    message_type: str = MessageType.TEXT,
     sender_id: str = "peer-456",
     sender_name: str = "Test Peer",
 ) -> PlatformMessage:
@@ -133,7 +133,8 @@ def failure_event(
 ) -> PlatformMessage:
     """An error event with optional room failure metadata."""
     return replace(
-        make_platform_message(content, message_type="error"), metadata=metadata or {}
+        make_platform_message(content, message_type=MessageType.ERROR),
+        metadata=metadata or {},
     )
 
 
@@ -228,7 +229,9 @@ async def release_pending_prompt(
     pending = await asyncio.wait_for(
         wait_for_pending_prompt(adapter, room_id), timeout=timeout
     )
-    await adapter._finish_pending_prompt(room_id, expected=pending, outcome="end_turn")
+    await adapter._finish_pending_prompt(
+        room_id, expected=pending, outcome=ACPStopReason.END_TURN
+    )
 
 
 @pytest.fixture

@@ -38,7 +38,7 @@ from acp.schema import (
 )
 
 from band import __version__
-from band.integrations.acp.types import ConcurrentPromptError
+from band.integrations.acp.types import ACPStopReason, ConcurrentPromptError
 
 if TYPE_CHECKING:
     from acp.interfaces import Agent, Client
@@ -476,7 +476,7 @@ class ACPServer:
             outcome = await self._adapter.handle_prompt(session_id, text)
         except ConcurrentPromptError as exc:
             raise RequestError.invalid_params({"message": str(exc)}) from exc
-        if isinstance(outcome, str):
+        if isinstance(outcome, ACPStopReason):
             return PromptResponse(stop_reason=outcome)  # type: ignore[call-arg]  # Pydantic alias: stopReason
         raise RequestError.internal_error(outcome.to_extension_data())
 

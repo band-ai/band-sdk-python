@@ -6,12 +6,26 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-PromptOutcome = Literal["end_turn", "cancelled"] | AgentFailure
+
+class ACPStopReason(StrEnum):
+    """Terminal stop reasons the Band ACP server can return."""
+
+    END_TURN = "end_turn"
+    CANCELLED = "cancelled"
+
+
+class ACPServerUpdate(StrEnum):
+    """ACP session update kinds constructed directly by this server."""
+
+    AGENT_MESSAGE_CHUNK = "agent_message_chunk"
+
+
+PromptOutcome = ACPStopReason | AgentFailure
 
 
 class ConcurrentPromptError(ValueError):
@@ -201,7 +215,7 @@ class PendingACPPrompt:
 
     Attributes:
         session_id: The ACP session identifier.
-        done_event: Signals when the prompt has been fully answered.
+        done_event: Signals when the prompt has ended.
         outcome: The first terminal result, once settled.
         completion_task: Debounced completion task for multi-message replies.
     """
@@ -210,3 +224,16 @@ class PendingACPPrompt:
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
     outcome: PromptOutcome | None = None
     completion_task: asyncio.Task[None] | None = None
+
+    def finish(self, outcome: PromptOutcome | None) -> None:
+        """Stop the grace timer and mark the prompt as ended."""
+        completion_task = self.completion_task
+        self.completion_task = None
+        if (
+            completion_task is not None
+            and completion_task is not asyncio.current_task()
+        ):
+            completion_task.cancel()
+        if outcome is not None:
+            self.outcome = outcome
+        self.done_event.set()
