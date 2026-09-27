@@ -37,7 +37,7 @@ from tests.integration.conftest import (
 )
 from tests.integration.participants import (
     absent_from_room,
-    ensure_in_room,
+    ensure_agent_in_room,
     ensure_not_in_room,
     get_participant_role,
 )
@@ -84,7 +84,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -93,7 +93,7 @@ class TestParticipantRemovalPermissions:
         )
 
         # Restore agent2 for subsequent tests
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -108,7 +108,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
 
@@ -117,7 +117,7 @@ class TestParticipantRemovalPermissions:
         )
 
         # Restore agent2 for subsequent tests
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -157,7 +157,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -187,7 +187,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
 
@@ -203,7 +203,7 @@ class TestParticipantRemovalPermissions:
         )
 
         # Restore agent2 for subsequent tests
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -220,7 +220,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
 
@@ -232,7 +232,7 @@ class TestParticipantRemovalPermissions:
         )
 
         # Restore agent2 for subsequent tests
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -253,7 +253,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -276,7 +276,7 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -285,7 +285,7 @@ class TestParticipantRemovalPermissions:
         )
 
         # Restore agent2 for subsequent tests
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -385,7 +385,7 @@ class TestParticipantAddPermissions:
         assert role == "admin"
 
         # Restore to member
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -437,7 +437,7 @@ class TestParticipantAddPermissions:
         chat_id = shared_multi_agent_room
 
         # 1. Ensure agent2 is admin
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
         role = await get_participant_role(
@@ -462,7 +462,7 @@ class TestParticipantAddPermissions:
         )
 
         # 4. Restore: owner adds agent2 back
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -482,7 +482,7 @@ class TestParticipantAddPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -511,7 +511,7 @@ class TestParticipantAddPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
@@ -576,7 +576,7 @@ class TestRemoteMcpIdentityBoundary:
 
         chat_id = shared_multi_agent_room
         # Ensure agent2 starts as a member so the CM has a role to restore.
-        await ensure_in_room(
+        await ensure_agent_in_room(
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
         async with absent_from_room(session_api_client, chat_id, shared_agent2_info.id):
