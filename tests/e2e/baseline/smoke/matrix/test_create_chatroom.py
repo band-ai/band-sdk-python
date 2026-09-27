@@ -51,6 +51,9 @@ async def test_agent_creates_a_chatroom(
         )
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
+        results = (await capture.tool_results(sender_id=agent.id)).named(
+            CREATE_CHATROOM_TOOL
+        )
 
     # Adopt every new room for teardown reaping BEFORE asserting, so a failing assertion
     # never leaks it (agent-owned; the user-scoped delete is authorized for the owner, and
@@ -62,4 +65,7 @@ async def test_agent_creates_a_chatroom(
     # The call half: the create tool fired.
     calls.assert_fired(CREATE_CHATROOM_TOOL)
     # The state half: exactly one new room landed in the agent's own chat list.
-    assert len(new_rooms) == 1, f"expected exactly one new room, got {new_rooms}"
+    assert len(new_rooms) == 1, (
+        f"expected exactly one new room, got {new_rooms}; "
+        f"tool results: {[(result.output, result.is_error) for result in results]}"
+    )
