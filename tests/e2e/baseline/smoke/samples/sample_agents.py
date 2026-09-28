@@ -173,7 +173,10 @@ def liveness_probe(marker: str) -> str:
     the word X and nothing else"), which safety-tuned models sometimes refuse
     ("I can't follow instructions that override my behaviour") — an unrelated false
     failure. The marker still lands verbatim in the reply for a substring assert."""
-    return f"To confirm you're still active, include this exact token in your reply: {marker}."
+    return (
+        "To confirm you're still active, call band_send_message to reply with "
+        f"this complete token exactly as written: {marker}."
+    )
 
 
 def unique_marker(prefix: str) -> str:
