@@ -30,7 +30,11 @@ from typing import (
 
 from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker, is_self_echo
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
+)
 from band.client.streaming import (
     ControlMode,
     DeliveryStatus,
@@ -46,6 +50,7 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
+from band.platform.posting import post_message
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
@@ -1560,6 +1565,10 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
+            if self.config.report_turn_failures_to_room:
+                await self._notify_turn_failure(
+                    sender_id=msg.sender_id, sender_name=msg.sender_name, error=e
+                )
             return BacklogProcessResult.ADVANCED
 
         finally:
@@ -1979,6 +1988,41 @@ class ExecutionContext:
 
         return await self._process_event_body(event, msg_id, payload)
 
+    async def _notify_turn_failure(
+        self, *, sender_id: str | None, sender_name: str | None, error: Exception
+    ) -> None:
+        """Best-effort chat-visible notice for a turn that raised before completing.
+
+        ``mark_failed`` records the failure on the server, but nothing about
+        it is otherwise visible to the room -- without this, a crashed turn
+        looks identical to the agent never having received the message at
+        all. Mentions the failed message's own sender, since the platform
+        rejects a message with an empty mentions list.
+        """
+        if not sender_id or sender_id == self.agent_id:
+            return
+        try:
+            await post_message(
+                rest=self.link.rest,
+                room_id=self.room_id,
+                request=ChatMessageRequest(
+                    content=(
+                        "I hit an internal error and couldn't process that "
+                        f"message: {_error_label(error)}"
+                    ),
+                    mentions=[
+                        ChatMessageRequestMentionsItem(
+                            id=sender_id, name=sender_name or sender_id
+                        )
+                    ],
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "ExecutionContext %s: Failed to post turn-failure notice",
+                self.room_id,
+            )
+
     async def _process_event_body(
         self, event: PlatformEvent, msg_id: str | None, payload: Any
     ) -> bool:
@@ -2110,6 +2154,16 @@ class ExecutionContext:
                     "ExecutionContext %s: Failed to mark message %s as failed",
                     self.room_id,
                     msg_id,
+                )
+            if (
+                self.config.report_turn_failures_to_room
+                and isinstance(event, MessageEvent)
+                and event.payload
+            ):
+                await self._notify_turn_failure(
+                    sender_id=event.payload.sender_id,
+                    sender_name=event.payload.sender_name,
+                    error=e,
                 )
             return True
 

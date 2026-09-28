@@ -138,6 +138,13 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
+    # A turn that raises before completing is marked "failed" on the server,
+    # but that status is never surfaced anywhere the room's participants can
+    # see it -- the room looks like the agent never received the message at
+    # all. When true (default), post a chat-visible notice mentioning the
+    # failed message's original sender instead of failing silently.
+    report_turn_failures_to_room: bool = True
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(

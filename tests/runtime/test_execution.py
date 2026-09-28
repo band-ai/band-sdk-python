@@ -1839,6 +1839,150 @@ class TestCrashRecoverySync:
         assert failing_handler.await_count == 1
 
 
+class TestTurnFailureNotification:
+    """A turn that raises before completing must post a chat-visible notice,
+    not just fail silently server-side (report_turn_failures_to_room)."""
+
+    @staticmethod
+    def _stub_post_message(mock_link):
+        """Wire the REST mock deep enough for platform.posting.post_message to succeed."""
+        mock_link.rest.agent_api_messages = MagicMock()
+        mock_link.rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            return_value=MagicMock(data=MagicMock())
+        )
+
+    async def test_backlog_handler_failure_posts_notice_to_sender(self, mock_link):
+        """Backlog-sync turn path: notice mentions the original sender."""
+        self._stub_post_message(mock_link)
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        msg = PlatformMessage(
+            id="msg-notify-backlog",
+            room_id="room-123",
+            content="Test",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(UTC),
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        await ctx._process_backlog_message(msg)
+
+        create = mock_link.rest.agent_api_messages.create_agent_chat_message
+        create.assert_awaited_once()
+        request = create.call_args.kwargs["message"]
+        assert request.mentions[0].id == "user-1"
+        assert "handler failed" in request.content
+
+    async def test_websocket_handler_failure_posts_notice_to_sender(self, mock_link):
+        """WebSocket-driven turn path: same guarantee as the backlog path."""
+        self._stub_post_message(mock_link)
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-notify-ws", sender_id="user-1"
+        )
+
+        assert await ctx._process_event(event) is True
+
+        create = mock_link.rest.agent_api_messages.create_agent_chat_message
+        create.assert_awaited_once()
+        request = create.call_args.kwargs["message"]
+        assert request.mentions[0].id == "user-1"
+
+    async def test_report_turn_failures_disabled_suppresses_notice(self, mock_link):
+        """The kill-switch must fully disable the notice, not just soften it."""
+        self._stub_post_message(mock_link)
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(
+                enable_context_hydration=False, report_turn_failures_to_room=False
+            ),
+        )
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-notify-off", sender_id="user-1"
+        )
+
+        assert await ctx._process_event(event) is True
+
+        mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+
+    async def test_self_authored_failure_is_not_mentioned(self, mock_link):
+        """A turn triggered by the agent's own message must never post a
+        self-mentioning notice -- that's an internal-event artifact, not a
+        real participant to notify."""
+        self._stub_post_message(mock_link)
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-notify-self", sender_id="agent-123"
+        )
+
+        assert await ctx._process_event(event) is True
+
+        mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+
+    async def test_notice_post_failure_does_not_break_turn_failure_handling(
+        self, mock_link
+    ):
+        """If posting the notice itself fails, that failure must be swallowed --
+        the turn is already marked failed server-side and processing must
+        still advance."""
+        mock_link.rest.agent_api_messages = MagicMock()
+        mock_link.rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            side_effect=RuntimeError("network down")
+        )
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-notify-post-fails", sender_id="user-1"
+        )
+
+        assert await ctx._process_event(event) is True
+        mock_link.mark_failed.assert_awaited_once()
+
+
 class TestSessionConfigDefaults:
     """Test SessionConfig default values."""
 
