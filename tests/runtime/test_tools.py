@@ -2277,6 +2277,14 @@ class TestHandleMentionResolution:
         assert len(resolved) == 1
         assert resolved[0] == {"id": "user-1", "handle": "@user-one"}
 
+    def test_resolve_by_id(self, mock_rest_client, participants):
+        """An exact participant ID can route a message without knowing its handle."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        resolved = tools._resolve_mentions(["user-1"])
+
+        assert resolved == [{"id": "user-1", "handle": "@user-one"}]
+
     def test_resolve_handle_takes_priority(self, mock_rest_client):
         """Should try handle lookup before name lookup."""
         # Participant with handle different from name
