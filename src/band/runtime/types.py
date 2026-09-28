@@ -29,6 +29,9 @@ from typing import TYPE_CHECKING, Any
 # for other system-generated content.
 SYNTHETIC_SENDER_TYPE = "System"
 
+# Platform sender type for messages authored by a human participant.
+USER_SENDER_TYPE = "User"
+
 # Sender ID for synthetic contact event messages. This is a logical identifier
 # (not a UUID) that allows filtering/identification of contact-related synthetic
 # messages. Used in MessageEvent.payload.sender_id for hub room injections.
@@ -138,11 +141,10 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
-    # A turn that raises before completing is marked "failed" on the server,
-    # but that status is never surfaced anywhere the room's participants can
-    # see it -- the room looks like the agent never received the message at
-    # all. When true (default), post a chat-visible notice mentioning the
-    # failed message's original sender instead of failing silently.
+    # A failed turn is marked "failed" on the server, but the room can't see
+    # that -- it looks like the agent never received the message. When true
+    # (default), a human sender's message that fails its final attempt gets a
+    # chat-visible notice naming the error type.
     report_turn_failures_to_room: bool = True
 
     def __post_init__(self) -> None:

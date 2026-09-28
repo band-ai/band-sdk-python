@@ -201,25 +201,6 @@ class TestAgentRuntimeExecutionManagement:
 
         await runtime.stop()
 
-    async def test_all_contexts_share_one_notified_turn_failures_map(
-        self, mock_link, mock_handler
-    ):
-        """A message that already got a turn-failure room notice must not
-        get a second one after its room's context is destroyed and
-        recreated (e.g. the agent leaves and rejoins the room) -- that
-        requires the same durability guarantee claims already has."""
-        runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
-
-        room_a = await runtime._create_execution("room-a")
-        room_b = await runtime._create_execution("room-b")
-        await runtime._on_room_left("room-a")
-        room_a_again = await runtime._create_execution("room-a")
-
-        assert room_a._notified_turn_failures is room_b._notified_turn_failures
-        assert room_a_again._notified_turn_failures is room_a._notified_turn_failures
-
-        await runtime.stop()
-
     async def test_pending_ack_is_retried_only_by_its_room(
         self, mock_link, mock_handler
     ):

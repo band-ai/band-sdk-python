@@ -28,6 +28,7 @@ from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterCo
 from band.integrations.a2a.gateway.adapter import (
     BandAgentExecutor,
     GatewayRequest,
+    _redact_credentials,
 )
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
@@ -346,7 +347,7 @@ class TestGatewayExecution:
         configure_room_creation(adapter)
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=RuntimeError(
-                "upstream rejected Bearer abc123.def456\n(api_key=sk-live-secret)"
+                "upstream rejected Bearer abc123.def456 (api_key=sk-live-secret)"
             )
         )
         queue = EventQueueLegacy()
@@ -361,6 +362,29 @@ class TestGatewayExecution:
         assert "sk-live-secret" not in message
         assert "Bearer [REDACTED]" in message
         assert "api_key=[REDACTED]" in message
+
+    def test_redact_credentials_full_value_scheme_prefixed(self) -> None:
+        """A scheme-prefixed credential value (a space between the key and
+        the secret) must be redacted in full, not just up to that space."""
+        redacted = _redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
+        assert "sk-live-abcdef123456" not in redacted
+        assert redacted == "Authorization=[REDACTED]"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "password=hunter2",
+            "client_secret=abc123XYZ",
+            "AWS_SECRET_ACCESS_KEY=AKIAABCDEFGHIJKLMNOP",
+        ],
+    )
+    def test_redact_credentials_covers_non_token_keywords(self, text: str) -> None:
+        """token/authorization/api_key aren't the only credential-shaped
+        keywords a peer's error text can embed -- password, secret (and its
+        client_secret compound), and access_key must be redacted too."""
+        redacted = _redact_credentials(text)
+        secret_value = text.split("=", 1)[1]
+        assert secret_value not in redacted
 
     @pytest.mark.asyncio
     async def test_establish_request_raises_when_peer_missing(self) -> None:
