@@ -1943,14 +1943,15 @@ class TestTurnFailureNotification:
 
         assert await ctx._process_event(event) is True
 
+        mock_link.mark_failed.assert_awaited_once()
         mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
 
     async def test_report_turn_failures_disabled_suppresses_notice_backlog(
         self, mock_link
     ):
-        """The kill-switch has its own separate check in the backlog path
-        (_process_claimed_backlog_message) -- verify it independently of the
-        WebSocket path above."""
+        """The backlog call site must be wired into the same shared
+        _notify_turn_failure guard as the WebSocket path above -- verify it
+        independently rather than assuming the wiring matches."""
         self._stub_post_message(mock_link)
 
         async def failing_handler(ctx, event):
@@ -1978,6 +1979,7 @@ class TestTurnFailureNotification:
 
         await ctx._process_backlog_message(msg)
 
+        mock_link.mark_failed.assert_awaited_once()
         mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
 
     async def test_self_authored_failure_is_not_mentioned(self, mock_link):
@@ -2002,6 +2004,7 @@ class TestTurnFailureNotification:
 
         assert await ctx._process_event(event) is True
 
+        mock_link.mark_failed.assert_awaited_once()
         mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
 
     async def test_notice_post_failure_does_not_break_turn_failure_handling(

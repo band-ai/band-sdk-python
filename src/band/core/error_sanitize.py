@@ -9,13 +9,17 @@ from __future__ import annotations
 import re
 
 _MAX_CHARS = 240
-_BEARER_TOKEN_RE = re.compile(r"Bearer\s+[^\s,;]+", re.IGNORECASE)
-# The value group excludes only "," and ";" (not whitespace) so a
-# scheme-prefixed credential (e.g. "Authorization: ApiKey sk-...") gets
-# redacted in full instead of leaking everything past the first space.
+# Both value groups run to end-of-line rather than stopping at "," or ";" --
+# a real credential can itself contain either (e.g. AWS SigV4's
+# "Authorization: AWS4-HMAC-SHA256 Credential=..., SignedHeaders=a;b, Signature=..."
+# is one credential value, comma- and semicolon-delimited internally), so a
+# narrower value group leaks everything past the first one. Over-redacting
+# the rest of the line is an acceptable trade for never leaking a secret;
+# length is already capped separately by sanitize_external_error_message.
+_BEARER_TOKEN_RE = re.compile(r"Bearer\s+\S.*", re.IGNORECASE)
 _CREDENTIAL_KV_RE = re.compile(
     r"(token|authorization|api[_-]?key|access[_-]?key|secret|password)"
-    r"\s*[:=]\s*[^,;]+",
+    r"\s*[:=]\s*.+",
     re.IGNORECASE,
 )
 
