@@ -484,10 +484,15 @@ def retrieve_memory_instruction(marker: str) -> str:
     leaving the agent to infer it against a system prompt that otherwise tells
     it not to send a chat message unless asked."""
     return (
-        f"Call {MemoryTool.LIST.value} with content_query={marker} to find the "
-        f"memory. Then call {MemoryTool.GET.value} with memory_id set to the id "
-        "of a memory the list returned. Then use band_send_message to state the "
-        "exact token you found. Do not call any other tools."
+        f"Call {MemoryTool.LIST.value} with content_query={marker}, "
+        f"scope={MemoryStoreScope.AGENT.value}, "
+        f"system={MemorySystem.LONG_TERM.value}, "
+        f"type={MemoryType.SEMANTIC.value}, and "
+        f"segment={MemorySegment.USER.value} to find the memory stored in the "
+        f"previous turn. Then call {MemoryTool.GET.value} with memory_id set to "
+        "the id returned by that list call. The token is memory content, not "
+        "the memory ID. Then use band_send_message to state the exact token "
+        "you found. Do not call any other tools."
     )
 
 
