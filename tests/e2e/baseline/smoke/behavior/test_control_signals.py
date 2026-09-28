@@ -53,10 +53,18 @@ async def test_stop_cancels_then_play_replays(
 
         await user_ops.stop_agent(room_id)
         await control.wait_for_cancellation(deadline_s=baseline_settings.e2e_timeout)
+        assert ControlMode.STOP in control.received_control_modes
         assert mid not in control.completed_message_ids
 
         await user_ops.play_agent(room_id)
-        await capture.wait_for_processed(mid, agent.id)
+        try:
+            await capture.wait_for_processed(mid, agent.id)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"{exc}; SDK received modes: "
+                f"{[mode.value for mode in control.received_control_modes]}; "
+                f"handler completed messages: {control.completed_message_ids}"
+            ) from None
 
     assert mid in control.completed_message_ids, (
         "PLAY did not replay the stopped message"
