@@ -2147,6 +2147,41 @@ class TestTurnFailureNotification:
         create = mock_link.rest.agent_api_messages.create_agent_chat_message
         create.assert_awaited_once()
 
+    async def test_dedup_key_recorded_even_when_post_message_raises_after_sending(
+        self, mock_link
+    ):
+        """post_message can raise *after* its REST call already reached the
+        server -- an empty response body on an otherwise-successful send is
+        exactly that case. That ambiguous failure must not be mistaken for
+        "nothing was sent": the dedup key has to be recorded before the
+        attempt, not after, or a redelivery of the same message re-posts a
+        real duplicate notice."""
+        mock_link.rest.agent_api_messages = MagicMock()
+        mock_link.rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            return_value=MagicMock(data=None)
+        )
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False, max_message_retries=2),
+        )
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-ambiguous-send", sender_id="user-1"
+        )
+
+        assert await ctx._process_event(event) is True
+        assert ("room-123", "msg-ambiguous-send") in ctx._notified_turn_failures
+
+        assert await ctx._process_event(event) is True
+
+        create = mock_link.rest.agent_api_messages.create_agent_chat_message
+        create.assert_awaited_once()
+
 
 class TestSessionConfigDefaults:
     """Test SessionConfig default values."""

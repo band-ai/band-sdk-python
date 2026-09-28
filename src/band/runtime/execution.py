@@ -2059,8 +2059,20 @@ class ExecutionContext:
                 bool(notified_key and notified_key in self._notified_turn_failures),
             )
             return
+        # Record BEFORE the awaited post_message call, synchronously, mirroring
+        # remember_ack_pending's ordering above -- post_message can raise after
+        # the REST call already reached the server (e.g. an empty response body
+        # on an otherwise-successful send), and an exception there must not be
+        # mistaken for "nothing was sent". Recording first guarantees at most
+        # one notice per message even in that ambiguous case.
+        if notified_key:
+            self._notified_turn_failures[notified_key] = True
+            self._notified_turn_failures.move_to_end(notified_key)
+            if len(self._notified_turn_failures) > _MAX_NOTIFIED_TURN_FAILURES:
+                self._notified_turn_failures.popitem(last=False)
+
         try:
-            response = await post_message(
+            await post_message(
                 rest=self.link.rest,
                 room_id=self.room_id,
                 request=ChatMessageRequest(
@@ -2081,13 +2093,6 @@ class ExecutionContext:
                 self.room_id,
                 sender_id,
             )
-            return
-
-        if response is not None and notified_key:
-            self._notified_turn_failures[notified_key] = True
-            self._notified_turn_failures.move_to_end(notified_key)
-            if len(self._notified_turn_failures) > _MAX_NOTIFIED_TURN_FAILURES:
-                self._notified_turn_failures.popitem(last=False)
 
     async def _process_event_body(
         self, event: PlatformEvent, msg_id: str | None, payload: Any
