@@ -102,8 +102,7 @@ def _error_label(e: Exception) -> str:
     return str(e).strip() or type(e).__name__
 
 
-# Only the error type reaches the room; the message may carry secrets and
-# stays in mark_failed and the logs.
+# Error type only: the message may carry secrets (it stays in mark_failed/logs).
 _TURN_FAILURE_NOTICE = (
     "I hit an internal error and couldn't process your message ({error_type})."
 )
@@ -1567,14 +1566,7 @@ class ExecutionContext:
 
         except Exception as e:
             logger.exception("Error processing backlog message %s", msg_id)
-            await self._handle_turn_failure(
-                msg_id=msg_id,
-                attempts=attempts,
-                sender_id=msg.sender_id,
-                sender_name=msg.sender_name,
-                sender_type=msg.sender_type,
-                error=e,
-            )
+            await self._handle_turn_failure(msg_id, attempts, msg, e)
             return BacklogProcessResult.ADVANCED
 
         finally:
@@ -1996,22 +1988,16 @@ class ExecutionContext:
 
     async def _handle_turn_failure(
         self,
-        *,
         msg_id: str,
         attempts: int | None,
-        sender_id: str | None,
-        sender_name: str | None,
-        sender_type: str | None,
+        message: PlatformMessage | MessageCreatedPayload,
         error: Exception,
     ) -> None:
-        """Record a failed turn server-side and, once it is final, tell the room.
+        """Mark a failed turn failed and, on its final attempt, tell the room.
 
-        Without the notice a failed turn looks like the message was never
-        received. It goes only to human senders -- a notice mentioning an
-        agent starts that agent's turn, so two failing agents would loop --
-        and only on the final attempt, so each message gets at most one per
-        retry budget. ``attempts`` is None when the failure came before the
-        attempt was recorded; that can't be judged final.
+        Humans only: a notice mentioning an agent starts that agent's turn, so
+        two failing agents would loop. ``attempts`` is None when the failure
+        preceded ``record_attempt``, which can't be judged final.
         """
         if not await self.link.mark_failed(self.room_id, msg_id, _error_label(error)):
             logger.warning(
@@ -2020,12 +2006,13 @@ class ExecutionContext:
                 msg_id,
             )
 
+        sender_id = message.sender_id
         is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
         if not (
             self.config.report_turn_failures_to_room
             and is_final
             and sender_id
-            and sender_type == USER_SENDER_TYPE
+            and message.sender_type == USER_SENDER_TYPE
         ):
             logger.debug(
                 "ExecutionContext %s: No turn-failure notice for message %s "
@@ -2034,7 +2021,7 @@ class ExecutionContext:
                 msg_id,
                 self.config.report_turn_failures_to_room,
                 is_final,
-                sender_type,
+                message.sender_type,
             )
             return
 
@@ -2048,7 +2035,7 @@ class ExecutionContext:
                     ),
                     mentions=[
                         ChatMessageRequestMentionsItem(
-                            id=sender_id, name=sender_name or sender_id
+                            id=sender_id, name=message.sender_name or sender_id
                         )
                     ],
                 ),
@@ -2179,16 +2166,8 @@ class ExecutionContext:
 
         except Exception as e:
             logger.exception("Error processing %s", event.type)
-            # Synthetic messages have msg_id cleared, so nothing is tracked.
-            if isinstance(event, MessageEvent) and msg_id and event.payload:
-                await self._handle_turn_failure(
-                    msg_id=msg_id,
-                    attempts=attempts,
-                    sender_id=event.payload.sender_id,
-                    sender_name=event.payload.sender_name,
-                    sender_type=event.payload.sender_type,
-                    error=e,
-                )
+            if isinstance(event, MessageEvent) and msg_id and payload:
+                await self._handle_turn_failure(msg_id, attempts, payload, e)
             return True
 
         finally:

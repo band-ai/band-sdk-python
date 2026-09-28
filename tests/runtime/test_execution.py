@@ -1843,13 +1843,11 @@ class TestTurnFailureNotification:
     """A final failed turn on a human's message posts a chat-visible notice
     instead of failing silently (report_turn_failures_to_room)."""
 
-    @staticmethod
-    def _stub_post_message(mock_link, *, side_effect=None):
-        """Wire the REST mock deep enough for platform.posting.post_message."""
-        mock_link.rest.agent_api_messages = MagicMock()
-        mock_link.rest.agent_api_messages.create_agent_chat_message = AsyncMock(
-            side_effect=side_effect, return_value=MagicMock(data=MagicMock())
-        )
+    @pytest.fixture
+    def create(self, mock_link, mock_rest_client) -> AsyncMock:
+        """The real-signature message-create mock the notice is posted through."""
+        mock_link.rest.agent_api_messages = mock_rest_client.agent_api_messages
+        return mock_rest_client.agent_api_messages.create_agent_chat_message
 
     @staticmethod
     def _context(mock_link, **config) -> ExecutionContext:
@@ -1878,18 +1876,15 @@ class TestTurnFailureNotification:
         )
 
     async def test_backlog_final_failure_notifies_sender_with_error_type_only(
-        self, mock_link
+        self, mock_link, create
     ):
         """The notice names the error type; the exception message, which can
         carry secrets, never reaches the room."""
-        self._stub_post_message(mock_link)
-
         await self._context(mock_link)._process_backlog_message(
             self._backlog_message("msg-backlog")
         )
 
         mock_link.mark_failed.assert_awaited_once()
-        create = mock_link.rest.agent_api_messages.create_agent_chat_message
         create.assert_awaited_once()
         request = create.call_args.kwargs["message"]
         assert request.mentions[0].id == "user-1"
@@ -1897,10 +1892,9 @@ class TestTurnFailureNotification:
         assert "RuntimeError" in request.content
         assert "sk-live-secret" not in request.content
 
-    async def test_websocket_final_failure_notifies_sender(self, mock_link):
+    async def test_websocket_final_failure_notifies_sender(self, mock_link, create):
         """Same guarantee on the live path; the mention falls back to the
         sender id when the payload has no display name."""
-        self._stub_post_message(mock_link)
         event = make_message_event(
             room_id="room-123", msg_id="msg-ws", sender_id="user-1"
         )
@@ -1908,21 +1902,18 @@ class TestTurnFailureNotification:
         assert await self._context(mock_link)._process_event(event) is True
 
         mock_link.mark_failed.assert_awaited_once()
-        create = mock_link.rest.agent_api_messages.create_agent_chat_message
         create.assert_awaited_once()
         request = create.call_args.kwargs["message"]
         assert request.mentions[0].id == "user-1"
         assert request.mentions[0].name == "user-1"
 
-    async def test_notice_waits_for_the_final_attempt(self, mock_link):
+    async def test_notice_waits_for_the_final_attempt(self, mock_link, create):
         """A failure the message will be retried from is not final; only the
         last attempt in the retry budget notifies, exactly once."""
-        self._stub_post_message(mock_link)
         ctx = self._context(mock_link, max_message_retries=2)
         event = make_message_event(
             room_id="room-123", msg_id="msg-retried", sender_id="user-1"
         )
-        create = mock_link.rest.agent_api_messages.create_agent_chat_message
 
         assert await ctx._process_event(event) is True
         mock_link.mark_failed.assert_awaited_once()
@@ -1936,11 +1927,12 @@ class TestTurnFailureNotification:
         create.assert_awaited_once()
 
     @pytest.mark.parametrize("sender_type", ["Agent", "System"])
-    async def test_non_human_sender_gets_no_notice(self, mock_link, sender_type):
+    async def test_non_human_sender_gets_no_notice(
+        self, mock_link, create, sender_type
+    ):
         """A notice mentioning an agent starts that agent's turn, so two
         failing agents would notify each other forever; only humans are
         notified. The failure is still recorded server-side."""
-        self._stub_post_message(mock_link)
         event = make_message_event(
             room_id="room-123",
             msg_id="msg-non-human",
@@ -1951,22 +1943,22 @@ class TestTurnFailureNotification:
         assert await self._context(mock_link)._process_event(event) is True
 
         mock_link.mark_failed.assert_awaited_once()
-        mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+        create.assert_not_awaited()
 
-    async def test_disabled_flag_suppresses_notice(self, mock_link):
-        self._stub_post_message(mock_link)
+    async def test_disabled_flag_suppresses_notice(self, mock_link, create):
 
         await self._context(
             mock_link, report_turn_failures_to_room=False
         )._process_backlog_message(self._backlog_message("msg-off"))
 
         mock_link.mark_failed.assert_awaited_once()
-        mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+        create.assert_not_awaited()
 
-    async def test_failure_before_attempt_is_recorded_gets_no_notice(self, mock_link):
+    async def test_failure_before_attempt_is_recorded_gets_no_notice(
+        self, mock_link, create
+    ):
         """A failure before the retry tracker counted the attempt (here,
         hydration) can't be judged final, so it is only recorded."""
-        self._stub_post_message(mock_link)
         ctx = self._context(mock_link)
         ctx._ensure_fresh_context = AsyncMock(side_effect=RuntimeError("history down"))
         event = make_message_event(
@@ -1977,12 +1969,12 @@ class TestTurnFailureNotification:
 
         ctx._ensure_fresh_context.assert_awaited_once()
         mock_link.mark_failed.assert_awaited_once()
-        mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+        create.assert_not_awaited()
 
-    async def test_notice_post_failure_is_swallowed(self, mock_link):
+    async def test_notice_post_failure_is_swallowed(self, mock_link, create):
         """The turn is already marked failed; a failed notice must not stop
         processing from advancing."""
-        self._stub_post_message(mock_link, side_effect=RuntimeError("network down"))
+        create.side_effect = RuntimeError("network down")
 
         result = await self._context(mock_link)._process_backlog_message(
             self._backlog_message("msg-post-fails")
@@ -1990,7 +1982,7 @@ class TestTurnFailureNotification:
 
         assert result is BacklogProcessResult.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
-        mock_link.rest.agent_api_messages.create_agent_chat_message.assert_awaited_once()
+        create.assert_awaited_once()
 
 
 class TestSessionConfigDefaults:

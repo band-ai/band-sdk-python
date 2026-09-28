@@ -141,10 +141,8 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
-    # A failed turn is marked "failed" on the server, but the room can't see
-    # that -- it looks like the agent never received the message. When true
-    # (default), a human sender's message that fails its final attempt gets a
-    # chat-visible notice naming the error type.
+    # Post a chat-visible notice when a human's message fails its final
+    # attempt; otherwise the room can't tell it from a message never received.
     report_turn_failures_to_room: bool = True
 
     def __post_init__(self) -> None:
