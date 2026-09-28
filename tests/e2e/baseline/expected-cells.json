@@ -4948,15 +4948,10 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
       "adapter": "langgraph",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "core"
       ],
-      "status": "na",
-      "reason": "emits no chat reply after a reboot in a live multi-agent room (langgraph-adapter behaviour under investigation)"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
