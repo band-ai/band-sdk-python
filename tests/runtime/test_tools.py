@@ -1377,6 +1377,17 @@ class TestAgentToolsSendMessage:
         assert message.mentions[0].id == "user-1"
         assert message.mentions[0].handle == "@user-one"
 
+    async def test_send_message_accepts_participant_id(
+        self, mock_rest_client, participants
+    ):
+        """An exact ID routes to its participant without knowing the handle."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        await tools.send_message("Hello!", mentions=["user-1"])
+
+        call = mock_rest_client.agent_api_messages.create_agent_chat_message.call_args
+        assert call.kwargs["message"].mentions[0].id == "user-1"
+
     async def test_send_message_omits_attachment_ids_when_not_given(
         self, mock_rest_client, participants
     ):
@@ -2276,14 +2287,6 @@ class TestHandleMentionResolution:
 
         assert len(resolved) == 1
         assert resolved[0] == {"id": "user-1", "handle": "@user-one"}
-
-    def test_resolve_by_id(self, mock_rest_client, participants):
-        """An exact participant ID can route a message without knowing its handle."""
-        tools = AgentTools("room-123", mock_rest_client, participants)
-
-        resolved = tools._resolve_mentions(["user-1"])
-
-        assert resolved == [{"id": "user-1", "handle": "@user-one"}]
 
     def test_resolve_handle_takes_priority(self, mock_rest_client):
         """Should try handle lookup before name lookup."""
