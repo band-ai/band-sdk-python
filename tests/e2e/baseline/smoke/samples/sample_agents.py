@@ -549,9 +549,9 @@ ROSTER_PROBE = (
 # always-injected participants list carried those descriptions.
 PASSIVE_ROSTER_DESCRIPTIONS_PROBE = (
     "Use the ## Current Participants list already supplied in this turn. "
-    "For every other agent participant, copy that agent's registered "
+    "For every other agent participant, copy that agent's public room "
     "description exactly and pair it with the agent's name. The descriptions "
-    "are in the supplied list; no roster tool call is needed. Use "
+    "are in that list; no roster tool call is needed. Use "
     "band_send_message to deliver the report."
 )
 
