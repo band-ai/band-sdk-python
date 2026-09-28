@@ -432,6 +432,20 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/guards/test_settings.py::test_settings_repr_omits_credentials",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_ctx_field_collision_raises_clear_error",
       "adapter": "suite",
       "lanes": [
