@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -2075,6 +2076,76 @@ class TestTurnFailureNotification:
 
         mock_link.mark_failed.assert_not_awaited()
         mock_link.rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+
+    async def test_redelivered_failure_does_not_post_a_second_notice(self, mock_link):
+        """A message that keeps failing across retries (within its retry
+        budget, so the handler genuinely runs again) must only ever get one
+        room notice, not one per attempt."""
+        self._stub_post_message(mock_link)
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False, max_message_retries=2),
+        )
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-redelivered", sender_id="user-1"
+        )
+
+        assert await ctx._process_event(event) is True
+        mock_link.mark_failed.assert_awaited_once()
+
+        assert await ctx._process_event(event) is True
+        mock_link.mark_failed.assert_awaited()
+        assert mock_link.mark_failed.await_count == 2
+
+        create = mock_link.rest.agent_api_messages.create_agent_chat_message
+        create.assert_awaited_once()
+
+    async def test_notified_turn_failures_survives_context_recreation(self, mock_link):
+        """The bug this guards against: a room leave/rejoin destroys and
+        recreates the ExecutionContext with a fresh, empty _retry_tracker,
+        but a 'failed' message stays /next-actionable and gets redelivered
+        to the new context. Without a durable, shared notified-set, the new
+        context would post a second near-identical notice for the same
+        underlying failure."""
+        self._stub_post_message(mock_link)
+        shared_notified: OrderedDict[tuple[str, str], bool] = OrderedDict()
+
+        async def failing_handler(ctx, event):
+            raise RuntimeError("handler failed")
+
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-across-recreation", sender_id="user-1"
+        )
+
+        original_ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False),
+            notified_turn_failures=shared_notified,
+        )
+        assert await original_ctx._process_event(event) is True
+
+        # Simulate AgentRuntime._on_room_left -> _on_room_joined: a brand-new
+        # ExecutionContext with its own fresh _retry_tracker, but sharing the
+        # same notified_turn_failures map the runtime would pass to it.
+        recreated_ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False),
+            notified_turn_failures=shared_notified,
+        )
+        assert await recreated_ctx._process_event(event) is True
+
+        create = mock_link.rest.agent_api_messages.create_agent_chat_message
+        create.assert_awaited_once()
 
 
 class TestSessionConfigDefaults:

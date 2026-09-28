@@ -153,6 +153,12 @@ class AgentRuntime:
         # once per runtime, including across context recreation.
         self._claim_registry = ClaimRegistry()
 
+        # Shared by default contexts so a message that already got a
+        # turn-failure room notice doesn't get a second one after this
+        # context is destroyed and recreated (e.g. a room leave/rejoin)
+        # while the message is still 'failed' and /next-actionable.
+        self._notified_turn_failures: OrderedDict[tuple[str, str], bool] = OrderedDict()
+
         # Set up presence callbacks
         self.presence.on_room_joined = self._on_room_joined
         self.presence.on_room_left = self._on_room_left
@@ -399,6 +405,7 @@ class AgentRuntime:
                 on_participant_removed=self._on_participant_removed,
                 hub_room_id=self._hub_room_id,
                 claim_registry=self._claim_registry,
+                notified_turn_failures=self._notified_turn_failures,
             )
 
         self.executions[room_id] = execution

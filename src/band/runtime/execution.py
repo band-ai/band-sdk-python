@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 from asyncio import timeout as asyncio_timeout
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
@@ -100,6 +101,12 @@ class ExecutionState(StrEnum):
 def _error_label(e: Exception) -> str:
     """Return a non-empty label for an exception, falling back to the class name."""
     return str(e).strip() or type(e).__name__
+
+
+# Bound on ExecutionContext._notified_turn_failures, matching RetryTracker's
+# own max_tracked default -- an intentional shared memory-safety policy, not
+# a promise to remember more than this many distinct message ids.
+_MAX_NOTIFIED_TURN_FAILURES = 10_000
 
 
 @runtime_checkable
@@ -241,6 +248,7 @@ class ExecutionContext:
         *,
         hub_room_id: str | None = None,
         claim_registry: ClaimRegistry | None = None,
+        notified_turn_failures: OrderedDict[tuple[str, str], bool] | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -260,6 +268,14 @@ class ExecutionContext:
                 passes one registry to its default contexts so a room/message
                 pair executes at most once per runtime. Defaults to a private
                 instance for standalone contexts.
+            notified_turn_failures: Optional shared (room_id, msg_id) -> True
+                map of messages that have already triggered a turn-failure
+                room notice. AgentRuntime passes one map to its default
+                contexts so a message redelivered after this context is
+                destroyed and recreated (e.g. the agent leaves and rejoins
+                the room while the message is still 'failed' server-side)
+                doesn't trigger a second, near-identical notice. Defaults to
+                a private instance for standalone contexts.
         """
         self.room_id = room_id
         self.link = link
@@ -303,6 +319,17 @@ class ExecutionContext:
         # acks) shared by /next and WebSocket processing. Runtime-provided so
         # all contexts of one agent coordinate; private otherwise.
         self.claims = claim_registry or ClaimRegistry()
+
+        # Which (room_id, msg_id) pairs already got a turn-failure room
+        # notice. Runtime-provided so it survives this context being
+        # destroyed and recreated (e.g. a room leave/rejoin), unlike
+        # _retry_tracker below; private otherwise. Bounded like
+        # RetryTracker's own default max_tracked, for the same reason.
+        self._notified_turn_failures = (
+            notified_turn_failures
+            if notified_turn_failures is not None
+            else OrderedDict()
+        )
 
         # Crash recovery: sync point marker and retry tracking. Attempt and
         # permanently-failed-id storage is bounded at RetryTracker's default
@@ -1567,7 +1594,10 @@ class ExecutionContext:
                     msg_id,
                 )
             await self._notify_turn_failure(
-                sender_id=msg.sender_id, sender_name=msg.sender_name, error=e
+                msg_id=msg_id,
+                sender_id=msg.sender_id,
+                sender_name=msg.sender_name,
+                error=e,
             )
             return BacklogProcessResult.ADVANCED
 
@@ -1989,7 +2019,12 @@ class ExecutionContext:
         return await self._process_event_body(event, msg_id, payload)
 
     async def _notify_turn_failure(
-        self, *, sender_id: str | None, sender_name: str | None, error: Exception
+        self,
+        *,
+        msg_id: str | None,
+        sender_id: str | None,
+        sender_name: str | None,
+        error: Exception,
     ) -> None:
         """Best-effort chat-visible notice for a turn that raised before completing.
 
@@ -1998,22 +2033,34 @@ class ExecutionContext:
         looks identical to the agent never having received the message at
         all. Mentions the failed message's own sender, since the platform
         rejects a message with an empty mentions list.
+
+        A ``'failed'`` message stays ``/next``-actionable indefinitely, and
+        this context can be destroyed and recreated with a fresh
+        ``_retry_tracker`` (e.g. the agent leaves and rejoins the room) while
+        that's still true -- so redelivery alone can't be trusted to mean
+        "not notified yet". ``_notified_turn_failures`` is the durable record
+        of that instead, keyed by (room_id, msg_id) so it survives context
+        recreation the same way ``claims`` does.
         """
+        notified_key = (self.room_id, msg_id) if msg_id else None
         if (
             not self.config.report_turn_failures_to_room
             or not sender_id
             or sender_id == self.agent_id
+            or (notified_key and notified_key in self._notified_turn_failures)
         ):
             logger.debug(
-                "ExecutionContext %s: Not posting turn-failure notice "
-                "(report_turn_failures_to_room=%s, sender_id=%s)",
+                "ExecutionContext %s: Not posting turn-failure notice for message %s "
+                "(report_turn_failures_to_room=%s, sender_id=%s, already_notified=%s)",
                 self.room_id,
+                msg_id,
                 self.config.report_turn_failures_to_room,
                 sender_id,
+                bool(notified_key and notified_key in self._notified_turn_failures),
             )
             return
         try:
-            await post_message(
+            response = await post_message(
                 rest=self.link.rest,
                 room_id=self.room_id,
                 request=ChatMessageRequest(
@@ -2034,6 +2081,13 @@ class ExecutionContext:
                 self.room_id,
                 sender_id,
             )
+            return
+
+        if response is not None and notified_key:
+            self._notified_turn_failures[notified_key] = True
+            self._notified_turn_failures.move_to_end(notified_key)
+            if len(self._notified_turn_failures) > _MAX_NOTIFIED_TURN_FAILURES:
+                self._notified_turn_failures.popitem(last=False)
 
     async def _process_event_body(
         self, event: PlatformEvent, msg_id: str | None, payload: Any
@@ -2174,6 +2228,7 @@ class ExecutionContext:
                 # sender is a synthetic sentinel with no real room
                 # participant to notify.
                 await self._notify_turn_failure(
+                    msg_id=msg_id,
                     sender_id=event.payload.sender_id,
                     sender_name=event.payload.sender_name,
                     error=e,
