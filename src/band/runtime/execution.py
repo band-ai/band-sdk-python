@@ -2030,8 +2030,9 @@ class ExecutionContext:
             )
         except Exception:
             logger.exception(
-                "ExecutionContext %s: Failed to post turn-failure notice",
+                "ExecutionContext %s: Failed to post turn-failure notice for sender %s",
                 self.room_id,
+                sender_id,
             )
 
     async def _process_event_body(
