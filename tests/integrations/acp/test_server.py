@@ -183,17 +183,15 @@ class TestACPServerCancel:
 class TestACPServerOnConnect:
     """Tests for ACPServer.on_connect()."""
 
-    def test_on_connect_stores_client(self) -> None:
-        """Should retain the SDK client on the adapter for session_update."""
+    def test_on_connect_forwards_client_to_adapter(self) -> None:
+        """Should forward the SDK client to the adapter for session_update."""
         adapter = BandACPServerAdapter()
         server = ACPServer(adapter)
         mock_client = MagicMock()
 
-        assert adapter.get_acp_client() is None
         server.on_connect(mock_client)
 
         assert adapter.get_acp_client() is mock_client
-        assert not hasattr(server, "_conn")
 
 
 class TestACPServerExtractText:

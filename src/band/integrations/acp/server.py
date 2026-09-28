@@ -75,10 +75,10 @@ class ACPServer:
         self._adapter = adapter
 
     def on_connect(self, conn: Client) -> None:
-        """Retain the connected ACP client for outbound session_update.
+        """Forward the connected ACP client to the adapter for session_update.
 
-        Called by the ACP SDK when a client connects. The client is stored on
-        the adapter, which is the single source of truth for session_update.
+        Called by the ACP SDK when a client connects. The adapter is the
+        single source of truth for outbound session_update.
 
         Args:
             conn: The connected ACP client interface.
