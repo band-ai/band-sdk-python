@@ -2635,15 +2635,10 @@
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
       "adapter": "crewai",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "crewai"
       ],
-      "status": "na",
-      "reason": "the second, post-reboot retrieval turn reads the memory but ends on an empty completion before band_send_message runs, so no reply ever reaches the room; reproduced on every attempt, not a transient"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",

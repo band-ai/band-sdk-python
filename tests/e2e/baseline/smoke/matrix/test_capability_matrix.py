@@ -19,7 +19,7 @@ import pytest
 from band.core.memory_types import MemoryListScope
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import Capability
-from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.scorecard import env_gated_skip
 from tests.e2e.baseline.settings import BaselineSettings
@@ -133,14 +133,6 @@ async def test_recall_memory_across_memory_adapters(
 
 @per_adapter(
     supports={Capability.MEMORY},
-    exclude=[
-        ExcludedAdapter(
-            Adapter.CREWAI,
-            "the second, post-reboot retrieval turn reads the memory but ends on "
-            "an empty completion before band_send_message runs, so no reply ever "
-            "reaches the room; reproduced on every attempt, not a transient",
-        )
-    ],
     **MEMORY_AGENT,
 )
 @flaky_infra("only transient failures")

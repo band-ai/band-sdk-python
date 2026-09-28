@@ -213,10 +213,10 @@ def serialize_tool_result(result: Any) -> Any:
     output shape cannot drift from the real one.
     """
     if hasattr(result, "model_dump"):
-        return result.model_dump()
+        return result.model_dump(mode="json")
     if isinstance(result, list):
         return [
-            item.model_dump() if hasattr(item, "model_dump") else item
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
             for item in result
         ]
     return result
