@@ -22,13 +22,13 @@ from a2a.types import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.core.error_sanitize import redact_credentials
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import PlatformMessage
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.adapter import (
     BandAgentExecutor,
     GatewayRequest,
-    _redact_credentials,
 )
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
@@ -366,7 +366,7 @@ class TestGatewayExecution:
     def test_redact_credentials_full_value_scheme_prefixed(self) -> None:
         """A scheme-prefixed credential value (a space between the key and
         the secret) must be redacted in full, not just up to that space."""
-        redacted = _redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
+        redacted = redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
         assert "sk-live-abcdef123456" not in redacted
         assert redacted == "Authorization=[REDACTED]"
 
@@ -382,7 +382,7 @@ class TestGatewayExecution:
         """token/authorization/api_key aren't the only credential-shaped
         keywords a peer's error text can embed -- password, secret (and its
         client_secret compound), and access_key must be redacted too."""
-        redacted = _redact_credentials(text)
+        redacted = redact_credentials(text)
         secret_value = text.split("=", 1)[1]
         assert secret_value not in redacted
 

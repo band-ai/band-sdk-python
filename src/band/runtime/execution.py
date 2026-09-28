@@ -41,6 +41,7 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
+from band.core.error_sanitize import sanitize_external_error_message
 from band.core.types import metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
@@ -1565,10 +1566,9 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-            if self.config.report_turn_failures_to_room:
-                await self._notify_turn_failure(
-                    sender_id=msg.sender_id, sender_name=msg.sender_name, error=e
-                )
+            await self._notify_turn_failure(
+                sender_id=msg.sender_id, sender_name=msg.sender_name, error=e
+            )
             return BacklogProcessResult.ADVANCED
 
         finally:
@@ -1999,7 +1999,18 @@ class ExecutionContext:
         all. Mentions the failed message's own sender, since the platform
         rejects a message with an empty mentions list.
         """
-        if not sender_id or sender_id == self.agent_id:
+        if (
+            not self.config.report_turn_failures_to_room
+            or not sender_id
+            or sender_id == self.agent_id
+        ):
+            logger.debug(
+                "ExecutionContext %s: Not posting turn-failure notice "
+                "(report_turn_failures_to_room=%s, sender_id=%s)",
+                self.room_id,
+                self.config.report_turn_failures_to_room,
+                sender_id,
+            )
             return
         try:
             await post_message(
@@ -2008,7 +2019,7 @@ class ExecutionContext:
                 request=ChatMessageRequest(
                     content=(
                         "I hit an internal error and couldn't process that "
-                        f"message: {_error_label(error)}"
+                        f"message: {sanitize_external_error_message(error)}"
                     ),
                     mentions=[
                         ChatMessageRequestMentionsItem(
@@ -2155,11 +2166,12 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-            if (
-                self.config.report_turn_failures_to_room
-                and isinstance(event, MessageEvent)
-                and event.payload
-            ):
+            if isinstance(event, MessageEvent) and msg_id and event.payload:
+                # msg_id-gated, matching the mark_failed check above: a
+                # synthetic message (e.g. a contact event injected into the
+                # hub room) has msg_id cleared to skip all tracking, and its
+                # sender is a synthetic sentinel with no real room
+                # participant to notify.
                 await self._notify_turn_failure(
                     sender_id=event.payload.sender_id,
                     sender_name=event.payload.sender_name,
