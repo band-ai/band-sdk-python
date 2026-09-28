@@ -34,6 +34,7 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
+from band.runtime.tools.types import BandTool
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -46,12 +47,13 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
     usage_features,
 )
+from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT)
+@per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT, **EXECUTION_REPORTING)
 @flaky_model("cold-boot recall is model-non-deterministic")
 @pytest.mark.timeout(extra=300)  # several run-1 turns + two agent boots
 @pytest.mark.asyncio(loop_scope="session")
@@ -89,6 +91,12 @@ async def test_handled_work_not_redrained_on_restart(
                 mention_name=identity.name,
             )
             await capture.wait_for_processed(invite_mid, identity.id)
+            calls = await capture.tool_calls(sender_id=identity.id)
+            calls.assert_fired(
+                BandTool.ADD_PARTICIPANT, with_args={"identifier": echo.id}
+            )
+            results = await capture.tool_results(sender_id=identity.id)
+            results.assert_succeeded(BandTool.ADD_PARTICIPANT)
             mark = capture.messages.snapshot()
             handled_mid = await user_ops.send_message(
                 room_id,
