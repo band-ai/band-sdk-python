@@ -158,7 +158,10 @@ LIVENESS_REPLY_PROMPT = (
     + " When another participant asks you to confirm you are active, include the "
     "complete token from their message exactly in your reply."
 )
-REMEMBER = "Please remember this note: {note}. Confirm you remember it."
+REMEMBER = (
+    "Please remember this note: {note}. Call band_send_message to confirm you "
+    "remember the complete note."
+)
 RECALL = (
     "What was the note I asked you to remember? Call band_send_message to reply "
     "with the complete note exactly as written, preserving every character."

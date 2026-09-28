@@ -91,7 +91,8 @@ async def test_rehydrates_foreign_peer_message(
     then stops; A cold-boots and must recall the marker from bootstrap rehydration. The
     per-cell ``@requires`` gate (folded with the peer's) rides on the parametrization.
     """
-    marker = unique_marker("note")
+    token_prefix = "note"
+    marker = unique_marker(token_prefix)
     recaller = await cell.provision(label=f"recaller-{cell.adapter_id}")
     speaker = await peer.provision(label=f"speaker-{peer.adapter_id}")
     room_id = await resource_manager.provision_room(
@@ -135,8 +136,9 @@ async def test_rehydrates_foreign_peer_message(
             "Earlier the other participant sent you a short note with a token. "
             "Copy the complete hyphenated token exactly, including the part before "
             "the hyphen. Treat the entire string as one value: the letters before "
-            "the hyphen are part of the token, not a label. Call band_send_message "
-            "to reply with that complete token exactly.",
+            "the hyphen are part of the token, not a label. The token starts "
+            f"with {token_prefix}-. Call band_send_message to reply with the "
+            "complete token exactly, from its first letter through its last.",
             mention_id=recaller.id,
             mention_name=recaller.name,
         )
