@@ -28,6 +28,7 @@ from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     PASSIVE_ROSTER_DESCRIPTIONS_PROBE,
+    PASSIVE_ROSTER_REPORTING_PROMPT,
     ROSTER_LOOKUP_PAGE_SIZE,
     ROSTER_PROBE,
     TOOL_AGENT,
@@ -118,7 +119,9 @@ async def test_reports_identity_and_roster(
     replies.assert_contains_any(offered_names)  # invitable (via band_lookup_peers)
 
 
-@per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
+@per_adapter(
+    runs_tool_loop=True, prompt=PASSIVE_ROSTER_REPORTING_PROMPT, **EXECUTION_REPORTING
+)
 @flaky_model(
     "small-model wording of descriptions / whether to skip tools is non-deterministic"
 )
