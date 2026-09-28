@@ -135,7 +135,8 @@ async def test_rehydrates_foreign_peer_message(
             "Earlier the other participant sent you a short note with a token. "
             "Copy the complete hyphenated token exactly, including the part before "
             "the hyphen. Treat the entire string as one value: the letters before "
-            "the hyphen are part of the token, not a label. Reply with just that token.",
+            "the hyphen are part of the token, not a label. Call band_send_message "
+            "to reply with that complete token exactly.",
             mention_id=recaller.id,
             mention_name=recaller.name,
         )
