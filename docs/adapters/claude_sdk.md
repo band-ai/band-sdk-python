@@ -106,6 +106,7 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `effort` | `EffortLevel \| None` | `None` | Response effort level. The accepted values are `claude_agent_sdk`'s `EffortLevel`. When `None`, the model default applies. |
 | `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions" \| "dontAsk" \| "auto"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. See [Permission modes](#permission-modes). |
 | `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions. Must exist if provided. |
+| `turn_timeout_s` | `float \| None` | `None` | Seconds one turn may run. On expiry the turn is interrupted and a `timeout` failure is posted to the room. `None` leaves turns unbounded. A manual approval wait counts toward it, so keep it above `approval_wait_timeout_s`. |
 
 ### Permission modes
 
@@ -139,6 +140,7 @@ adapter = ClaudeSDKAdapter(
     permission_mode="dontAsk",
     plugin_dirs=["/srv/agents/reviewer/plugin"],
     env={"GITHUB_TOKEN": "per-agent-token"},
+    turn_timeout_s=1800.0,
 )
 assert adapter.plugin_dirs == ["/srv/agents/reviewer/plugin"]
 ```

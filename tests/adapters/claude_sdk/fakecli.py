@@ -96,6 +96,9 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # A wedged CLI: interrupt requests are acknowledged but the turn
+        # neither stops nor ends.
+        self.ignore_interrupt = False
         self.errors: list[BaseException] = []
 
     def script(self, *turns: Turn) -> None:
@@ -193,6 +196,15 @@ class FakeCLISession(Transport):
                 "response": {},
             },
         )
+        if request["subtype"] == "interrupt":
+            self._interrupt()
+
+    def _interrupt(self) -> None:
+        """Stop the running turn; like the real CLI it still ends with a result."""
+        if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
+            return
+        self._turn.cancel()
+        self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
 
     def _emit(self, **message: Any) -> None:
         self._outbox.put_nowait(message)
@@ -232,6 +244,11 @@ class FakeCLISession(Transport):
         except Exception as error:  # noqa: BLE001
             self.claude.errors.append(error)
             ending = EndTurn(is_error=True, result=str(error))
+        self._emit_result(ending, denials)
+
+    def _emit_result(
+        self, ending: EndTurn, denials: list[dict[str, Any]] | None = None
+    ) -> None:
         self._emit(
             type="result",
             subtype="success",

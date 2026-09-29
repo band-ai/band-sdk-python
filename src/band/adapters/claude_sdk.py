@@ -62,6 +62,7 @@ from band.converters.claude_sdk import (
     ClaudeSDKSessionState,
 )
 from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
     TurnResultAlreadyReported,
@@ -180,6 +181,11 @@ def _reserved_extra_args(extra_args: dict[str, str | None]) -> list[str]:
     return sorted(
         flag for flag in extra_args if flag.lstrip("-") in _RESERVED_CLI_FLAGS
     )
+
+
+# Upper bound on draining the interrupted turn's final result after a
+# timeout, so the next turn on the same client does not read it as its own.
+_TIMEOUT_DRAIN_SECONDS = 10.0
 
 
 # Approval flow types (mirrors Codex adapter patterns)
@@ -371,6 +377,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         env: dict[str, str] | None = None,
         add_dirs: list[str] | None = None,
         extra_args: dict[str, str | None] | None = None,
+        turn_timeout_s: float | None = None,
         # Chat-based approval flow (opt-in)
         approval_mode: ApprovalMode | None = None,
         approval_text_notifications: bool = True,
@@ -418,6 +425,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             add_dirs: Additional directories Claude may access (``--add-dir``).
             extra_args: Additional CLI flags, ``{"flag": "value"}`` or
                 ``{"flag": None}`` for a bare flag.
+            turn_timeout_s: Seconds a turn may run before it is interrupted and
+                a timeout failure is posted to the room. ``None`` (default)
+                leaves turns unbounded. A manual approval wait counts toward
+                it, so keep it above ``approval_wait_timeout_s``.
             approval_mode: Chat-based approval mode.  ``None`` (default) disables
                 chat-based approval -- the SDK's ``permission_mode`` controls
                 approvals entirely.  Set to ``"manual"`` to route approval
@@ -472,6 +483,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             raise ValueError(
                 f"extra_args may not set adapter-owned CLI flags: {reserved}"
             )
+        if turn_timeout_s is not None and turn_timeout_s <= 0:
+            raise ValueError("turn_timeout_s must be > 0 when set")
+        self.turn_timeout_s = turn_timeout_s
         # Which host settings the CLI loads (skills/subagents/settings from
         # ~/.claude and ./.claude). Default isolates the bridged agent so its
         # capabilities are defined here, not by whatever config sits on the host
@@ -892,13 +906,26 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         release_future: asyncio.Future[None],
     ) -> None:
         """Run one turn to completion; always releases ``release_future``."""
+        deadline = asyncio.timeout(self.turn_timeout_s)
         try:
             try:
-                # Send query to Claude
-                await client.query(full_message)
+                async with deadline:
+                    await client.query(full_message)
+                    # MCP tools handle execution; this dispatches the stream.
+                    await self._process_response(client, room_id, tools)
 
-                # Process streaming response (MCP tools handle execution)
-                await self._process_response(client, room_id, tools)
+            except TimeoutError:
+                if not deadline.expired():
+                    logger.exception("Error processing message")
+                    await tools.send_failure(
+                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    raise
+                detail = await self._abandon_timed_out_turn(client, room_id)
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, detail, FAILURE_CODE_TIMEOUT)
+                )
+                raise TurnResultAlreadyReported(detail) from None
 
             except TurnResultAlreadyReported:
                 # The failure was already reported via send_failure deeper in
@@ -955,6 +982,42 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         if release is not None and not release.done():
             release.set_result(None)
+
+    async def _abandon_timed_out_turn(
+        self, client: ClaudeSDKClient, room_id: str
+    ) -> str:
+        """Interrupt a turn that outlived ``turn_timeout_s``; return the notice.
+
+        The interrupted turn still streams a final ResultMessage, which the
+        next turn on this client would otherwise read as its own. It is
+        drained here. A client whose process died is evicted; one that is
+        still running but will not stop is closed, keeping any captured
+        session id so the next message resumes it on a fresh process.
+        """
+        logger.warning(
+            "Room %s: Claude turn timed out after %ss", room_id, self.turn_timeout_s
+        )
+        try:
+            async with asyncio.timeout(_TIMEOUT_DRAIN_SECONDS):
+                await client.interrupt()
+                async for sdk_message in client.receive_response():
+                    if isinstance(sdk_message, ResultMessage):
+                        break
+        except CLIConnectionError:
+            logger.warning(
+                "Room %s: timed-out Claude turn's CLI is gone; invalidating session",
+                room_id,
+                exc_info=True,
+            )
+            await self._invalidate_session(room_id)
+        except Exception:
+            logger.warning(
+                "Room %s: timed-out Claude turn did not stop; closing its client",
+                room_id,
+                exc_info=True,
+            )
+            await self._retire_client(room_id)
+        return f"Claude turn timed out after {self.turn_timeout_s}s"
 
     async def _cancel_turn(self, room_id: str) -> None:
         """Cancel and await a detached turn before its session is closed."""
