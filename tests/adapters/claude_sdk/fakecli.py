@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 from mcp import ClientSession
 
@@ -113,6 +113,11 @@ class FakeClaude:
         # Modes the account or model can't run; the CLI falls back to
         # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
         self.unavailable_modes: set[ClaudePermissionMode] = set()
+        # Raised by connect() instead of the generic refusal, e.g. a missing CLI.
+        self.connect_error: BaseException | None = None
+        # What the CLI answers the SDK's initialize request with, which
+        # get_server_info() returns (e.g. its "models").
+        self.server_info: dict[str, Any] = {}
         # A wedged CLI: interrupt requests are acknowledged but the turn
         # neither stops nor ends.
         self.ignore_interrupt = False
@@ -128,6 +133,12 @@ class FakeClaude:
         session = FakeCLISession(self, options)
         self.sessions.append(session)
         return session
+
+    def client(self, *, options: ClaudeAgentOptions) -> ClaudeSDKClient:
+        """Stands in for the ``ClaudeSDKClient`` constructor."""
+        session = FakeCLISession(self, options)
+        self.sessions.append(session)
+        return ClaudeSDKClient(options=options, transport=session)
 
     @property
     def session_workspaces(self) -> list[str]:
@@ -174,6 +185,8 @@ class FakeCLISession(Transport):
         if (hold := self.claude.connecting) is not None:
             hold.reached.set()
             await hold.released.wait()
+        if self.claude.connect_error is not None:
+            raise self.claude.connect_error
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
             raise CLIConnectionError("Claude CLI exited during startup")
 
@@ -221,14 +234,16 @@ class FakeCLISession(Transport):
 
     def _answer_sdk(self, message: dict[str, Any]) -> None:
         request = message["request"]
+        response: dict[str, Any] = {}
         if request["subtype"] == "initialize":
             self._hooks = request.get("hooks") or {}
+            response = self.claude.server_info
         self._emit(
             type="control_response",
             response={
                 "subtype": "success",
                 "request_id": message["request_id"],
-                "response": {},
+                "response": response,
             },
         )
         if request["subtype"] == "interrupt":
