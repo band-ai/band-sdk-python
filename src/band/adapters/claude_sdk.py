@@ -62,7 +62,7 @@ from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
-from band.core.harness import PreflightResult
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -2078,3 +2078,25 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         for entry in registry.cancel_all():
             entry.payload.future.set_result(None)
         # Keep the seq counter to avoid token collisions with suspended coroutines
+
+
+async def list_models(adapter: ClaudeSDKAdapter) -> list[HarnessModel]:
+    """The models Claude Code offers this account, with their effort levels.
+
+    Read from ``get_server_info()`` of a throwaway Claude Code process
+    launched with ``adapter``'s ``cli_path``/``env``; no model turn runs and
+    no room session is created. Tested with Claude Code 2.1.280.
+    """
+    info = await adapter._probe_server_info()
+    return [_claude_model(entry) for entry in info.get("models") or []]
+
+
+def _claude_model(entry: dict[str, Any]) -> HarnessModel:
+    value = str(entry["value"])
+    return HarnessModel(
+        id=value,
+        label=str(entry.get("displayName") or value),
+        provider="anthropic",
+        efforts=tuple(entry.get("supportedEffortLevels") or ()),
+        is_default=value == "default",
+    )
