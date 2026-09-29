@@ -153,6 +153,14 @@ class FakeCodexClient:
         self._thread_counter = 0
         self._turn_counter = 0
 
+    @property
+    def requested_methods(self) -> list[str]:
+        return [method for method, _ in self.requests]
+
+    def play(self, *events: RpcEvent) -> None:
+        """Queue more server events for the next turn to consume."""
+        self._events.extend(events)
+
     async def connect(self) -> None:
         self.connected = True
 
@@ -325,7 +333,8 @@ class CodexTurn:
 
 async def run_codex_turn(
     *,
-    events: list[RpcEvent],
+    events: list[RpcEvent] | None = None,
+    client: FakeCodexClient | None = None,
     tools: FakeAgentTools | None = None,
     config: CodexAdapterConfig | None = None,
     **adapter_kwargs: Any,
@@ -334,9 +343,10 @@ async def run_codex_turn(
 
     Wraps the scaffolding a turn test otherwise repeats -- fake transport,
     adapter wired to it, ``on_started``, one bootstrap ``on_message`` -- so a
-    test states only the events it scripts and the outcome it asserts.
+    test states only the events it scripts and the outcome it asserts. A
+    ``client`` stands in for the default scripted one.
     """
-    client = FakeCodexClient(events=events)
+    client = client or FakeCodexClient(events=events)
     adapter = make_codex_adapter(client, config=config, **adapter_kwargs)
     room_tools = tools if tools is not None else ToolSchemaFakeTools()
 
@@ -6758,177 +6768,23 @@ class TestReadRoomFileImagePassthrough:
         assert turn.content_items[0]["type"] == "inputText"
 
 
-def _methods(client: FakeCodexClient) -> list[str]:
-    return [method for method, _ in client.requests]
+def _thread_gone() -> CodexJsonRpcError:
+    return CodexJsonRpcError(code=-32600, message="no rollout found")
 
 
-async def _bootstrap_turn(adapter: CodexAdapter) -> FakeAgentTools:
-    tools = ToolSchemaFakeTools()
-    await adapter.on_started("Codex Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(),
-        tools,
-        CodexSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
+async def _released_room(
+    codex_room: Callable[..., Awaitable[CodexRoom]],
+    *,
+    resume_error: Exception | None = None,
+) -> CodexRoom:
+    """A room that finished one turn and then had its idle app-server released."""
+    client = FakeCodexClient(
+        events=[_turn_completed("turn-1")], resume_error=resume_error
     )
-    return tools
-
-
-async def _later_turn(adapter: CodexAdapter, tools: FakeAgentTools) -> None:
-    await adapter.on_message(
-        make_platform_message(),
-        tools,
-        CodexSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=False,
-        room_id="room-1",
-    )
-
-
-class TestIdleRelease:
-    @pytest.mark.asyncio
-    async def test_released_room_resumes_its_thread_on_the_next_turn(self) -> None:
-        client = FakeCodexClient(events=[_turn_completed("turn-1")])
-        adapter = make_codex_adapter(client)
-        tools = await _bootstrap_turn(adapter)
-        [started] = [p for m, p in client.requests if m == "thread/start"]
-
-        await adapter.release_room_resources("room-1")
-
-        assert client.closed
-        client.closed = False
-        client._events.append(_turn_completed("turn-2"))
-        await _later_turn(adapter, tools)
-        methods = _methods(client)
-        assert methods.count("thread/start") == 1
-        assert "turn/start" in methods[methods.index("thread/resume") :]
-        assert ("thread/resume", {"threadId": "thr-1", "personality": "pragmatic"}) in (
-            client.requests
-        )
-        assert started["cwd"] == adapter._room_clients["room-1"].workspace
-
-    @pytest.mark.asyncio
-    async def test_a_room_with_its_lock_held_is_not_released(self) -> None:
-        client = FakeCodexClient(events=[_turn_completed()])
-        adapter = make_codex_adapter(client)
-        await _bootstrap_turn(adapter)
-        room = adapter._room_clients["room-1"]
-
-        async with room.rpc_lock:
-            await adapter.release_room_resources("room-1")
-
-        assert (client.closed, room.client is client) == (False, True)
-
-    @pytest.mark.asyncio
-    async def test_leaving_after_a_release_forgets_the_thread(self) -> None:
-        client = FakeCodexClient(events=[_turn_completed()])
-        adapter = make_codex_adapter(client)
-        await _bootstrap_turn(adapter)
-        await adapter.release_room_resources("room-1")
-
-        await adapter.on_cleanup("room-1")
-
-        assert (adapter._released_threads, adapter._room_clients) == ({}, {})
-
-    @pytest.mark.asyncio
-    async def test_failed_resume_after_release_seeds_the_fresh_thread(self) -> None:
-        client = FakeCodexClient(
-            events=[_turn_completed("turn-1")],
-            resume_error=CodexJsonRpcError(code=-32600, message="no rollout found"),
-        )
-        adapter = make_codex_adapter(client)
-        tools = await _bootstrap_turn(adapter)
-        await adapter.release_room_resources("room-1")
-        tools.set_room_context(_RECALL_TRANSCRIPT)
-        client._events.append(_turn_completed("turn-2"))
-
-        await _later_turn(adapter, tools)
-
-        assert _methods(client).count("thread/start") == 2
-        texts = [item["text"] for item in _last_turn_input(client)]
-        history = _history_item(_last_turn_input(client))
-        assert "The code word is PELICAN." in history
-        assert texts.index(history) < len(texts) - 1
-        assert adapter._released_threads == {}
-
-    @pytest.mark.asyncio
-    async def test_failed_resume_with_no_history_fails_instead_of_starting_blank(
-        self,
-    ) -> None:
-        client = FakeCodexClient(
-            events=[_turn_completed("turn-1")],
-            resume_error=CodexJsonRpcError(code=-32600, message="no rollout found"),
-        )
-        adapter = make_codex_adapter(client)
-        tools = await _bootstrap_turn(adapter)
-        await adapter.release_room_resources("room-1")
-        tools.fetch_room_context = AsyncMock(side_effect=OSError("platform down"))
-
-        with pytest.raises(OSError):
-            await _later_turn(adapter, tools)
-
-        assert _methods(client).count("thread/start") == 1
-        assert adapter._released_threads == {"room-1": "thr-1"}
-
-    @pytest.mark.asyncio
-    async def test_fallback_history_survives_a_failed_fresh_thread_start(self) -> None:
-        client = FakeCodexClient(
-            events=[_turn_completed("turn-1")],
-            resume_error=CodexJsonRpcError(code=-32600, message="no rollout found"),
-        )
-        adapter = make_codex_adapter(client)
-        tools = await _bootstrap_turn(adapter)
-        await adapter.release_room_resources("room-1")
-        tools.set_room_context(_RECALL_TRANSCRIPT)
-        client.thread_start_errors.append(
-            CodexJsonRpcError(code=-32000, message="busy")
-        )
-        with pytest.raises(CodexJsonRpcError):
-            await _later_turn(adapter, tools)
-        client._events.append(_turn_completed("turn-2"))
-
-        await _later_turn(adapter, tools)
-
-        history = _history_item(_last_turn_input(client))
-        assert "The code word is PELICAN." in history
-
-    @pytest.mark.asyncio
-    async def test_fallback_history_survives_a_rejected_turn_start(self) -> None:
-        client = FakeCodexClient(
-            events=[_turn_completed("turn-1")],
-            resume_error=CodexJsonRpcError(code=-32600, message="no rollout found"),
-        )
-        adapter = make_codex_adapter(client)
-        tools = await _bootstrap_turn(adapter)
-        await adapter.release_room_resources("room-1")
-        tools.set_room_context(_RECALL_TRANSCRIPT)
-        client._turn_start_error = CodexJsonRpcError(code=-32000, message="busy")
-        with pytest.raises(CodexJsonRpcError):
-            await _later_turn(adapter, tools)
-        client._events.append(_turn_completed("turn-2"))
-
-        await _later_turn(adapter, tools)
-
-        history = _history_item(_last_turn_input(client))
-        assert "The code word is PELICAN." in history
-
-    @pytest.mark.asyncio
-    async def test_an_unexpected_resume_error_keeps_the_thread_for_retry(self) -> None:
-        client = FakeCodexClient(
-            events=[_turn_completed("turn-1")], resume_error=OSError("pipe closed")
-        )
-        adapter = make_codex_adapter(client)
-        tools = await _bootstrap_turn(adapter)
-        await adapter.release_room_resources("room-1")
-
-        with pytest.raises(OSError):
-            await _later_turn(adapter, tools)
-
-        assert adapter._released_threads == {"room-1": "thr-1"}
+    room = await codex_room(client=client)
+    await room.send("Hello")
+    await room.adapter.release_room_resources(ROOM_ID)
+    return room
 
 
 def _last_turn_input(client: FakeCodexClient) -> list[dict[str, Any]]:
@@ -6952,11 +6808,125 @@ _RECALL_TRANSCRIPT: list[dict[str, Any]] = [
         "sender_name": "Alice",
         "message_type": "text",
     },
-    {
-        "id": "msg-1",
-        "content": "Hello",
-        "sender_id": "user-1",
-        "sender_type": "User",
-        "message_type": "text",
-    },
 ]
+
+
+class TestIdleRelease:
+    @pytest.mark.asyncio
+    async def test_released_room_resumes_its_thread_on_the_next_turn(
+        self, codex_room
+    ) -> None:
+        room = await codex_room(_turn_completed("turn-1"))
+        await room.send("Hello")
+        [started] = [p for m, p in room.client.requests if m == "thread/start"]
+
+        await room.adapter.release_room_resources(ROOM_ID)
+
+        assert room.client.closed
+        room.client.closed = False
+        room.client.play(_turn_completed("turn-2"))
+        await room.send("Hello again")
+        methods = room.client.requested_methods
+        assert methods.count("thread/start") == 1
+        assert "turn/start" in methods[methods.index("thread/resume") :]
+        assert (
+            "thread/resume",
+            {"threadId": "thr-1", "personality": "pragmatic"},
+        ) in room.client.requests
+        assert started["cwd"] == room.adapter._room_clients[ROOM_ID].workspace
+
+    @pytest.mark.asyncio
+    async def test_a_room_with_its_lock_held_is_not_released(self, codex_room) -> None:
+        room = await codex_room(_turn_completed())
+        await room.send("Hello")
+        room_client = room.adapter._room_clients[ROOM_ID]
+
+        async with room_client.rpc_lock:
+            await room.adapter.release_room_resources(ROOM_ID)
+
+        assert (room.client.closed, room_client.client is room.client) == (False, True)
+
+    @pytest.mark.asyncio
+    async def test_leaving_after_a_release_forgets_the_thread(self, codex_room) -> None:
+        room = await _released_room(codex_room)
+
+        await room.adapter.on_cleanup(ROOM_ID)
+
+        assert (room.adapter._released_threads, room.adapter._room_clients) == ({}, {})
+
+    @pytest.mark.asyncio
+    async def test_failed_resume_after_release_seeds_the_fresh_thread(
+        self, codex_room
+    ) -> None:
+        room = await _released_room(codex_room, resume_error=_thread_gone())
+        room.tools.set_room_context(_RECALL_TRANSCRIPT)
+        room.client.play(_turn_completed("turn-2"))
+
+        await room.send("What is the code word?")
+
+        assert room.client.requested_methods.count("thread/start") == 2
+        turn_input = _last_turn_input(room.client)
+        history = _history_item(turn_input)
+        assert "The code word is PELICAN." in history
+        assert [item["text"] for item in turn_input].index(history) < (
+            len(turn_input) - 1
+        )
+        assert room.adapter._released_threads == {}
+
+    @pytest.mark.asyncio
+    async def test_failed_resume_with_no_history_fails_instead_of_starting_blank(
+        self, codex_room
+    ) -> None:
+        room = await _released_room(codex_room, resume_error=_thread_gone())
+        room.tools.fetch_room_context = AsyncMock(side_effect=OSError("platform down"))
+
+        with pytest.raises(OSError):
+            await room.send("What is the code word?")
+
+        assert room.client.requested_methods.count("thread/start") == 1
+        assert room.adapter._released_threads == {ROOM_ID: "thr-1"}
+
+    @pytest.mark.asyncio
+    async def test_fallback_history_survives_a_failed_fresh_thread_start(
+        self, codex_room
+    ) -> None:
+        room = await _released_room(codex_room, resume_error=_thread_gone())
+        room.tools.set_room_context(_RECALL_TRANSCRIPT)
+        room.client.thread_start_errors.append(
+            CodexJsonRpcError(code=-32000, message="busy")
+        )
+        with pytest.raises(CodexJsonRpcError):
+            await room.send("What is the code word?")
+        room.client.play(_turn_completed("turn-2"))
+
+        await room.send("What is the code word?")
+
+        history = _history_item(_last_turn_input(room.client))
+        assert "The code word is PELICAN." in history
+
+    @pytest.mark.asyncio
+    async def test_fallback_history_survives_a_rejected_turn_start(
+        self, codex_room
+    ) -> None:
+        room = await _released_room(codex_room, resume_error=_thread_gone())
+        room.tools.set_room_context(_RECALL_TRANSCRIPT)
+        room.client._turn_start_error = CodexJsonRpcError(code=-32000, message="busy")
+        with pytest.raises(CodexJsonRpcError):
+            await room.send("What is the code word?")
+        room.client.play(_turn_completed("turn-2"))
+
+        await room.send("What is the code word?")
+
+        history = _history_item(_last_turn_input(room.client))
+        assert "The code word is PELICAN." in history
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_resume_error_keeps_the_thread_for_retry(
+        self, codex_room
+    ) -> None:
+        room = await _released_room(codex_room, resume_error=OSError("pipe closed"))
+
+        with pytest.raises(OSError):
+            await room.send("Hello again")
+
+        assert room.adapter._released_threads == {ROOM_ID: "thr-1"}
