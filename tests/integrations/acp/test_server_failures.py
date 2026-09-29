@@ -12,8 +12,8 @@ from band_sdk_core import AgentFailure
 from band.agent import Agent
 from band.core.types import MessageType
 from band.integrations.acp.server import ACPServer
-from band.integrations.acp.types import ACPStopReason, PendingACPPrompt
 from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.types import ACPStopReason, PendingACPPrompt
 from tests.integrations.acp.conftest import (
     deliver_server_message,
     failure_event,
@@ -432,8 +432,6 @@ async def test_second_same_room_prompt_does_not_replace_first(
     mock_rest_client.agent_api_messages.create_agent_chat_message.assert_awaited_once()
 
 
-
-
 @pytest.mark.asyncio
 async def test_late_error_after_end_turn_does_not_change_prompt_outcome(
     mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -476,6 +474,7 @@ async def test_settled_pending_reference_forwards_to_push_handler(
     )
     push.handle_push_event.assert_awaited_once()
     assert not task.done()
+
 
 @pytest.mark.asyncio
 async def test_other_room_remains_independent(mock_rest_client: MagicMock) -> None:

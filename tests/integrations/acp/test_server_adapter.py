@@ -6,11 +6,12 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_sdk_core import AgentFailure
 
 from band.core.content import BLANK_CONTENT_ERROR
+from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.router import AgentRouter
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 from band.testing.platform import platform_connection_stub
@@ -218,12 +219,12 @@ class TestBandACPServerAdapterHandlePrompt:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("text", BLANK_CONTENT_CASES)
-    async def test_handle_prompt_raises_fast_on_blank_content(
+    async def test_handle_prompt_fails_fast_on_blank_content(
         self, mock_rest_client: MagicMock, text: str
     ) -> None:
         """A blank prompt with no other participants to @mention combines
         into blank content, which post_message refuses. handle_prompt must
-        fail fast with a clear error instead of waiting out the reply
+        return a failure right away instead of waiting out the reply
         timeout for a message that was never sent."""
         mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
             data=[]
@@ -232,9 +233,14 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
-        with pytest.raises(ValueError, match=BLANK_CONTENT_ERROR):
-            await asyncio.wait_for(adapter.handle_prompt("session-1", text), timeout=1)
+        outcome = await asyncio.wait_for(
+            adapter.handle_prompt("session-1", text), timeout=1
+        )
 
+        assert (
+            outcome.to_extension_data()
+            == AgentFailure("band", BLANK_CONTENT_ERROR).to_extension_data()
+        )
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_called()
         assert "room-123" not in adapter._pending_prompts
 
@@ -917,7 +923,7 @@ class TestBandACPServerAdapterTimeout:
     """Tests for prompt timeout behavior."""
 
     @pytest.mark.asyncio
-    async def test_handle_prompt_timeout_raises(
+    async def test_handle_prompt_timeout_returns_failure(
         self, mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Should return a Core failure when the peer never responds."""
@@ -931,7 +937,10 @@ class TestBandACPServerAdapterTimeout:
         adapter._session_to_room["session-1"] = "room-123"
 
         outcome = await adapter.handle_prompt("session-1", "Hello")
-        assert outcome.to_extension_data() == prompt_timeout_failure(0.05).to_extension_data()
+        assert (
+            outcome.to_extension_data()
+            == prompt_timeout_failure(0.05).to_extension_data()
+        )
 
         # Verify pending prompt was cleaned up
         assert "room-123" not in adapter._pending_prompts
@@ -988,7 +997,7 @@ class TestBandACPServerAdapterCreateSessionRollback:
     async def test_handle_prompt_cleans_up_pending_on_send_failure(
         self, mock_rest_client: MagicMock
     ) -> None:
-        """Should drop the pending prompt immediately when message creation fails."""
+        """A failed message creation returns a failure and drops the pending prompt."""
         adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
@@ -996,7 +1005,10 @@ class TestBandACPServerAdapterCreateSessionRollback:
             side_effect=RuntimeError("send failed")
         )
 
-        with pytest.raises(RuntimeError, match="send failed"):
-            await adapter.handle_prompt("session-1", "Hello")
+        outcome = await adapter.handle_prompt("session-1", "Hello")
 
+        assert (
+            outcome.to_extension_data()
+            == AgentFailure("band", "send failed").to_extension_data()
+        )
         assert "room-123" not in adapter._pending_prompts
