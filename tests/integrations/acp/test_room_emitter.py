@@ -13,6 +13,7 @@ from typing import ClassVar
 
 import pytest
 
+from band.converters.acp_client import ACPClientHistoryConverter
 from band.core.types import Emit
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import (
@@ -124,12 +125,13 @@ class TestRoomTurnEmitterBlankChunks:
 
 
 class TestRoomTurnEmitterEmitGating:
-    """The constructor's emit set controls which chunk kinds reach the room.
+    """The constructor's emit set controls which narration kinds reach the room.
 
     The adapter hands the emitter the caller's resolved ``features.emit``;
     ``None`` here is the historical all-kinds default. Chunk *recording* is
     unconditional, so the tool-first delivery decision and the text relay
-    behave identically whether narration is on or off.
+    behave identically whether narration is on or off. The closing session
+    bookkeeping event is resume state, not narration, so it is never gated.
     """
 
     MENTIONS: ClassVar[list[dict[str, str]]] = [{"id": "u1", "name": "User"}]
@@ -167,12 +169,14 @@ class TestRoomTurnEmitterEmitGating:
 
         await self.run_turn(tools, None)
 
-        # thought, tool_call, tool_result, the plan, and the closing
-        # session bookkeeping event.
+        # thought, tool_call, tool_result, the plan, then the closing
+        # session bookkeeping event last.
         kinds = [event["message_type"] for event in tools.events_sent]
-        assert sorted(kinds) == sorted(
-            ["thought", "tool_call", "tool_result", "task", "task"]
-        )
+        assert kinds == ["thought", "tool_call", "tool_result", "task", "task"]
+        assert tools.events_sent[-1]["metadata"] == {
+            "acp_client_session_id": "s1",
+            "acp_client_room_id": "room-1",
+        }
         assert [message["content"] for message in tools.messages_sent] == ["done"]
 
     @pytest.mark.asyncio
@@ -181,7 +185,10 @@ class TestRoomTurnEmitterEmitGating:
 
         await self.run_turn(tools, frozenset())
 
-        assert tools.events_sent == []
+        # Only the ungated session bookkeeping event remains.
+        assert [event["content"] for event in tools.events_sent] == [
+            "ACP client session"
+        ]
         assert [message["content"] for message in tools.messages_sent] == ["done"]
 
     @pytest.mark.asyncio
@@ -191,8 +198,27 @@ class TestRoomTurnEmitterEmitGating:
         await self.run_turn(tools, frozenset({Emit.TOOL_CALLS}))
 
         kinds = [event["message_type"] for event in tools.events_sent]
-        assert sorted(kinds) == ["tool_call", "tool_result"]
+        assert kinds == ["tool_call", "tool_result", "task"]
+        assert tools.events_sent[-1]["content"] == "ACP client session"
         assert [message["content"] for message in tools.messages_sent] == ["done"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "emit",
+        [None, frozenset(), frozenset({Emit.TOOL_CALLS})],
+        ids=["default", "silenced", "tool-calls-only"],
+    )
+    async def test_every_emit_set_keeps_session_resume(
+        self, emit: frozenset[Emit] | None
+    ) -> None:
+        """The posted events must round-trip through the history converter to
+        the room→session map, or a restart skips native ``session/load``."""
+        tools = FakeAgentTools()
+
+        await self.run_turn(tools, emit)
+
+        state = ACPClientHistoryConverter().convert(tools.events_sent)
+        assert state.room_to_session == {"room-1": "s1"}
 
     @pytest.mark.asyncio
     async def test_silenced_turn_still_suppresses_duplicated_text(self) -> None:
@@ -230,7 +256,9 @@ class TestRoomTurnEmitterEmitGating:
                 )
             )
 
-        assert tools.events_sent == []
+        assert [event["content"] for event in tools.events_sent] == [
+            "ACP client session"
+        ]
         assert tools.messages_sent == []
 
     @pytest.mark.asyncio

@@ -74,10 +74,14 @@ class RoomTurnEmitter:
     On a clean close the held text is relayed (unless already posted in-room), and
     the session bookkeeping ``task`` event is posted last.
 
-    Which event kinds reach the room is controlled by the emit set passed at
-    construction (``None``: all kinds — the historical default). Chunks are
+    Which narration kinds reach the room is controlled by the emit set passed
+    at construction (``None``: all kinds — the historical default). Chunks are
     always recorded regardless, so the tool-first delivery decision keeps
-    working even when narration is silenced.
+    working even when narration is silenced. The closing bookkeeping ``task``
+    event is state, not narration, and is posted regardless of the emit set:
+    ``ACPClientHistoryConverter`` reads its metadata to rebuild the
+    room→session map, so gating it would silently disable ``session/load``
+    resume after a restart.
     """
 
     def __init__(
@@ -200,8 +204,9 @@ class RoomTurnEmitter:
         if not turn_replied_in_room(self._chunks):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
-        if Emit.TASK_EVENTS not in self._emit:
-            return False
+        # Posted regardless of the emit set: this is resume state read back by
+        # ACPClientHistoryConverter, not narration (only PLAN chunks follow
+        # Emit.TASK_EVENTS).
         await send_event_safe(
             self._tools,
             content="ACP client session",
