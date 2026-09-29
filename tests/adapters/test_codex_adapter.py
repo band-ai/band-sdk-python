@@ -30,6 +30,8 @@ from band.adapters.codex import (
     PendingApproval,
 )
 from band.client.streaming import ControlMode
+from band.core.exceptions import BandConnectionError
+from band.core.harness import PreflightResult
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -6752,3 +6754,116 @@ class TestReadRoomFileImagePassthrough:
         )
 
         assert turn.content_items[0]["type"] == "inputText"
+
+
+class ProbeClient(FakeCodexClient):
+    """A throwaway probe client: scripted replies, a record of its close."""
+
+    def __init__(
+        self,
+        *,
+        replies: dict[str, Any] | None = None,
+        connect_error: Exception | None = None,
+        initialize_error: BaseException | None = None,
+    ) -> None:
+        super().__init__()
+        self._replies = replies or {}
+        self._connect_error = connect_error
+        self._initialize_error = initialize_error
+
+    async def connect(self) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+        await super().connect()
+
+    async def initialize(self, **kwargs: Any) -> dict[str, Any]:
+        if self._initialize_error is not None:
+            raise self._initialize_error
+        return await super().initialize(**kwargs)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        self.requests.append((method, dict(params or {})))
+        reply = self._replies.get(method, {})
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+
+@pytest.fixture
+def probe_client(monkeypatch: pytest.MonkeyPatch) -> Callable[..., ProbeClient]:
+    def install(**kwargs: Any) -> ProbeClient:
+        client = ProbeClient(**kwargs)
+        monkeypatch.setattr(
+            "band.adapters.codex.CodexStdioClient", lambda **_kwargs: client
+        )
+        return client
+
+    return install
+
+
+def _missing_codex() -> BandConnectionError:
+    error = BandConnectionError("Codex CLI binary not found: 'codex'.")
+    error.__cause__ = FileNotFoundError("codex")
+    return error
+
+
+class TestProbes:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kwargs", "reason_part"),
+        [
+            ({"connect_error": _missing_codex()}, "binary not found"),
+            ({"initialize_error": RuntimeError("bad frame")}, "did not complete"),
+            (
+                {
+                    "replies": {
+                        "account/read": {"account": None, "requiresOpenaiAuth": True}
+                    }
+                },
+                "not logged in",
+            ),
+        ],
+        ids=["missing-executable", "handshake", "login-required"],
+    )
+    async def test_preflight_names_the_failure(
+        self, probe_client, kwargs: dict[str, Any], reason_part: str
+    ) -> None:
+        client = probe_client(**kwargs)
+
+        result = await CodexAdapter(CodexAdapterConfig()).preflight()
+
+        assert (
+            result.ok,
+            reason_part in (result.reason or ""),
+            bool(result.remedy),
+        ) == (
+            False,
+            True,
+            True,
+        )
+        assert client.closed or not client.connected
+
+    @pytest.mark.asyncio
+    async def test_preflight_passes_without_touching_room_state(
+        self, probe_client, tmp_path
+    ) -> None:
+        client = probe_client(
+            replies={"account/read": {"account": {"type": "chatgpt"}}}
+        )
+        adapter = CodexAdapter(
+            CodexAdapterConfig(
+                workspace_for_room=lambda room: str(tmp_path / room),
+            )
+        )
+
+        result = await adapter.preflight()
+
+        assert result == PreflightResult.passed()
+        assert client.closed
+        assert (adapter._room_clients, adapter._workspace_rooms) == ({}, {})
