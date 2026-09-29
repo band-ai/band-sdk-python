@@ -15,7 +15,10 @@ the agent waits for an in-flight teardown to finish.
 `SimpleAdapter.release_room_resources` is the adapter hook; the default is a
 no-op. **Codex** closes the idle room's app-server and resumes the same thread
 on the next turn via `thread/resume`, refetching transcript when resume fails.
-Other managed-host adapters document their behavior in their adapter guides.
+**Claude SDK** stops the idle room's CLI process and resumes the same session
+id on the next turn, refetching transcript when resume fails. **OMP ACP**
+releases the agent process when `session/load` is advertised. Other adapters
+document their behavior in their adapter guides.
 
 ```python
 from band.runtime.types import SessionConfig

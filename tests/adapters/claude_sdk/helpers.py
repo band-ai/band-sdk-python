@@ -34,6 +34,8 @@ from tests.mcpclient import crash_backend
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 # What the runtime reports for a turn that ended without completing.
 MISSING_REPLY_TEXT = MISSING_REPLY_FAILURE[1]
+# The lead-in that tells a session its history is its own memory of the room.
+MEMORY_FRAMING = "Your memory of this room so far"
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
 

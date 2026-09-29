@@ -4,11 +4,9 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
+from tests.adapters.claude_sdk.helpers import MEMORY_FRAMING, ClaudeRoom, said
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
-
-MEMORY_FRAMING = "Your memory of this room so far"
 
 
 async def test_a_room_bootstraps_once_then_keeps_talking_in_the_same_session(
