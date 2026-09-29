@@ -24,8 +24,10 @@ from band.integrations.crewai.tools import (
     NoopReporter,
     build_band_crewai_tools,
 )
+from band.runtime.tools import CHAT_TOOL_NAMES
 
-EXPECTED_BASE_TOOLS = 8
+# No capabilities: the base surface is exactly the chat tools.
+EXPECTED_BASE_TOOLS = len(CHAT_TOOL_NAMES)
 
 
 def _build() -> list[Any]:

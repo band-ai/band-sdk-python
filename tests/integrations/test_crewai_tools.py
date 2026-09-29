@@ -11,6 +11,8 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from collections.abc import Iterable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,7 +21,12 @@ from pydantic import BaseModel, ValidationError
 from band.core.exceptions import BandToolError
 from band.core.memory_types import memory_type_field_description
 from band.core.types import AdapterFeatures, Capability, Emit
-from band.runtime.tools import file_content_placeholder, image_block_placeholder
+from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.tools import (
+    file_content_placeholder,
+    image_block_placeholder,
+    iter_tool_definitions,
+)
 
 
 class MockBaseTool:
@@ -81,97 +88,40 @@ def platform_args_schemas(builder_mod):
 # --- Tool-set composition ---
 
 
+def _registry_names(capabilities: frozenset[Capability]) -> set[str]:
+    """The platform tools the registry offers for ``capabilities``."""
+    return {
+        definition.name
+        for definition in iter_tool_definitions(capabilities=capabilities)
+    }
+
+
+def _unique_names(tools: Iterable[Any]) -> set[str]:
+    names = [tool.name for tool in tools]
+    assert len(names) == len(set(names)), f"duplicate tool names: {names}"
+    return set(names)
+
+
 class TestToolSetComposition:
-    def test_base_tools_only(self, builder_mod):
+    @pytest.mark.parametrize(
+        "capabilities",
+        [
+            frozenset(),
+            frozenset({Capability.CONTACTS}),
+            frozenset({Capability.MEMORY}),
+            frozenset({Capability.FILES}),
+            frozenset({Capability.CONTACTS, Capability.MEMORY}),
+            frozenset({Capability.CONTACTS, Capability.MEMORY, Capability.FILES}),
+        ],
+        ids=lambda caps: "+".join(sorted(caps)) or "base",
+    )
+    def test_tool_surface_is_the_registry_surface(self, builder_mod, capabilities):
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(),
+            capabilities=capabilities,
         )
-        names = {t.name for t in tools}
-        assert names == {
-            "band_send_message",
-            "band_send_event",
-            "band_no_reply",
-            "band_add_participant",
-            "band_remove_participant",
-            "band_get_participants",
-            "band_lookup_peers",
-            "band_create_chatroom",
-        }
-        assert len(tools) == 8
-
-    def test_capability_contacts_adds_five(self, builder_mod):
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.CONTACTS}),
-        )
-        names = {t.name for t in tools}
-        contact_names = {
-            "band_list_contacts",
-            "band_add_contact",
-            "band_remove_contact",
-            "band_list_contact_requests",
-            "band_respond_contact_request",
-        }
-        assert contact_names.issubset(names)
-        assert len(tools) == 13
-
-    def test_capability_memory_adds_five(self, builder_mod):
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.MEMORY}),
-        )
-        names = {t.name for t in tools}
-        memory_names = {
-            "band_list_memories",
-            "band_store_memory",
-            "band_get_memory",
-            "band_supersede_memory",
-            "band_archive_memory",
-        }
-        assert memory_names.issubset(names)
-        assert len(tools) == 13
-
-    def test_capability_files_adds_three(self, builder_mod):
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.FILES}),
-        )
-        names = {t.name for t in tools}
-        file_names = {
-            "band_list_room_files",
-            "band_read_room_file",
-            "band_send_room_file",
-        }
-        assert file_names.issubset(names)
-        assert len(tools) == 11
-
-    def test_both_capabilities(self, builder_mod):
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
-        )
-        assert len(tools) == 18  # 8 base + 5 contacts + 5 memory
-
-    def test_all_three_capabilities(self, builder_mod):
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(
-                {Capability.CONTACTS, Capability.MEMORY, Capability.FILES}
-            ),
-        )
-        assert len(tools) == 21  # 8 base + 5 contacts + 5 memory + 3 files
+        assert _unique_names(tools) == _registry_names(capabilities)
 
     def test_custom_tools_appended(self, builder_mod):
 
@@ -189,8 +139,9 @@ class TestToolSetComposition:
             capabilities=frozenset(),
             custom_tools=[(MyInput, my_handler)],
         )
-        # Custom tool name comes from the InputModel class name (lowercased)
-        assert len(tools) == 9
+        assert _unique_names(tools) == _registry_names(frozenset()) | {
+            get_custom_tool_name(MyInput)
+        }
 
     def test_adapter_feature_filters_apply_to_platform_tools(self, builder_mod):
 
