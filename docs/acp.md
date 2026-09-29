@@ -25,7 +25,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/adapters/cursor_acp.py` | `CursorACPAdapter` — Cursor CLI backend with room-routed decisions |
-| `src/band/adapters/omp_acp.py` | `OmpACPAdapter` — stdio-only OMP (`omp acp`) with enforced `always-ask` approval |
+| `src/band/adapters/omp_acp.py` | `OmpACPAdapter` — stdio-only OMP (`omp acp`) with safe-default, opt-in YOLO approval |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -198,11 +198,17 @@ framework-conformance as a bridge.
 ## OMP (oh-my-pi) ACP backend
 
 `OmpACPAdapter` (`src/band/adapters/omp_acp.py`) drives OMP's native `omp acp`
-stdio server through `ACPClientAdapter`. The spawn command always ends with
-`--approval-mode always-ask` (overlays / global config cannot widen approvals),
-and the adapter advertises only form-elicitation client capabilities — never
-filesystem or terminal. Provider credentials are passed only via the child
-`env` (see `omp_provider_env` in `band.integrations.omp`); do not log keys.
+stdio server through `ACPClientAdapter`. By default the spawn command ends with
+`--approval-mode always-ask`. A host that explicitly wants unrestricted OMP tool
+execution can opt in with `OmpACPAdapterConfig(approval_mode="yolo")`, which ends
+the command with `--approval-mode yolo`. Both modes reject approval flags supplied
+through `command`; the selected mode is always the final override of global
+configuration. YOLO bypasses OMP's native approval checks and gives the agent full
+access to its host environment; use it only for trusted agents and workspaces.
+The adapter advertises only form-elicitation client capabilities — never filesystem
+or terminal. Provider credentials are passed only via the child `env` (see
+`omp_provider_env` in `band.integrations.omp`); do not log keys. Approval mode
+does not change Band tool registration or Band platform permissions.
 
 Registered in the baseline matrix under the `backends` lane, gated on
 `Dep.OMP` (Bun >= 1.3.14, a working `omp` / `omp acp`, and the provider API key
