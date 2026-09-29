@@ -104,8 +104,21 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `fallback_model` | `str \| None` | `None` | Fallback model for Claude Code if the primary model is unavailable. Aliases are accepted. |
 | `max_thinking_tokens` | `int \| None` | `None` | Maximum tokens for Claude extended thinking. |
 | `effort` | `EffortLevel \| None` | `None` | Response effort level. The accepted values are `claude_agent_sdk`'s `EffortLevel`. When `None`, the model default applies. |
-| `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. |
+| `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions" \| "dontAsk" \| "auto"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. See [Permission modes](#permission-modes). |
 | `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions. Must exist if provided. |
+
+### Permission modes
+
+| Mode | Behavior |
+|------|----------|
+| `"default"` | Prompts for each sensitive tool call. Headless agents need `approval_mode` to answer the prompts. |
+| `"acceptEdits"` | Accepts file edits without prompting; prompts for the rest. |
+| `"plan"` | Planning only; no edits or commands. |
+| `"bypassPermissions"` | Skips every permission check. |
+| `"dontAsk"` | Never prompts; denies any tool call not pre-approved by allow rules. Suits unattended agents. |
+| `"auto"` | A model classifier approves or denies each tool call. Availability depends on the Claude account and model. |
+
+The mode is forwarded to the CLI as given. If the CLI rejects it (for example `"auto"` on an account without it), the turn fails; there is no fallback to another mode.
 
 ### Prompts and Tools
 

@@ -306,7 +306,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await agent.run()
     """
 
-    PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+    PermissionMode = Literal[
+        "default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"
+    ]
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
@@ -354,7 +356,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             effort: Response effort level. ``None`` uses the model default.
-            permission_mode: SDK permission mode
+            permission_mode: SDK permission mode. ``"dontAsk"`` never prompts
+                and denies any tool not pre-approved by allow rules;
+                ``"auto"`` lets a model classifier approve or deny each tool
+                call and depends on the Claude account and model. A mode the
+                CLI rejects fails the turn; there is no fallback.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
