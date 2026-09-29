@@ -61,8 +61,8 @@ class Hangup:
 
 @dataclass
 class Hold:
-    """Parks the turn at this step: ``async with hold`` waits for the turn to
-    reach it and lets the turn continue on exit."""
+    """Parks a step of the fake CLI, a turn's or the process's exit:
+    ``async with hold`` waits for it to be reached and lets it continue on exit."""
 
     reached: asyncio.Event = field(default_factory=asyncio.Event)
     released: asyncio.Event = field(default_factory=asyncio.Event)
@@ -100,6 +100,8 @@ class FakeClaude:
         # neither stops nor ends.
         self.ignore_interrupt = False
         self.errors: list[BaseException] = []
+        # A CLI slow to exit: close() parks on it.
+        self.closing: Hold | None = None
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
@@ -155,6 +157,9 @@ class FakeCLISession(Transport):
     async def end_input(self) -> None: ...
 
     async def close(self) -> None:
+        if (closing := self.claude.closing) is not None:
+            closing.reached.set()
+            await closing.released.wait()
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()
