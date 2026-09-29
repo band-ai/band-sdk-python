@@ -26,11 +26,13 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from typing_extensions import Unpack
 
+from band.core.harness import HarnessModel
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import ACPClientAdapter, PermissionResolver
 from band.integrations.acp.session_config import SessionConfigResolver
@@ -100,14 +102,7 @@ class CopilotACPAdapter(ACPClientAdapter):
             )
 
         # Auth/env for the spawned CLI (stdio only; a TCP server owns its own env).
-        # Pass any method's env via config.env; github_token is a convenience for
-        # GITHUB_TOKEN (an explicit env entry wins). None => the CLI's ambient login.
-        env: dict[str, str] | None = None
-        if not use_tcp:
-            env = dict(config.env or {})
-            if config.github_token:
-                env.setdefault("GITHUB_TOKEN", config.github_token)
-            env = env or None
+        env = None if use_tcp else _spawn_env(config)
 
         workspace_for_room = workspace_resolver_for(
             config.cwd, config.workspace_for_room
@@ -130,8 +125,70 @@ class CopilotACPAdapter(ACPClientAdapter):
             super().__init__(command=list(config.command), **common, **features)
 
 
+def _spawn_env(config: CopilotACPAdapterConfig) -> dict[str, str] | None:
+    """Auth/env for a spawned CLI: ``env`` over ``github_token``'s GITHUB_TOKEN.
+
+    ``None`` leaves the CLI on its ambient login.
+    """
+    env = dict(config.env or {})
+    if config.github_token:
+        env.setdefault("GITHUB_TOKEN", config.github_token)
+    return env or None
+
+
+def _probe_env(config: CopilotACPAdapterConfig) -> dict[str, str] | None:
+    """The listing client's full child environment.
+
+    ``CopilotClient`` hands ``env`` to the subprocess as-is, so the host's
+    environment (PATH, HOME, proxy and cert settings) is copied under the
+    configured overrides rather than replaced by them. ``None`` inherits.
+    """
+    overrides = _spawn_env(config)
+    return None if overrides is None else {**os.environ, **overrides}
+
+
+async def list_models(
+    config: CopilotACPAdapterConfig | None = None,
+) -> list[HarnessModel]:
+    """The models the installed Copilot CLI offers this account.
+
+    Uses ``github-copilot-sdk`` (the ``copilot_sdk`` extra) against the
+    executable in ``config.command`` with the configured auth; no session
+    or model turn. The client is stopped on every exit path, including a
+    start that fails partway. Tested with Copilot CLI 1.0.88 and
+    github-copilot-sdk 1.0.14.
+    """
+    # Deferred: github-copilot-sdk is the optional copilot_sdk extra, absent
+    # from lanes that import this module for the ACP adapter alone.
+    from copilot import (  # noqa: PLC0415 -- copilot_sdk extra, see above
+        CopilotClient,
+        StdioRuntimeConnection,
+    )
+
+    config = config or CopilotACPAdapterConfig()
+    client = CopilotClient(
+        connection=StdioRuntimeConnection(path=config.command[0]),
+        env=_probe_env(config),
+    )
+    try:
+        await client.start()
+        listed = await client.list_models()
+    finally:
+        await client.stop()
+    return [
+        HarnessModel(
+            id=model.id,
+            label=model.name,
+            efforts=tuple(model.supported_reasoning_efforts or ()),
+            default_effort=model.default_reasoning_effort,
+        )
+        for model in listed
+    ]
+
+
 __all__ = [
     "DEFAULT_COPILOT_COMMAND",
     "CopilotACPAdapter",
     "CopilotACPAdapterConfig",
+    "list_models",
 ]
