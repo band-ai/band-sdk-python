@@ -304,6 +304,16 @@ class SimpleAdapter(ABC, Generic[H]):
         release here.
         """
 
+    async def release_room_resources(self, room_id: str) -> None:
+        """Release one idle room's harness resources; the room stays joined.
+
+        Called by the runtime when ``SessionConfig.release_idle_room_after_s``
+        is set and the room has been idle that long, between turns on the
+        room's own loop. An adapter overrides this only when the room's next
+        message recreates the resources and resumes the same conversation
+        without losing context. The default keeps everything (no-op).
+        """
+
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""
         self.agent_name = agent_name

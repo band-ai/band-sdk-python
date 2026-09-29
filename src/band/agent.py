@@ -280,6 +280,11 @@ class Agent:
                     # implement it -- degrade to a no-op signal like other
                     # optional protocol additions (e.g. Execution.request_resync).
                     on_control=getattr(self._adapter, "on_interrupt", None),
+                    on_idle_release=(
+                        self._adapter.release_room_resources
+                        if isinstance(self._adapter, SimpleAdapter)
+                        else None
+                    ),
                 )
             except BaseException:
                 # on_started may have acquired resources (e.g. a CLI runtime
