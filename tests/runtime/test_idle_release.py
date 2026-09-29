@@ -17,6 +17,7 @@ import pytest_asyncio
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
+from tests.adapters.test_claude_sdk_idle_release import ROOM, claude_room
 from tests.adapters.test_codex_adapter import (
     FakeCodexClient,
     _turn_completed,
@@ -24,8 +25,6 @@ from tests.adapters.test_codex_adapter import (
 )
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
-
-ROOM = "room-1"
 
 _RELEASE_AFTER_S = 0.05
 
@@ -401,3 +400,22 @@ async def test_stopping_mid_omp_release_still_stops_the_agent_process(room) -> N
 
         assert stop_completed
         assert "room-1" not in session.adapter._runtimes
+
+
+async def test_stopping_mid_claude_release_still_stops_the_session(
+    room, tmp_path
+) -> None:
+    claude = await claude_room(str(tmp_path))
+    claude.manager.cleanup_gate = asyncio.Event()
+    r = await _started(room(adapter_release=claude.adapter.release_room_resources))
+    await r.send("msg-1")
+    await asyncio.wait_for(claude.manager.cleanup_entered.wait(), timeout=5.0)
+
+    stopping = asyncio.create_task(r.ctx.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+    claude.manager.cleanup_gate.set()
+    await asyncio.wait_for(stopping, timeout=5.0)
+
+    assert claude.manager.has_session(ROOM) is False
+    assert claude.adapter._released_sessions == {ROOM: "sess-1"}
+    await claude.adapter.cleanup_all()

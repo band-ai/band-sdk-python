@@ -98,7 +98,11 @@ from band.runtime.decisions import (
     Timeout,
     sender_allowlist,
 )
-from band.runtime.formatters import format_tokens, strip_leading_mentions
+from band.runtime.formatters import (
+    format_tokens,
+    messages_before,
+    strip_leading_mentions,
+)
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -546,6 +550,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Per-room session IDs (for SDK session resume)
         self._session_ids: dict[str, str] = {}
+        # Rooms whose client was released while idle, keyed to the session id
+        # the next turn resumes; kept until that resume settles.
+        self._released_sessions: dict[str, str] = {}
+        # Rooms whose next turn replays a refetched transcript into a fresh
+        # session because resuming the released one failed.
+        self._replay_rooms: set[str] = set()
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
@@ -791,45 +801,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             return
 
         # The manager only resumes when it has to create the client: on
-        # bootstrap, or after a retired client (see _retire_client).
+        # bootstrap, after a retired client (see _retire_client), or after an
+        # idle release, which resumes the session its client was running.
         stored_session_id = (
-            history.session_id if is_session_bootstrap else None
-        ) or self._session_ids.get(room_id)
+            (history.session_id if is_session_bootstrap else None)
+            or self._released_sessions.get(room_id)
+            or self._session_ids.get(room_id)
+        )
 
         self._claim_room_workspace(room_id)
         try:
-            # Get or create Claude SDK client for this room (optionally resuming)
-            try:
-                client = await self._session_manager.get_or_create_session(
-                    room_id, resume_session_id=stored_session_id
-                )
-            except Exception as resume_exc:
-                if stored_session_id:
-                    logger.warning(
-                        "Room %s: Session resume failed (session_id=%s): %s. "
-                        "Creating new session",
-                        room_id,
-                        stored_session_id,
-                        resume_exc,
-                    )
-                    try:
-                        client = await self._session_manager.get_or_create_session(
-                            room_id, resume_session_id=None
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Room %s: Fresh session creation also failed", room_id
-                        )
-                        await tools.send_failure(
-                            AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                        )
-                        raise
-                else:
-                    logger.exception("Room %s: Session creation failed", room_id)
-                    await tools.send_failure(
-                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    raise
+            client = await self._room_session(room_id, stored_session_id, tools, msg.id)
         except BaseException:
             if not self._holds_room_continuity(room_id):
                 self._release_room_workspace(room_id)
@@ -863,7 +845,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # "previous context" aside weakly, so a fact another participant stated (or that
         # you stated) while you were offline gets missed on recall. Tell it plainly this
         # is its own memory of the room and to answer from it.
-        if is_session_bootstrap and self._session_context.get(room_id):
+        replay_context = is_session_bootstrap or room_id in self._replay_rooms
+        if replay_context and self._session_context.get(room_id):
             messages_to_send.append(
                 "Your memory of this room so far — real earlier messages from you and "
                 "from other participants and agents, including ones sent while you were "
@@ -926,11 +909,91 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
 
+    async def _reload_released_room_context(
+        self, room_id: str, tools: AgentToolsProtocol, trigger_id: str
+    ) -> None:
+        """Refetch a released room's transcript for the fresh session to replay.
+
+        The runtime hands history over only on bootstrap, and a released
+        room's failed resume happens later. When the transcript can't be
+        fetched the turn fails and the released id stays for the next turn to
+        retry, rather than starting a session that has lost the conversation.
+        """
+        try:
+            context = await tools.fetch_room_context(room_id=room_id)
+        except Exception:
+            logger.exception(
+                "Room %s: could not fetch history for the fresh Claude session",
+                room_id,
+            )
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
+        earlier = [
+            message
+            for message in messages_before(context.get("data") or [], trigger_id)
+            if message.get("id") != trigger_id
+        ]
+        converter = self.history_converter or ClaudeSDKHistoryConverter()
+        self._session_context[room_id] = converter.convert(earlier).text
+        self._released_sessions.pop(room_id, None)
+        self._replay_rooms.add(room_id)
+
+    async def _room_session(
+        self,
+        room_id: str,
+        stored_session_id: str | None,
+        tools: AgentToolsProtocol,
+        trigger_id: str,
+    ) -> ClaudeSDKClient:
+        """Get or create the room's Claude client, falling back to a fresh
+        session when resuming the stored one fails."""
+        if self._session_manager is None:
+            raise RuntimeError("ClaudeSDKAdapter.on_started() has not run")
+        try:
+            client = await self._session_manager.get_or_create_session(
+                room_id, resume_session_id=stored_session_id
+            )
+        except Exception as resume_exc:
+            if not stored_session_id:
+                logger.exception("Room %s: Session creation failed", room_id)
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
+                raise
+            logger.warning(
+                "Room %s: Session resume failed (session_id=%s): %s. "
+                "Creating new session",
+                room_id,
+                stored_session_id,
+                resume_exc,
+            )
+        else:
+            self._released_sessions.pop(room_id, None)
+            return client
+        if room_id in self._released_sessions:
+            await self._reload_released_room_context(room_id, tools, trigger_id)
+        try:
+            return await self._session_manager.get_or_create_session(
+                room_id, resume_session_id=None
+            )
+        except Exception:
+            logger.exception("Room %s: Fresh session creation also failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
+
     def _holds_room_continuity(self, room_id: str) -> bool:
-        """Whether the room still has a live session, which keeps its workspace claimed."""
-        return self._session_manager is not None and self._session_manager.has_session(
+        """Whether the room still has a live session, a released session to
+        resume, or replay memory not yet delivered to a fresh session; any of
+        these keeps its workspace claimed until leave or cleanup."""
+        if self._session_manager is not None and self._session_manager.has_session(
             room_id
-        )
+        ):
+            return True
+        return room_id in self._released_sessions or room_id in self._replay_rooms
 
     def _claim_room_workspace(self, room_id: str) -> None:
         """Resolve and claim the room's own workspace when ``workspace_for_room`` is set."""
@@ -1008,6 +1071,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 await self._retire_client(room_id)
                 raise
 
+            # The fresh session has now seen the replayed memory.
+            self._replay_rooms.discard(room_id)
             logger.debug("Message %s processed successfully", msg_id)
         finally:
             self._release_turn(room_id, release_future)
@@ -1540,6 +1605,27 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             cache_write="cache_creation_input_tokens",
         )
 
+    async def release_room_resources(self, room_id: str) -> None:
+        """Stop an idle room's Claude Code process; the next turn resumes its session.
+
+        Skipped while a turn or an approval is still in flight, and when no
+        session id has been captured yet (there would be nothing to resume).
+        The room keeps its workspace claim and session id.
+        """
+        running_turn = self._turn_tasks.get(room_id)
+        if running_turn is not None and not running_turn.done():
+            return
+        if self._pending_approvals.get(room_id):
+            return
+        session_id = self._session_ids.get(room_id)
+        if session_id is None or self._session_manager is None:
+            return
+        if not self._session_manager.has_session(room_id):
+            return
+        self._released_sessions[room_id] = session_id
+        await self._session_manager.cleanup_session(room_id)
+        logger.info("Room %s: released idle Claude session %s", room_id, session_id)
+
     # --- Copied from BandClaudeSDKAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up Claude SDK session and stored tools when agent leaves a room."""
@@ -1551,6 +1637,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._mcp_room_tools.pop(room_id, None)
         self._session_context.pop(room_id, None)
         self._session_ids.pop(room_id, None)
+        self._released_sessions.pop(room_id, None)
+        self._replay_rooms.discard(room_id)
         self._room_last_sender.pop(room_id, None)
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
@@ -1575,6 +1663,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._mcp_room_tools.clear()
         self._session_context.clear()
         self._session_ids.clear()
+        self._released_sessions.clear()
+        self._replay_rooms.clear()
         self._room_last_sender.clear()
         self._notified_declines.clear()
         self._pending_tool_names.clear()
