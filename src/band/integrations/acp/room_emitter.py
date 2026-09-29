@@ -26,10 +26,10 @@ def turn_replied_in_room(
     *,
     custom_effects: Mapping[str, TurnEffect] | None = None,
 ) -> bool:
-    """True when the turn settled its reply: a room post, band_no_reply, or a
-    custom tool that declared either (``custom_effects``).
+    """True when the turn already settled its reply.
 
-    Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
+    A room post, band_no_reply, or a custom tool that declared either
+    (``custom_effects``) settles it. Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
     at execution time, ACP tool calls may run out-of-process (a remote band-mcp
     server the SDK never sees execute). The ACP session-update stream is the one
     record of the turn that covers both, so detection matches the collected
@@ -38,7 +38,7 @@ def turn_replied_in_room(
     ``completed`` — a failed post must not suppress the text fallback, or the turn
     goes silent.
     """
-    posting_call_ids: set[str] = set()
+    settling_call_ids: set[str] = set()
     for chunk in chunks:
         metadata = chunk.metadata or {}
         if isinstance(chunk.tool, ACPToolCall) and settles_turn_reply(
@@ -51,10 +51,10 @@ def turn_replied_in_room(
             # non-posting tool's — and falsely suppress the text fallback,
             # silencing the turn.
             if chunk.tool.tool_call_id:
-                posting_call_ids.add(chunk.tool.tool_call_id)
+                settling_call_ids.add(chunk.tool.tool_call_id)
         elif (
             isinstance(chunk.tool, ACPToolResult)
-            and chunk.tool.call.tool_call_id in posting_call_ids
+            and chunk.tool.call.tool_call_id in settling_call_ids
             and metadata.get("status") == ToolStatus.COMPLETED
         ):
             return True
@@ -206,9 +206,9 @@ class RoomTurnEmitter:
         # neither the held text nor the bookkeeping event.
         if exc_type is not None:
             return False
-        # Tool-first delivery (matches copilot_sdk / codex): if the turn posted via
-        # a Band messaging tool, relaying its plain text too would duplicate the
-        # reply (and leak the agent's narration of the call).
+        # Tool-first delivery (matches copilot_sdk / codex): if the turn already
+        # settled its reply, relaying its plain text too would duplicate it (and
+        # leak the agent's narration of the call).
         if not turn_replied_in_room(self._chunks, custom_effects=self._custom_effects):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)

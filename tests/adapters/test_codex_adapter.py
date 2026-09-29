@@ -291,6 +291,12 @@ def _turn_completed(turn_id: str = "turn-1") -> RpcEvent:
     )
 
 
+def _final_text(text: str) -> RpcEvent:
+    return _event_notification(
+        "item/agentMessage/delta", {"itemId": "m", "delta": text}
+    )
+
+
 def _tool_call_request(
     request_id: int, tool: str, arguments: dict[str, Any] | None = None
 ) -> RpcEvent:
@@ -6754,12 +6760,6 @@ class TestReadRoomFileImagePassthrough:
         assert turn.content_items[0]["type"] == "inputText"
 
 
-def _final_text(text: str) -> RpcEvent:
-    return _event_notification(
-        "item/agentMessage/delta", {"itemId": "m", "delta": text}
-    )
-
-
 class TestNoReply:
     @pytest.mark.asyncio
     async def test_no_reply_suppresses_the_fallback_text(self) -> None:
@@ -6774,69 +6774,54 @@ class TestNoReply:
         assert reported_failures(turn.tools) == []
 
     @pytest.mark.asyncio
-    async def test_no_reply_does_not_carry_into_the_next_turn(self) -> None:
-        turn = await run_codex_turn(
-            events=[
-                _tool_call_request(1, "band_no_reply"),
-                _turn_completed("turn-1"),
-            ]
-        )
-        turn.client._events.extend(
-            [_final_text("Second answer"), _turn_completed("turn-2")]
-        )
-
-        await turn.adapter.on_message(
-            make_platform_message(),
-            turn.tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id="room-1",
+    async def test_no_reply_does_not_carry_into_the_next_turn(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            _tool_call_request(1, "band_no_reply"),
+            _turn_completed("turn-1"),
+            _final_text("Second answer"),
+            _turn_completed("turn-2"),
         )
 
-        assert [m["content"] for m in turn.tools.messages_sent] == ["Second answer"]
+        await room.send("First message")
+        await room.send("Second message")
+
+        assert room.chat == ["Second answer"]
 
 
 class StayQuietInput(BaseModel):
     """Say nothing this turn."""
 
 
-def _stay_quiet_handler() -> Callable[[StayQuietInput], Awaitable[str]]:
-    """A fresh handler per test: declaring an effect mutates the function."""
-
-    async def stay_quiet(args: StayQuietInput) -> str:
-        return "quiet"
-
-    return stay_quiet
+def _undeclared(handler: Callable[..., Any]) -> Callable[..., Any]:
+    return handler
 
 
 class TestCustomToolEffect:
     @pytest.mark.asyncio
-    async def test_a_tool_declaring_silence_suppresses_the_fallback_text(self) -> None:
-        turn = await run_codex_turn(
-            events=[
-                _tool_call_request(1, "stayquiet"),
-                _final_text("Nothing to add."),
-                _turn_completed(),
-            ],
-            additional_tools=[
-                (
-                    StayQuietInput,
-                    declares_turn_effect(TurnEffect.DECLINE)(_stay_quiet_handler()),
-                )
-            ],
-        )
-        assert turn.tools.messages_sent == []
+    @pytest.mark.parametrize(
+        ("declare", "chat"),
+        [
+            pytest.param(
+                declares_turn_effect(TurnEffect.DECLINE), [], id="declared-silence"
+            ),
+            pytest.param(_undeclared, ["Nothing to add."], id="undeclared"),
+        ],
+    )
+    async def test_only_a_declared_tool_settles_the_reply(
+        self, declare: Callable[..., Any], chat: list[str]
+    ) -> None:
+        async def stay_quiet(args: StayQuietInput) -> str:
+            return "quiet"
 
-    @pytest.mark.asyncio
-    async def test_an_undeclared_tool_leaves_the_text_fallback(self) -> None:
         turn = await run_codex_turn(
             events=[
                 _tool_call_request(1, "stayquiet"),
                 _final_text("Nothing to add."),
                 _turn_completed(),
             ],
-            additional_tools=[(StayQuietInput, _stay_quiet_handler())],
+            additional_tools=[(StayQuietInput, declare(stay_quiet))],
         )
-        assert [m["content"] for m in turn.tools.messages_sent] == ["Nothing to add."]
+
+        assert [m["content"] for m in turn.tools.messages_sent] == chat

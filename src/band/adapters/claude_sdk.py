@@ -105,7 +105,6 @@ from band.runtime.tools import (
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
-    TurnEffect,
     is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
@@ -449,15 +448,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
-        # Effects the custom tools declared. Only these let a turn with no Band
+        # Only custom tools that declared an effect let a turn with no Band
         # terminal tool call still count as answered — see is_terminal_success.
-        # Keyed by the name the tool is actually registered/called under
-        # (get_custom_tool_name), not the handler's Python __name__ —
-        # _build_custom_sdk_tool derives the MCP tool name from the input model,
-        # so the two can differ.
-        self._custom_effects: dict[str, TurnEffect] = custom_tool_effects(
-            self._custom_tools
-        )
+        self._custom_effects = custom_tool_effects(self._custom_tools)
 
         # Approval flow state
         # {room_id: DecisionRegistry of PendingApproval}

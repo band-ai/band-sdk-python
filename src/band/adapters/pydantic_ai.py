@@ -61,12 +61,12 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     declared_effect,
     declared_effects,
+    declares_turn_effect,
     get_custom_tool_name,
     invoke_validated_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    TurnEffect,
     band_tool_errored,
     image_block_placeholder,
     is_terminal_success,
@@ -181,7 +181,7 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     native.__doc__ = input_model.__doc__ or native.__name__
     native.__annotations__ = {"args": input_model, "return": str}
     if (effect := declared_effect(handler)) is not None:
-        native.band_effect = effect  # type: ignore[attr-defined]
+        declares_turn_effect(effect)(native)
     return native
 
 
@@ -291,7 +291,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Effects the custom tools declared on their function. Only these let an
         # empty final response be treated as benign; an undeclared custom tool
         # does not (fail-loud — see is_terminal_success).
-        self._custom_effects: dict[str, TurnEffect] = declared_effects(
+        self._custom_effects = declared_effects(
             (fn.__name__, fn) for fn in self._custom_tools
         )
 

@@ -122,9 +122,7 @@ def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> st
 
 
 # The agent tools whose MCP handler takes a room id (``chat_id`` on the wire)
-# as a kwarg -- i.e. the handler is room-scoped. Related to but distinct from
-# ``turn_effect`` below (that classifies what a *successful call* does to the
-# turn's reply; this one is about which tools need a room id at all).
+# as a kwarg -- i.e. the handler is room-scoped.
 #
 # AgentTools is constructor-scoped (``AgentTools(room_id=..., rest=...)``), so
 # these method signatures don't carry a room field themselves -- an MCP front

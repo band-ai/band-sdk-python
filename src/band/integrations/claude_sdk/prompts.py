@@ -36,8 +36,6 @@ def generate_claude_sdk_agent_prompt(
         System prompt configuration dict
     """
     features = features or AdapterFeatures()
-    # Tool text comes from the master schema (runtime/tools), never retyped here.
-    no_reply_description = get_tool_description(BandTool.NO_REPLY)
 
     # Capability-gated sections
     memory_section = ""
@@ -150,7 +148,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 - `message_type`: "thought" (reasoning), "error" (problems), "task" (progress)
 - Use to share your thinking process or report errors
 
-**mcp__band__band_no_reply** - {no_reply_description}
+**mcp__band__band_no_reply** - {get_tool_description(BandTool.NO_REPLY)}
 
 **mcp__band__band_create_chatroom** - Create a new chat room
 ```json

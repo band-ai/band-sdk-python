@@ -15,7 +15,7 @@ from band.runtime.tools.registry import (
     EVENT_TOOL_NAMES,
     LEGACY_SEND_MESSAGE_TOOL,
     READ_ONLY_TOOL_NAMES,
-    _resolve_mcp_tool_name,
+    canonicalize_mcp_tool_name,
 )
 from band.runtime.tools.types import BandTool, TurnEffect
 
@@ -34,20 +34,20 @@ _BAND_EFFECTS: dict[str, TurnEffect] = {
 
 def turn_effect(
     tool_name: str, *, custom_effects: Mapping[str, TurnEffect] | None = None
-) -> TurnEffect | None:
-    """The turn effect of a tool, or ``None`` for one with no declared effect.
+) -> TurnEffect:
+    """The turn effect of a tool. A tool that declared none is ``OBSERVE``.
 
     A Band tool is resolved first, tolerating the Band MCP server's own ``band-``
-    spelling (see ``_resolve_mcp_tool_name``) but nothing else, so a custom tool
+    spelling (see ``canonicalize_mcp_tool_name``) but nothing else, so a custom tool
     cannot redefine a Band tool and an unrelated MCP server's tool that merely ends
     in ``-band_send_message`` never resolves. Any other name is looked up in
     ``custom_effects``: the effects the caller's own tools declared (see
     ``runtime.custom_tools.declares_turn_effect``).
     """
-    band_tool = _resolve_mcp_tool_name(tool_name, _BAND_EFFECTS)
-    if band_tool is not None:
+    band_tool = canonicalize_mcp_tool_name(tool_name, _BAND_EFFECTS)
+    if band_tool in _BAND_EFFECTS:
         return _BAND_EFFECTS[band_tool]
-    return (custom_effects or {}).get(tool_name)
+    return (custom_effects or {}).get(tool_name, TurnEffect.OBSERVE)
 
 
 def settles_turn_reply(
@@ -61,8 +61,7 @@ def settles_turn_reply(
     miss only costs a duplicate reply (the pre-suppression behavior), never a
     wrong post.
     """
-    effect = turn_effect(tool_name, custom_effects=custom_effects)
-    return effect is not None and effect.settles_reply
+    return turn_effect(tool_name, custom_effects=custom_effects).settles_reply
 
 
 def is_terminal_success(
@@ -88,11 +87,8 @@ def is_terminal_success(
     silently swallowed. A custom tool that genuinely completes the turn declares
     its effect (see ``runtime.custom_tools.declares_turn_effect``).
     """
-    if not succeeded:
-        return False
-    effect = (
-        None
-        if tool_name is None
-        else turn_effect(tool_name, custom_effects=custom_effects)
+    return (
+        succeeded
+        and tool_name is not None
+        and turn_effect(tool_name, custom_effects=custom_effects).did_work
     )
-    return effect is not None and effect.did_work

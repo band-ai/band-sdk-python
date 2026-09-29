@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from band.runtime.custom_tools import (
     CustomToolDef,
     declared_effect,
+    declares_turn_effect,
     get_custom_tool_name,
 )
 
@@ -118,5 +119,5 @@ class ToolSpec:
         # Carry the declared turn effect so the callable path (pydantic-ai/agno)
         # agrees with the CustomToolDef tuple path.
         if (effect := declared_effect(self.handler)) is not None:
-            tool.band_effect = effect  # type: ignore[attr-defined]
+            declares_turn_effect(effect)(tool)
         return tool

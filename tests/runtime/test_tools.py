@@ -2427,7 +2427,6 @@ class TestSettlesTurnReply:
     def test_non_settling_tools(self):
         assert settles_turn_reply("band_send_event") is False
         assert settles_turn_reply("band_lookup_peers") is False
-        assert settles_turn_reply("band_add_participant") is False
         assert settles_turn_reply("get_weather") is False
 
     def test_no_substring_false_positive(self):

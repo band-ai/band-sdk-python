@@ -11,46 +11,22 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
-    EVENT_TOOL_NAMES,
-    READ_ONLY_TOOL_NAMES,
     AgentTools,
+    BandTool,
     TurnEffect,
     band_tool_errored,
     is_terminal_success,
     settles_turn_reply,
 )
 
-# A concrete Band tool of each kind, derived from the registry so a rename can't
-# rot the test into asserting nothing.
-_TERMINAL_BAND_TOOL = "band_send_message"
-_READ_ONLY_BAND_TOOL = "band_get_memory"
-
-
-def test_band_terminal_tool_success_counts() -> None:
-    assert _TERMINAL_BAND_TOOL in ALL_TOOL_NAMES - READ_ONLY_TOOL_NAMES
-    assert is_terminal_success(_TERMINAL_BAND_TOOL, succeeded=True) is True
-
-
-def test_band_read_only_tool_never_counts() -> None:
-    assert _READ_ONLY_BAND_TOOL in READ_ONLY_TOOL_NAMES
-    assert is_terminal_success(_READ_ONLY_BAND_TOOL, succeeded=True) is False
-
 
 def test_failed_tool_never_counts() -> None:
-    assert is_terminal_success(_TERMINAL_BAND_TOOL, succeeded=False) is False
-
-
-def test_event_tool_is_not_terminal() -> None:
-    # band_send_event emits an observational event (thought/error/task), not terminal
-    # work — a send-event-only turn + empty final must surface, not be swallowed.
-    assert "band_send_event" in EVENT_TOOL_NAMES
-    assert "band_send_event" in ALL_TOOL_NAMES  # it is a real Band tool...
-    assert (
-        is_terminal_success("band_send_event", succeeded=True) is False
-    )  # ...just not terminal
+    assert is_terminal_success(BandTool.SEND_MESSAGE, succeeded=False) is False
 
 
 def test_band_tool_errored_detects_error_prefix() -> None:
@@ -63,35 +39,36 @@ def test_band_tool_errored_detects_error_prefix() -> None:
     assert band_tool_errored(None, "Error x") is False
 
 
-_SLACK_POST_ACT = {"post_to_slack": TurnEffect.ACT}
-_QUIET_DECLINE = {"stay_quiet": TurnEffect.DECLINE}
+_POST_TO_SLACK = {"post_to_slack": TurnEffect.ACT}
+_STAY_QUIET = {"stay_quiet": TurnEffect.DECLINE}
 
 
-def test_undeclared_custom_tool_is_not_terminal() -> None:
-    # A custom tool name is in neither set → fail-loud default (not terminal).
-    assert is_terminal_success("weather", succeeded=True) is False
+@pytest.mark.parametrize(
+    ("tool", "custom_effects", "did_work", "settles_reply"),
+    [
+        pytest.param(BandTool.SEND_MESSAGE, None, True, True, id="post"),
+        pytest.param(BandTool.NO_REPLY, None, True, True, id="no-reply"),
+        # Silence after an action is benign, yet the model's plain text is still owed.
+        pytest.param(BandTool.ADD_PARTICIPANT, None, True, False, id="action"),
+        pytest.param(BandTool.GET_MEMORY, None, False, False, id="read-only"),
+        pytest.param(BandTool.SEND_EVENT, None, False, False, id="narration"),
+        # An undeclared custom tool fails loud: no work, the reply still owed.
+        pytest.param("weather", _POST_TO_SLACK, False, False, id="undeclared"),
+        pytest.param("post_to_slack", _POST_TO_SLACK, True, False, id="declared-act"),
+        pytest.param("stay_quiet", _STAY_QUIET, True, True, id="declared-silence"),
+    ],
+)
+def test_the_two_views_of_a_finished_tool_call(
+    tool: str,
+    custom_effects: dict[str, TurnEffect] | None,
+    did_work: bool,
+    settles_reply: bool,
+) -> None:
     assert (
-        is_terminal_success("weather", succeeded=True, custom_effects=_SLACK_POST_ACT)
-        is False
+        is_terminal_success(tool, succeeded=True, custom_effects=custom_effects)
+        is did_work
     )
-
-
-def test_declared_custom_tool_is_terminal() -> None:
-    assert (
-        is_terminal_success(
-            "post_to_slack", succeeded=True, custom_effects=_SLACK_POST_ACT
-        )
-        is True
-    )
-
-
-def test_declared_custom_tool_still_needs_success() -> None:
-    assert (
-        is_terminal_success(
-            "post_to_slack", succeeded=False, custom_effects=_SLACK_POST_ACT
-        )
-        is False
-    )
+    assert settles_turn_reply(tool, custom_effects=custom_effects) is settles_reply
 
 
 def test_declared_effect_reads_the_declaration_and_the_terminal_shorthand() -> None:
@@ -113,49 +90,31 @@ def test_declared_effect_reads_the_declaration_and_the_terminal_shorthand() -> N
     assert declared_effect(plain) is None
 
 
-def test_a_custom_tool_that_declares_silence_settles_the_reply() -> None:
-    assert settles_turn_reply("stay_quiet", custom_effects=_QUIET_DECLINE) is True
-    assert is_terminal_success(
-        "stay_quiet", succeeded=True, custom_effects=_QUIET_DECLINE
-    )
-    assert settles_turn_reply("stay_quiet") is False
-
-
-def test_a_custom_action_is_work_but_leaves_the_reply_owed() -> None:
-    assert settles_turn_reply("post_to_slack", custom_effects=_SLACK_POST_ACT) is False
-
-
 def test_a_custom_tool_cannot_redefine_a_band_tool() -> None:
-    hijack = {"band_send_message": TurnEffect.OBSERVE}
-    assert settles_turn_reply("band_send_message", custom_effects=hijack) is True
+    hijack = {BandTool.SEND_MESSAGE: TurnEffect.OBSERVE}
+    assert settles_turn_reply(BandTool.SEND_MESSAGE, custom_effects=hijack) is True
 
 
-def test_no_reply_is_terminal_and_settles_the_reply() -> None:
-    assert is_terminal_success("band_no_reply", succeeded=True) is True
-    assert settles_turn_reply("band_no_reply") is True
+def test_no_reply_is_recognised_under_the_band_mcp_prefix_only() -> None:
     assert settles_turn_reply("band-band_no_reply") is True
     assert settles_turn_reply("other-band_no_reply") is False
 
 
-def test_an_action_is_terminal_work_but_leaves_the_reply_owed() -> None:
-    # The two views of one classification differ exactly here: silence after an
-    # action is benign, yet the model's plain-text answer must still be relayed.
-    assert is_terminal_success("band_add_participant", succeeded=True) is True
-    assert settles_turn_reply("band_add_participant") is False
-
-
 def test_only_posts_and_no_reply_settle_the_reply() -> None:
     settling = {name for name in ALL_TOOL_NAMES if settles_turn_reply(name)}
-    assert settling == {"band_send_message", "band_send_room_file", "band_no_reply"}
+    assert settling == {
+        BandTool.SEND_MESSAGE,
+        BandTool.SEND_ROOM_FILE,
+        BandTool.NO_REPLY,
+    }
 
 
-async def test_no_reply_is_local_only() -> None:
-    rest = MagicMock()
-    tools = AgentTools("room-1", rest)
+async def test_no_reply_is_local_only(mock_rest_client: MagicMock) -> None:
+    tools = AgentTools("room-1", mock_rest_client)
 
     outcome = await tools.execute_tool_call_structured(
-        "band_no_reply", {"reason": "addressed to another agent"}
+        BandTool.NO_REPLY, {"reason": "addressed to another agent"}
     )
 
     assert (outcome.ok, outcome.value) == (True, {"status": "no_reply"})
-    assert rest.mock_calls == []
+    assert mock_rest_client.mock_calls == []
