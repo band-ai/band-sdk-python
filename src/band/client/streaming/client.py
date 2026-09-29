@@ -952,5 +952,38 @@ class WebSocketClient:
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
-    async def run_forever(self):
-        await self._require_client().run_forever()
+    async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
+        """Block until the connection's supervisor ends.
+
+        With ``install_signal_handlers`` the Phoenix client's own
+        ``run_forever`` runs, which replaces the process's SIGTERM/SIGINT
+        handlers while it waits and shuts down on either signal -- right for
+        a script, wrong for a host that owns its signals. Without it, this
+        waits on the same supervisor task directly and touches no handlers.
+        """
+        client = self._require_client()
+        if install_signal_handlers:
+            await client.run_forever()
+            return
+        await _wait_for_supervisor(client)
+
+
+async def _wait_for_supervisor(client: PHXChannelsClient) -> None:
+    """``PHXChannelsClient.run_forever`` minus its signal handling.
+
+    Mirrors that method's completion rules (a recorded terminal error
+    propagates, as does a failed supervisor), reading the same two
+    attributes because phoenix-channels-python-client 0.2.4 exposes no
+    handler-free wait. ``asyncio.wait`` leaves the supervisor running if the
+    caller is cancelled, as the upstream method does.
+    """
+    supervisor = client._supervisor_task
+    if supervisor is None:
+        raise PHXConnectionError(
+            "Client is not connected. Use 'async with' context manager."
+        )
+    await asyncio.wait({supervisor})
+    if client._terminal_error is not None:
+        raise client._terminal_error
+    if not supervisor.cancelled():
+        supervisor.result()

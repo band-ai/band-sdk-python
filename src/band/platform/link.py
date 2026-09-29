@@ -217,10 +217,17 @@ class BandLink:
         self._subscriptions_manager.end_session()
         logger.info("Disconnected from platform")
 
-    async def run_forever(self) -> None:
+    async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
+        """Block until the connection ends.
+
+        ``install_signal_handlers`` is off by default: a library that embeds
+        the agent keeps its own process-wide signal handlers. ``Agent.run()``
+        turns it on for a standalone script, where SIGTERM/SIGINT should stop
+        the process.
+        """
         if not self._ws:
             raise RuntimeError("Not connected")
-        await self._ws.run_forever()
+        await self._ws.run_forever(install_signal_handlers=install_signal_handlers)
 
     async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
         """Shared join call for agent_control -- used by both the initial

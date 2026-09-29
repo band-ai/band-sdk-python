@@ -344,7 +344,12 @@ class Agent:
         self, shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT
     ) -> None:
         """
-        Run until interrupted.
+        Run until interrupted: the script entry point.
+
+        Installs SIGTERM/SIGINT handlers for the duration and stops on either
+        -- appropriate for a standalone script. Hosts that own their process
+        signals should use ``start()`` + ``run_forever()`` instead, which
+        installs none.
 
         Args:
             shutdown_timeout: Seconds to wait for graceful shutdown on interrupt.
@@ -354,7 +359,7 @@ class Agent:
         self._shutdown_timeout = shutdown_timeout
         await self.start()
         try:
-            await self._runtime.run_forever()
+            await self._runtime.run_forever(install_signal_handlers=True)
         finally:
             await self.stop(timeout=shutdown_timeout)
 
@@ -395,7 +400,10 @@ class Agent:
 
     async def run_forever(self) -> None:
         """
-        Keep the agent running forever.
+        Keep the agent running until it is stopped or disconnected.
+
+        Installs no process-wide signal handlers: the embedding host owns
+        SIGTERM/SIGINT and calls ``stop()`` itself.
 
         Use this inside an async context manager:
             async with agent:
@@ -407,6 +415,8 @@ class Agent:
                 await agent.run_forever()
             finally:
                 await agent.stop()
+
+        Returns normally once ``stop()`` is called.
         """
         await self._runtime.run_forever()
 
