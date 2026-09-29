@@ -22,6 +22,7 @@ from tests.adapters.test_codex_adapter import (
     _turn_completed,
     run_codex_turn,
 )
+from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 ROOM = "room-1"
@@ -372,3 +373,31 @@ async def test_stopping_mid_codex_release_still_closes_the_app_server(room) -> N
     room_client = codex.adapter._room_clients["room-1"]
     assert (client.closed, room_client.client) == (True, None)
     assert codex.adapter._released_threads == {"room-1": "thr-1"}
+
+
+async def test_stopping_mid_omp_release_still_stops_the_agent_process(room) -> None:
+    agent = FakeACPAgent(supports_session_load=True).will_say("Noted.")
+    async with acp_adapter(agent) as session:
+        await session.send("My favorite color is blue.", bootstrap=True)
+        runtime = session.adapter._runtimes["room-1"]
+        stop_entered, stop_gate = asyncio.Event(), asyncio.Event()
+        stop_completed = False
+        real_stop = runtime.stop
+
+        async def gated_stop() -> None:
+            nonlocal stop_completed
+            stop_entered.set()
+            await stop_gate.wait()
+            await real_stop()
+            stop_completed = True
+
+        runtime.stop = gated_stop  # type: ignore[method-assign]
+        r = await _started(
+            room(adapter_release=session.adapter._release_loadable_session)
+        )
+        await r.send("msg-1")
+
+        await r.stop_while_parked(entered=stop_entered, gate=stop_gate)
+
+        assert stop_completed
+        assert "room-1" not in session.adapter._runtimes
