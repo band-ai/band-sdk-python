@@ -145,6 +145,43 @@ CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
 
+# CLI flags the adapter itself sets to wire Band's MCP server, tool
+# allowlist, prompt, model, permissions, and session stream. ``extra_args``
+# may not carry them, or a passthrough could silently unhook the Band tools.
+_RESERVED_CLI_FLAGS: frozenset[str] = frozenset(
+    {
+        "mcp-config",
+        "strict-mcp-config",
+        "allowedTools",
+        "allowed-tools",
+        "disallowedTools",
+        "disallowed-tools",
+        "tools",
+        "permission-mode",
+        "permission-prompt-tool",
+        "setting-sources",
+        "system-prompt",
+        "system-prompt-file",
+        "append-system-prompt",
+        "model",
+        "fallback-model",
+        "input-format",
+        "output-format",
+        "resume",
+        "continue",
+        "fork-session",
+        "session-id",
+        "print",
+    }
+)
+
+
+def _reserved_extra_args(extra_args: dict[str, str | None]) -> list[str]:
+    return sorted(
+        flag for flag in extra_args if flag.lstrip("-") in _RESERVED_CLI_FLAGS
+    )
+
+
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
@@ -329,6 +366,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
         setting_sources: list[str] | None = None,
+        plugin_dirs: list[str] | None = None,
+        cli_path: str | None = None,
+        env: dict[str, str] | None = None,
+        add_dirs: list[str] | None = None,
+        extra_args: dict[str, str | None] | None = None,
         # Chat-based approval flow (opt-in)
         approval_mode: ApprovalMode | None = None,
         approval_text_notifications: bool = True,
@@ -366,6 +408,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 tuples. These are converted to MCP tools internally.
             cwd: Working directory for Claude Code sessions. If set, Claude Code
                 will operate in this directory (e.g., a mounted git repo).
+            plugin_dirs: Local Claude Code plugin folders to load (each maps
+                to ``{"type": "local", "path": ...}``); their skills load
+                without changing ``cwd`` or ``setting_sources``.
+            cli_path: Path to the ``claude`` executable to launch instead of
+                the one bundled with ``claude-agent-sdk``.
+            env: Extra environment variables for the Claude CLI process only;
+                the host's own ``os.environ`` is left untouched.
+            add_dirs: Additional directories Claude may access (``--add-dir``).
+            extra_args: Additional CLI flags, ``{"flag": "value"}`` or
+                ``{"flag": None}`` for a bare flag.
             approval_mode: Chat-based approval mode.  ``None`` (default) disables
                 chat-based approval -- the SDK's ``permission_mode`` controls
                 approvals entirely.  Set to ``"manual"`` to route approval
@@ -411,6 +463,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
+        self.plugin_dirs: list[str] = list(plugin_dirs or [])
+        self.cli_path = cli_path
+        self.env: dict[str, str] = dict(env or {})
+        self.add_dirs: list[str] = list(add_dirs or [])
+        self.extra_args: dict[str, str | None] = dict(extra_args or {})
+        if reserved := _reserved_extra_args(self.extra_args):
+            raise ValueError(
+                f"extra_args may not set adapter-owned CLI flags: {reserved}"
+            )
         # Which host settings the CLI loads (skills/subagents/settings from
         # ~/.claude and ./.claude). Default isolates the bridged agent so its
         # capabilities are defined here, not by whatever config sits on the host
@@ -551,6 +612,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if self.cwd:
             sdk_options.cwd = self.cwd
 
+        self._apply_cli_passthrough(sdk_options)
+
         # When approval_mode is set, add a PreToolUse hook that returns
         # "ask" for native tools so the SDK delegates to can_use_tool instead
         # of auto-resolving permissions via the permission_mode. Band's MCP
@@ -603,6 +666,21 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
         return backend
+
+    def _apply_cli_passthrough(self, sdk_options: ClaudeAgentOptions) -> None:
+        """Map the host's CLI passthrough options; omitted ones stay SDK defaults."""
+        if self.plugin_dirs:
+            sdk_options.plugins = [
+                {"type": "local", "path": path} for path in self.plugin_dirs
+            ]
+        if self.cli_path:
+            sdk_options.cli_path = self.cli_path
+        if self.env:
+            sdk_options.env = dict(self.env)
+        if self.add_dirs:
+            sdk_options.add_dirs = list(self.add_dirs)
+        if self.extra_args:
+            sdk_options.extra_args = dict(self.extra_args)
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(

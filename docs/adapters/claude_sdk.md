@@ -120,6 +120,31 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 
 The mode is forwarded to the CLI as given. If the CLI rejects it (for example `"auto"` on an account without it), the turn fails; there is no fallback to another mode.
 
+### CLI Passthrough
+
+These map onto `ClaudeAgentOptions` for hosts that manage the Claude CLI themselves. Omitted, each leaves the SDK default. None of them can replace the adapter's Band MCP server, tool allowlist, or `setting_sources`.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `plugin_dirs` | `list[str] \| None` | `None` | Local Claude Code plugin folders; each becomes `{"type": "local", "path": ...}`. Loads a host-managed skills folder without changing `cwd` or `setting_sources`. |
+| `cli_path` | `str \| None` | `None` | The `claude` executable to launch, e.g. the user's installed CLI with their own version, login, and settings. `None` uses the CLI bundled with `claude-agent-sdk`. |
+| `env` | `dict[str, str] \| None` | `None` | Extra environment for the Claude CLI process only, e.g. per-agent secrets. The host's `os.environ` is not modified. |
+| `add_dirs` | `list[str] \| None` | `None` | Extra directories Claude may access (`--add-dir`). |
+| `extra_args` | `dict[str, str \| None] \| None` | `None` | Additional CLI flags; `None` values are bare flags. Flags the adapter sets itself (`mcp-config`, `allowedTools`, `permission-mode`, `setting-sources`, `system-prompt`, `model`, `resume`, ...) are refused with `ValueError`. |
+
+```python
+from band.adapters.claude_sdk import ClaudeSDKAdapter
+
+adapter = ClaudeSDKAdapter(
+    permission_mode="dontAsk",
+    plugin_dirs=["/srv/agents/reviewer/plugin"],
+    env={"GITHUB_TOKEN": "per-agent-token"},
+)
+assert adapter.plugin_dirs == ["/srv/agents/reviewer/plugin"]
+```
+
+Hosts that loaded skills through a private `cwd` holding `.claude/skills` with `setting_sources=["project"]`, or wrote harness secrets into `os.environ` before start, can move to `plugin_dirs` and `env`.
+
 ### Prompts and Tools
 
 | Parameter | Type | Default | Description |
