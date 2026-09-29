@@ -10,6 +10,7 @@ import pytest
 from band.core.content import BLANK_CONTENT_ERROR
 from band.integrations.acp.router import AgentRouter
 from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 from band.testing.platform import platform_connection_stub
@@ -919,7 +920,7 @@ class TestBandACPServerAdapterTimeout:
     async def test_handle_prompt_timeout_raises(
         self, mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Should raise TimeoutError when peer never responds."""
+        """Should return a Core failure when the peer never responds."""
         monkeypatch.setattr(
             "band.integrations.acp.server_adapter._PROMPT_TIMEOUT_SECONDS",
             0.05,
@@ -929,8 +930,8 @@ class TestBandACPServerAdapterTimeout:
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
-        with pytest.raises(asyncio.TimeoutError):
-            await adapter.handle_prompt("session-1", "Hello")
+        outcome = await adapter.handle_prompt("session-1", "Hello")
+        assert outcome.to_extension_data() == prompt_timeout_failure(0.05).to_extension_data()
 
         # Verify pending prompt was cleaned up
         assert "room-123" not in adapter._pending_prompts

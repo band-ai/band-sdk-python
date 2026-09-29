@@ -62,3 +62,23 @@ def _fallback_failure(msg: PlatformMessage) -> AgentFailure:
         ACPFailureProvider.BAND,
         redact_credentials(msg.content.strip() or "Band peer reported a failure."),
     )
+
+
+def prompt_timeout_failure(timeout_seconds: float) -> AgentFailure:
+    """Stable Band-side failure when an ACP prompt waits too long."""
+    if timeout_seconds == int(timeout_seconds):
+        seconds_label = str(int(timeout_seconds))
+    else:
+        seconds_label = f"{timeout_seconds:g}"
+    return AgentFailure(
+        ACPFailureProvider.BAND,
+        f"Prompt timed out after {seconds_label}s waiting for a Band peer reply.",
+    )
+
+
+def prompt_exception_failure(exc: BaseException) -> AgentFailure:
+    """Map prompt setup or transport errors to a redacted Core failure."""
+    message = str(exc).strip()
+    if not message:
+        message = type(exc).__name__
+    return AgentFailure(ACPFailureProvider.BAND, redact_credentials(message))

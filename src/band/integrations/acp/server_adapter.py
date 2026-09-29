@@ -24,7 +24,12 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.event_converter import EventConverter
-from band.integrations.acp.failure import ACPFailureProvider, decode_failure
+from band.integrations.acp.failure import (
+    ACPFailureProvider,
+    decode_failure,
+    prompt_exception_failure,
+    prompt_timeout_failure,
+)
 from band.integrations.acp.types import (
     ACPSessionState,
     ACPStopReason,
@@ -392,9 +397,24 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         send_task.add_done_callback(_observe_prompt_send)
         settled_task = asyncio.create_task(pending.done_event.wait())
         try:
-            await asyncio.wait(
-                {send_task, settled_task}, return_when=asyncio.FIRST_COMPLETED
+            done, _ = await asyncio.wait(
+                {send_task, settled_task},
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=_PROMPT_TIMEOUT_SECONDS,
             )
+            if not done:
+                logger.error(
+                    "Prompt timed out after %ds for session %s (room %s) "
+                    "before the peer replied",
+                    _PROMPT_TIMEOUT_SECONDS,
+                    session_id,
+                    room_id,
+                )
+                failure = prompt_timeout_failure(_PROMPT_TIMEOUT_SECONDS)
+                await self._finish_pending_prompt(
+                    room_id, expected=pending, outcome=failure
+                )
+                return failure
             try:
                 if pending.outcome is None:
                     sent = await send_task
@@ -402,9 +422,18 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                         logger.debug(
                             "Sent prompt to room %s, awaiting response", room_id
                         )
-            except Exception:
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                raise
+            except Exception as exc:
                 if pending.outcome is None:
-                    raise
+                    failure = prompt_exception_failure(exc)
+                    await self._finish_pending_prompt(
+                        room_id, expected=pending, outcome=failure
+                    )
+                    return failure
+                raise
+            if pending.outcome is not None:
+                return pending.outcome
             try:
                 await asyncio.wait_for(
                     pending.done_event.wait(), timeout=_PROMPT_TIMEOUT_SECONDS
@@ -416,7 +445,11 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                     session_id,
                     room_id,
                 )
-                raise
+                failure = prompt_timeout_failure(_PROMPT_TIMEOUT_SECONDS)
+                await self._finish_pending_prompt(
+                    room_id, expected=pending, outcome=failure
+                )
+                return failure
         finally:
             await self._finish_pending_prompt(room_id, expected=pending)
             send_task.cancel()
@@ -528,9 +561,23 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                 pending = None
 
         if pending and pending.outcome is not None:
-            return
+            pending = None
 
         if pending and msg.message_type == MessageType.ERROR:
+            if pending.outcome == ACPStopReason.END_TURN:
+                failure = decode_failure(msg)
+                if self._acp_client:
+                    try:
+                        chunk = EventConverter.convert(msg, failure=failure)
+                        if chunk is not None:
+                            await self._acp_client.session_update(
+                                session_id=pending.session_id, update=chunk
+                            )
+                    except Exception:
+                        logger.exception(
+                            "Failed to deliver post-turn ACP failure update"
+                        )
+                return
             failure = decode_failure(msg)
             claimed = await self._finish_pending_prompt(
                 room_id, expected=pending, outcome=failure

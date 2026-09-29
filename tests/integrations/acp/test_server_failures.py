@@ -12,6 +12,7 @@ from band_sdk_core import AgentFailure
 from band.agent import Agent
 from band.core.types import MessageType
 from band.integrations.acp.server import ACPServer
+from band.integrations.acp.types import ACPStopReason, PendingACPPrompt
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from tests.integrations.acp.conftest import (
     deliver_server_message,
@@ -235,8 +236,10 @@ async def test_lookup_failure_is_not_hidden_by_an_earlier_room_event(
     await deliver_server_message(adapter, failure_event())
     assert not task.done()
     release.set()
-    with pytest.raises(RuntimeError, match="REST failed"):
+    with pytest.raises(RequestError) as raised:
         await task
+    assert raised.value.code == -32603
+    assert raised.value.data == AgentFailure("band", "REST failed").to_extension_data()
     mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_awaited()
 
 
@@ -428,6 +431,51 @@ async def test_second_same_room_prompt_does_not_replace_first(
     assert (await first).stop_reason == "end_turn"
     mock_rest_client.agent_api_messages.create_agent_chat_message.assert_awaited_once()
 
+
+
+
+@pytest.mark.asyncio
+async def test_late_error_after_end_turn_does_not_change_prompt_outcome(
+    mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS", 0.01
+    )
+    adapter, server = running_server(mock_rest_client)
+    task = prompt(server)
+    await wait_for_pending_prompt(adapter, "room-123")
+    await deliver_server_message(
+        adapter, make_platform_message("Done", message_type=MessageType.TEXT)
+    )
+    assert (await task).stop_reason == "end_turn"
+    settled = adapter._pending_prompts.get("room-123")
+    assert settled is None
+    pending = PendingACPPrompt(session_id="session-1")
+    pending.posted = True
+    pending.outcome = ACPStopReason.END_TURN
+    adapter._pending_prompts["room-123"] = pending
+    await deliver_server_message(adapter, failure_event())
+    assert pending.outcome == ACPStopReason.END_TURN
+
+
+@pytest.mark.asyncio
+async def test_settled_pending_reference_forwards_to_push_handler(
+    mock_rest_client: MagicMock,
+) -> None:
+    adapter, server = running_server(mock_rest_client)
+    push = MagicMock()
+    push.handle_push_event = AsyncMock()
+    adapter.set_push_handler(push)
+    task = prompt(server)
+    await wait_for_pending_prompt(adapter, "room-123")
+    settled = adapter._pending_prompts["room-123"]
+    settled.outcome = ACPStopReason.END_TURN
+    adapter._pending_prompts["room-123"] = settled
+    await deliver_server_message(
+        adapter, make_platform_message("Follow-up", message_type=MessageType.TEXT)
+    )
+    push.handle_push_event.assert_awaited_once()
+    assert not task.done()
 
 @pytest.mark.asyncio
 async def test_other_room_remains_independent(mock_rest_client: MagicMock) -> None:
