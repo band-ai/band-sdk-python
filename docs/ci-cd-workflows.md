@@ -33,20 +33,18 @@ Protection is enforced with GitHub Rulesets, not classic branch protection.
 **Required status checks:**
 
 - `lint`
-- `test (ubuntu-latest, 3.11)`
-- `test (ubuntu-latest, 3.12)`
-- `test (windows-latest, 3.11)`
-- `test (windows-latest, 3.12)`
+- `test (<os>, <python-version>)`, `test-crewai (<os>, <python-version>)` and
+  `test-parlant (<os>, <python-version>)` for every `os` in `ubuntu-latest`,
+  `windows-latest` and every `python-version` in `3.11`, `3.12`, `3.13`
 - `packaging`
 - `Validate PR Title`
 
-> **Matrix context names:** the `test` job is a 2×2 matrix (`os` ×
-> `python-version`), so GitHub reports one check context *per cell* named
-> `test (<os>, <python-version>)` — not `test (3.11)`. Configure the ruleset with
-> the exact strings above; a name that doesn't match a real context silently
-> never becomes required. The `test-crewai` job (run in the `dev-crewai` extra)
-> follows the same pattern — `test-crewai (<os>, <python-version>)` — if you add
-> it to the required set.
+> **Matrix context names:** `test`, `test-crewai` (run in the `dev-crewai`
+> extra) and `test-parlant` (run in the `dev-parlant` extra) are each an `os` ×
+> `python-version` matrix, so GitHub reports one check context *per cell* named
+> `<job> (<os>, <python-version>)` — for example `test (ubuntu-latest, 3.13)`,
+> not `test (3.13)`. Configure the ruleset with exactly that form; a name that
+> doesn't match a real context silently never becomes required.
 
 > `main` uses **strict** required status checks: a PR branch must be up to date
 > with `main` before it can merge. After each merge, other open PRs go stale and
@@ -61,8 +59,9 @@ Protection is enforced with GitHub Rulesets, not classic branch protection.
 Runs on every PR to `main`.
 
 - `lint` — `pre-commit run --all-files`
-- `test` — pytest on Python 3.11 and 3.12 (Linux + Windows)
+- `test` — pytest on Python 3.11, 3.12 and 3.13 (Linux + Windows)
 - `test-crewai` — crewai adapter/converter tests in an isolated extra
+- `test-parlant` — parlant adapter/integration tests in an isolated extra
 - `packaging` — builds the wheel and verifies core and full imports
 
 ### PR Title — `pr-title.yml`
