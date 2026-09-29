@@ -15,6 +15,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.capabilities import prune_unsupported
 from band.runtime.platform_runtime import PlatformRuntime
+from band.runtime.status import AgentStatus
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -250,6 +251,16 @@ class Agent:
         once a fresh ``start()`` reconnects.
         """
         return self._runtime.last_disconnect_reason
+
+    def status(self) -> AgentStatus:
+        """An immutable snapshot for dashboards, status files, and heartbeats.
+
+        Reports whether the agent is connected, why the platform last
+        disconnected it, when it started, and each room with its execution
+        state (``starting``, ``idle``, ``processing``). Synchronous, cheap,
+        and lock-free; later changes never alter a returned snapshot.
+        """
+        return self._runtime.status()
 
     async def start(self) -> None:
         """Start agent."""
