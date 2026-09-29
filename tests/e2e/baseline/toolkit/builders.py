@@ -24,7 +24,7 @@ from typing import Any
 
 from band import create_room_workspace_resolver
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability
 from band.testing import feature_kwargs
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
@@ -496,21 +496,6 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     }
 
 
-def _clamp_emit_to_supported(
-    built_features: dict[str, Any], supported_emit: frozenset[Emit]
-) -> None:
-    """Clamp a shared fixture's requested ``emit`` down to what an ACP-bridge
-    adapter actually declares in ``SUPPORTED_EMIT``.
-
-    Every ACP-bridge adapter (Copilot/Cursor/OMP/Kiro) narrates tool calls
-    unconditionally and only opts into ``Emit.USAGE`` -- so a shared fixture
-    that also requests ``Emit.TOOL_CALLS`` (e.g. for the memory/contacts
-    matrix) would otherwise trip the construction-time unsupported-emit check.
-    """
-    if "emit" in built_features:
-        built_features["emit"] &= supported_emit
-
-
 @adapter(
     Adapter.COPILOT_ACP,
     requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
@@ -558,13 +543,10 @@ def _build_copilot_acp(
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
-    built_features = feature_kwargs(features)
-    _clamp_emit_to_supported(built_features, CopilotACPAdapter.SUPPORTED_EMIT)
-
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 
@@ -616,13 +598,10 @@ def _build_omp_acp(
     if s.backends.omp_command.strip():
         config_kwargs["command"] = tuple(s.backends.omp_command.split())
 
-    built_features = feature_kwargs(features)
-    _clamp_emit_to_supported(built_features, OmpACPAdapter.SUPPORTED_EMIT)
-
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 
@@ -664,12 +643,10 @@ def _build_cursor_acp(
     }
     if s.backends.cursor_command.strip():
         config_kwargs["command"] = tuple(s.backends.cursor_command.split())
-    built_features = feature_kwargs(features)
-    _clamp_emit_to_supported(built_features, CursorACPAdapter.SUPPORTED_EMIT)
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 
@@ -711,13 +688,10 @@ def _build_kiro_acp(
     if s.backends.kiro_command.strip():
         config_kwargs["command"] = tuple(s.backends.kiro_command.split())
 
-    built_features = feature_kwargs(features)
-    _clamp_emit_to_supported(built_features, KiroACPAdapter.SUPPORTED_EMIT)
-
     return KiroACPAdapter(
         config=KiroACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 

@@ -216,9 +216,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
-    # Tool/thought/plan narration is inherent to ACP and always posted by
-    # RoomTurnEmitter, so only USAGE (from `session/prompt`'s response) is opt-out.
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.USAGE})
+    # Narration kinds gate RoomTurnEmitter; USAGE comes from `session/prompt`'s response.
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
+    )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
@@ -462,6 +463,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 mentions=mentions,
                 session_id=session_id,
                 room_id=room_id,
+                emit=self.features.emit,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,

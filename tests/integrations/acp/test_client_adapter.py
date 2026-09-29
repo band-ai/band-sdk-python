@@ -18,7 +18,7 @@ from acp.schema import (
 )
 
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
-from band.core.types import Capability
+from band.core.types import Capability, Emit
 from band.integrations.acp import client_adapter, client_profiles
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -1792,3 +1792,21 @@ class TestResolveACPClientProfile:
     @pytest.mark.parametrize("name", ["unknown", ""])
     def test_unknown_or_empty_resolves_to_none(self, name: str) -> None:
         assert resolve_acp_client_profile(name) is None
+
+
+class TestACPClientAdapterEmitSupport:
+    """Which ``Emit`` kinds the ACP client adapter declares.
+
+    Every ACP adapter (OMP / Copilot / Cursor / Kiro) inherits this: room
+    narration is gated by the caller's ``emit=`` (see ``room_emitter``), and
+    ``Emit.USAGE`` reports the ``session/prompt`` response's usage.
+    """
+
+    def test_every_emit_kind_is_accepted(self) -> None:
+        every_kind = {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
+        adapter = ACPClientAdapter(command=["omp", "acp"], emit=every_kind)
+        assert adapter.features.emit == frozenset(every_kind)
+
+    def test_silence_is_accepted(self) -> None:
+        adapter = ACPClientAdapter(command=["omp", "acp"], emit=())
+        assert adapter.features.emit == frozenset()
