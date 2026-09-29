@@ -74,7 +74,8 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
-from band.runtime.formatters import messages_before, strip_leading_mentions
+from band.runtime.formatters import strip_leading_mentions
+from band.runtime.history import fetch_earlier_messages
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     image_block_placeholder,
@@ -1740,7 +1741,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 # the turn fails and the id stays for the next turn to retry.
                 if self.config.inject_history_on_resume_failure:
                     if released_id:
-                        await self._stash_room_transcript(tools, room_id, trigger_id)
+                        self._raw_history_by_room[
+                            room_id
+                        ] = await fetch_earlier_messages(
+                            tools, room_id=room_id, trigger_id=trigger_id
+                        )
                     self._needs_history_injection.add(room_id)
                 self._released_threads.pop(room_id, None)
         elif room_id not in self._needs_history_injection:
@@ -1787,30 +1792,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
 
         return thread_id
-
-    async def _stash_room_transcript(
-        self, tools: AgentToolsProtocol, room_id: str, trigger_id: str | None
-    ) -> None:
-        """Fetch the room transcript before ``trigger_id`` for history injection.
-
-        The runtime hands history over only on bootstrap; a released room's
-        failed resume happens later, so the fresh thread would otherwise
-        start without the conversation. A failed fetch propagates.
-        """
-        try:
-            context = await tools.fetch_room_context(room_id=room_id)
-        except Exception:
-            logger.warning(
-                "Room %s: could not fetch history for the fresh Codex thread",
-                room_id,
-                exc_info=True,
-            )
-            raise
-        self._raw_history_by_room[room_id] = [
-            message
-            for message in messages_before(context.get("data") or [], trigger_id)
-            if message.get("id") != trigger_id
-        ]
 
     def _build_dynamic_tools(self, tools: AgentToolsProtocol) -> list[dict[str, Any]]:
         dynamic_tools: list[dict[str, Any]] = []

@@ -76,7 +76,7 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
-from band.runtime.formatters import messages_before
+from band.runtime.history import fetch_earlier_messages
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
@@ -1237,16 +1237,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
     ) -> list[str] | None:
-        """The room transcript for a session created off-bootstrap.
-
-        The runtime hands history to the adapter only on session bootstrap;
-        when a session is minted later (the previous runtime was torn down
-        mid-run), the transcript is re-fetched so the fresh session does not
-        start amnesiac. Entries from the trigger onward are excluded: they are
-        this turn and pending turns of their own.
-        """
+        """The room transcript to replay into a session created off-bootstrap."""
         try:
-            context = await tools.fetch_room_context(room_id=msg.room_id)
+            earlier = await fetch_earlier_messages(
+                tools, room_id=msg.room_id, trigger_id=msg.id
+            )
         except Exception:
             logger.warning(
                 "Room %s: could not fetch history to re-seed the new ACP session",
@@ -1254,8 +1249,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 exc_info=True,
             )
             return None
-        raw = messages_before(context.get("data") or [], msg.id)
-        return build_replay_messages([m for m in raw if m.get("id") != msg.id])
+        return build_replay_messages(earlier)
 
     async def _ensure_connection(self, runtime: ACPRuntime) -> ACPConnectionProtocol:
         return await runtime.ensure_connection(
