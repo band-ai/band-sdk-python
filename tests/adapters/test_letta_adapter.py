@@ -43,7 +43,11 @@ from tests.adapters.lettakit import (
 )
 
 # The tools whose call settles the turn's reply, so no assistant text is relayed.
-REPLY_SETTLING_TOOLS = [BandTool.SEND_MESSAGE, BandTool.NO_REPLY]
+REPLY_SETTLING_TOOLS = [
+    BandTool.SEND_MESSAGE,
+    BandTool.SEND_ROOM_FILE,
+    BandTool.NO_REPLY,
+]
 
 # ──────────────────────────────────────────────────────────────────────
 # Initialization

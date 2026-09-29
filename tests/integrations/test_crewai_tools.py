@@ -319,6 +319,30 @@ class TestToolSetComposition:
         assert tracker.replied is True
         assert tracker.tool_executed is True
 
+    def test_no_reply_marks_reply_tracker_terminal_work(self, builder_mod):
+        """A successful band_no_reply flips tool_executed (DECLINE) so an empty
+        final answer is benign, without treating the turn as a room post."""
+        tools_obj = MagicMock()
+        tools_obj.no_reply = AsyncMock(return_value={"status": "no_reply"})
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        no_reply = next(t for t in tools if t.name == "band_no_reply")
+
+        result = json.loads(no_reply._run(reason="not for me"))
+
+        assert result["status"] == "success"
+        assert result["result_status"] == "no_reply"
+        tools_obj.no_reply.assert_awaited_once()
+        assert tracker.replied is False
+        assert tracker.tool_executed is True
+
     def test_send_event_is_not_terminal_work(self, builder_mod):
         """band_send_event emits an observational event (thought/error/task), not
         terminal work — it must NOT flip tool_executed. So a turn that only sends an
