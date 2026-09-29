@@ -501,6 +501,7 @@ class TestParlantToolFunctions:
         tools = MagicMock()
         tools.send_message = AsyncMock()
         tools.send_event = AsyncMock()
+        tools.no_reply = AsyncMock(return_value={"status": "no_reply"})
         tools.send_failure = AsyncMock()
         tools.add_participant = AsyncMock(return_value={"status": "added"})
         tools.remove_participant = AsyncMock()
@@ -612,6 +613,7 @@ class TestParlantToolFunctions:
         no_reply = parlant_tools["band_no_reply"]
         await no_reply(mock_context, reason="")
 
+        mock_tools.no_reply.assert_awaited_once_with(None)
         assert was_message_sent(mock_context.session_id) is True
 
     @pytest.mark.asyncio
