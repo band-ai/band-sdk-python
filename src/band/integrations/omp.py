@@ -101,7 +101,7 @@ def omp_provider_env(*, model: str, api_key: str) -> dict[str, str]:
 
 
 def validate_omp_command(command: Sequence[str]) -> None:
-    """Reject spawn commands that disable OMP's always-ask safety."""
+    """Reject unsafe approval flags in a command; the selected mode is configured separately."""
     tokens = list(command)
     index = 0
     while index < len(tokens):
@@ -127,12 +127,14 @@ def validate_omp_command(command: Sequence[str]) -> None:
         index += 1
 
 
-def finalize_omp_command(command: Sequence[str]) -> list[str]:
-    """Validate ``command`` and append a final ``always-ask`` override."""
+def finalize_omp_command(
+    command: Sequence[str], *, approval_mode: str = OMP_APPROVAL_MODE_ALWAYS_ASK
+) -> list[str]:
+    """Append the explicitly selected approval mode after validating the supplied command."""
     validate_omp_command(command)
-    finalized = list(command)
-    finalized.extend((OMP_APPROVAL_MODE_FLAG, OMP_APPROVAL_MODE_ALWAYS_ASK))
-    return finalized
+    if approval_mode not in (OMP_APPROVAL_MODE_ALWAYS_ASK, OMP_APPROVAL_MODE_YOLO):
+        raise ValueError(f"Unsupported OMP approval mode {approval_mode!r}")
+    return [*command, OMP_APPROVAL_MODE_FLAG, approval_mode]
 
 
 def omp_elicitation_call_id(session_id: str) -> str:

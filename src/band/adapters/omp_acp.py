@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from acp.schema import (
     AcceptElicitationResponse,
@@ -36,6 +36,7 @@ from band.integrations.acp.types import ACPToolCall
 from band.integrations.omp import (
     DEFAULT_OMP_ACP_COMMAND,
     OMP_APPROVAL_FORM_TOOL_NAME,
+    OMP_APPROVAL_MODE_ALWAYS_ASK,
     OMP_APPROVE_OPTION_ID,
     OMP_DENY_OPTION_ID,
     OMP_FORM_APPROVE,
@@ -95,6 +96,8 @@ class OmpACPAdapterConfig:
     ``workspace_for_room`` for new code.
     """
 
+    # Full access is opt-in; CLI approval flags in command remain forbidden.
+    approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = None
@@ -124,7 +127,9 @@ class OmpACPAdapter(ACPClientAdapter):
                 raise ValueError("set either cwd or workspace_for_room, not both")
             workspace_for_room = create_room_workspace_resolver(config.cwd)
         super().__init__(
-            command=finalize_omp_command(config.command),
+            command=finalize_omp_command(
+                config.command, approval_mode=config.approval_mode
+            ),
             env=config.env,
             workspace_for_room=workspace_for_room,
             mcp_servers=config.mcp_servers,
