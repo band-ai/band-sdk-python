@@ -33,3 +33,13 @@ result = PreflightResult.failed(
 )
 assert (result.ok, result.remedy) == (False, "Run `codex login`, then retry.")
 ```
+
+## Listing models
+
+Each coding adapter module has an async `list_models(...)` that asks the harness itself, with no model turn, and returns `HarnessModel` entries (`id`, `label`, `provider`, `efforts`, `default_effort`, `is_default`). `id` is the value the adapter's own `model` setting accepts. Temporary processes and clients are closed on every path.
+
+| Module | Call | Source | Tested with |
+|---|---|---|---|
+| `band.adapters.claude_sdk` | `list_models(adapter)` | `get_server_info()["models"]` | Claude Code 2.1.280 |
+
+A harness that rejects or lacks the call raises a clear error rather than returning an empty list. Hosts that kept listing code per harness can use these instead.
