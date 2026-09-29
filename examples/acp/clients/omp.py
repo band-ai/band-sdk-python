@@ -5,9 +5,10 @@
 """
 OMP ACP client — bridge Band rooms to ``omp acp``.
 
-Spawns OMP's native ACP stdio server with ``always-ask`` approval mode enforced
-by the SDK, injects Band tools over loopback MCP, and forwards room messages.
-Provider credentials are passed only to the OMP child process environment.
+By default the SDK enforces ``always-ask`` approval mode (hosts may opt in to
+``approval_mode="yolo"`` for unrestricted OMP execution), injects Band tools
+over loopback MCP, and forwards room messages. Provider credentials are passed
+only to the OMP child process environment.
 """
 
 from __future__ import annotations

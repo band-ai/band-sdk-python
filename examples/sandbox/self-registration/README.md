@@ -21,6 +21,7 @@ needs a nested-virtualization-capable host, so it isn't run in CI.
 - `.env.test` at the repo root with `BAND_API_KEY_USER` (plus
   `BAND_REST_URL`/`BAND_WS_URL` for a non-production deployment) — the same
   convention every other E2E/live tool in this repo uses
+- A Band Enterprise plan for the Human API calls used by this demo
 - This repo's dev venv (`uv sync --extra dev`) — `demo.py` reuses the E2E
   baseline toolkit, which isn't part of the published `band-sdk` package
 
@@ -50,7 +51,9 @@ sandbox/secret/agent behind under the random name the run printed
 uv run examples/sandbox/self-registration/demo.py --cleanup band-selfreg-demo-<the-name>
 ```
 
-This removes the sandbox, its scoped secret, and any agent registered under
-that run's display name. It cannot recover the room (nothing to search it by)
-— that's a harmless orphan with no plan-cap cost; delete it from the Band UI
-if it matters.
+This removes the sandbox and its scoped secret, then looks up and deletes any
+agent registered under that run's display name. Agent listing uses the
+Enterprise Human API. If the lookup fails, the script logs the error and still
+removes the sandbox and secret; delete any orphaned agent from the Band UI.
+It cannot recover the room (nothing to search it by) — that's a harmless
+orphan with no plan-cap cost; delete it from the Band UI if it matters.

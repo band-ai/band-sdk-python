@@ -53,16 +53,20 @@ RUN_DIR="$HERE/.demo/run"
 MF_SANDBOXES="$RUN_DIR/sandboxes"     # one sbx name per line
 MF_SECRETS="$RUN_DIR/secrets"          # "sandbox<TAB>host" per line (scoped set-custom)
 MF_POLICY="$RUN_DIR/policy"            # global network host per line (rules we added)
+MF_TMUX="$RUN_DIR/tmux"                # tmux session holding sbx attachments
+TMUX_SESSION="band-demo-$$"
+TMUX_STARTED=0
 
 log()  { printf '\n=== %s ===\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 require() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found on PATH" >&2; exit 1; }; }
 record() { printf '%s\n' "$2" >>"$1"; }   # append line "$2" to manifest "$1"
+sandbox_exists() { sbx ls -q 2>/dev/null | grep -qxF "$1"; }
 
 # set-custom refuses to overwrite an existing env for a host, so clear any leftover
 # scoped secret (from a crashed run or prior manual use — secrets survive `sbx rm`)
 # before setting, keeping `up` idempotent.
-clear_secret() { sbx secret rm "$1" --host "$2" -f >/dev/null 2>&1 || true; }
+clear_secret() { sbx secret rm --sandbox "$1" --host "$2" -f >/dev/null 2>&1 || true; }
 
 # Provider -> "<llm-host> <proxy-env-var> <placeholder>". One source, read by both
 # egress and secret setup so a provider's host can't drift between them.
@@ -93,6 +97,13 @@ check_keys() {
   : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required (PM agent)}"
   : "${OPENAI_API_KEY:?OPENAI_API_KEY is required (Developer + Architect agents)}"
   echo "keys ok — Band: $BAND_REST_URL"
+}
+
+check_attach_tool() {
+  if command -v tmux >/dev/null 2>&1; then return; fi
+  if [ -z "${DEMO_HEADLESS:-}" ] && command -v osascript >/dev/null 2>&1; then return; fi
+  echo "ERROR: tmux is required to keep sandbox agents attached in headless or non-macOS runs" >&2
+  exit 1
 }
 
 # --- Build ---------------------------------------------------------------------
@@ -138,10 +149,10 @@ grant_egress() {
 
 # Abort rather than clobber a band-demo-* that this run did not create.
 assert_names_free() {
-  local spec name existing; existing="$(sbx ls 2>/dev/null || true)"
+  local spec name
   for spec in "${ROLES[@]}"; do
     IFS='|' read -r _ _ name _ _ <<<"$spec"
-    if printf '%s' "$existing" | grep -qw "$name"; then
+    if sandbox_exists "$name"; then
       echo "ERROR: sandbox '$name' already exists — run './launch.sh down' first" >&2
       exit 1
     fi
@@ -184,7 +195,7 @@ launch_one() {
   local llm_host llm_env llm_ph
   read -r llm_host llm_env llm_ph <<<"$(provider_llm "$provider")"
   clear_secret "$name" "$llm_host"
-  sbx secret set-custom "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
+  sbx secret set-custom --sandbox "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
   record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$llm_host")"
 
   # Band key: host-held sentinel swap, scoped per sandbox. Cover every Band host
@@ -193,11 +204,12 @@ launch_one() {
   [ "$BAND_SECRET_HOST" != "$BAND_NET_HOST" ] && secret_hosts=("$BAND_SECRET_HOST")
   local host_args=() h
   for h in "${secret_hosts[@]}"; do host_args+=(--host "$h"); clear_secret "$name" "$h"; done
-  sbx secret set-custom "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
+  sbx secret set-custom --sandbox "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
   for h in "${secret_hosts[@]}"; do record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$h")"; done
 
-  sbx create --name "$name" --kit "$KIT_DIR" --template "$image" band-python-kit "$stage"
+  sbx create --name "$name" --template "$image" "$KIT_DIR" "$stage"
   record "$MF_SANDBOXES" "$name"
+  attach_one "$role" "$name"
 }
 
 launch_all() {
@@ -211,48 +223,37 @@ launch_all() {
 
 # --- Presentation --------------------------------------------------------------
 
-# The command that streams one sandbox's live agent log (one source of truth).
-pane_cmd() { echo "sbx exec $1 tail -n +1 -f /var/log/sbx-kit-startup.log"; }
+# sbx create does not start the kit entrypoint; each agent needs a live pty
+# attachment. Start it immediately after create, before creating the next VM.
+pane_cmd() { echo "sbx run --name $1"; }
 
-# tmux gives one window with a live pane per agent that shows *inside* the current
-# terminal (Warp, iTerm, Terminal — all fine), instead of osascript spawning
-# separate Apple Terminal.app windows that hide behind a different front-end.
-TMUX_SESSION="band-demo"
-
-spawn_terminals() {
-  local spec role name
+attach_one() {
+  local role="$1" name="$2"
+  local pane="echo '=== [$role] $name ==='; $(pane_cmd "$name")"
   if command -v tmux >/dev/null 2>&1; then
-    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-    local first=1
-    for spec in "${ROLES[@]}"; do
-      IFS='|' read -r role _ name _ _ <<<"$spec"
-      local pane="echo '=== [$role] $name ==='; $(pane_cmd "$name")"
-      if [ "$first" = 1 ]; then
-        tmux new-session -d -s "$TMUX_SESSION" -n agents "$pane"; first=0
-      else
-        tmux split-window -t "$TMUX_SESSION" "$pane"
-      fi
+    if [ "$TMUX_STARTED" -eq 0 ]; then
+      record "$MF_TMUX" "$TMUX_SESSION"
+      tmux new-session -d -s "$TMUX_SESSION" -n agents "$pane"
+      TMUX_STARTED=1
+    else
+      tmux split-window -t "$TMUX_SESSION" "$pane"
       tmux select-layout -t "$TMUX_SESSION" tiled >/dev/null
-    done
-    printf '\nAgent logs live in tmux — open a new terminal tab/pane and run:\n   tmux attach -t %s        (detach with Ctrl-b then d)\n\n' "$TMUX_SESSION"
+    fi
     return
   fi
-  # No tmux: fall back to osascript, but bring Terminal to the front so the windows
-  # aren't lost behind another terminal app. Still print the commands as a backstop.
-  if command -v osascript >/dev/null 2>&1; then
-    for spec in "${ROLES[@]}"; do
-      IFS='|' read -r role _ name _ _ <<<"$spec"
-      local cmd="printf '\\033]0;%s sandbox\\007' '$role'; echo '=== [$role] $name ==='; $(pane_cmd "$name")"
-      osascript -e "tell application \"Terminal\" to do script \"$cmd\"" \
-                -e 'tell application "Terminal" to activate' >/dev/null 2>&1 || true
-    done
+  local cmd="printf '\\033]0;%s sandbox\\007' '$role'; $pane"
+  # Passed as argv, never spliced into the script: AppleScript string literals
+  # reject the shell's \033 escape and any embedded double quote.
+  osascript -e 'on run argv' \
+            -e 'tell application "Terminal" to do script (item 1 of argv)' \
+            -e 'tell application "Terminal" to activate' \
+            -e 'end run' "$cmd" >/dev/null
+}
+
+announce_attachments() {
+  if [ "$TMUX_STARTED" -eq 1 ]; then
+    printf '\nAgent output is live in tmux — run:\n   tmux attach -t %s        (detach with Ctrl-b then d)\n\n' "$TMUX_SESSION"
   fi
-  echo "For a live pane per agent, 'brew install tmux' then re-run. Or open one"
-  echo "terminal per sandbox and run:"
-  for spec in "${ROLES[@]}"; do
-    IFS='|' read -r role _ name _ _ <<<"$spec"
-    echo "  [$role]  $(pane_cmd "$name")"
-  done
 }
 
 open_ui() {
@@ -272,14 +273,25 @@ run_conductor() {
 
 cleanup() {
   log "Cleanup"
-  local failed=0 name sandbox host
+  local failed=0 name sandbox host session
 
-  # Close the live-log panes (best effort) so teardown doesn't leave dead tails.
-  command -v tmux >/dev/null 2>&1 && tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  if [ -f "$MF_TMUX" ]; then
+    while IFS= read -r session; do
+      [ -n "$session" ] || continue
+      if ! command -v tmux >/dev/null 2>&1; then
+        warn "tmux is unavailable; close session $session manually"
+        failed=1
+      elif tmux has-session -t "$session" 2>/dev/null; then
+        tmux kill-session -t "$session" 2>/dev/null \
+          || { warn "could not close tmux session $session"; failed=1; }
+      fi
+    done <"$MF_TMUX"
+  fi
 
   if [ -f "$MF_SANDBOXES" ]; then
     while IFS= read -r name; do
       [ -n "$name" ] || continue
+      sandbox_exists "$name" || continue   # already gone (e.g. a retried down)
       sbx rm -f "$name" >/dev/null || { warn "could not remove sandbox $name"; failed=1; }
     done <"$MF_SANDBOXES"
   fi
@@ -289,16 +301,17 @@ cleanup() {
   if [ -f "$MF_SECRETS" ]; then
     while IFS=$'\t' read -r sandbox host; do
       [ -n "$sandbox" ] || continue
-      sbx secret rm "$sandbox" --host "$host" -f >/dev/null 2>&1 \
-        || { warn "leftover secret for $sandbox ($host); remove: sbx secret rm $sandbox --host $host -f"; failed=1; }
+      sbx secret rm --sandbox "$sandbox" --host "$host" -f >/dev/null 2>&1 \
+        || { warn "leftover secret for $sandbox ($host); remove: sbx secret rm --sandbox $sandbox --host $host -f"; failed=1; }
     done <"$MF_SECRETS"
   fi
 
   if [ -f "$MF_POLICY" ]; then
     while IFS= read -r host; do
       [ -n "$host" ] || continue
-      sbx policy rm network --resource "$host" >/dev/null 2>&1 \
-        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host"; failed=1; }
+      sbx policy check network "$host" >/dev/null 2>&1 || continue   # already gone
+      sbx policy rm network --resource "$host" -f >/dev/null 2>&1 \
+        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host -f"; failed=1; }
     done <"$MF_POLICY"
   fi
 
@@ -319,8 +332,13 @@ cleanup() {
 up() {
   check_tools
   check_keys
+  check_attach_tool
   assert_names_free
-  rm -rf "$RUN_DIR"; mkdir -p "$RUN_DIR/workspaces"
+  if [ -e "$RUN_DIR" ]; then
+    echo "ERROR: previous demo manifest exists — run './launch.sh down' first" >&2
+    exit 1
+  fi
+  mkdir -p "$RUN_DIR/workspaces"
   # Arm cleanup BEFORE the first mutation so any partial failure is reaped. INT/TERM
   # (Ctrl-C) convert to a normal exit so the single EXIT trap tears down cleanly —
   # a guaranteed manual stop that never depends on the chat or the conductor.
@@ -329,8 +347,8 @@ up() {
   provision
   launch_all
   rm -f "$HERE/.demo/room.url"
+  announce_attachments
   if [ -z "${DEMO_HEADLESS:-}" ]; then
-    spawn_terminals
     ( open_ui ) &          # background: opens the UI once the room exists
   fi
 
@@ -344,9 +362,11 @@ up() {
   run_conductor
 }
 
-case "${1:-up}" in
-  build) check_tools; build ;;
-  up)    up ;;
-  down)  cleanup ;;
-  *) echo "usage: $0 {build|up|down}" >&2; exit 2 ;;
-esac
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-up}" in
+    build) check_tools; build ;;
+    up)    up ;;
+    down)  cleanup ;;
+    *) echo "usage: $0 {build|up|down}" >&2; exit 2 ;;
+  esac
+fi

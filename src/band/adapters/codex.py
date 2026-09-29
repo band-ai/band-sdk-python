@@ -110,7 +110,6 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
-_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
 # Codex-local slash commands, which surface their outcome in the room themselves.
@@ -202,7 +201,7 @@ _HELP_TEXT = (
     f"`/{CodexCommand.STATUS}`, `/{CodexCommand.MODEL}`, `/{CodexCommand.MODELS}`, "
     f"`/{CodexCommand.MODEL} {CodexSubcommand.LIST}`, "
     f"`/{CodexCommand.MODELS} {CodexSubcommand.LIST}`, `/{CodexCommand.MODEL} <id>`, "
-    f"`/{CodexCommand.REASONING} [{'|'.join(_REASONING_EFFORTS)}]`, "
+    f"`/{CodexCommand.REASONING} [effort]`, "
     f"`/{CodexCommand.APPROVALS}`, `/{CodexCommand.APPROVE} <id>`, "
     f"`/{CodexCommand.APPROVE_SESSION} <id>`, `/{CodexCommand.DECLINE} <id>`, "
     f"`/{CodexCommand.THREADS}`, `/{CodexCommand.THREAD} {CodexSubcommand.INFO}`, "
@@ -276,7 +275,7 @@ class SetReasoningInput(BaseModel):
 
     effort: str | None = Field(
         default=None,
-        description="Reasoning effort level: none, minimal, low, medium, high, or xhigh. Omit to keep current.",
+        description="Reasoning effort level supported by the current model (for example low, medium, or high). Omit to keep current.",
     )
     summary: str | None = Field(
         default=None,
@@ -435,9 +434,9 @@ class CodexAdapterConfig(BaseSettings):
 
     transport: TransportKind = "stdio"
     model: str | None = None
-    reasoning_effort: (
-        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
-    ) = None
+    # Not validated here: the supported efforts vary by model and Codex CLI
+    # version (model/list reports them), and the backend rejects unknown ones.
+    reasoning_effort: str | None = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
     # Explicit-kwarg-only (see settings_customise_sources): rejected outright
     # in CodexAdapter.__init__ -- never populated from CODEX_CWD.
@@ -742,11 +741,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 raise RuntimeError("_handle_set_reasoning must run under _rpc_lock")
             parts: list[str] = []
             if inp.effort is not None:
-                if inp.effort not in _REASONING_EFFORTS:
-                    return (
-                        f"Invalid reasoning effort '{inp.effort}'. "
-                        f"Valid: {', '.join(_REASONING_EFFORTS)}."
-                    )
+                # Unlike /reasoning, this closure is sync and holds _rpc_lock, so it
+                # can't await a model/list round-trip to check the value live without
+                # risking deadlock -- same reason _handle_set_model never validates
+                # the model. An unsupported effort surfaces on the next turn instead.
                 adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
             if inp.summary is not None:
@@ -3195,21 +3193,25 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         if command == CodexCommand.REASONING:
             effort_arg = args.strip().lower()
+            model_id, efforts = await self._current_model_efforts()
+            supported = ", ".join(efforts)
             if not effort_arg:
+                hint = f"`{model_id}` supports: {supported}. " if efforts else ""
                 await deliver_reply(
                     tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
-                    f"Use `/{CodexCommand.REASONING} "
-                    f"<{'|'.join(_REASONING_EFFORTS)}>` to override.",
+                    f"{hint}Use `/reasoning <effort>` to override.",
                     mentions=mention,
                 )
                 return True
-            if effort_arg not in _REASONING_EFFORTS:
+            # A person's typo would otherwise fail every later turn; the
+            # setreasoning tool can't check this because it runs mid-turn.
+            if efforts and effort_arg not in efforts:
                 await deliver_reply(
                     tools,
-                    f"Invalid reasoning effort `{effort_arg}`. "
-                    f"Valid values: {', '.join(_REASONING_EFFORTS)}.",
+                    f"`{model_id}` doesn't support reasoning effort `{effort_arg}`. "
+                    f"Supported: {supported}.",
                     mentions=mention,
                 )
                 return True
@@ -3883,3 +3885,37 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 continue
             models.append(model_id)
         return models
+
+    @staticmethod
+    def _supported_efforts(result: dict[str, Any], model_id: str) -> list[str]:
+        data = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(data, list):
+            return []
+        entry = next(
+            (e for e in data if isinstance(e, dict) and e.get("id") == model_id),
+            None,
+        )
+        efforts = entry.get("supportedReasoningEfforts") if entry else None
+        if not isinstance(efforts, list):
+            return []
+        return [
+            effort["reasoningEffort"]
+            for effort in efforts
+            if isinstance(effort, dict)
+            and isinstance(effort.get("reasoningEffort"), str)
+        ]
+
+    async def _current_model_efforts(self) -> tuple[str, list[str]]:
+        """The room's model and the efforts Codex reports for it (empty if unknown)."""
+        if self._client is None:
+            raise RuntimeError("Codex client not initialized")
+        model_id = self._selected_model or await self._select_model()
+        try:
+            result = await self._client.request("model/list", {})
+        except Exception:
+            logger.warning(
+                "model/list failed; supported reasoning efforts are unknown",
+                exc_info=True,
+            )
+            return model_id, []
+        return model_id, self._supported_efforts(result, model_id)

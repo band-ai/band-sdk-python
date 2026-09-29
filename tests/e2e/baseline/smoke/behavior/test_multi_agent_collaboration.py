@@ -120,9 +120,10 @@ TASK_BOARD_COLLAB_PROMPT = (
     "with that id and status='in_progress'; then call the matching tool "
     f"({LOOKUP} or {WEATHER}) to get the value (you cannot guess it); then "
     "call band_update_task again with the same id, status='completed', and a "
-    "comment stating the exact value you found. Do not send a chat message "
-    "for this -- recording it on the task board via band_update_task is your "
-    "only action."
+    "comment whose text is exactly the raw string that tool returned — copy "
+    "it verbatim with no paraphrase, summary, or wrapper sentence. Do not send "
+    "a chat message for this -- recording it on the task board via "
+    "band_update_task is your only action."
 )
 
 
@@ -357,7 +358,6 @@ async def test_heterogeneous_agents_triage_concurrent_mentions(
     prompt=TASK_BOARD_COLLAB_PROMPT,
     features=AdapterFeatures(capabilities={Capability.TASKS}, emit={Emit.TOOL_CALLS}),
 )
-@flaky_model("multi-hop task-board cascade occasionally drops a turn; retry")
 @pytest.mark.timeout(extra=300)  # coordinator setup turn + 2 specialist turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_coordinator_delegates_via_task_board(
@@ -419,16 +419,23 @@ async def test_coordinator_delegates_via_task_board(
         (
             coordinator_tasks,
             lookup_calls,
+            lookup_results,
             weather_calls,
+            weather_results,
             lookup_tasks,
             weather_tasks,
         ) = await asyncio.gather(
             capture.task_calls(sender_id=coordinator.id),
             capture.tool_calls(sender_id=lookup_spec.id),
+            capture.tool_results(sender_id=lookup_spec.id),
             capture.tool_calls(sender_id=weather_spec.id),
+            capture.tool_results(sender_id=weather_spec.id),
             capture.task_calls(sender_id=lookup_spec.id),
             capture.task_calls(sender_id=weather_spec.id),
         )
+
+    expected_code = ACCESS_CODES[PANEL_KEY]
+    lookup_results.assert_succeeded(LOOKUP, output_contains=expected_code)
 
     # The coordinator set up the board and created one task per specialist.
     coordinator_tasks.assert_set_board_called()
@@ -438,9 +445,10 @@ async def test_coordinator_delegates_via_task_board(
     # result in the comment -- proof the round trip went through the task board.
     lookup_tasks.assert_update_called(status=TaskAssignmentStatus.IN_PROGRESS.value)
     lookup_tasks.assert_update_called(
-        status=TaskAssignmentStatus.COMPLETED.value, comment=ACCESS_CODES[PANEL_KEY]
+        status=TaskAssignmentStatus.COMPLETED.value, comment=expected_code
     )
     weather_tasks.assert_update_called(status=TaskAssignmentStatus.IN_PROGRESS.value)
+    weather_results.assert_succeeded(WEATHER, output_contains=FORECAST_FRAGMENT)
     weather_tasks.assert_update_called(
         status=TaskAssignmentStatus.COMPLETED.value, comment=FORECAST_FRAGMENT
     )
