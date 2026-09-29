@@ -259,6 +259,7 @@ class FakeAgentTools:
         self._hub_room_id = hub_room_id
         self.messages_sent: list[dict[str, Any]] = []
         self.events_sent: list[dict[str, Any]] = []
+        self.no_replies: list[str | None] = []
         # Set to simulate a send_event REST rejection (e.g. proving
         # send_failure swallows it while send_event itself still raises).
         self.send_event_error: Exception | None = None
@@ -419,6 +420,10 @@ class FakeAgentTools:
                 self._observers.remove(observer)
                 if not observed.done():
                     observed.set_result(None)
+
+    async def no_reply(self, reason: str | None = None) -> dict[str, str]:
+        self.no_replies.append(reason)
+        return {"status": "no_reply"}
 
     async def send_event(
         self,

@@ -45,6 +45,7 @@ through untouched.
 ## Chat Tools
 - `band_send_message`: Send message to chat room (requires mentions)
 - `band_send_event`: Send non-message event (thought, error, task)
+- `band_no_reply`: End the turn without posting (purely local; the optional `reason` is only logged). Every adapter treats it as the turn's reply, so no fallback text or missing-reply error follows
 - `band_add_participant`: Add agent/user to room
 - `band_remove_participant`: Remove participant from room
 - `band_get_participants`: List room participants

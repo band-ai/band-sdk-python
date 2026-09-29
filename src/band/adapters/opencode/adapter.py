@@ -62,8 +62,8 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
-    is_room_posting_tool,
     iter_tool_definitions,
+    settles_turn_reply,
 )
 
 logger = logging.getLogger(__name__)
@@ -921,7 +921,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # compare by value (the StrEnum member equals its string).
         if (
             state.status == OpencodeToolStatus.COMPLETED
-            and is_room_posting_tool(tool_name)
+            and settles_turn_reply(tool_name)
             and room_state.turn is not None
         ):
             room_state.turn.replied_via_room_tool = True

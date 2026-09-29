@@ -92,13 +92,14 @@ class TestToolSetComposition:
         assert names == {
             "band_send_message",
             "band_send_event",
+            "band_no_reply",
             "band_add_participant",
             "band_remove_participant",
             "band_get_participants",
             "band_lookup_peers",
             "band_create_chatroom",
         }
-        assert len(tools) == 7
+        assert len(tools) == 8
 
     def test_capability_contacts_adds_five(self, builder_mod):
 
@@ -116,7 +117,7 @@ class TestToolSetComposition:
             "band_respond_contact_request",
         }
         assert contact_names.issubset(names)
-        assert len(tools) == 12
+        assert len(tools) == 13
 
     def test_capability_memory_adds_five(self, builder_mod):
 
@@ -134,7 +135,7 @@ class TestToolSetComposition:
             "band_archive_memory",
         }
         assert memory_names.issubset(names)
-        assert len(tools) == 12
+        assert len(tools) == 13
 
     def test_capability_files_adds_three(self, builder_mod):
 
@@ -150,7 +151,7 @@ class TestToolSetComposition:
             "band_send_room_file",
         }
         assert file_names.issubset(names)
-        assert len(tools) == 10
+        assert len(tools) == 11
 
     def test_both_capabilities(self, builder_mod):
 
@@ -159,7 +160,7 @@ class TestToolSetComposition:
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
         )
-        assert len(tools) == 17  # 7 base + 5 contacts + 5 memory
+        assert len(tools) == 18  # 8 base + 5 contacts + 5 memory
 
     def test_all_three_capabilities(self, builder_mod):
 
@@ -170,7 +171,7 @@ class TestToolSetComposition:
                 {Capability.CONTACTS, Capability.MEMORY, Capability.FILES}
             ),
         )
-        assert len(tools) == 20  # 7 base + 5 contacts + 5 memory + 3 files
+        assert len(tools) == 21  # 8 base + 5 contacts + 5 memory + 3 files
 
     def test_custom_tools_appended(self, builder_mod):
 
@@ -189,7 +190,7 @@ class TestToolSetComposition:
             custom_tools=[(MyInput, my_handler)],
         )
         # Custom tool name comes from the InputModel class name (lowercased)
-        assert len(tools) == 8
+        assert len(tools) == 9
 
     def test_adapter_feature_filters_apply_to_platform_tools(self, builder_mod):
 
