@@ -34,7 +34,7 @@ from band.core.delivery import (
     reraise_delivery_cause,
 )
 from band.core.exceptions import BandConnectionError
-from band.core.harness import PreflightResult
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -1633,18 +1633,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         try:
-            result = await self._client.request("model/list", {})
+            models = await fetch_codex_models(self._client)
         except Exception:
             logger.warning(
                 "model/list failed; using default Codex model",
                 exc_info=True,
             )
             return _DEFAULT_MODEL
-
-        visible_model_ids = self._visible_model_ids(result)
-        if visible_model_ids:
-            return visible_model_ids[0]
-        return _DEFAULT_MODEL
+        return models[0].id if models else _DEFAULT_MODEL
 
     async def _ensure_thread(
         self,
@@ -3164,8 +3160,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if model_arg.lower() in _MODEL_LIST_WORDS:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
-                result = await self._client.request("model/list", {})
-                models = self._visible_model_ids(result)
+                models = [m.id for m in await fetch_codex_models(self._client)]
                 if models:
                     preview = ", ".join(models[:10])
                     if len(models) > 10:
@@ -3872,56 +3867,21 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         for entry in registry.cancel_all():
             entry.payload.future.set_result("decline")
 
-    @staticmethod
-    def _visible_model_ids(result: dict[str, Any]) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        models: list[str] = []
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            model_id = entry.get("id")
-            if not isinstance(model_id, str) or not model_id:
-                continue
-            if bool(entry.get("hidden", False)):
-                continue
-            models.append(model_id)
-        return models
-
-    @staticmethod
-    def _supported_efforts(result: dict[str, Any], model_id: str) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        entry = next(
-            (e for e in data if isinstance(e, dict) and e.get("id") == model_id),
-            None,
-        )
-        efforts = entry.get("supportedReasoningEfforts") if entry else None
-        if not isinstance(efforts, list):
-            return []
-        return [
-            effort["reasoningEffort"]
-            for effort in efforts
-            if isinstance(effort, dict)
-            and isinstance(effort.get("reasoningEffort"), str)
-        ]
-
     async def _current_model_efforts(self) -> tuple[str, list[str]]:
         """The room's model and the efforts Codex reports for it (empty if unknown)."""
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         model_id = self._selected_model or await self._select_model()
         try:
-            result = await self._client.request("model/list", {})
+            models = await fetch_codex_models(self._client)
         except Exception:
             logger.warning(
                 "model/list failed; supported reasoning efforts are unknown",
                 exc_info=True,
             )
             return model_id, []
-        return model_id, self._supported_efforts(result, model_id)
+        efforts = next((m.efforts for m in models if m.id == model_id), ())
+        return model_id, list(efforts)
 
     async def preflight(self) -> PreflightResult:
         """Launch a throwaway app-server, handshake, check its login, close it."""
@@ -3947,6 +3907,81 @@ async def _probe_client(config: CodexAdapterConfig) -> AsyncIterator[CodexStdioC
         yield client
     finally:
         await client.close()
+
+
+def codex_models(result: dict[str, Any]) -> list[HarnessModel]:
+    """Parse a ``model/list`` result into the visible models, in Codex's order.
+
+    Hidden models are left out, as Codex's own pickers do.
+    """
+    data = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(data, list):
+        return []
+    return [
+        _codex_model(entry)
+        for entry in data
+        if isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and entry["id"]
+        and not entry.get("hidden", False)
+    ]
+
+
+def _codex_model(entry: dict[str, Any]) -> HarnessModel:
+    efforts = tuple(
+        str(level["reasoningEffort"])
+        for level in entry.get("supportedReasoningEfforts") or ()
+        if isinstance(level, dict) and level.get("reasoningEffort")
+    )
+    return HarnessModel(
+        id=entry["id"],
+        label=str(entry.get("displayName") or entry["id"]),
+        provider="openai",
+        efforts=efforts,
+        default_effort=entry.get("defaultReasoningEffort"),
+        is_default=bool(entry.get("isDefault", False)),
+    )
+
+
+# A catalog far past any real one; reaching it means pagination is broken.
+_MAX_MODEL_LIST_PAGES = 50
+
+
+async def fetch_codex_models(client: CodexClientProtocol) -> list[HarnessModel]:
+    """Every visible model from ``model/list``, following ``nextCursor``.
+
+    The one listing path for probes, ``/model list``, and room startup.
+    Raises on a failed request, a cursor Codex already returned, or more
+    than ``_MAX_MODEL_LIST_PAGES`` pages, so a degraded app-server can
+    neither hang startup nor flood itself with requests. An empty list is a
+    successful, empty catalog.
+    """
+    models: list[HarnessModel] = []
+    params: dict[str, Any] = {}
+    seen_cursors: set[str] = set()
+    for _ in range(_MAX_MODEL_LIST_PAGES):
+        result = await client.request("model/list", params)
+        models.extend(codex_models(result))
+        cursor = result.get("nextCursor") if isinstance(result, dict) else None
+        if not cursor:
+            return models
+        if cursor in seen_cursors:
+            raise RuntimeError(f"Codex model/list repeated cursor {cursor!r}")
+        seen_cursors.add(cursor)
+        params = {"cursor": cursor}
+    raise RuntimeError(
+        f"Codex model/list returned more than {_MAX_MODEL_LIST_PAGES} pages"
+    )
+
+
+async def list_models(config: CodexAdapterConfig) -> list[HarnessModel]:
+    """The models this Codex install offers the logged-in account.
+
+    ``model/list`` on a throwaway app-server; no thread or model turn.
+    Tested with Codex 0.156.1.
+    """
+    async with _probe_client(config) as client:
+        return await fetch_codex_models(client)
 
 
 async def preflight(config: CodexAdapterConfig) -> PreflightResult:
