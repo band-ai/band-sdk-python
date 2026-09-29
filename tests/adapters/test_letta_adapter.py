@@ -221,6 +221,33 @@ class TestLettaAdapterOnMessagePerRoom:
         assert len(tools.messages_sent) == 0
 
     @pytest.mark.asyncio
+    async def test_no_reply_suppresses_auto_relay(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """Declining to answer is a settled turn: the assistant text that follows
+        it is not relayed into the room."""
+        adapter, mock_client = adapter_with_client
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message("band_no_reply"),
+            make_tool_return_message("band_no_reply"),
+            make_assistant_message("Nothing to add."),
+        )
+
+        tools = FakeAgentTools()
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.messages_sent == []
+
+    @pytest.mark.asyncio
     async def test_timeout_reports_error(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -1444,6 +1471,34 @@ class TestAutoRelayDisabled:
         )
 
         assert len(tools.messages_sent) == 0
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
+    async def test_disabled_relay_quiet_when_no_reply_used(self) -> None:
+        adapter = LettaAdapter(config=LettaAdapterConfig(auto_relay=False))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message("band_no_reply"),
+            make_assistant_message("Nothing to add."),
+        )
+
+        tools = FakeAgentTools()
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.messages_sent == []
         assert not reported_failures(tools)
 
 
