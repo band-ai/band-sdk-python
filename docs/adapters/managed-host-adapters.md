@@ -29,3 +29,20 @@ assert issubclass(AgentDisconnectedError, BandConnectionError)
 ```
 
 Compatibility: before this, a supersede made `run_forever()` return as if nothing happened. Scripts that ignored its return now see `AgentDisconnectedError` in that case; that visible failure is intended. Hosts that polled `runtime.link.last_disconnect_reason` beside `run_forever()` to classify the exit can catch the exception instead.
+
+## Status snapshot
+
+`agent.status()` returns an `AgentStatus`: `connected`, `last_disconnect_reason`, `started_at` (set when `start()` completes, `None` once stopped), and `rooms`, one `RoomStatus(room_id, state)` per joined room with the runtime's own `ExecutionState` (`starting`, `idle`, `processing`). It is synchronous, copies in-memory state without locks or I/O, and is frozen: a snapshot never changes after it is taken, so a heartbeat can call it freely. Hosts that read `AgentRuntime.executions` or showed only `link.is_connected` can use it instead.
+
+```python
+from band import AgentStatus, RoomStatus
+from band.runtime.execution import ExecutionState
+
+status = AgentStatus(
+    connected=True,
+    last_disconnect_reason=None,
+    started_at=None,
+    rooms=(RoomStatus(room_id="room-1", state=ExecutionState.IDLE),),
+)
+assert [room.state for room in status.rooms] == ["idle"]
+```

@@ -106,6 +106,7 @@ from .runtime import (
     render_system_prompt,
     run_with_graceful_shutdown,
 )
+from .runtime.status import AgentStatus, RoomStatus
 from .workspaces import create_room_workspace_resolver
 
 __all__ = [
@@ -128,6 +129,7 @@ __all__ = [
     # Runtime - Core
     "AgentDisconnectedError",
     "AgentRuntime",
+    "AgentStatus",
     "AgentTools",
     "BandConfigError",
     "BandConnectionError",
@@ -159,6 +161,7 @@ __all__ = [
     "PlatformMessage",
     "RoomExecutionStoppedError",
     "RoomPresence",
+    "RoomStatus",
     "SessionConfig",
     "build_logging_config",
     "build_participants_message",
