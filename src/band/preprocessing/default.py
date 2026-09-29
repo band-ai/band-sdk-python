@@ -7,7 +7,12 @@ from datetime import datetime
 from typing import Any
 
 from band.core.protocols import Preprocessor
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    HistoryProvider,
+    PlatformMessage,
+    metadata_to_dict,
+)
 from band.integrations.base import check_and_format_participants
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
@@ -76,7 +81,7 @@ class DefaultPreprocessor(Preprocessor):
             sender_type=msg_data.sender_type,
             sender_name=sender_name,
             message_type=msg_data.message_type,
-            metadata=msg_data.metadata,  # Pass through as-is (Any type)
+            metadata=metadata_to_dict(msg_data.metadata, exclude_none=True),
             created_at=datetime.fromisoformat(msg_data.inserted_at),
         )
 

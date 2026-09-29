@@ -147,6 +147,7 @@ def inject_acp_spawn(
                 canonicalize_tool_name=adapter._canonical_tool_name,
             ),
             spawn_process=spawn,
+            pass_builtin_transport_options=False,
         )
 
     adapter._build_runtime = _build_runtime  # type: ignore[method-assign]
@@ -309,12 +310,17 @@ async def acp_adapter(
         inject_band_tools=inject_band_tools,
         **adapter_kwargs,
     )
-    inject_acp_spawn(adapter, _pair_in_process(agent))
+    pair_in_process(adapter, agent)
     await adapter.on_started("Fake Agent", "in-process fake")
     try:
         yield AcpSession(adapter, agent)
     finally:
         await adapter.stop()
+
+
+def pair_in_process(adapter: ACPClientAdapter, agent: FakeACPAgent) -> None:
+    """Wire every room runtime ``adapter`` opens to ``agent`` in process."""
+    inject_acp_spawn(adapter, _pair_in_process(agent))
 
 
 def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:

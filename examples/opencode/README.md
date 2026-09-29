@@ -8,7 +8,7 @@ their own working context.
 
 1. Install OpenCode: `npm install -g opencode-ai`.
 2. Give the server a provider key. The defaults (`OPENCODE_PROVIDER_ID=opencode`
-   with `OPENCODE_MODEL_ID=mimo-v2.5-free`) are [OpenCode
+   with `OPENCODE_MODEL_ID=mimo-v2.6-flash-free`) are [OpenCode
    Zen](https://opencode.ai/docs/zen/)-hosted, so the server needs a Zen API key
    or every prompt fails. Either run `opencode auth login` and pick OpenCode Zen,
    or write the key into the server's config:
@@ -73,7 +73,7 @@ uv run examples/opencode/03_custom_tools_agent.py
 | `AGENT_KEY` | `darter` | Entry in `agent_config.yaml` to run as. |
 | `OPENCODE_BASE_URL` | `http://127.0.0.1:4096` | OpenCode server URL. |
 | `OPENCODE_PROVIDER_ID` | `opencode` | Provider sent with each prompt. |
-| `OPENCODE_MODEL_ID` | `mimo-v2.5-free` | Model sent with each prompt. |
+| `OPENCODE_MODEL_ID` | `mimo-v2.6-flash-free` | Model sent with each prompt. |
 | `OPENCODE_AGENT` | unset | Optional OpenCode agent profile. |
 | `OPENCODE_DIRECTORY` | unset | Repository directory for the workspace example. |
 | `OPENCODE_WORKSPACE` | unset | Optional OpenCode workspace selector. |

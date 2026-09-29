@@ -133,7 +133,7 @@ class Backends(BaseSettings):
     opencode_provider_id: str = "opencode"  # OPENCODE_PROVIDER_ID (the Zen provider)
     # A current OpenCode Zen *free* model (the catalogue shifts; confirm against the
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
-    opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
+    opencode_model_id: str = "mimo-v2.6-flash-free"  # OPENCODE_MODEL_ID
     # Whether the serve behind opencode_base_url gates its `bash` tool to `ask`.
     # Only the server's own permission rules decide when it raises a
     # `permission.asked`, so the manual-approval smoke has no way to provoke one
@@ -168,6 +168,11 @@ class Backends(BaseSettings):
     # command overrides preserve local installations outside PATH.
     cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
     cursor_api_key: str = ""  # CURSOR_API_KEY
+
+    # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
+    # provider-qualified OMP_MODEL; override the binary + args via OMP_COMMAND.
+    omp_command: str = ""  # OMP_COMMAND
+    omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
 
     # Copilot-hosted auth for the single non-BYOK smoke
     # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix

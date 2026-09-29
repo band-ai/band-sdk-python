@@ -20,7 +20,7 @@ from band.core.memory_types import MemoryListScope
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import Capability
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
-from tests.e2e.baseline.flaky import flaky_infra
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.scorecard import env_gated_skip
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -230,7 +230,10 @@ async def test_list_contacts_across_contacts_adapters(
 
 
 @per_adapter(supports={Capability.TASKS}, **TASK_AGENT)
-@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@flaky_model(
+    "six sequential tool calls across two turns is a lot to hold to exactly;"
+    " a capable model (esp. a smaller/free one) occasionally drops one"
+)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_task_lifecycle_across_task_adapters(
     agent: ProvisionedAgent,
@@ -314,9 +317,9 @@ async def test_file_round_trip_across_files_adapters(
 # separate tests.baseline.adapter.Adapter enum, a different registry). Differs
 # from that set by: -crewai_flow (its E2E builder is a hardcoded echo flow with
 # no Band tool loop, so there's no tool call for this to drive), +copilot_acp,
-# +cursor_acp, and +letta (the ACP bridges wrap/share the same MCP engine as opencode,
-# so the unit-level set excludes them as having no probe of their own, but
-# the E2E matrix gives each a real live cell). parlant isn't in Adapter at
+# +cursor_acp, +omp_acp, and +letta (the ACP bridges wrap/share the same MCP
+# engine as opencode, so the unit-level set excludes them as having no probe
+# of their own, but the E2E matrix gives each a real live cell). parlant isn't in Adapter at
 # all -- confirmed unsupportable, no matrix cell either way.
 # test_image_passthrough_adapters_matches_unit_level_set below asserts this
 # relationship instead of leaving it to this comment alone.
@@ -331,6 +334,7 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.COPILOT_SDK,
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,
+    Adapter.OMP_ACP,
     Adapter.CODEX,
     Adapter.PYDANTIC_AI,
     Adapter.CREWAI,

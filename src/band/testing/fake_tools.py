@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
+from types import TracebackType
 from typing import Any, Literal
 
 import band_sdk_core
@@ -192,6 +195,29 @@ def _canonicalize_context_item(message: dict[str, Any]) -> dict[str, Any]:
     return context_item_to_dict(ChatMessage.model_validate(message))
 
 
+class HeldMessage:
+    """A room message held in flight: entering the block waits until the
+    adapter starts sending it, and leaving lets it land -- or raise ``error``,
+    as a failed delivery would."""
+
+    def __init__(self, matching: str, error: Exception | None) -> None:
+        self.matching = matching
+        self.error = error
+        self.sending = asyncio.Event()
+        self.released = asyncio.Event()
+
+    async def __aenter__(self) -> None:
+        await self.sending.wait()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.released.set()
+
+
 class FakeAgentTools:
     """
     Fake implementation of AgentToolsProtocol for testing.
@@ -283,6 +309,8 @@ class FakeAgentTools:
         self.participants_removed: list[ParticipantRemoveResult] = []
         self.tool_calls: list[dict[str, Any]] = []
         self.context_calls: list[dict[str, Any]] = []
+        self._held_messages: list[HeldMessage] = []
+        self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
 
     @property
     def agent_id(self) -> str | None:
@@ -319,9 +347,30 @@ class FakeAgentTools:
         if self.send_message_error is not None:
             raise self.send_message_error
         self._require_mentions(mentions)
+        if (held := self._take_held_message(content)) is not None:
+            held.sending.set()
+            await held.released.wait()
+            if held.error is not None:
+                raise held.error
         if not has_visible_content(content):
             return None
         return self._record_message(content, mentions)
+
+    def hold_message(
+        self, matching: str, *, error: Exception | None = None
+    ) -> HeldMessage:
+        """Hold the next message containing ``matching`` in flight for an
+        ``async with`` block, so a test can interleave room traffic with a
+        slow -- or, given ``error``, failing -- send."""
+        held = HeldMessage(matching, error)
+        self._held_messages.append(held)
+        return held
+
+    def _take_held_message(self, content: str) -> HeldMessage | None:
+        held = next((h for h in self._held_messages if h.matching in content), None)
+        if held is not None:
+            self._held_messages.remove(held)
+        return held
 
     def _require_mentions(
         self, mentions: list[str] | list[dict[str, str]] | None
@@ -345,7 +394,31 @@ class FakeAgentTools:
         self.messages_sent.append(
             {"id": message.id, "content": content, "mentions": mentions or []}
         )
+        self._notify_observers()
         return message
+
+    async def until(self, condition: Callable[[], bool]) -> None:
+        """Wait until ``condition`` holds, re-checked whenever the room records
+        a message or event."""
+        if condition():
+            return
+        observed = asyncio.get_running_loop().create_future()
+        self._observers.append((condition, observed))
+        await observed
+
+    async def until_said(self, fragment: str, *, times: int = 1) -> None:
+        """Wait until ``times`` sent messages contain ``fragment``."""
+        await self.until(
+            lambda: sum(fragment in m["content"] for m in self.messages_sent) >= times
+        )
+
+    def _notify_observers(self) -> None:
+        for observer in list(self._observers):
+            condition, observed = observer
+            if observed.done() or condition():
+                self._observers.remove(observer)
+                if not observed.done():
+                    observed.set_result(None)
 
     async def send_event(
         self,
@@ -373,6 +446,7 @@ class FakeAgentTools:
                 "metadata": metadata or {},
             }
         )
+        self._notify_observers()
         return event
 
     async def send_failure(

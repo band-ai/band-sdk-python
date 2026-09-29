@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.client.streaming import DeliveryStatus
 from band.integrations.a2a import A2AAdapter
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
@@ -81,8 +82,11 @@ async def test_a2a_adapter_surfaces_a_remote_task_failure(
     reply_capture: CaptureFactory,
     baseline_settings: BaselineSettings,
 ) -> None:
-    """A terminal FAILED task from the remote A2A server surfaces as a room
-    error event, not a silently dropped turn."""
+    """A terminal FAILED task from the remote A2A server posts a visible room
+    error event, not a silently dropped turn -- even though the state is
+    retryable (see RETRYABLE_TASK_FAILURE_STATES), so the message delivery
+    itself ends up FAILED once Band's own retries are exhausted against this
+    deterministically-failing counterparty."""
     async with running(A2ACounterparty()) as counterparty:
         adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
         async with running_provisioned_agent(
@@ -98,9 +102,13 @@ async def test_a2a_adapter_surfaces_a_remote_task_failure(
                     mention_id=agent.id,
                     mention_name=agent.name,
                 )
-                await capture.wait_for_processed(
-                    mid, agent.id, deadline_s=baseline_settings.e2e_timeout
+                reached = await capture.wait_for_delivery(
+                    mid,
+                    agent.id,
+                    until={DeliveryStatus.FAILED},
+                    deadline_s=baseline_settings.e2e_timeout,
                 )
                 errors = await capture.errors(sender_id=agent.id)
 
+    assert reached is DeliveryStatus.FAILED
     errors.assert_present()

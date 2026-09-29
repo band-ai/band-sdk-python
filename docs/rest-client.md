@@ -75,7 +75,7 @@ await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 
 ## Workarounds for band-client-rest Bugs
 
-`band-client-rest` is pinned exactly (`pyproject.toml`, currently `==0.0.27`). Before
+`band-client-rest` is pinned exactly (`pyproject.toml`, currently `==0.0.40`). Before
 writing a workaround, check whether a newer release already fixes it upstream:
 
 - `pip index versions band-client-rest`, then diff the relevant model/method

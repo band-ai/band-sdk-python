@@ -36,6 +36,7 @@ from tests.e2e.baseline.fixtures.platform import (
     orphan_sweep,
     reap_leaked_agents,
     resource_manager,
+    second_user_ops,
     user_ops,
 )
 from tests.e2e.baseline.flaky import assert_flaky_is_classified
@@ -64,6 +65,7 @@ __all__ = [
     "reap_leaked_agents",
     "reply_capture",
     "resource_manager",
+    "second_user_ops",
     "user_ops",
 ]
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.0...band-mcp-v2.2.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 3.1.1 ([#631](https://github.com/band-ai/band-sdk-python/issues/631)) ([9fe766e](https://github.com/band-ai/band-sdk-python/commit/9fe766e43753e76c93229da445e1df46c9ae8b6d))
+* Normalize ChatMessageMetadata through metadata_to_dict ([#657](https://github.com/band-ai/band-sdk-python/issues/657)) ([b22e4e1](https://github.com/band-ai/band-sdk-python/commit/b22e4e1354983dde5205185fcfae09f5a8096195))
+
 ## [2.2.0](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.1.0...band-mcp-v2.2.0) (2026-09-11)
 
 

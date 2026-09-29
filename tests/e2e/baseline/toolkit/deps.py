@@ -27,14 +27,19 @@ in ``..requires``; this module just reports availability.
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
+from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.paths import REPO_ROOT
 
 # REPO_ROOT: used to reject a Codex working directory inside the SDK checkout,
@@ -152,6 +157,8 @@ class Dep(Enum):
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
+    OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
+    SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
 
 
 @dataclass(frozen=True)
@@ -179,10 +186,14 @@ def _google_available(settings: BaselineSettings) -> bool:
     )
 
 
+def _cli_binary(command: str, default_binary: str) -> str:
+    """The CLI binary an override ``command`` names, else ``default_binary``."""
+    return command.split()[0] if command.strip() else default_binary
+
+
 def _cli_on_path(command: str, default_binary: str) -> bool:
     """Whether the CLI binary (from an override ``command`` or ``default_binary``) is on PATH."""
-    binary = command.split()[0] if command.strip() else default_binary
-    return shutil.which(binary) is not None
+    return shutil.which(_cli_binary(command, default_binary)) is not None
 
 
 def _codex_cli_available(settings: BaselineSettings) -> bool:
@@ -190,15 +201,86 @@ def _codex_cli_available(settings: BaselineSettings) -> bool:
     return _cli_on_path(settings.backends.codex_command, "codex")
 
 
+def _bun_meets_min_version(min_version: str) -> bool:
+    binary = shutil.which("bun")
+    if binary is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [binary, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if completed.returncode != 0:
+        return False
+    match = re.search(r"(\d+\.\d+\.\d+)", completed.stdout)
+    if not match:
+        return False
+    found = tuple(int(part) for part in match.group(1).split("."))
+    required = tuple(int(part) for part in min_version.split("."))
+    return found >= required
+
+
+def _omp_cli_responds(settings: BaselineSettings) -> bool:
+    """The OMP ``acp`` subcommand responds (``OMP_COMMAND`` overrides the full base command)."""
+    raw = settings.backends.omp_command.strip()
+    base = raw.split() if raw else ["omp", "acp"]
+    if shutil.which(base[0]) is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [*base, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def _omp_available(settings: BaselineSettings) -> bool:
+    return (
+        _bun_meets_min_version(OMP_MIN_BUN)
+        and _omp_cli_responds(settings)
+        and bool(omp_provider_api_key(settings))
+    )
+
+
 def _copilot_cli_available(settings: BaselineSettings) -> bool:
     """The Copilot CLI (or the binary named by ``COPILOT_COMMAND``) is on PATH."""
     return _cli_on_path(settings.backends.copilot_command, "copilot")
 
 
+def _cursor_logged_in(binary: str) -> bool:
+    """Whether ``agent status`` reports a stored ``agent login`` session."""
+    try:
+        completed = subprocess.run(
+            [binary, "status", "--format", "json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        parsed = json.loads(completed.stdout)
+        return isinstance(parsed, dict) and parsed.get("isAuthenticated") is True
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return False
+
+
 def _cursor_cli_available(settings: BaselineSettings) -> bool:
-    """The Cursor CLI and its noninteractive E2E credential are available."""
-    return bool(settings.backends.cursor_api_key) and _cli_on_path(
-        settings.backends.cursor_command, "agent"
+    """The Cursor CLI is on PATH and authenticated: ``CURSOR_API_KEY`` (CI) or a
+    stored ``agent login`` (local). Cursor has no provider-key BYOK to fall back on."""
+    command = settings.backends.cursor_command
+    if not _cli_on_path(command, "agent"):
+        return False
+    return bool(settings.backends.cursor_api_key) or _cursor_logged_in(
+        _cli_binary(command, "agent")
     )
 
 
@@ -284,7 +366,12 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.CURSOR_CLI: DepSpec(
         _cursor_cli_available,
-        "Cursor agent CLI not found on PATH or CURSOR_API_KEY not set",
+        "Cursor agent CLI not found on PATH, or neither CURSOR_API_KEY nor `agent login` authenticates it",
+        lane=Lane.BACKENDS,
+    ),
+    Dep.OMP: DepSpec(
+        _omp_available,
+        f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(
@@ -301,6 +388,10 @@ _DEPS: dict[Dep, DepSpec] = {
     # The serve -- not the adapter's approval_mode -- decides when a permission is
     # asked, so the manual-relay smoke needs a serve whose rules gate `bash` to
     # `ask`. Unstated, that smoke stalls to its deadline instead of naming why.
+    Dep.SECOND_USER: DepSpec(
+        lambda s: bool(s.credentials.api_key_user_2),
+        "BAND_API_KEY_USER_2 not set",
+    ),
     Dep.OPENCODE_BASH_ASKS: DepSpec(
         lambda s: s.backends.opencode_bash_asks,
         "E2E_OPENCODE_BASH_ASKS=true must declare that OPENCODE_BASE_URL's serve "
