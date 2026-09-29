@@ -106,6 +106,23 @@ class ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
+# model/list as codex-cli reports it: per-model efforts, including ones newer
+# than the SDK ever knew about.
+_LIVE_EFFORTS_MODEL_LIST: dict[str, Any] = {
+    "data": [
+        {
+            "id": "gpt-6-sol",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "low"},
+                {"reasoningEffort": "max"},
+                {"reasoningEffort": "ultra"},
+            ],
+        },
+        {"id": "other", "supportedReasoningEfforts": [{"reasoningEffort": "minimal"}]},
+    ]
+}
+
+
 class FakeCodexClient:
     """Minimal fake transport client for adapter tests."""
 
@@ -117,6 +134,7 @@ class FakeCodexClient:
         turn_start_error: Exception | None = None,
         turn_start_error_once: bool = True,
         model_list_result: dict[str, Any] | None = None,
+        model_list_error: Exception | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -129,6 +147,7 @@ class FakeCodexClient:
         self._turn_start_error = turn_start_error
         self._turn_start_error_once = turn_start_error_once
         self._model_list_result = model_list_result
+        self._model_list_error = model_list_error
         self._thread_counter = 0
         self._turn_counter = 0
 
@@ -158,6 +177,8 @@ class FakeCodexClient:
         self.requests.append((method, dict(payload)))
 
         if method == "model/list":
+            if self._model_list_error is not None:
+                raise self._model_list_error
             if self._model_list_result is not None:
                 return self._model_list_result
             return {"data": [{"id": "gpt-5.5", "hidden": False}]}
@@ -1032,12 +1053,14 @@ class TestCodexAdapter:
         assert "Available models" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
-    async def test_reasoning_effort_passed_in_turn_overrides(self) -> None:
+    @pytest.mark.parametrize("effort", ["high", "max"])
+    async def test_reasoning_effort_passed_in_turn_overrides(self, effort: str) -> None:
+        """Efforts newer than any list the SDK could hard-code reach Codex as-is."""
         fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = make_codex_adapter(
             fake_client,
             config=CodexAdapterConfig(
-                reasoning_effort="high", reasoning_summary="concise"
+                reasoning_effort=effort, reasoning_summary="concise"
             ),
         )
         tools = ToolSchemaFakeTools()
@@ -1054,7 +1077,7 @@ class TestCodexAdapter:
         turn_params = next(
             params for method, params in fake_client.requests if method == "turn/start"
         )
-        assert turn_params["effort"] == "high"
+        assert turn_params["effort"] == effort
         assert turn_params["summary"] == "concise"
 
     @pytest.mark.asyncio
@@ -1079,13 +1102,14 @@ class TestCodexAdapter:
         assert "summary" not in turn_params
 
     @pytest.mark.asyncio
-    async def test_reasoning_command_sets_effort(self) -> None:
+    @pytest.mark.parametrize("effort", ["high", "ultra"])
+    async def test_reasoning_command_sets_effort(self, effort: str) -> None:
         fake_client = FakeCodexClient()
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
-            make_platform_message(content="/reasoning high"),
+            make_platform_message(content=f"/reasoning {effort}"),
             tools,
             CodexSessionState(),
             participants_msg=None,
@@ -1094,18 +1118,22 @@ class TestCodexAdapter:
             room_id="room-1",
         )
         room = adapter._room_clients["room-1"]
-        assert room.reasoning_effort == "high"
+        assert room.reasoning_effort == effort
         assert len(tools.messages_sent) == 1
-        assert "Reasoning effort set to `high`" in tools.messages_sent[0]["content"]
+        assert (
+            f"Reasoning effort set to `{effort}`" in tools.messages_sent[0]["content"]
+        )
 
     @pytest.mark.asyncio
-    async def test_reasoning_command_rejects_invalid_effort(self) -> None:
-        fake_client = FakeCodexClient()
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+    async def test_reasoning_command_lists_efforts_the_model_supports(self) -> None:
+        fake_client = FakeCodexClient(model_list_result=_LIVE_EFFORTS_MODEL_LIST)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-6-sol")
+        )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
-            make_platform_message(content="/reasoning ultra"),
+            make_platform_message(content="/reasoning"),
             tools,
             CodexSessionState(),
             participants_msg=None,
@@ -1113,9 +1141,74 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.reasoning_effort is None
         assert len(tools.messages_sent) == 1
-        assert "Invalid reasoning effort" in tools.messages_sent[0]["content"]
+        assert (
+            "`gpt-6-sol` supports: low, max, ultra."
+            in tools.messages_sent[0]["content"]
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("effort", "stored", "reply"),
+        [
+            ("ultra", "ultra", "Reasoning effort set to `ultra`"),
+            (
+                "hgih",
+                None,
+                (
+                    "`gpt-6-sol` doesn't support reasoning effort `hgih`. "
+                    "Supported: low, max, ultra."
+                ),
+            ),
+        ],
+    )
+    async def test_reasoning_command_checks_the_models_live_efforts(
+        self, effort: str, stored: str | None, reply: str
+    ) -> None:
+        """A typo is refused up front instead of failing every later turn."""
+        fake_client = FakeCodexClient(model_list_result=_LIVE_EFFORTS_MODEL_LIST)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-6-sol")
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content=f"/reasoning {effort}"),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert adapter._room_clients["room-1"].reasoning_effort == stored
+        assert len(tools.messages_sent) == 1
+        assert reply in tools.messages_sent[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_command_still_answers_when_model_list_fails(self) -> None:
+        fake_client = FakeCodexClient(
+            model_list_error=RuntimeError("model/list unavailable")
+        )
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="high"),
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content="/reasoning"),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert len(tools.messages_sent) == 1
+        reply = tools.messages_sent[0]["content"]
+        assert "Current reasoning effort: `high`" in reply
+        assert "supports:" not in reply
 
     @pytest.mark.asyncio
     async def test_self_config_tools_registered_when_enabled(self) -> None:
@@ -1213,7 +1306,8 @@ class TestCodexAdapter:
         assert "o3" in result_text
 
     @pytest.mark.asyncio
-    async def test_setreasoning_tool_changes_effort(self) -> None:
+    @pytest.mark.parametrize("effort", ["xhigh", "ultra"])
+    async def test_setreasoning_tool_changes_effort(self, effort: str) -> None:
         events = [
             _event_request(
                 99,
@@ -1221,7 +1315,7 @@ class TestCodexAdapter:
                 {
                     "tool": "setreasoning",
                     "callId": "call-2",
-                    "arguments": {"effort": "xhigh", "summary": "detailed"},
+                    "arguments": {"effort": effort, "summary": "detailed"},
                 },
             ),
             _turn_completed(),
@@ -1242,49 +1336,8 @@ class TestCodexAdapter:
             room_id="room-1",
         )
         room = adapter._room_clients["room-1"]
-        assert room.reasoning_effort == "xhigh"
+        assert room.reasoning_effort == effort
         assert room.reasoning_summary == "detailed"
-
-    @pytest.mark.asyncio
-    async def test_setreasoning_tool_rejects_invalid_effort(self) -> None:
-        events = [
-            _event_request(
-                99,
-                "item/tool/call",
-                {
-                    "tool": "setreasoning",
-                    "callId": "call-3",
-                    "arguments": {"effort": "ultra"},
-                },
-            ),
-            _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
-        )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(content="set reasoning ultra"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        # Effort should not have changed
-        assert adapter.config.reasoning_effort is None
-        # Tool response should contain error message
-        tool_responses = [
-            (rid, result)
-            for rid, result in fake_client.responses
-            if isinstance(result, dict) and "contentItems" in result
-        ]
-        assert len(tool_responses) >= 1
-        result_text = tool_responses[0][1]["contentItems"][0]["text"]
-        assert "Invalid reasoning effort" in result_text
 
     @pytest.mark.asyncio
     async def test_sandbox_alias_is_normalized_for_thread_and_turn(self) -> None:
@@ -3304,22 +3357,9 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
         """Auto-selection uses the adapter default if model discovery fails."""
-
-        class ModelListFailsClient(FakeCodexClient):
-            async def request(
-                self,
-                method: str,
-                params: dict[str, Any] | None = None,
-                *,
-                retry_on_overload: bool = True,
-            ) -> dict[str, Any]:
-                if method == "model/list":
-                    raise RuntimeError("model/list unavailable")
-                return await super().request(
-                    method, params, retry_on_overload=retry_on_overload
-                )
-
-        fake_client = ModelListFailsClient()
+        fake_client = FakeCodexClient(
+            model_list_error=RuntimeError("model/list unavailable")
+        )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
         adapter._room_client("room-1")
