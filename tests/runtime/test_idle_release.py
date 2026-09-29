@@ -17,12 +17,7 @@ import pytest_asyncio
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
-from tests.adapters.test_codex_adapter import (
-    FakeCodexClient,
-    _bootstrap_turn,
-    _turn_completed,
-    make_codex_adapter,
-)
+from tests.adapters.codexturns import FakeCodexClient, run_codex_turn, turn_completed
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 ROOM = "room-1"
@@ -97,6 +92,16 @@ class Room:
     async def wait_released(self) -> None:
         await asyncio.wait_for(self.released.wait(), timeout=5.0)
         self.released.clear()
+
+    async def stop_while_parked(
+        self, *, entered: asyncio.Event, gate: asyncio.Event
+    ) -> None:
+        """Stop the room once its release is parked on ``gate``, then let it finish."""
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+        stopping = asyncio.create_task(self.ctx.stop())
+        await wait_for_condition(lambda: not self.ctx.is_running, timeout=5.0)
+        gate.set()
+        await asyncio.wait_for(stopping, timeout=5.0)
 
 
 # Function loop: the rooms run on the test's loop, and a teardown on the
@@ -351,20 +356,15 @@ class GatedCloseCodexClient(FakeCodexClient):
 
 
 async def test_stopping_mid_codex_release_still_closes_the_app_server(room) -> None:
-    client = GatedCloseCodexClient(events=[_turn_completed()])
-    adapter = make_codex_adapter(client)
-    await _bootstrap_turn(adapter)
+    client = GatedCloseCodexClient(events=[turn_completed()])
+    codex = await run_codex_turn(client=client)
     r = await _started(
-        room(room_id="room-1", adapter_release=adapter.release_room_resources)
+        room(room_id="room-1", adapter_release=codex.adapter.release_room_resources)
     )
     await r.send("msg-1")
-    await asyncio.wait_for(client.close_entered.wait(), timeout=5.0)
 
-    stopping = asyncio.create_task(r.ctx.stop())
-    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
-    client.close_gate.set()
-    await asyncio.wait_for(stopping, timeout=5.0)
+    await r.stop_while_parked(entered=client.close_entered, gate=client.close_gate)
 
-    room_client = adapter._room_clients["room-1"]
+    room_client = codex.adapter._room_clients["room-1"]
     assert (client.closed, room_client.client) == (True, None)
-    assert adapter._released_threads == {"room-1": "thr-1"}
+    assert codex.adapter._released_threads == {"room-1": "thr-1"}
