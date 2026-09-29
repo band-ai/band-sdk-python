@@ -21,6 +21,7 @@ The release runs on the room's own processing loop, between turns: a turn in pro
 
 | Adapter | Releases | Resumes with | Verified |
 |---|---|---|---|
+| Codex | the room's app-server process | `thread/resume` with the room's thread id (Codex keeps threads on disk); if the resume fails, a fresh thread starts with the refetched room transcript injected, and the turn fails instead when the transcript can't be fetched | live, Codex 0.156.1: a fact from the first turn was recalled after release |
 | Copilot CLI, Cursor, and generic ACP | nothing (no-op) | — | no cross-process recall proven here; an agent without `session/load` would also come back blank |
 | Copilot SDK, OpenCode, Letta, and the in-process framework adapters | nothing (no-op) | — | no per-room harness process that could be released and resumed |
 

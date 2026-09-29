@@ -17,6 +17,12 @@ import pytest_asyncio
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
+from tests.adapters.test_codex_adapter import (
+    FakeCodexClient,
+    _bootstrap_turn,
+    _turn_completed,
+    make_codex_adapter,
+)
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 ROOM = "room-1"
@@ -328,3 +334,37 @@ async def test_a_release_failing_after_its_stop_was_cancelled_is_still_seen(
     ]
     assert [str(rec.exc_info[1]) for rec in failures] == ["teardown failed"]
     assert cleanups == [ROOM]
+
+
+class GatedCloseCodexClient(FakeCodexClient):
+    """A Codex client whose close() waits for the test to let it finish."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.close_entered = asyncio.Event()
+        self.close_gate = asyncio.Event()
+
+    async def close(self) -> None:
+        self.close_entered.set()
+        await self.close_gate.wait()
+        await super().close()
+
+
+async def test_stopping_mid_codex_release_still_closes_the_app_server(room) -> None:
+    client = GatedCloseCodexClient(events=[_turn_completed()])
+    adapter = make_codex_adapter(client)
+    await _bootstrap_turn(adapter)
+    r = await _started(
+        room(room_id="room-1", adapter_release=adapter.release_room_resources)
+    )
+    await r.send("msg-1")
+    await asyncio.wait_for(client.close_entered.wait(), timeout=5.0)
+
+    stopping = asyncio.create_task(r.ctx.stop())
+    await wait_for_condition(lambda: not r.ctx.is_running, timeout=5.0)
+    client.close_gate.set()
+    await asyncio.wait_for(stopping, timeout=5.0)
+
+    room_client = adapter._room_clients["room-1"]
+    assert (client.closed, room_client.client) == (True, None)
+    assert adapter._released_threads == {"room-1": "thr-1"}
