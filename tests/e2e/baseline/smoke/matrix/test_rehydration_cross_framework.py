@@ -40,7 +40,6 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, Lane, per_adapter
-from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -51,6 +50,23 @@ from tests.e2e.baseline.toolkit.provisioning import (
     agent_rest_client,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+
+def _recall_token_request(marker: str) -> str:
+    """Ask A to echo the peer's token without truncating its prefix.
+
+    Derives only the opaque token's prefix from ``marker`` so the recall turn
+    cannot leak the full value — the model must read it from rehydrated context.
+    """
+    token_prefix = f"{marker.partition('-')[0]}-"
+    return (
+        "Earlier the other participant sent you a short note with a token. "
+        "Call band_send_message to reply with exactly that complete token string "
+        "and nothing else. Treat the entire string as one value: copy every "
+        f"character including the full '{token_prefix}' prefix exactly as it "
+        "appeared in their message. The letters before the hyphen are part of the "
+        "token, not a label — not a suffix, hash, or shortened form."
+    )
 
 
 def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
@@ -73,7 +89,6 @@ def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
     peer=Adapter.LANGGRAPH,
     prompt=REPLY_PROMPT,
 )
-@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # peer boot + relay turn + fresh A boot + recall turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rehydrates_foreign_peer_message(
@@ -91,8 +106,7 @@ async def test_rehydrates_foreign_peer_message(
     then stops; A cold-boots and must recall the marker from bootstrap rehydration. The
     per-cell ``@requires`` gate (folded with the peer's) rides on the parametrization.
     """
-    token_prefix = "note"
-    marker = unique_marker(token_prefix)
+    marker = unique_marker("note")
     recaller = await cell.provision(label=f"recaller-{cell.adapter_id}")
     speaker = await peer.provision(label=f"speaker-{peer.adapter_id}")
     room_id = await resource_manager.provision_room(
@@ -133,12 +147,7 @@ async def test_rehydrates_foreign_peer_message(
         mark = capture.messages.snapshot()  # scope strictly to the recall turn
         mid = await user_ops.send_message(
             room_id,
-            "Earlier the other participant sent you a short note with a token. "
-            "Copy the complete hyphenated token exactly, including the part before "
-            "the hyphen. Treat the entire string as one value: the letters before "
-            "the hyphen are part of the token, not a label. The token starts "
-            f"with {token_prefix}-. Call band_send_message to reply with the "
-            "complete token exactly, from its first letter through its last.",
+            _recall_token_request(marker),
             mention_id=recaller.id,
             mention_name=recaller.name,
         )

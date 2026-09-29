@@ -19,8 +19,9 @@ from acp.schema import (
 )
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
+from band.core.exceptions import BandConfigError
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
-from band.core.types import Capability
+from band.core.types import Capability, Emit
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -2265,3 +2266,30 @@ class TestTurnRepliedInRoom:
             )
         ]
         assert not turn_replied_in_room(chunks)
+
+
+class TestACPClientAdapterEmitSupport:
+    """Which ``Emit`` kinds the ACP client adapter declares.
+
+    All three ACP adapters (OMP / Copilot / Cursor) inherit this: room
+    narration is gated by the caller's ``emit=`` (see ``room_emitter``),
+    and kinds ACP cannot observe (``Emit.USAGE``) are rejected up front
+    instead of silently ignored.
+    """
+
+    def test_supported_emit_kinds_are_accepted(self) -> None:
+        adapter = ACPClientAdapter(
+            command=["omp", "acp"],
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
+        )
+        assert adapter.features.emit == frozenset(
+            {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        )
+
+    def test_silence_is_accepted(self) -> None:
+        adapter = ACPClientAdapter(command=["omp", "acp"], emit=())
+        assert adapter.features.emit == frozenset()
+
+    def test_an_unsupported_emit_kind_is_rejected(self) -> None:
+        with pytest.raises(BandConfigError):
+            ACPClientAdapter(command=["omp", "acp"], emit=Emit.USAGE)

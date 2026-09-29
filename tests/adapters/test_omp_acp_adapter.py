@@ -52,6 +52,27 @@ class TestOmpACPAdapterConstruction:
             OMP_APPROVAL_MODE_ALWAYS_ASK,
         ]
 
+    def test_explicit_yolo_is_effective_approval_mode_for_room_spawn(self) -> None:
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(approval_mode="yolo"))
+
+        assert adapter._spawn_command("/rooms/room-a")[-2:] == [
+            OMP_APPROVAL_MODE_FLAG,
+            "yolo",
+        ]
+
+    def test_yolo_does_not_allow_unsafe_command_flags(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe OMP"):
+            OmpACPAdapter(
+                OmpACPAdapterConfig(
+                    command=("omp", "acp", OMP_YOLO_FLAG),
+                    approval_mode="yolo",
+                )
+            )
+
+    def test_unknown_approval_mode_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="approval mode"):
+            OmpACPAdapter(OmpACPAdapterConfig(approval_mode="write"))  # type: ignore[arg-type]
+
     def test_rejects_unsafe_command_in_config(self) -> None:
         with pytest.raises(ValueError):
             OmpACPAdapter(OmpACPAdapterConfig(command=("omp", "acp", OMP_YOLO_FLAG)))
