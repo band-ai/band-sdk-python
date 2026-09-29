@@ -55,6 +55,10 @@ participant and can interject at any time by @mentioning an agent.
 - `tmux` (`brew install tmux` on macOS) — the launcher holds each agent's
   `sbx run` attachment in a live pane. Interactive macOS runs can use Terminal.app
   instead; headless runs require `tmux`.
+- A Band Enterprise plan for the Human API calls used to register agents and
+  drive the meeting. If the optional agent-list lookup is unavailable, the
+  launcher logs the error and continues registration without sweeping stale
+  demo agents. A name collision can still make registration fail.
 - Host keys: `BAND_API_KEY_USER` (a Band **user** key — the conductor and
   presenter identity), `ANTHROPIC_API_KEY` (PM), `OPENAI_API_KEY` (Dev + Architect).
 

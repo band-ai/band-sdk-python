@@ -31,6 +31,9 @@ process is killed outright (SIGKILL, host crash) that finally block never
 runs, leaving an orphaned sandbox/secret/agent behind under the random name
 printed in the "Run name" log line -- recover with:
     uv run examples/sandbox/self-registration/demo.py --cleanup <that-name>
+
+The recovery agent lookup uses the Enterprise Human API. If it fails, the
+sandbox and secret are still removed; remove any orphaned agent in the Band UI.
 """
 
 from __future__ import annotations
@@ -48,6 +51,8 @@ from pathlib import Path
 # checkout and needs the repo root on sys.path -- fixed by this file's own
 # location (examples/sandbox/self-registration/), not a generic walk-up.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from pydantic import ValidationError
 
 from band import LogSettings, LogStream
 from band.docker.provision import read_agent_id
@@ -180,7 +185,7 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> None:
 async def cleanup_by_name(name: str) -> None:
     """Standalone recovery for a run whose finally block never got to run
     (e.g. the process was killed). Removes the sandbox and its scoped secret,
-    and any agent registered under this run's display name.
+    and any agent registered under this run's display name if lookup succeeds.
 
     Cannot recover the room: unlike the agent, it carries no name this demo
     set, so there is nothing to search by. It's a harmless orphan (no plan
@@ -192,18 +197,26 @@ async def cleanup_by_name(name: str) -> None:
         user_client=client, settings=settings, run_id=name
     )
 
-    agents = await client.human_api_agents.list_my_agents(page=1, page_size=100)
-    matches = [a for a in (agents.data or []) if name in (a.name or "")]
-    for agent in matches:
-        logger.info("Deleting orphaned agent %s (%s)", agent.id, agent.name)
-        await resource_manager.reap_agent(agent.id)
-    if not matches:
-        logger.info("No registered agent found matching %r", name)
+    try:
+        agents = await client.human_api_agents.list_my_agents(page=1, page_size=100)
+    except ValidationError:
+        logger.exception(
+            "Invalid agent listing; continuing sandbox cleanup. Remove any orphaned agent manually"
+        )
+    except Exception:
+        logger.exception(
+            "Could not list agents; continuing sandbox cleanup. Remove any orphaned agent manually"
+        )
+    else:
+        matches = [a for a in (agents.data or []) if name in (a.name or "")]
+        for agent in matches:
+            logger.info("Deleting orphaned agent %s (%s)", agent.id, agent.name)
+            await resource_manager.reap_agent(agent.id)
+        if not matches:
+            logger.info("No registered agent found matching %r", name)
 
     _teardown_sbx(name)
-    logger.info(
-        "Cleanup complete for %s: sandbox, secret, and any matching agent removed", name
-    )
+    logger.info("Sandbox and secret cleanup complete for %s", name)
 
 
 async def run(kit: str) -> None:
