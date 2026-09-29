@@ -12,11 +12,13 @@ are never unlinked (removing a lock file races against a concurrent
 acquire on the recreated path); a leftover file without a holder carries
 no lock and is harmless.
 
-Scope, honestly stated: the lock file lives in the process's temp dir,
-so the guard only catches duplicates that share it. Processes with
-divergent ``TMPDIR`` (e.g. systemd ``PrivateTmp``), separate containers,
-or different hosts do not contend — deployments that shard one agent id
-across such boundaries need platform-level dedup, not this guard. It
+Scope, honestly stated: the lock file lives in the process's temp dir
+unless ``AgentConfig.single_instance_lock_dir`` names another directory,
+so the guard only catches duplicates that share that directory. Processes
+with divergent ``TMPDIR`` (e.g. systemd ``PrivateTmp``) and no shared lock
+dir, separate containers, or different hosts do not contend — deployments
+that shard one agent id across such boundaries need platform-level dedup,
+not this guard. It
 also guards only the long-lived Agent runtime; one-shot invocations
 (``band.runtime.oneshot``) rely on server-arbitrated message claiming
 instead of host locks.
@@ -45,11 +47,12 @@ logger = logging.getLogger(__name__)
 
 _LOCK_SPAN_BYTES = 1
 
-# Live holders in this process, by agent id. Exists for lifecycles that
+# Live holders in this process, by resolved lock path: two lock dirs are two
+# independent locks even within one process. Exists for lifecycles that
 # skip normal unwinding (e.g. a test runner's signal kill bypasses
 # ``Agent.stop``): the leaked fd would otherwise pin the lock for the
 # process lifetime. ``release_all_held`` lets such harnesses reap.
-_held: dict[str, SingleInstanceGuard] = {}
+_held: dict[Path, SingleInstanceGuard] = {}
 
 
 def _contention_error(agent_id: str, lock_path: Path) -> BandConfigError:
@@ -104,7 +107,7 @@ def release_all_held() -> list[str]:
     without unwinding it (pytest-timeout's signal method). Normal code
     paths release via ``PlatformRuntime.stop`` and never need this.
     """
-    released = list(_held)
+    released = [guard._agent_id for guard in _held.values()]
     for guard in list(_held.values()):
         guard.release()
     return released
@@ -120,7 +123,7 @@ class SingleInstanceGuard:
 
     def __init__(self, agent_id: str, *, lock_dir: str | Path | None = None) -> None:
         directory = Path(lock_dir) if lock_dir else Path(tempfile.gettempdir())
-        self.lock_path = directory / f"band-agent-{agent_id}.lock"
+        self.lock_path = (directory / f"band-agent-{agent_id}.lock").resolve()
         self._agent_id = agent_id
         self._fd: int | None = None
 
@@ -128,7 +131,7 @@ class SingleInstanceGuard:
         """Take the agent's run lock, failing fast when it is held."""
         if self._fd is not None:
             return
-        if self._agent_id in _held:
+        if self.lock_path in _held:
             raise _contention_error(self._agent_id, self.lock_path)
 
         try:
@@ -159,14 +162,14 @@ class SingleInstanceGuard:
                 "AgentConfig(single_instance=False) to bypass the guard."
             ) from exc
         self._fd = fd
-        _held[self._agent_id] = self
+        _held[self.lock_path] = self
 
     def release(self) -> None:
         """Drop the lock; the file stays behind (holderless, harmless)."""
         if self._fd is None:
             return
-        if _held.get(self._agent_id) is self:
-            del _held[self._agent_id]
+        if _held.get(self.lock_path) is self:
+            del _held[self.lock_path]
         fd, self._fd = self._fd, None
         try:
             _unlock_fd(fd)

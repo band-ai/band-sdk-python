@@ -190,13 +190,15 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
         yield
         return
 
-    lock_dir: list = []
+    default_lock_dir: list = []
     created: list[SingleInstanceGuard] = []
 
-    def isolated_guard(agent_id):
-        if not lock_dir:
-            lock_dir.append(tmp_path_factory.mktemp("agent-locks"))
-        guard = SingleInstanceGuard(agent_id, lock_dir=lock_dir[0])
+    def isolated_guard(agent_id, *, lock_dir=None):
+        if lock_dir is None:
+            if not default_lock_dir:
+                default_lock_dir.append(tmp_path_factory.mktemp("agent-locks"))
+            lock_dir = default_lock_dir[0]
+        guard = SingleInstanceGuard(agent_id, lock_dir=lock_dir)
         created.append(guard)
         return guard
 

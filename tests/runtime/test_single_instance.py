@@ -38,6 +38,31 @@ class TestSingleInstanceGuard:
         finally:
             one.release()
 
+    def test_same_agent_in_different_lock_dirs_does_not_contend(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        one = SingleInstanceGuard("agent-1", lock_dir=tmp_path / "a")
+        two = SingleInstanceGuard("agent-1", lock_dir=tmp_path / "b")
+        one.acquire()
+        try:
+            two.acquire()
+            two.release()
+        finally:
+            one.release()
+
+    def test_one_lock_dir_spelled_two_ways_still_contends(self, tmp_path):
+        (tmp_path / "locks").mkdir()
+        first = SingleInstanceGuard("agent-1", lock_dir=tmp_path / "locks")
+        second = SingleInstanceGuard(
+            "agent-1", lock_dir=tmp_path / "locks" / ".." / "locks"
+        )
+        first.acquire()
+        try:
+            with pytest.raises(BandConfigError, match="already running"):
+                second.acquire()
+        finally:
+            first.release()
+
     def test_acquire_and_release_are_idempotent(self, tmp_path):
         guard = SingleInstanceGuard("agent-1", lock_dir=tmp_path)
         guard.acquire()

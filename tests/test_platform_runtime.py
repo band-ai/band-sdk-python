@@ -1,5 +1,11 @@
 """Tests for PlatformRuntime."""
 
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -554,6 +560,50 @@ class TestSingleInstance:
         await second.start(on_execute=AsyncMock())
         await first.stop()
         await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_shared_lock_dir_catches_a_process_with_another_tmpdir(
+        self, platform_mocks, tmp_path
+    ):
+        """A service-managed copy with its own TMPDIR still meets the lock."""
+        lock_dir = tmp_path / "locks"
+        lock_dir.mkdir()
+        runtime = PlatformRuntime(
+            agent_id="agent-123",
+            api_key="k",
+            config=AgentConfig(single_instance_lock_dir=str(lock_dir)),
+        )
+        await runtime.start(on_execute=AsyncMock())
+        try:
+            assert _acquire_in_child("agent-123", lock_dir, tmp_path) == "refused"
+        finally:
+            await runtime.stop()
+        assert _acquire_in_child("agent-123", lock_dir, tmp_path) == "acquired"
+
+
+def _acquire_in_child(agent_id: str, lock_dir: Path, tmp_path: Path) -> str:
+    """Try the agent's lock from a separate process with its own TMPDIR."""
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir(exist_ok=True)
+    script = (
+        "import sys\n"
+        "from band.core.exceptions import BandConfigError\n"
+        "from band.runtime.single_instance import SingleInstanceGuard\n"
+        "try:\n"
+        "    SingleInstanceGuard(sys.argv[1], lock_dir=sys.argv[2]).acquire()\n"
+        "except BandConfigError:\n"
+        "    sys.stdout.write('refused')\n"
+        "else:\n"
+        "    sys.stdout.write('acquired')\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, agent_id, str(lock_dir)],
+        env={**os.environ, "TMPDIR": str(child_tmp)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
 
 
 class TestNoopCleanup:
