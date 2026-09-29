@@ -1,19 +1,22 @@
-"""Model listing for the OMP ACP adapter."""
+"""Model listing for the OMP and Copilot ACP adapters."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import stat
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from acp.schema import SessionConfigOptionSelect, SessionConfigSelectOption
 
+from band.adapters import copilot_acp
+from band.adapters.copilot_acp import CopilotACPAdapterConfig
 from band.adapters.omp_acp import OmpACPAdapterConfig
 from band.adapters.omp_acp import list_models as omp_list_models
 from band.core.harness import HarnessModel
@@ -160,3 +163,102 @@ async def test_omp_fallback_closes_its_session_process_on_cancellation(
     with pytest.raises(asyncio.CancelledError):
         await omp_list_models(omp_without_listing)
     assert spawn.exited
+
+
+class FakeCopilotClient:
+    """Stands in for ``copilot.CopilotClient``; records its lifecycle."""
+
+    def __init__(self, *, connection: Any, env: dict[str, str] | None) -> None:
+        self.connection = connection
+        self.env = env
+        self.stopped = False
+        FakeCopilotClient.last = self
+
+    last: ClassVar[FakeCopilotClient]
+    start_error: ClassVar[BaseException | None] = None
+
+    async def start(self) -> None:
+        if FakeCopilotClient.start_error is not None:
+            raise FakeCopilotClient.start_error
+
+    async def list_models(self) -> list[Any]:
+        return [
+            SimpleNamespace(
+                id="claude-sonnet-5",
+                name="Claude Sonnet 5",
+                supported_reasoning_efforts=["low", "high"],
+                default_reasoning_effort="low",
+            )
+        ]
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+@pytest.fixture
+def fake_copilot(monkeypatch: pytest.MonkeyPatch) -> type[FakeCopilotClient]:
+    FakeCopilotClient.start_error = None
+    monkeypatch.setattr("copilot.CopilotClient", FakeCopilotClient)
+    return FakeCopilotClient
+
+
+async def test_copilot_listing_uses_the_configured_cli_and_auth(fake_copilot) -> None:
+    config = CopilotACPAdapterConfig(
+        command=("/opt/copilot", "--acp"), github_token="ghp_x"
+    )
+
+    models = await copilot_acp.list_models(config)
+
+    assert models == [
+        HarnessModel(
+            id="claude-sonnet-5",
+            label="Claude Sonnet 5",
+            efforts=("low", "high"),
+            default_effort="low",
+        )
+    ]
+    client = fake_copilot.last
+    assert (client.connection.path, client.env["GITHUB_TOKEN"], client.stopped) == (
+        "/opt/copilot",
+        "ghp_x",
+        True,
+    )
+
+
+async def test_copilot_listing_keeps_the_host_environment_under_overrides(
+    fake_copilot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BAND_TEST_SENTINEL", "inherited")
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient")
+    config = CopilotACPAdapterConfig(
+        github_token="configured", env={"HTTPS_PROXY": "http://proxy:3128"}
+    )
+
+    await copilot_acp.list_models(config)
+
+    env = fake_copilot.last.env
+    assert (
+        env["BAND_TEST_SENTINEL"],
+        env["PATH"],
+        env["GITHUB_TOKEN"],
+        env["HTTPS_PROXY"],
+    ) == ("inherited", os.environ["PATH"], "configured", "http://proxy:3128")
+
+
+async def test_copilot_listing_without_overrides_inherits_as_is(fake_copilot) -> None:
+    await copilot_acp.list_models()
+    assert fake_copilot.last.env is None
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("spawn failed"), asyncio.CancelledError()]
+)
+async def test_copilot_listing_stops_a_client_that_failed_to_start(
+    fake_copilot, error: BaseException
+) -> None:
+    fake_copilot.start_error = error
+
+    with pytest.raises(type(error)):
+        await copilot_acp.list_models()
+
+    assert fake_copilot.last.stopped
