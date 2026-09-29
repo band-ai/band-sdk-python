@@ -29,6 +29,7 @@ from pathlib import Path
 import yaml
 from band_rest import AsyncRestClient
 from band_rest.types import AgentRegisterRequest
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
@@ -87,12 +88,19 @@ def make_client(settings: ProvisionSettings) -> AsyncRestClient:
 
 
 async def sweep_stale(client: AsyncRestClient, spec: AgentSpec) -> None:
-    """Delete a prior demo agent of this name whose teardown didn't fire.
+    """Delete a prior demo agent of this name when listing is available.
 
     Scoped to demo-owned agents via DEMO_MARKER so a user's real agent that
     happens to share the display name is never touched.
     """
-    existing = await client.human_api_agents.list_my_agents(name=spec.name)
+    try:
+        existing = await client.human_api_agents.list_my_agents(name=spec.name)
+    except ValidationError:
+        logger.exception("Invalid agent listing; continuing without stale-agent sweep")
+        return
+    except Exception:
+        logger.exception("Could not list agents; continuing without stale-agent sweep")
+        return
     for old in existing.data:
         if old.name == spec.name and (old.description or "").startswith(DEMO_MARKER):
             await client.human_api_agents.delete_my_agent(old.id, force=True)
