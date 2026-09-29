@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from band.client.streaming.client import WebSocketDisconnectReason
 
 
 class BandError(Exception):
@@ -42,6 +46,23 @@ class BandConfigError(BandError):
 
 class BandConnectionError(BandError):
     """Transport failures (WebSocket, REST). Actionable by ops."""
+
+
+class AgentDisconnectedError(BandConnectionError):
+    """The platform ended this agent's connection for good.
+
+    Raised by ``run_forever()`` on a terminal platform disconnect, such as a
+    newer connection with the same agent key superseding this one.
+    Restarting would only fight the other connection over one identity, so
+    a host should stop rather than retry. ``reason`` carries the platform's
+    typed disconnect reason.
+    """
+
+    def __init__(self, reason: WebSocketDisconnectReason) -> None:
+        super().__init__(
+            f"Platform disconnected the agent: {reason.reason} ({reason.message})"
+        )
+        self.reason = reason
 
 
 class BandToolError(BandError):

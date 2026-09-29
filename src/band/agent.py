@@ -24,6 +24,7 @@ from band.runtime.types import (
 )
 
 if TYPE_CHECKING:
+    from band.client.streaming import WebSocketDisconnectReason
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
 
@@ -239,6 +240,17 @@ class Agent:
         """Check if agent is subscribed to contact events."""
         return self._runtime.is_contacts_subscribed
 
+    @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """Why the platform last ended this agent's connection, if it did.
+
+        Set by a terminal platform disconnect (e.g. a supersede) and kept
+        after ``stop()`` so a host can classify the exit. ``None`` before the
+        first connection, when the host stopped the agent itself, and again
+        once a fresh ``start()`` reconnects.
+        """
+        return self._runtime.last_disconnect_reason
+
     async def start(self) -> None:
         """Start agent."""
         if self._started:
@@ -355,6 +367,10 @@ class Agent:
             shutdown_timeout: Seconds to wait for graceful shutdown on interrupt.
                               Set to None for immediate cancellation.
                               Default is 30 seconds.
+
+        Raises:
+            AgentDisconnectedError: The platform ended the connection for good
+                (e.g. superseded by another connection with the same key).
         """
         self._shutdown_timeout = shutdown_timeout
         await self.start()
@@ -417,6 +433,12 @@ class Agent:
                 await agent.stop()
 
         Returns normally once ``stop()`` is called.
+
+        Raises:
+            AgentDisconnectedError: The platform ended the connection for good
+                (e.g. superseded by another connection with the same key); its
+                ``reason`` is the typed disconnect reason. Do not restart in
+                that case, or two copies fight over one identity.
         """
         await self._runtime.run_forever()
 

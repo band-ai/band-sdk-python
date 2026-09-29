@@ -48,6 +48,7 @@ from importlib.metadata import version as _get_version
 from .agent import Agent
 from .config.logs import LogSettings, configure_logging_from_env
 from .core.exceptions import (
+    AgentDisconnectedError,
     BandConfigError,
     BandConnectionError,
     BandError,
@@ -122,6 +123,7 @@ __all__ = [
     "Agent",
     "AgentConfig",
     # Runtime - Core
+    "AgentDisconnectedError",
     "AgentRuntime",
     "AgentTools",
     "BandConfigError",
