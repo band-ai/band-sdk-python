@@ -49,6 +49,7 @@ from .agent import Agent
 from .config.logs import LogSettings, configure_logging_from_env
 from .core.exceptions import (
     AgentAlreadyRunningError,
+    AgentDisconnectedError,
     BandConfigError,
     BandConnectionError,
     BandError,
@@ -125,6 +126,7 @@ __all__ = [
     "AgentAlreadyRunningError",
     "AgentConfig",
     # Runtime - Core
+    "AgentDisconnectedError",
     "AgentRuntime",
     "AgentTools",
     "BandConfigError",
