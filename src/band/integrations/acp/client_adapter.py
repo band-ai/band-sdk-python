@@ -81,7 +81,7 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
-    ROOM_POSTING_TOOL_NAMES,
+    LEGACY_SEND_MESSAGE_TOOL,
     ToolDefinition,
     canonicalize_mcp_tool_name,
     iter_tool_definitions,
@@ -340,8 +340,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # external band-mcp's MCP-prefixed legacy call
             # (band-create_agent_chat_message) would canonicalize to nothing and
             # narrate under the raw prefixed name — the one case reply-suppression
-            # (settles_turn_reply, a superset of this source set) already tolerates.
-            | ROOM_POSTING_TOOL_NAMES
+            # (settles_turn_reply) already tolerates.
+            | {LEGACY_SEND_MESSAGE_TOOL}
         )
         return definitions, names
 

@@ -74,7 +74,13 @@ from band.runtime.tools.inputs import (
     UpdateMyProfileInput,
     UpdateTaskInput,
 )
-from band.runtime.tools.types import BandTool, Surface, ToolCategory, ToolDefinition
+from band.runtime.tools.types import (
+    BandTool,
+    Surface,
+    ToolCategory,
+    ToolDefinition,
+    TurnEffect,
+)
 
 # The name the Band MCP server registers under. MCP clients key tool
 # namespacing off it (e.g. Copilot's hyphen-joined ``band-<tool>``), and
@@ -83,26 +89,10 @@ from band.runtime.tools.types import BandTool, Surface, ToolCategory, ToolDefini
 # match here, and ``integrations.mcp.backends`` names the server from it.
 BAND_MCP_SERVER_NAME = "band"
 
-# Tool names whose successful call posts a visible message into the room.
-# Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
-# fallback text relay once the turn has already replied in the room, so the
-# reply is delivered exactly once. band-mcp 1.3.2+ advertises the SDK-native
-# ``band_send_message`` (its registrar reuses these SDK tool definitions), which
-# the ``<server>-`` prefix match already covers; ``create_agent_chat_message``
-# is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
-# still match. ``band_send_room_file`` also posts a message (the file's
-# attaching message), same reply-once reasoning.
-ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {BandTool.SEND_MESSAGE, "create_agent_chat_message", BandTool.SEND_ROOM_FILE}
-)
-
-# Tool names whose successful call settles the turn's reply: either a visible
-# post (ROOM_POSTING_TOOL_NAMES) or band_no_reply's deliberate silence. Bridge
-# adapters suppress their fallback text relay once one of these succeeded
-# in the current turn.
-REPLY_SETTLING_TOOL_NAMES: frozenset[str] = ROOM_POSTING_TOOL_NAMES | {
-    BandTool.NO_REPLY
-}
+# The message-send spelling of band-mcp <=1.3.1 (1.3.2+ advertises the SDK-native
+# ``band_send_message``). Kept so older out-of-process servers still classify as
+# a reply.
+LEGACY_SEND_MESSAGE_TOOL = "create_agent_chat_message"
 
 
 def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None:
@@ -126,29 +116,6 @@ def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None
     return suffix if suffix != tool_name and suffix in names else None
 
 
-def is_room_posting_tool(tool_name: str) -> bool:
-    """True when a successful call of ``tool_name`` posts a message to the room.
-
-    Tolerates the Band MCP server's own ``band-`` spelling (see
-    ``_resolve_mcp_tool_name``) but nothing else -- an unrelated MCP server's
-    tool that merely ends in ``-band_send_message`` (e.g.
-    ``other-band_send_message``) never resolves as room-posting, since its
-    prefix isn't ``band``. A miss only costs a duplicate reply (the
-    pre-suppression behavior), never a wrong post.
-    """
-    return _resolve_mcp_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES) is not None
-
-
-def settles_turn_reply(tool_name: str) -> bool:
-    """True when a successful call of ``tool_name`` is the turn's reply.
-
-    Same MCP-spelling tolerance as :func:`is_room_posting_tool`; adds
-    ``band_no_reply``, whose deliberate silence also means no fallback text
-    may be relayed for the turn.
-    """
-    return _resolve_mcp_tool_name(tool_name, REPLY_SETTLING_TOOL_NAMES) is not None
-
-
 def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> str:
     """The canonical band tool name behind the Band MCP server's ``band-`` spelling.
 
@@ -162,8 +129,8 @@ def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> st
 
 # The agent tools whose MCP handler takes a room id (``chat_id`` on the wire)
 # as a kwarg -- i.e. the handler is room-scoped. Related to but distinct from
-# ROOM_POSTING_TOOL_NAMES above (that set is about which *successful calls*
-# post a room message; this one is about which tools need a room id at all).
+# ``turn_effect`` below (that classifies what a *successful call* does to the
+# turn's reply; this one is about which tools need a room id at all).
 #
 # AgentTools is constructor-scoped (``AgentTools(room_id=..., rest=...)``), so
 # these method signatures don't carry a room field themselves -- an MCP front
@@ -707,6 +674,43 @@ def band_tool_errored(tool_name: str | None, content: Any) -> bool:
     )
 
 
+# The one classification of what a successful Band tool call does to the turn's
+# reply obligation. Every other Band tool is a durable action (ACT).
+# ``band_send_room_file`` also posts a message (the file's attaching message).
+_TURN_EFFECTS: dict[str, TurnEffect] = {
+    **dict.fromkeys(ALL_TOOL_NAMES, TurnEffect.ACT),
+    **dict.fromkeys(READ_ONLY_TOOL_NAMES | EVENT_TOOL_NAMES, TurnEffect.OBSERVE),
+    **dict.fromkeys(
+        {BandTool.SEND_MESSAGE, BandTool.SEND_ROOM_FILE, LEGACY_SEND_MESSAGE_TOOL},
+        TurnEffect.REPLY,
+    ),
+    BandTool.NO_REPLY: TurnEffect.DECLINE,
+}
+
+
+def turn_effect(tool_name: str) -> TurnEffect | None:
+    """The turn effect of a Band tool, or ``None`` for a tool that isn't one.
+
+    Tolerates the Band MCP server's own ``band-`` spelling (see
+    ``_resolve_mcp_tool_name``) but nothing else -- an unrelated MCP server's
+    tool that merely ends in ``-band_send_message`` never resolves.
+    """
+    resolved = _resolve_mcp_tool_name(tool_name, _TURN_EFFECTS)
+    return None if resolved is None else _TURN_EFFECTS[resolved]
+
+
+def settles_turn_reply(tool_name: str) -> bool:
+    """Whether a successful call of ``tool_name`` is the turn's reply.
+
+    True for a room post or ``band_no_reply``'s deliberate silence. Bridge
+    adapters relay the model's plain text only when no call settled the reply, so
+    the reply is delivered exactly once. A miss only costs a duplicate reply (the
+    pre-suppression behavior), never a wrong post.
+    """
+    effect = turn_effect(tool_name)
+    return effect is not None and effect.settles_reply
+
+
 def is_terminal_success(
     tool_name: str | None,
     *,
@@ -715,30 +719,27 @@ def is_terminal_success(
 ) -> bool:
     """Whether a finished tool call counts as terminal productive work.
 
-    Single source of truth shared by the crewai / pydantic-ai adapters to decide
-    whether an empty final model response is *benign* (the agent already did its
-    work this turn) or a genuine no-response failure. Terminal work is:
+    Single source of truth shared by the tool-only adapters (claude_sdk, crewai,
+    pydantic-ai, strands) to decide whether an empty final model response is
+    *benign* (the agent already did its work this turn) or a genuine no-response
+    failure. Terminal work is:
 
-    * a Band tool that is not read-only, not observational, and did not fail, or
+    * a Band tool whose ``turn_effect`` did work and that did not fail, or
     * a custom tool the caller declares terminal (``custom_terminal=True``).
 
-    Read-only Band tools (``READ_ONLY_TOOL_NAMES``) never count — fetching state is
-    not a terminal action. Observational tools (``EVENT_TOOL_NAMES`` — band_send_event
-    posts a thought/error/task event) don't count either: emitting narration/status is
-    not a chat reply or a durable requested action. Custom tools are **not** terminal
-    by default: the SDK cannot know whether a bare custom tool is a lookup or a
-    side-effecting action, so it fails loud — an empty final after only an undeclared
-    custom tool surfaces as a no-response error rather than being silently swallowed.
-    A custom tool that genuinely completes the turn opts in (see
+    Observing tools never count -- fetching state (``READ_ONLY_TOOL_NAMES``) or
+    narrating (``EVENT_TOOL_NAMES``: band_send_event posts a thought/error/task
+    event) is not a chat reply or a durable requested action. Custom tools are
+    **not** terminal by default: the SDK cannot know whether a bare custom tool is a
+    lookup or a side-effecting action, so it fails loud — an empty final after only
+    an undeclared custom tool surfaces as a no-response error rather than being
+    silently swallowed. A custom tool that genuinely completes the turn opts in (see
     ``runtime.custom_tools.is_marked_terminal``).
     """
     if not succeeded:
         return False
-    if tool_name in READ_ONLY_TOOL_NAMES or tool_name in EVENT_TOOL_NAMES:
-        return False
-    if tool_name in ALL_TOOL_NAMES:
-        return True
-    return custom_terminal
+    effect = None if tool_name is None else turn_effect(tool_name)
+    return custom_terminal if effect is None else effect.did_work
 
 
 def missing_reply_error(framework: str, *, detail: str = "") -> str:

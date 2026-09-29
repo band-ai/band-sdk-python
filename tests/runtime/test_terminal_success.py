@@ -111,6 +111,18 @@ def test_no_reply_is_terminal_and_settles_the_reply() -> None:
     assert settles_turn_reply("other-band_no_reply") is False
 
 
+def test_an_action_is_terminal_work_but_leaves_the_reply_owed() -> None:
+    # The two views of one classification differ exactly here: silence after an
+    # action is benign, yet the model's plain-text answer must still be relayed.
+    assert is_terminal_success("band_add_participant", succeeded=True) is True
+    assert settles_turn_reply("band_add_participant") is False
+
+
+def test_only_posts_and_no_reply_settle_the_reply() -> None:
+    settling = {name for name in ALL_TOOL_NAMES if settles_turn_reply(name)}
+    assert settling == {"band_send_message", "band_send_room_file", "band_no_reply"}
+
+
 async def test_no_reply_is_local_only() -> None:
     rest = MagicMock()
     tools = AgentTools("room-1", rest)

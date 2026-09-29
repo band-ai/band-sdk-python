@@ -87,3 +87,28 @@ usable against a real deployment.
 `Capability.TASKS` gates the seven task-board tools above, room-scoped like
 the file tools — see [Capability Negotiation](capability-negotiation.md) for
 how a request gets pruned against `AgentMe.feature_flags`.
+
+## Turn effects
+
+Adapters ask two questions about a finished tool call, and one classification,
+`turn_effect(name)` in `src/band/runtime/tools/registry.py`, answers both:
+
+| Effect | Tools | Turn outcome |
+|---|---|---|
+| `OBSERVE` | read-only tools and `band_send_event` | the turn still owes a reply |
+| `ACT` | every other tool (add participant, store memory, ...) | silence afterwards is benign |
+| `REPLY` | `band_send_message`, `band_send_room_file` | the reply is posted |
+| `DECLINE` | `band_no_reply` | the reply is deliberately withheld |
+
+- `is_terminal_success` (did the turn do work?) serves the adapters that answer
+  only through tools: an empty final answer after work is benign.
+- `settles_turn_reply` (is the reply settled?) serves the adapters that relay
+  the model's plain text as a fallback: they relay only when no call settled it.
+
+```python
+from band.runtime.tools import is_terminal_success, settles_turn_reply
+
+assert is_terminal_success("band_add_participant", succeeded=True)
+assert not settles_turn_reply("band_add_participant")
+assert settles_turn_reply("band_no_reply")
+```
