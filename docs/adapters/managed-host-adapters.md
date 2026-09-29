@@ -41,5 +41,6 @@ Each coding adapter module has an async `list_models(...)` that asks the harness
 | Module | Call | Source | Tested with |
 |---|---|---|---|
 | `band.adapters.claude_sdk` | `list_models(adapter)` | `get_server_info()["models"]` | Claude Code 2.1.280 |
+| `band.adapters.codex` | `list_models(CodexAdapterConfig(...))` | app-server `model/list`, hidden models left out | Codex 0.156.1 |
 
 A harness that rejects or lacks the call raises a clear error rather than returning an empty list. Hosts that kept listing code per harness can use these instead.
