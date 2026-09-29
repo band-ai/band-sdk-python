@@ -68,6 +68,7 @@ from band.integrations.codex.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    custom_tool_effects,
     custom_tool_to_openai_schema,
     execute_custom_tool,
     find_custom_tool,
@@ -594,6 +595,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         if self.config.cwd is not None:
             raise ValueError(
                 "cwd is not supported; use workspace_for_room or the default"
@@ -2009,7 +2011,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
 
-            return settles_turn_reply(tool_name) and tool_call_succeeded
+            return (
+                settles_turn_reply(tool_name, custom_effects=self._custom_effects)
+                and tool_call_succeeded
+            )
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(

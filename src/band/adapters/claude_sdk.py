@@ -88,8 +88,7 @@ from band.integrations.mcp.backends import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
-    get_custom_tool_name,
-    is_marked_terminal,
+    custom_tool_effects,
 )
 from band.runtime.decisions import (
     DecisionEntry,
@@ -106,6 +105,7 @@ from band.runtime.tools import (
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
+    TurnEffect,
     is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
@@ -449,16 +449,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
-        # Custom tools that opt in as terminal actions (band_terminal=True on the
-        # handler). Only these let a turn with no Band terminal tool call still
-        # count as answered — see is_terminal_success. Keyed by the name the
-        # tool is actually registered/called under (get_custom_tool_name), not
-        # the handler's Python __name__ — _build_custom_sdk_tool derives the
-        # MCP tool name from the input model, so the two can differ.
-        self._custom_terminal_names: frozenset[str] = frozenset(
-            get_custom_tool_name(input_model)
-            for input_model, handler in self._custom_tools
-            if is_marked_terminal(handler)
+        # Effects the custom tools declared. Only these let a turn with no Band
+        # terminal tool call still count as answered — see is_terminal_success.
+        # Keyed by the name the tool is actually registered/called under
+        # (get_custom_tool_name), not the handler's Python __name__ —
+        # _build_custom_sdk_tool derives the MCP tool name from the input model,
+        # so the two can differ.
+        self._custom_effects: dict[str, TurnEffect] = custom_tool_effects(
+            self._custom_tools
         )
 
         # Approval flow state
@@ -1205,9 +1203,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # comparing, same as every other tool-name check in this adapter.
             tool_name = self._semantic_tool_name(raw_tool_name)
             if is_terminal_success(
-                tool_name,
-                succeeded=True,
-                custom_terminal=tool_name in self._custom_terminal_names,
+                tool_name, succeeded=True, custom_effects=self._custom_effects
             ):
                 return True
         return False
@@ -1298,7 +1294,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         return is_terminal_success(
             result_tool_name,
             succeeded=not block.is_error,
-            custom_terminal=result_tool_name in self._custom_terminal_names,
+            custom_effects=self._custom_effects,
         )
 
     @staticmethod

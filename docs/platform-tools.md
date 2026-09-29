@@ -91,7 +91,7 @@ how a request gets pruned against `AgentMe.feature_flags`.
 ## Turn effects
 
 Adapters ask two questions about a finished tool call, and one classification,
-`turn_effect(name)` in `src/band/runtime/tools/registry.py`, answers both:
+`turn_effect(name)` in `src/band/runtime/tools/effects.py`, answers both:
 
 | Effect | Tools | Turn outcome |
 |---|---|---|
@@ -111,4 +111,39 @@ from band.runtime.tools import is_terminal_success, settles_turn_reply
 assert is_terminal_success("band_add_participant", succeeded=True)
 assert not settles_turn_reply("band_add_participant")
 assert settles_turn_reply("band_no_reply")
+```
+
+### Declaring the effect of your own tool
+
+A custom tool passed as `additional_tools=[(InputModel, handler)]` has no
+effect until it declares one, so an empty answer after only an undeclared tool
+still surfaces as a missing-reply error. Declare it on the handler:
+
+| Declaration | Meaning for the turn |
+|---|---|
+| `@declares_turn_effect(TurnEffect.ACT)` (or `handler.band_terminal = True`) | the tool did real work; an empty final answer afterwards is benign |
+| `@declares_turn_effect(TurnEffect.REPLY)` | the tool delivers the answer itself; no fallback text is relayed |
+| `@declares_turn_effect(TurnEffect.DECLINE)` | silence is the answer; no fallback text is relayed |
+
+Every adapter that decides a turn's outcome honors it: Claude SDK, CrewAI,
+Pydantic AI, Strands, Codex, Copilot SDK, OpenCode and the ACP client adapters. A
+Band tool's own effect always wins, so a custom tool cannot redefine one.
+
+```python
+from pydantic import BaseModel
+
+from band.runtime.custom_tools import declared_effect, declares_turn_effect
+from band.runtime.tools import TurnEffect
+
+
+class StayQuietInput(BaseModel):
+    """Say nothing this turn."""
+
+
+@declares_turn_effect(TurnEffect.DECLINE)
+async def stay_quiet(args: StayQuietInput) -> str:
+    return "quiet"
+
+
+assert declared_effect(stay_quiet) is TurnEffect.DECLINE
 ```

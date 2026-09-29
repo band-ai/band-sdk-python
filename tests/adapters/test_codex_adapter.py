@@ -44,9 +44,9 @@ from band.integrations.codex.types import (
     build_agent_failure,
     parse_plan_steps,
 )
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
 from band.runtime.decisions import DecisionRegistry
-from band.runtime.tools import ToolCallOutcome
+from band.runtime.tools import ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.adapters.codexturns import await_released_turn
 
@@ -6796,3 +6796,47 @@ class TestNoReply:
         )
 
         assert [m["content"] for m in turn.tools.messages_sent] == ["Second answer"]
+
+
+class StayQuietInput(BaseModel):
+    """Say nothing this turn."""
+
+
+def _stay_quiet_handler() -> Callable[[StayQuietInput], Awaitable[str]]:
+    """A fresh handler per test: declaring an effect mutates the function."""
+
+    async def stay_quiet(args: StayQuietInput) -> str:
+        return "quiet"
+
+    return stay_quiet
+
+
+class TestCustomToolEffect:
+    @pytest.mark.asyncio
+    async def test_a_tool_declaring_silence_suppresses_the_fallback_text(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(1, "stayquiet"),
+                _final_text("Nothing to add."),
+                _turn_completed(),
+            ],
+            additional_tools=[
+                (
+                    StayQuietInput,
+                    declares_turn_effect(TurnEffect.DECLINE)(_stay_quiet_handler()),
+                )
+            ],
+        )
+        assert turn.tools.messages_sent == []
+
+    @pytest.mark.asyncio
+    async def test_an_undeclared_tool_leaves_the_text_fallback(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(1, "stayquiet"),
+                _final_text("Nothing to add."),
+                _turn_completed(),
+            ],
+            additional_tools=[(StayQuietInput, _stay_quiet_handler())],
+        )
+        assert [m["content"] for m in turn.tools.messages_sent] == ["Nothing to add."]

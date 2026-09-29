@@ -1,22 +1,23 @@
 """Unit tests for the shared "terminal productive work" predicate.
 
-``is_terminal_success`` is the single source of truth the crewai / pydantic-ai
-adapters use to decide whether an empty final model response is *benign* (the
-agent already did its work) or a genuine no-response failure. The fail-loud
-policy: read-only Band tools and *undeclared* custom tools never count; a custom
-tool must opt in via ``band_terminal`` (checked by ``is_marked_terminal``).
+``is_terminal_success`` is the single source of truth the tool-only adapters use
+to decide whether an empty final model response is *benign* (the agent already
+did its work) or a genuine no-response failure. The fail-loud policy: read-only
+Band tools and *undeclared* custom tools never count; a custom tool must declare
+its effect (``declares_turn_effect``, or the ``band_terminal`` shorthand).
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from band.runtime.custom_tools import is_marked_terminal
+from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     EVENT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
     AgentTools,
+    TurnEffect,
     band_tool_errored,
     is_terminal_success,
     settles_turn_reply,
@@ -62,46 +63,71 @@ def test_band_tool_errored_detects_error_prefix() -> None:
     assert band_tool_errored(None, "Error x") is False
 
 
+_SLACK_POST_ACT = {"post_to_slack": TurnEffect.ACT}
+_QUIET_DECLINE = {"stay_quiet": TurnEffect.DECLINE}
+
+
 def test_undeclared_custom_tool_is_not_terminal() -> None:
     # A custom tool name is in neither set → fail-loud default (not terminal).
     assert is_terminal_success("weather", succeeded=True) is False
     assert (
-        is_terminal_success("weather", succeeded=True, custom_terminal=False) is False
-    )
-
-
-def test_opted_in_custom_tool_is_terminal() -> None:
-    assert (
-        is_terminal_success("post_to_slack", succeeded=True, custom_terminal=True)
-        is True
-    )
-
-
-def test_opted_in_custom_tool_still_needs_success() -> None:
-    assert (
-        is_terminal_success("post_to_slack", succeeded=False, custom_terminal=True)
+        is_terminal_success("weather", succeeded=True, custom_effects=_SLACK_POST_ACT)
         is False
     )
 
 
-def test_is_marked_terminal_reads_the_flag() -> None:
-    def plain() -> None: ...
+def test_declared_custom_tool_is_terminal() -> None:
+    assert (
+        is_terminal_success(
+            "post_to_slack", succeeded=True, custom_effects=_SLACK_POST_ACT
+        )
+        is True
+    )
+
+
+def test_declared_custom_tool_still_needs_success() -> None:
+    assert (
+        is_terminal_success(
+            "post_to_slack", succeeded=False, custom_effects=_SLACK_POST_ACT
+        )
+        is False
+    )
+
+
+def test_declared_effect_reads_the_declaration_and_the_terminal_shorthand() -> None:
+    @declares_turn_effect(TurnEffect.DECLINE)
+    def stay_quiet() -> None: ...
 
     def terminal() -> None: ...
 
     terminal.band_terminal = True  # type: ignore[attr-defined]
 
-    assert is_marked_terminal(plain) is False
-    assert is_marked_terminal(terminal) is True
+    def plain() -> None: ...
 
     class TerminalModel:
         band_terminal = True
 
-    class PlainModel:
-        pass
+    assert declared_effect(stay_quiet) is TurnEffect.DECLINE
+    assert declared_effect(terminal) is TurnEffect.ACT
+    assert declared_effect(TerminalModel) is TurnEffect.ACT
+    assert declared_effect(plain) is None
 
-    assert is_marked_terminal(TerminalModel) is True
-    assert is_marked_terminal(PlainModel) is False
+
+def test_a_custom_tool_that_declares_silence_settles_the_reply() -> None:
+    assert settles_turn_reply("stay_quiet", custom_effects=_QUIET_DECLINE) is True
+    assert is_terminal_success(
+        "stay_quiet", succeeded=True, custom_effects=_QUIET_DECLINE
+    )
+    assert settles_turn_reply("stay_quiet") is False
+
+
+def test_a_custom_action_is_work_but_leaves_the_reply_owed() -> None:
+    assert settles_turn_reply("post_to_slack", custom_effects=_SLACK_POST_ACT) is False
+
+
+def test_a_custom_tool_cannot_redefine_a_band_tool() -> None:
+    hijack = {"band_send_message": TurnEffect.OBSERVE}
+    assert settles_turn_reply("band_send_message", custom_effects=hijack) is True
 
 
 def test_no_reply_is_terminal_and_settles_the_reply() -> None:

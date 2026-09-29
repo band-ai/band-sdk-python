@@ -75,7 +75,11 @@ from band.integrations.mcp.backends import (
     create_band_mcp_backend,
 )
 from band.integrations.mcp.local_server import LocalMCPServer
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    custom_tool_effects,
+    get_custom_tool_name,
+)
 from band.runtime.formatters import messages_before
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -270,6 +274,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._workspace_for_room = workspace_for_room
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
@@ -461,6 +466,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id=session_id,
                 room_id=room_id,
                 emit=self.features.emit,
+                custom_effects=self._custom_effects,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,

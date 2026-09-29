@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Self
 
 from band.core.delivery import deliver_reply
@@ -15,13 +16,18 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
-from band.runtime.tools import settles_turn_reply
+from band.runtime.tools import TurnEffect, settles_turn_reply
 
 logger = logging.getLogger(__name__)
 
 
-def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
-    """True when the turn settled its reply via a Band tool: a room post or band_no_reply.
+def turn_replied_in_room(
+    chunks: list[CollectedChunk],
+    *,
+    custom_effects: Mapping[str, TurnEffect] | None = None,
+) -> bool:
+    """True when the turn settled its reply: a room post, band_no_reply, or a
+    custom tool that declared either (``custom_effects``).
 
     Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
     at execution time, ACP tool calls may run out-of-process (a remote band-mcp
@@ -35,7 +41,9 @@ def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
     posting_call_ids: set[str] = set()
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        if isinstance(chunk.tool, ACPToolCall) and settles_turn_reply(chunk.tool.name):
+        if isinstance(chunk.tool, ACPToolCall) and settles_turn_reply(
+            chunk.tool.name, custom_effects=custom_effects
+        ):
             if metadata.get("status") == ToolStatus.COMPLETED:
                 return True
             # Correlate with a later result only by a real id. An empty id (a
@@ -90,11 +98,13 @@ class RoomTurnEmitter:
         session_id: str,
         room_id: str,
         emit: frozenset[Emit] | None = None,
+        custom_effects: Mapping[str, TurnEffect] | None = None,
     ) -> None:
         self._tools = tools
         self._mentions = mentions
         self._session_id = session_id
         self._room_id = room_id
+        self._custom_effects = custom_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
         # reaches the room sink.
@@ -199,7 +209,7 @@ class RoomTurnEmitter:
         # Tool-first delivery (matches copilot_sdk / codex): if the turn posted via
         # a Band messaging tool, relaying its plain text too would duplicate the
         # reply (and leak the agent's narration of the call).
-        if not turn_replied_in_room(self._chunks):
+        if not turn_replied_in_room(self._chunks, custom_effects=self._custom_effects):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
         # Posted regardless of the emit set: this is resume state read back by

@@ -36,6 +36,7 @@ from band.integrations.acp.client_types import (
 )
 from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
+from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import inject_acp_spawn
 from tests.integrations.acp.conftest import make_platform_message
@@ -2266,6 +2267,17 @@ class TestTurnRepliedInRoom:
                 "tool_call", "band_no_reply", tool_call_id="tc-1", status="failed"
             )
         ]
+        assert not turn_replied_in_room(chunks)
+
+    def test_custom_tool_declaring_silence_settles_the_turn(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "stayquiet", tool_call_id="tc-1", status="completed"
+            )
+        ]
+        assert turn_replied_in_room(
+            chunks, custom_effects={"stayquiet": TurnEffect.DECLINE}
+        )
         assert not turn_replied_in_room(chunks)
 
     def test_no_reply_sealed_by_its_completed_result_settles_the_turn(self) -> None:
