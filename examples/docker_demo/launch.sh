@@ -61,11 +61,12 @@ log()  { printf '\n=== %s ===\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 require() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found on PATH" >&2; exit 1; }; }
 record() { printf '%s\n' "$2" >>"$1"; }   # append line "$2" to manifest "$1"
+sandbox_exists() { sbx ls -q 2>/dev/null | grep -qxF "$1"; }
 
 # set-custom refuses to overwrite an existing env for a host, so clear any leftover
 # scoped secret (from a crashed run or prior manual use — secrets survive `sbx rm`)
 # before setting, keeping `up` idempotent.
-clear_secret() { sbx secret rm "$1" --host "$2" -f >/dev/null 2>&1 || true; }
+clear_secret() { sbx secret rm --sandbox "$1" --host "$2" -f >/dev/null 2>&1 || true; }
 
 # Provider -> "<llm-host> <proxy-env-var> <placeholder>". One source, read by both
 # egress and secret setup so a provider's host can't drift between them.
@@ -148,10 +149,10 @@ grant_egress() {
 
 # Abort rather than clobber a band-demo-* that this run did not create.
 assert_names_free() {
-  local spec name existing; existing="$(sbx ls 2>/dev/null || true)"
+  local spec name
   for spec in "${ROLES[@]}"; do
     IFS='|' read -r _ _ name _ _ <<<"$spec"
-    if printf '%s' "$existing" | grep -qw "$name"; then
+    if sandbox_exists "$name"; then
       echo "ERROR: sandbox '$name' already exists — run './launch.sh down' first" >&2
       exit 1
     fi
@@ -194,7 +195,7 @@ launch_one() {
   local llm_host llm_env llm_ph
   read -r llm_host llm_env llm_ph <<<"$(provider_llm "$provider")"
   clear_secret "$name" "$llm_host"
-  sbx secret set-custom "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
+  sbx secret set-custom --sandbox "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
   record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$llm_host")"
 
   # Band key: host-held sentinel swap, scoped per sandbox. Cover every Band host
@@ -203,10 +204,10 @@ launch_one() {
   [ "$BAND_SECRET_HOST" != "$BAND_NET_HOST" ] && secret_hosts=("$BAND_SECRET_HOST")
   local host_args=() h
   for h in "${secret_hosts[@]}"; do host_args+=(--host "$h"); clear_secret "$name" "$h"; done
-  sbx secret set-custom "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
+  sbx secret set-custom --sandbox "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
   for h in "${secret_hosts[@]}"; do record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$h")"; done
 
-  sbx create --name "$name" --kit "$KIT_DIR" --template "$image" band-python-kit "$stage"
+  sbx create --name "$name" --template "$image" "$KIT_DIR" "$stage"
   record "$MF_SANDBOXES" "$name"
   attach_one "$role" "$name"
 }
@@ -241,8 +242,12 @@ attach_one() {
     return
   fi
   local cmd="printf '\\033]0;%s sandbox\\007' '$role'; $pane"
-  osascript -e "tell application \"Terminal\" to do script \"$cmd\"" \
-            -e 'tell application "Terminal" to activate' >/dev/null
+  # Passed as argv, never spliced into the script: AppleScript string literals
+  # reject the shell's \033 escape and any embedded double quote.
+  osascript -e 'on run argv' \
+            -e 'tell application "Terminal" to do script (item 1 of argv)' \
+            -e 'tell application "Terminal" to activate' \
+            -e 'end run' "$cmd" >/dev/null
 }
 
 announce_attachments() {
@@ -286,6 +291,7 @@ cleanup() {
   if [ -f "$MF_SANDBOXES" ]; then
     while IFS= read -r name; do
       [ -n "$name" ] || continue
+      sandbox_exists "$name" || continue   # already gone (e.g. a retried down)
       sbx rm -f "$name" >/dev/null || { warn "could not remove sandbox $name"; failed=1; }
     done <"$MF_SANDBOXES"
   fi
@@ -295,16 +301,17 @@ cleanup() {
   if [ -f "$MF_SECRETS" ]; then
     while IFS=$'\t' read -r sandbox host; do
       [ -n "$sandbox" ] || continue
-      sbx secret rm "$sandbox" --host "$host" -f >/dev/null 2>&1 \
-        || { warn "leftover secret for $sandbox ($host); remove: sbx secret rm $sandbox --host $host -f"; failed=1; }
+      sbx secret rm --sandbox "$sandbox" --host "$host" -f >/dev/null 2>&1 \
+        || { warn "leftover secret for $sandbox ($host); remove: sbx secret rm --sandbox $sandbox --host $host -f"; failed=1; }
     done <"$MF_SECRETS"
   fi
 
   if [ -f "$MF_POLICY" ]; then
     while IFS= read -r host; do
       [ -n "$host" ] || continue
-      sbx policy rm network --resource "$host" >/dev/null 2>&1 \
-        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host"; failed=1; }
+      sbx policy check network "$host" >/dev/null 2>&1 || continue   # already gone
+      sbx policy rm network --resource "$host" -f >/dev/null 2>&1 \
+        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host -f"; failed=1; }
     done <"$MF_POLICY"
   fi
 
