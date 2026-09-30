@@ -18,9 +18,18 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
   skills, subagents and settings under `~/.claude` and `./.claude` are not
   loaded and the agent's capabilities are defined by the adapter. Pass
   `["user", "project"]` to opt back in.
-- **`permission_mode` is forwarded to the CLI as given.** `"dontAsk"` and
-  `"auto"` are accepted; if the CLI rejects a mode (for example `"auto"` on an
-  account without it), the turn fails with no fallback to another mode.
+- **`permission_mode` is forwarded to the CLI as given.** It takes the
+  [Claude Code permission modes](https://code.claude.com/docs/en/permission-modes)
+  by config value. `approval_mode` sends every native tool call to a prompt,
+  which changes two modes:
+  - `"dontAsk"` denies every prompt without asking the adapter, so it raises
+    `ValueError` with any `approval_mode`.
+  - `"auto"` has its classifier answer prompts only when `approval_mode` is
+    `None`. Prompts forced by the adapter's approval hook skip the classifier,
+    so with an `approval_mode` that approval policy decides instead.
+
+  When the account or model can't run `"auto"`, the CLI starts the session in
+  `"default"`, and the adapter logs a warning.
 - **CLI launch options never override the adapter's own wiring.**
   `cli=ClaudeCLIOptions(...)` sets the executable, plugin folders, extra
   directories, env and extra flags, but cannot replace the Band MCP server, the
