@@ -51,10 +51,14 @@ participant and can interject at any time by @mentioning an agent.
 
 ## Prerequisites
 
-- `sbx` ≥ 0.35.0, signed in (`sbx login`); Docker; `uv`.
-- `tmux` (recommended, `brew install tmux`) — the launcher opens one window with a
-  live log pane per agent inside your current terminal. Without it, it falls back to
-  spawning separate Terminal.app windows (macOS) or prints the tail commands.
+- `sbx` ≥ 0.43.0, signed in (`sbx login`); Docker; `uv`.
+- `tmux` (`brew install tmux` on macOS) — the launcher holds each agent's
+  `sbx run` attachment in a live pane. Interactive macOS runs can use Terminal.app
+  instead; headless runs require `tmux`.
+- A Band Enterprise plan for the Human API calls used to register agents and
+  drive the meeting. If the optional agent-list lookup is unavailable, the
+  launcher logs the error and continues registration without sweeping stale
+  demo agents. A name collision can still make registration fail.
 - Host keys: `BAND_API_KEY_USER` (a Band **user** key — the conductor and
   presenter identity), `ANTHROPIC_API_KEY` (PM), `OPENAI_API_KEY` (Dev + Architect).
 
@@ -90,15 +94,15 @@ DEMO_ENV_FILE=/path/to/.env ./launch.sh up
   where the framework exposes it (Maya and Sam; CrewAI has no reasoning stream) — so
   the handoff mechanics (peer lookup, add-participant) are visible alongside the chat.
   These land in the room's REST context / Band UI, not the user WebSocket stream.
-- **Per-agent logs.** With `tmux`, the launcher starts a `band-demo` session with one
-  live setup/log pane per agent. Attach from another terminal tab:
+- **Per-agent output.** With `tmux`, the launcher starts a uniquely named session
+  with one live `sbx run` pane per agent. Use the session name printed by `up`
+  to attach from another terminal tab:
 
   ```bash
-  tmux attach -t band-demo        # detach with Ctrl-b then d
+  tmux attach -t band-demo-<pid>  # detach with Ctrl-b then d
   ```
 
-  Without `tmux` it falls back to separate Terminal.app windows (macOS) or just prints
-  the `sbx exec … tail -f` command per agent.
+  Interactive macOS runs without `tmux` open a Terminal.app window per agent.
 
 ### Ending the meeting
 
@@ -134,8 +138,8 @@ touching code:
 1. `build` produces `band-python-kit:local` and `band-python-kit-cli:local` and
    loads both as sbx templates.
 2. `up` registers Maya/Sam/Jordan, grants global egress, then for each agent:
-   injects the LLM + Band credentials host-side, creates the sandbox, and streams
-   its **setup log to a labeled pane**.
+   injects the LLM + Band credentials host-side, creates the sandbox, and starts
+   its **agent through an attached `sbx run` pane**.
 3. The conductor creates the room and posts the brief. Maya and Sam discuss;
    Maya invites Jordan; Jordan posts a `VERDICT:`. The conductor then opens the
    floor to you (see [Ending the meeting](#ending-the-meeting)).
@@ -182,10 +186,11 @@ timestamps). All caps are env-tunable (see [Tuning](#tuning)).
 
 ## Reset / re-run
 
-`./launch.sh down` removes only what the last run recorded (sandboxes, scoped
-secrets, global egress rules, agents) — never an unrelated `band-demo-*` — and
-reports any resource it couldn't remove. Teardown also runs on `up` exit, so a
-normal run leaves a clean host. `build` is only needed once or after a kit change.
+`./launch.sh down` removes only what the last run recorded (tmux session,
+sandboxes, scoped secrets, global egress rules, agents) — never an unrelated
+`band-demo-*` — and reports any resource it couldn't remove. Teardown also runs
+on `up` exit, so a normal run leaves a clean host. `build` is only needed once
+or after a kit change.
 
 ## Notes
 

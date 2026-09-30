@@ -337,7 +337,8 @@ def task_lifecycle_instruction(marker: str) -> str:
         f"task's id and status='{TaskAssignmentStatus.IN_PROGRESS.value}'. Then "
         f"call {TaskTool.UPDATE.value} again with the same id and "
         f"status='{TaskAssignmentStatus.COMPLETED.value}' and a brief comment. "
-        "Do not call any other tool."
+        "Then use band_send_message to briefly confirm what you did. Do not "
+        "call any other tool."
     )
 
 
@@ -349,7 +350,8 @@ def task_read_instruction() -> str:
         f"Now call {TaskTool.LIST.value} to see the board. Then call "
         f"{TaskTool.GET.value} on the task you created earlier. Then call "
         f"{TaskTool.GET_HISTORY.value} on that same task. Then call "
-        f"{TaskTool.GET_BOARD.value}. Do not call any other tool."
+        f"{TaskTool.GET_BOARD.value}. Then use band_send_message to briefly "
+        "summarize what you found. Do not call any other tool."
     )
 
 
@@ -376,9 +378,11 @@ def task_board_delegation_instruction(
         "exactly ONE band_send_message that mentions both "
         f"{lookup_name} (id {lookup_id}) and {weather_name} (id {weather_id}), "
         "stating the exact task number or id you just created for each of them "
-        "by name, and asking each to claim their task, gather their value, and "
-        "record it on the task board. Do not look anything up yourself, and do "
-        "not call any other tool."
+        "by name, and asking each to claim their task, call the matching tool, "
+        "and copy the tool's exact return value verbatim into the completed "
+        "task's comment via band_update_task (not a summary or description "
+        "without the value). Do not look anything up yourself, and do not call "
+        "any other tool."
     )
 
 

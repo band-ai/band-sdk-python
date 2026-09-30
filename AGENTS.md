@@ -44,9 +44,9 @@ tasks) and hydrates each event's payload into a typed, rule-free
 `WirePayload` projection without re-validating. See
 [docs/websocket-events.md](docs/websocket-events.md) for the channel table,
 payload field reference, and `band-sdk-core`'s delivery-lifecycle decisions.
-Whenever code here starts calling a `band_sdk_core` symbol it didn't use
-before, extend `.github/workflows/ci.yml`'s wheel-smoke step to prove that
-symbol is callable from the isolated pinned wheel, not just importable.
+CI's isolated-wheel smoke (`.github/scripts/wheel-smoke.py`) finds every
+`band_sdk_core` name the installed `band` package refers to and fails if the
+pinned wheel lacks one, so a new core symbol needs no manual CI step.
 
 ## Contact Event Handling
 

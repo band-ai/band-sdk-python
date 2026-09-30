@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from band.runtime.tools import CHAT_ID_FIELD_NAME, BandTool
+from band.runtime.tools import CHAT_ID_FIELD_NAME, LEGACY_SEND_MESSAGE_TOOL, BandTool
 
 # Known names of the message/event send tools across the Band MCP surfaces the
 # adapter can be pointed at: the SDK's self-hosted LocalMCPServer exposes the
 # band_* names, the external band-mcp exposes create_agent_chat_*. The adapter
 # resolves the actual names from the tools the registered server reports, so
-# the enforcement prompt, silent-reporting set, and auto-relay detection all
-# follow whichever server is wired — first entry doubles as the fallback.
+# the enforcement prompt and silent-reporting set follow whichever server is
+# wired — first entry doubles as the fallback.
 SEND_MESSAGE_TOOL_NAMES: tuple[str, ...] = (
     BandTool.SEND_MESSAGE,
-    "create_agent_chat_message",
+    LEGACY_SEND_MESSAGE_TOOL,
 )
 SEND_EVENT_TOOL_NAMES: tuple[str, ...] = (
     BandTool.SEND_EVENT,

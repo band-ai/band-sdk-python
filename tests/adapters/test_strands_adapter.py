@@ -52,7 +52,7 @@ from band.core.types import (
     TurnUsage,
     is_usage_event,
 )
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import TurnEffect, get_tool_description
 from band.testing import (
     ErrorTurn,
     FakeAgentTools,
@@ -172,8 +172,8 @@ class TestCustomToolWiring:
             bridge.tool_spec["inputSchema"]["json"]["properties"]["city"]["type"]
             == "string"
         )
-        # Not marked band_terminal -> not a terminal action.
-        assert adapter._custom_terminal_names == frozenset()
+        # Declared no effect -> not a terminal action.
+        assert adapter._custom_effects == {}
 
     def test_terminal_marker_captured_from_tuple_handler(self):
         class DoneInput(BaseModel):
@@ -188,7 +188,7 @@ class TestCustomToolWiring:
 
         adapter = StrandsAdapter(model="m", additional_tools=[(DoneInput, finish)])
 
-        assert adapter._custom_terminal_names == frozenset({"done"})
+        assert adapter._custom_effects == {"done": TurnEffect.ACT}
 
     def test_custom_tool_may_not_shadow_a_platform_tool(self):
         """Strands' registry is last-wins, so a collision must fail at construction."""
@@ -217,7 +217,7 @@ class TestCustomToolWiring:
 
         adapter = StrandsAdapter(model="m", additional_tools=[native_finish])
 
-        assert adapter._custom_terminal_names == frozenset({"native_finish"})
+        assert adapter._custom_effects == {"native_finish": TurnEffect.ACT}
 
 
 class TestToolRegistration:
@@ -230,6 +230,7 @@ class TestToolRegistration:
         assert names == {
             "band_send_message",
             "band_send_event",
+            "band_no_reply",
             "band_add_participant",
             "band_remove_participant",
             "band_lookup_peers",

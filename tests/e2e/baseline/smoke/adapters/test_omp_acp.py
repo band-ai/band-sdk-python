@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from band.adapters.omp_acp import OmpACPAdapter, OmpACPAdapterConfig
 from band.core.types import MessageType
-from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.omp import OMP_APPROVAL_FORM_TOOL_NAME
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
@@ -29,6 +28,10 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+if TYPE_CHECKING:
+    from band.adapters.omp_acp import OmpACPAdapter
+    from band.integrations.acp.client_adapter import ACPPermissionRequest
 
 BAND_EVENT_TOOL_NAME = "band_send_event"
 BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=1)
@@ -69,6 +72,13 @@ async def test_omp_acp_band_tool_call_is_narrated(
 
 def _denying_omp_adapter(settings: BaselineSettings) -> OmpACPAdapter:
     """OMP with always-ask plus a PermissionResolver that denies every ask."""
+    # Deferred: omp_acp pulls in the optional `acp` package, not installed in
+    # every lane's venv (e.g. dev-crewai, dev-parlant) -- importing at module
+    # level would break collection there.
+    from band.adapters.omp_acp import (  # noqa: PLC0415
+        OmpACPAdapter,
+        OmpACPAdapterConfig,
+    )
 
     async def deny(_request: ACPPermissionRequest) -> None:
         return None

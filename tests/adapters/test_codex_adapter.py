@@ -6,22 +6,30 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict, deque
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from pydantic import BaseModel
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
+    NO_APPROVALS_TO_RESOLVE_MESSAGE,
+    TURN_IN_PROGRESS_MESSAGE,
+    ApprovalDecision,
     CodexAdapter,
     CodexAdapterConfig,
+    CodexCommand,
     PendingApproval,
 )
+from band.client.streaming import ControlMode
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -36,9 +44,11 @@ from band.integrations.codex.types import (
     build_agent_failure,
     parse_plan_steps,
 )
-from band.runtime.custom_tools import CustomToolDef
-from band.runtime.tools import ToolCallOutcome
+from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
+from band.runtime.decisions import DecisionRegistry
+from band.runtime.tools import ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
+from tests.adapters.codexturns import await_released_turn
 
 
 def make_platform_message(
@@ -96,6 +106,23 @@ class ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
+# model/list as codex-cli reports it: per-model efforts, including ones newer
+# than the SDK ever knew about.
+_LIVE_EFFORTS_MODEL_LIST: dict[str, Any] = {
+    "data": [
+        {
+            "id": "gpt-6-sol",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "low"},
+                {"reasoningEffort": "max"},
+                {"reasoningEffort": "ultra"},
+            ],
+        },
+        {"id": "other", "supportedReasoningEfforts": [{"reasoningEffort": "minimal"}]},
+    ]
+}
+
+
 class FakeCodexClient:
     """Minimal fake transport client for adapter tests."""
 
@@ -107,6 +134,7 @@ class FakeCodexClient:
         turn_start_error: Exception | None = None,
         turn_start_error_once: bool = True,
         model_list_result: dict[str, Any] | None = None,
+        model_list_error: Exception | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -119,6 +147,7 @@ class FakeCodexClient:
         self._turn_start_error = turn_start_error
         self._turn_start_error_once = turn_start_error_once
         self._model_list_result = model_list_result
+        self._model_list_error = model_list_error
         self._thread_counter = 0
         self._turn_counter = 0
 
@@ -148,6 +177,8 @@ class FakeCodexClient:
         self.requests.append((method, dict(payload)))
 
         if method == "model/list":
+            if self._model_list_error is not None:
+                raise self._model_list_error
             if self._model_list_result is not None:
                 return self._model_list_result
             return {"data": [{"id": "gpt-5.5", "hidden": False}]}
@@ -260,6 +291,12 @@ def _turn_completed(turn_id: str = "turn-1") -> RpcEvent:
     )
 
 
+def _final_text(text: str) -> RpcEvent:
+    return _event_notification(
+        "item/agentMessage/delta", {"itemId": "m", "delta": text}
+    )
+
+
 def _tool_call_request(
     request_id: int, tool: str, arguments: dict[str, Any] | None = None
 ) -> RpcEvent:
@@ -318,25 +355,69 @@ async def run_codex_turn(
     return CodexTurn(adapter=adapter, client=client, tools=room_tools)
 
 
-async def _wait_for_pending_approval(
-    adapter: CodexAdapter,
-    room_id: str,
-    *,
-    timeout_s: float = 2.0,
-) -> None:
-    """Yield control until ``adapter`` records a pending approval for ``room_id``.
+ROOM_ID = "room-1"
 
-    Replaces brittle ``asyncio.sleep(0.01)`` calls in approval tests —
-    polls the adapter's in-memory state instead of racing a fixed delay.
-    """
-    deadline = asyncio.get_running_loop().time() + timeout_s
-    while asyncio.get_running_loop().time() < deadline:
-        if adapter._pending_approvals.get(room_id):
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(
-        f"No pending approval registered for room {room_id!r} within {timeout_s}s"
-    )
+
+class CodexRoom:
+    """A Codex room fed messages one at a time, as Band delivers them: each
+    ``send`` returns once the adapter hands the room back -- its turn done,
+    or parked on a human decision."""
+
+    def __init__(
+        self, adapter: CodexAdapter, client: FakeCodexClient, tools: FakeAgentTools
+    ) -> None:
+        self.adapter = adapter
+        self.client = client
+        self.tools = tools
+        self._bootstrapped = False
+
+    @property
+    def chat(self) -> list[str]:
+        return [message["content"] for message in self.tools.messages_sent]
+
+    @property
+    def turn(self) -> asyncio.Task[None]:
+        return self.adapter._turn_tasks[ROOM_ID]
+
+    async def send(self, content: str) -> None:
+        bootstrap, self._bootstrapped = not self._bootstrapped, True
+        await self.adapter.on_message(
+            make_platform_message(room_id=ROOM_ID, content=content),
+            self.tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=bootstrap,
+            room_id=ROOM_ID,
+        )
+
+    async def settled(self) -> None:
+        """Wait for a turn a human decision released to finish."""
+        await await_released_turn(self.adapter, ROOM_ID)
+
+
+# Adapters run their turns on the loop that started them, so setup, the test
+# and teardown share the test's own loop.
+@pytest_asyncio.fixture(loop_scope="function")
+async def codex_room() -> AsyncIterator[Callable[..., Awaitable[CodexRoom]]]:
+    """Open a room on a started manual-approval Codex adapter whose server
+    plays ``events``; every room is cleaned up at the end."""
+    rooms: list[CodexRoom] = []
+
+    async def open_room(
+        *events: RpcEvent, client: FakeCodexClient | None = None, **config: Any
+    ) -> CodexRoom:
+        client = client or FakeCodexClient(events=list(events))
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(**{"approval_mode": "manual", **config})
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        rooms.append(room := CodexRoom(adapter, client, ToolSchemaFakeTools()))
+        return room
+
+    yield open_room
+    for room in rooms:
+        await room.adapter.on_cleanup(ROOM_ID)
 
 
 class TestCodexAdapter:
@@ -978,12 +1059,14 @@ class TestCodexAdapter:
         assert "Available models" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
-    async def test_reasoning_effort_passed_in_turn_overrides(self) -> None:
+    @pytest.mark.parametrize("effort", ["high", "max"])
+    async def test_reasoning_effort_passed_in_turn_overrides(self, effort: str) -> None:
+        """Efforts newer than any list the SDK could hard-code reach Codex as-is."""
         fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = make_codex_adapter(
             fake_client,
             config=CodexAdapterConfig(
-                reasoning_effort="high", reasoning_summary="concise"
+                reasoning_effort=effort, reasoning_summary="concise"
             ),
         )
         tools = ToolSchemaFakeTools()
@@ -1000,7 +1083,7 @@ class TestCodexAdapter:
         turn_params = next(
             params for method, params in fake_client.requests if method == "turn/start"
         )
-        assert turn_params["effort"] == "high"
+        assert turn_params["effort"] == effort
         assert turn_params["summary"] == "concise"
 
     @pytest.mark.asyncio
@@ -1025,13 +1108,14 @@ class TestCodexAdapter:
         assert "summary" not in turn_params
 
     @pytest.mark.asyncio
-    async def test_reasoning_command_sets_effort(self) -> None:
+    @pytest.mark.parametrize("effort", ["high", "ultra"])
+    async def test_reasoning_command_sets_effort(self, effort: str) -> None:
         fake_client = FakeCodexClient()
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
-            make_platform_message(content="/reasoning high"),
+            make_platform_message(content=f"/reasoning {effort}"),
             tools,
             CodexSessionState(),
             participants_msg=None,
@@ -1040,18 +1124,22 @@ class TestCodexAdapter:
             room_id="room-1",
         )
         room = adapter._room_clients["room-1"]
-        assert room.reasoning_effort == "high"
+        assert room.reasoning_effort == effort
         assert len(tools.messages_sent) == 1
-        assert "Reasoning effort set to `high`" in tools.messages_sent[0]["content"]
+        assert (
+            f"Reasoning effort set to `{effort}`" in tools.messages_sent[0]["content"]
+        )
 
     @pytest.mark.asyncio
-    async def test_reasoning_command_rejects_invalid_effort(self) -> None:
-        fake_client = FakeCodexClient()
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+    async def test_reasoning_command_lists_efforts_the_model_supports(self) -> None:
+        fake_client = FakeCodexClient(model_list_result=_LIVE_EFFORTS_MODEL_LIST)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-6-sol")
+        )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         await adapter.on_message(
-            make_platform_message(content="/reasoning ultra"),
+            make_platform_message(content="/reasoning"),
             tools,
             CodexSessionState(),
             participants_msg=None,
@@ -1059,9 +1147,74 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter.config.reasoning_effort is None
         assert len(tools.messages_sent) == 1
-        assert "Invalid reasoning effort" in tools.messages_sent[0]["content"]
+        assert (
+            "`gpt-6-sol` supports: low, max, ultra."
+            in tools.messages_sent[0]["content"]
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("effort", "stored", "reply"),
+        [
+            ("ultra", "ultra", "Reasoning effort set to `ultra`"),
+            (
+                "hgih",
+                None,
+                (
+                    "`gpt-6-sol` doesn't support reasoning effort `hgih`. "
+                    "Supported: low, max, ultra."
+                ),
+            ),
+        ],
+    )
+    async def test_reasoning_command_checks_the_models_live_efforts(
+        self, effort: str, stored: str | None, reply: str
+    ) -> None:
+        """A typo is refused up front instead of failing every later turn."""
+        fake_client = FakeCodexClient(model_list_result=_LIVE_EFFORTS_MODEL_LIST)
+        adapter = make_codex_adapter(
+            fake_client, config=CodexAdapterConfig(model="gpt-6-sol")
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content=f"/reasoning {effort}"),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert adapter._room_clients["room-1"].reasoning_effort == stored
+        assert len(tools.messages_sent) == 1
+        assert reply in tools.messages_sent[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_command_still_answers_when_model_list_fails(self) -> None:
+        fake_client = FakeCodexClient(
+            model_list_error=RuntimeError("model/list unavailable")
+        )
+        adapter = make_codex_adapter(
+            fake_client,
+            config=CodexAdapterConfig(model="gpt-6-sol", reasoning_effort="high"),
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content="/reasoning"),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert len(tools.messages_sent) == 1
+        reply = tools.messages_sent[0]["content"]
+        assert "Current reasoning effort: `high`" in reply
+        assert "supports:" not in reply
 
     @pytest.mark.asyncio
     async def test_self_config_tools_registered_when_enabled(self) -> None:
@@ -1159,7 +1312,8 @@ class TestCodexAdapter:
         assert "o3" in result_text
 
     @pytest.mark.asyncio
-    async def test_setreasoning_tool_changes_effort(self) -> None:
+    @pytest.mark.parametrize("effort", ["xhigh", "ultra"])
+    async def test_setreasoning_tool_changes_effort(self, effort: str) -> None:
         events = [
             _event_request(
                 99,
@@ -1167,7 +1321,7 @@ class TestCodexAdapter:
                 {
                     "tool": "setreasoning",
                     "callId": "call-2",
-                    "arguments": {"effort": "xhigh", "summary": "detailed"},
+                    "arguments": {"effort": effort, "summary": "detailed"},
                 },
             ),
             _turn_completed(),
@@ -1188,49 +1342,8 @@ class TestCodexAdapter:
             room_id="room-1",
         )
         room = adapter._room_clients["room-1"]
-        assert room.reasoning_effort == "xhigh"
+        assert room.reasoning_effort == effort
         assert room.reasoning_summary == "detailed"
-
-    @pytest.mark.asyncio
-    async def test_setreasoning_tool_rejects_invalid_effort(self) -> None:
-        events = [
-            _event_request(
-                99,
-                "item/tool/call",
-                {
-                    "tool": "setreasoning",
-                    "callId": "call-3",
-                    "arguments": {"effort": "ultra"},
-                },
-            ),
-            _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(enable_self_config_tools=True)
-        )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(content="set reasoning ultra"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        # Effort should not have changed
-        assert adapter.config.reasoning_effort is None
-        # Tool response should contain error message
-        tool_responses = [
-            (rid, result)
-            for rid, result in fake_client.responses
-            if isinstance(result, dict) and "contentItems" in result
-        ]
-        assert len(tool_responses) >= 1
-        result_text = tool_responses[0][1]["contentItems"][0]["text"]
-        assert "Invalid reasoning effort" in result_text
 
     @pytest.mark.asyncio
     async def test_sandbox_alias_is_normalized_for_thread_and_turn(self) -> None:
@@ -3250,22 +3363,9 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
         """Auto-selection uses the adapter default if model discovery fails."""
-
-        class ModelListFailsClient(FakeCodexClient):
-            async def request(
-                self,
-                method: str,
-                params: dict[str, Any] | None = None,
-                *,
-                retry_on_overload: bool = True,
-            ) -> dict[str, Any]:
-                if method == "model/list":
-                    raise RuntimeError("model/list unavailable")
-                return await super().request(
-                    method, params, retry_on_overload=retry_on_overload
-                )
-
-        fake_client = ModelListFailsClient()
+        fake_client = FakeCodexClient(
+            model_list_error=RuntimeError("model/list unavailable")
+        )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
         adapter._room_client("room-1")
@@ -3381,19 +3481,18 @@ class TestHistoryInjection:
         # Manually inject a pending approval for room-1
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "tok-1": type(
-                "_PA",
-                (),
-                {
-                    "request_id": 1,
-                    "method": "item/tool/call",
-                    "summary": "test",
-                    "created_at": datetime.now(UTC),
-                    "future": fut,
-                },
-            )(),
-        }
+        registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
+        registry.register_keyed(
+            PendingApproval(
+                request_id=1,
+                method="item/tool/call",
+                summary="test",
+                created_at=datetime.now(UTC),
+                future=fut,
+            ),
+            key="tok-1",
+        )
+        adapter._pending_approvals["room-1"] = registry
         wire_codex_room(adapter, fake_client, "room-1")
         adapter._room_threads["room-1"] = "thr-1"
 
@@ -3611,59 +3710,23 @@ class TestStructuredErrors:
 
 
 class TestEnrichedApprovals:
-    @pytest.mark.asyncio
-    async def test_approve_session_auto_approves_subsequent_requests(self) -> None:
-        """After /approve-session, same method type is auto-approved."""
-        # First approval request - will be resolved via approve-session
-        first_events = [
+    async def test_approve_session_accepts_for_the_session_and_remembers_it(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
             _event_request(
-                10,
-                "item/commandExecution/requestApproval",
-                {"command": "npm test"},
+                10, "item/commandExecution/requestApproval", {"command": "npm test"}
             ),
             _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=first_events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "A coding agent")
 
-        # Manually resolve the approval in the background
-        async def approve_session_later():
-            await _wait_for_pending_approval(adapter, "room-1")
-            await adapter.on_message(
-                make_platform_message(content="/approve-session req-10"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        await room.send("run tests")
+        await room.send("/approve-session req-10")
+        await room.settled()
 
-        task = asyncio.create_task(approve_session_later())
-        await adapter.on_message(
-            make_platform_message(content="run tests"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await task
-
-        # Verify session-level was recorded with full command key
-        assert "commandExecution:npm test" in (
-            adapter._session_approved.get("room-1") or ()
-        )
-        # Verify approval message mentions session-level
-        session_msgs = [
-            m for m in tools.messages_sent if "session-level" in m["content"]
-        ]
-        assert len(session_msgs) >= 1
+        assert room.client.responses == [(10, {"decision": "acceptForSession"})]
+        assert "commandExecution:npm test" in room.adapter._session_approved[ROOM_ID]
+        assert any("session-level" in message for message in room.chat)
 
     @pytest.mark.asyncio
     async def test_approval_audit_trail_emitted(self) -> None:
@@ -5100,57 +5163,6 @@ class TestReviewFixes:
 
 class TestAcceptForSession:
     @pytest.mark.asyncio
-    async def test_approve_session_sends_accept_for_session_decision(self) -> None:
-        """After /approve-session, the decision sent to Codex is 'acceptForSession'."""
-        events = [
-            _event_request(
-                10,
-                "item/commandExecution/requestApproval",
-                {"command": "npm test"},
-            ),
-            _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(approval_mode="manual")
-        )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "A coding agent")
-
-        async def approve_session_later():
-            await _wait_for_pending_approval(adapter, "room-1")
-            await adapter.on_message(
-                make_platform_message(content="/approve-session req-10"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
-
-        task = asyncio.create_task(approve_session_later())
-        await adapter.on_message(
-            make_platform_message(content="run tests"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await task
-
-        # The decision sent to Codex should be 'acceptForSession'
-        accept_responses = [
-            result
-            for _, result in fake_client.responses
-            if result.get("decision") in {"accept", "acceptForSession"}
-        ]
-        assert len(accept_responses) >= 1
-        assert accept_responses[0]["decision"] == "acceptForSession"
-
-    @pytest.mark.asyncio
     async def test_session_auto_approval_sends_accept_for_session(self) -> None:
         """Session auto-approved requests send 'acceptForSession' to Codex."""
         events = [
@@ -5190,10 +5202,11 @@ class TestAcceptForSession:
 
 
 class TestNetworkContext:
-    @pytest.mark.asyncio
-    async def test_network_context_included_in_approval_metadata(self) -> None:
+    async def test_network_context_included_in_approval_metadata(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
         """networkContext from approval params is forwarded in metadata."""
-        events = [
+        room = await codex_room(
             _event_request(
                 10,
                 "item/commandExecution/requestApproval",
@@ -5204,49 +5217,21 @@ class TestNetworkContext:
                 },
             ),
             _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "A coding agent")
 
-        # Resolve the approval in background
-        async def approve_later():
-            await _wait_for_pending_approval(adapter, "room-1")
-            await adapter.on_message(
-                make_platform_message(content="/approve req-10"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        await room.send("install lodash")
+        await room.send("/approve req-10")
+        await room.settled()
 
-        task = asyncio.create_task(approve_later())
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await task
-
-        approval_events = [
+        [approval_event] = [
             e
-            for e in tools.events_sent
+            for e in room.tools.events_sent
             if e["metadata"].get("codex_event_type") == "approval_request"
         ]
-        assert len(approval_events) == 1
-        assert approval_events[0]["metadata"]["codex_network_context"] == {
+        assert approval_event["metadata"]["codex_network_context"] == {
             "domains": ["registry.npmjs.org"]
         }
-        assert approval_events[0]["metadata"]["codex_command"] == "npm install lodash"
+        assert approval_event["metadata"]["codex_command"] == "npm install lodash"
 
 
 class TestTurnStartedLifecycle:
@@ -5495,80 +5480,26 @@ class TestPlanStepsRobustness:
 class TestSessionApprovalValidation:
     """Guards that stop /approve-session from storing bogus session keys."""
 
-    @pytest.mark.asyncio
-    async def test_approve_session_rejects_empty_session_key(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_approve_session_is_refused_for_a_change_with_no_paths(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
-        """/approve-session for a request with no command signature is rejected.
-
-        Without this guard, _session_approved would silently accumulate "" and
-        the user would see "Future `` requests will be auto-approved".
-        """
-        events = [
-            _event_request(
-                15,
-                "item/fileChange/requestApproval",
-                {},  # No command field -> session_approval_key returns ""
-            ),
+        """A file change naming no paths has no signature to match, so
+        /approve-session is refused -- keying on the method alone would
+        auto-approve every future file change -- and the approval stays open
+        for a one-shot answer."""
+        room = await codex_room(
+            _event_request(15, "item/fileChange/requestApproval", {}),
             _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "A coding agent")
 
-        async def approve_session_later() -> None:
-            await _wait_for_pending_approval(adapter, "room-1")
-            await adapter.on_message(
-                make_platform_message(content="/approve-session req-15"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        await room.send("run")
+        await room.send("/approve-session req-15")
+        await room.send("/decline req-15")
+        await room.settled()
 
-        # File-change approvals DO key on method, so session-level would
-        # normally succeed.  Force the empty-key path by patching
-        # _session_approval_key to return "" for the file-change method.
-        original_key = adapter._session_approval_key
-
-        def _patched_key(method: str, params: dict[str, Any]) -> str:
-            if method == "item/fileChange/requestApproval":
-                return ""
-            return original_key(method, params)
-
-        monkeypatch.setattr(adapter, "_session_approval_key", _patched_key)
-
-        task = asyncio.create_task(approve_session_later())
-        # Manual approval waits for the user.  Decline path will be hit after
-        # /approve-session is rejected because the pending future stays open;
-        # short approval_wait_timeout_s keeps this test snappy.
-        adapter.config.approval_wait_timeout_s = 1.0
-        adapter.config.approval_timeout_decision = "decline"
-        await adapter.on_message(
-            make_platform_message(content="run"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await task
-
-        # No empty-string pattern was stored.
-        assert "" not in (adapter._session_approved.get("room-1") or ())
-        # The user got the "cannot be resolved as session-level" message.
-        rejection = [
-            m
-            for m in tools.messages_sent
-            if "cannot be resolved as session-level" in m["content"]
-        ]
-        assert len(rejection) == 1
+        assert room.client.responses == [(15, {"decision": "decline"})]
+        assert not room.adapter._session_approved.get(ROOM_ID)
+        assert sum("cannot be resolved as session-level" in m for m in room.chat) == 1
 
 
 class TestTokenUsageEmission:
@@ -5696,6 +5627,7 @@ class TestSessionApprovalKeying:
             is_session_bootstrap=True,
             room_id="room-1",
         )
+        await await_released_turn(adapter, "room-1")
 
         # Manual approval times out and the pending record is cleared,
         # so /approve-session reports no pending approvals rather than
@@ -5712,6 +5644,282 @@ class TestSessionApprovalKeying:
         )
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
         assert "room-1" not in adapter._session_approved
+
+
+def parked_on_approval(*then: RpcEvent) -> tuple[RpcEvent, ...]:
+    """A turn that asks the room to approve one command, then plays ``then``."""
+    return (
+        _event_request(10, "item/commandExecution/requestApproval", {"command": "a"}),
+        *then,
+    )
+
+
+class EndlessWorkClient(FakeCodexClient):
+    """A Codex server that, once its scripted events run out, keeps the
+    turn working forever."""
+
+    async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+        if self._events:
+            return self._events.popleft()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class TestApprovalFromASequentialRoom:
+    """Band hands a room its messages one at a time, so the reply resolving an
+    approval is delivered only after the asking message's on_message returns.
+    Approval waits are an hour long: a regression that waits on the human
+    hangs until pytest's timeout instead of passing by luck."""
+
+    @pytest.mark.asyncio
+    async def test_the_reply_delivered_after_the_asking_message_resolves_it(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            *parked_on_approval(_turn_completed()), approval_wait_timeout_s=3600
+        )
+
+        await room.send("run tests")
+        await room.send(f"/{CodexCommand.APPROVE} req-10")
+        await room.settled()
+
+        assert room.client.responses == [(10, {"decision": "accept"})]
+
+    @pytest.mark.asyncio
+    async def test_a_request_while_a_turn_awaits_a_human_is_turned_away(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            *parked_on_approval(_turn_completed()), approval_wait_timeout_s=3600
+        )
+
+        await room.send("run tests")
+        await room.send("and lint too")
+
+        assert room.chat[-1] == TURN_IN_PROGRESS_MESSAGE
+        methods = [method for method, _ in room.client.requests]
+        assert methods.count("turn/start") == 1
+
+    @pytest.mark.asyncio
+    async def test_interrupt_reaches_a_turn_parked_on_a_human(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        """ExecutionContext.interrupt()/stop_room() only cancel the cycle task
+        that invoked on_message -- once that returns early because the turn
+        released the room, only on_interrupt still reaches the parked turn.
+
+        on_interrupt declines the pending approval and then cancels the turn
+        as a backstop; which of the two finishes it is an asyncio-scheduling
+        detail, so this asserts only that the turn stops running."""
+        room = await codex_room(
+            *parked_on_approval(_turn_completed()), approval_wait_timeout_s=3600
+        )
+
+        await room.send("run tests")
+        turn = room.turn
+        assert not turn.done()
+
+        await room.adapter.on_interrupt(ROOM_ID, ControlMode.INTERRUPT)
+
+        assert turn.done()
+        assert ROOM_ID not in room.adapter._pending_approvals
+
+    @pytest.mark.asyncio
+    async def test_cleanup_declines_a_parked_turn_instead_of_waiting(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        """A turn waiting on a human holds the room's RPC lock; cleanup must
+        decline its approval (and any it raises afterwards) rather than block
+        for the whole approval wait."""
+        room = await codex_room(
+            *parked_on_approval(
+                _event_request(
+                    11, "item/commandExecution/requestApproval", {"command": "b"}
+                ),
+                _turn_completed(),
+            ),
+            approval_wait_timeout_s=3600,
+        )
+
+        await room.send("run tests")
+        turn = room.turn
+        await room.adapter.on_cleanup(ROOM_ID)
+        await turn
+
+        assert room.client.responses == [
+            (10, {"decision": "decline"}),
+            (11, {"decision": "decline"}),
+        ]
+        assert sum(m.startswith("Approval requested") for m in room.chat) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.looptime
+    async def test_cleanup_is_bounded_by_a_released_turn_still_working(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        """Once released, the runtime can't cancel the turn; cleanup waits out
+        the settle timeout, then cancels Codex work that never ends."""
+        room = await codex_room(
+            client=EndlessWorkClient(events=list(parked_on_approval())),
+            approval_wait_timeout_s=3600,
+        )
+
+        await room.send("run tests")
+        await room.send(f"/{CodexCommand.APPROVE} req-10")
+        turn = room.turn
+        await room.adapter.on_cleanup(ROOM_ID)
+
+        assert turn.cancelled()
+        assert room.client.closed
+
+
+class CodexApprovalRoom:
+    """One room's manual approvals on a started Codex adapter, observed
+    through the room's chat: each ask runs as its own turn, and replies go
+    through the room's approval commands."""
+
+    def __init__(self, adapter: CodexAdapter) -> None:
+        self.adapter = adapter
+        self.tools = FakeAgentTools()
+        self.asks: list[asyncio.Task[ApprovalDecision]] = []
+
+    @property
+    def pending(self) -> DecisionRegistry[PendingApproval]:
+        return self.adapter._pending_approvals[ROOM_ID]
+
+    def ask(
+        self, approval_id: str, *, request_id: int
+    ) -> asyncio.Task[ApprovalDecision]:
+        params = {"approvalId": approval_id, "command": "npm test"}
+        self.asks.append(
+            ask := asyncio.create_task(
+                self.adapter._resolve_manual_approval(
+                    tools=self.tools,
+                    msg=make_platform_message(room_id=ROOM_ID),
+                    room_id=ROOM_ID,
+                    event=_event_request(
+                        request_id, "item/commandExecution/requestApproval", params
+                    ),
+                    summary="npm test",
+                    params=params,
+                )
+            )
+        )
+        return ask
+
+    @asynccontextmanager
+    async def prompted(self, *approval_ids: str) -> AsyncIterator[None]:
+        """Asks made inside the block have each been registered and their
+        room prompt sent by the time it exits."""
+        prompts = [self.tools.hold_message(f"`{id_}`") for id_ in approval_ids]
+        yield
+        for prompt in prompts:
+            async with prompt:
+                pass
+
+    async def reply(self, command: CodexCommand, approval_id: str = "") -> str:
+        """Send an approval command to the room; the room's answer."""
+        await self.adapter._handle_approval_command(
+            tools=self.tools,
+            msg=make_platform_message(room_id=ROOM_ID),
+            room_id=ROOM_ID,
+            command=command,
+            args=approval_id,
+        )
+        return self.tools.messages_sent[-1]["content"]
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def approval_room() -> AsyncIterator[Callable[..., Awaitable[CodexApprovalRoom]]]:
+    """Open a Codex room in manual approval mode; asks still waiting when the
+    test ends are cancelled."""
+    rooms: list[CodexApprovalRoom] = []
+
+    async def open_room(**config: Any) -> CodexApprovalRoom:
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=[]),
+            config=CodexAdapterConfig(
+                **{"approval_mode": "manual", "approval_wait_timeout_s": 5, **config}
+            ),
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        rooms.append(room := CodexApprovalRoom(adapter))
+        return room
+
+    yield open_room
+    for room in rooms:
+        for ask in room.asks:
+            ask.cancel()
+
+
+class TestManualApprovalRaces:
+    """Races between a room reply and the approval wait's own timeout."""
+
+    @pytest.mark.asyncio
+    async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
+    ) -> None:
+        """The approval id is visible in the task event before the prompt
+        send; a reply claiming it while that send fails owns the answer."""
+        room = await approval_room()
+        failing_prompt = room.tools.hold_message(
+            "Approval requested", error=RuntimeError("network down")
+        )
+        decision = room.ask("approval-xyz", request_id=1)
+
+        async with failing_prompt:
+            await room.reply(CodexCommand.APPROVE)
+
+        assert await decision == "accept"
+        assert events_of_type(room.tools, "error") == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.looptime
+    async def test_a_late_reply_during_the_timeout_notice_is_not_reported_as_resolved(
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
+    ) -> None:
+        """A reply landing while the timeout notice is still being sent must
+        not be told "resolved" for a decision that already timed out."""
+        room = await approval_room(approval_wait_timeout_s=300)
+        timeout_notice = room.tools.hold_message("timed out")
+        decision = room.ask("approval-xyz", request_id=1)
+
+        async with timeout_notice:
+            assert await room.reply(CodexCommand.APPROVE, "approval-xyz") == (
+                NO_APPROVALS_TO_RESOLVE_MESSAGE
+            )
+
+        assert await decision == "decline"  # approval_timeout_decision
+
+    @pytest.mark.asyncio
+    async def test_redelivered_approvals_never_hang_evict_or_override_a_claim(
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
+    ) -> None:
+        """At capacity, with one approval claimed by a reply mid-resolution:
+        a second reply to it is told it's no longer pending; Codex re-sending
+        it declines at once without waiting; re-sending the open one
+        supersedes it (declining its asker) without evicting anything; and
+        both final answers stand."""
+        room = await approval_room(max_pending_approvals_per_room=2)
+        async with room.prompted("approval-a", "approval-b"):
+            claimed_ask = room.ask("approval-a", request_id=1)
+            superseded = room.ask("approval-b", request_id=2)
+        claimed = room.pending.try_claim("approval-a")
+        assert claimed is not None
+
+        assert await room.reply(CodexCommand.APPROVE, "approval-a") == (
+            "Approval `approval-a` is no longer pending."
+        )
+        refused = room.ask("approval-a", request_id=3)
+        redelivery = room.ask("approval-b", request_id=4)
+
+        assert await refused == "decline"
+        assert await superseded == "decline"
+        assert list(room.pending) == ["approval-a", "approval-b"]
+        await room.reply(CodexCommand.DECLINE, "approval-b")
+        claimed.payload.future.set_result("accept")
+        assert await redelivery == "decline"
+        assert await claimed_ask == "accept"
 
 
 class TestTokenUsageCounterMonotonicity:
@@ -6153,51 +6361,6 @@ class TestMalformedPayloadTolerance:
         )
 
 
-class TestCleanupOnCancel:
-    @pytest.mark.asyncio
-    async def test_pending_approvals_cleared_on_room_cleanup(self) -> None:
-        """on_cleanup must resolve pending approval futures to 'decline'.
-
-        Directly populates adapter state to isolate cleanup behavior from
-        the _rpc_lock held by on_message — this verifies that
-        _clear_pending_approvals_for_room resolves futures to 'decline',
-        not that the natural approval timeout fired first.
-        """
-        fake_client = FakeCodexClient(events=[])
-        adapter = make_codex_adapter(
-            fake_client,
-            config=CodexAdapterConfig(
-                approval_mode="manual", approval_wait_timeout_s=30.0
-            ),
-        )
-        await adapter.on_started("Agent", "A coding agent")
-
-        # Simulate an active room with a pending approval.
-        loop = asyncio.get_running_loop()
-        approval_future: asyncio.Future[str] = loop.create_future()
-
-        wire_codex_room(adapter, fake_client, "room-1")
-        adapter._room_threads["room-1"] = "thr-1"
-        adapter._pending_approvals["room-1"] = {
-            "token-1": PendingApproval(
-                request_id=42,
-                method="item/commandExecution/requestApproval",
-                summary="rm -rf /",
-                created_at=datetime.now(UTC),
-                future=approval_future,
-                session_key="cmd:rm -rf /",
-            ),
-        }
-
-        await adapter.on_cleanup("room-1")
-
-        assert adapter._pending_approvals.get("room-1", {}) == {}
-        assert "room-1" not in adapter._room_threads
-        # Verify cleanup resolved the future to "decline".
-        assert approval_future.done()
-        assert approval_future.result() == "decline"
-
-
 class TestTurnLifecycleEventsDisabled:
     @pytest.mark.asyncio
     async def test_no_lifecycle_events_when_disabled(self) -> None:
@@ -6425,20 +6588,26 @@ class TestSlashCommandExtraction:
     @pytest.mark.parametrize(
         ("content", "expected"),
         [
-            ("/approve req-1", ("approve", "req-1")),
-            ("@owner/agent-name /approve req-1", ("approve", "req-1")),
+            ("/approve req-1", (CodexCommand.APPROVE, "req-1")),
+            ("@owner/agent-name /approve req-1", (CodexCommand.APPROVE, "req-1")),
             # Every mentioned participant contributes a token to the block.
-            ("@owner/agent-name @owner/other-bot /approve req-1", ("approve", "req-1")),
+            (
+                "@owner/agent-name @owner/other-bot /approve req-1",
+                (CodexCommand.APPROVE, "req-1"),
+            ),
             # Unresolved mentions stay in the platform's normalized @[[uuid]] form.
-            ("@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approvals", ("approvals", "")),
-            ("@team/bot /approve", ("approve", "")),
+            (
+                "@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approvals",
+                (CodexCommand.APPROVALS, ""),
+            ),
+            ("@team/bot /approve", (CodexCommand.APPROVE, "")),
             # Any whitespace separates a command from its argument, not just " ".
-            ("@team/bot /approve\treq-1", ("approve", "req-1")),
-            ("/approve\nreq-1", ("approve", "req-1")),
+            ("@team/bot /approve\treq-1", (CodexCommand.APPROVE, "req-1")),
+            ("/approve\nreq-1", (CodexCommand.APPROVE, "req-1")),
         ],
     )
     def test_command_behind_the_mention_block_is_recognised(
-        self, content: str, expected: tuple[str, str]
+        self, content: str, expected: tuple[CodexCommand, str]
     ) -> None:
         """The delivery mention block must never hide a real command."""
         assert CodexAdapter._extract_local_command(content) == expected
@@ -6547,7 +6716,7 @@ class TestConfigEnvSourcing:
 class TestReadRoomFileImagePassthrough:
     @pytest.mark.asyncio
     async def test_image_result_becomes_input_image_content_item(self) -> None:
-        class _ImageTools(ToolSchemaFakeTools):
+        class ImageTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(
                 self, tool_name: str, arguments: dict[str, Any]
             ) -> ToolCallOutcome:
@@ -6569,7 +6738,7 @@ class TestReadRoomFileImagePassthrough:
                 _tool_call_request(42, "band_read_room_file", {"file_id": "f1"}),
                 _turn_completed(),
             ],
-            tools=_ImageTools(),
+            tools=ImageTools(),
         )
 
         response_id, response_payload = turn.tool_response
@@ -6589,3 +6758,70 @@ class TestReadRoomFileImagePassthrough:
         )
 
         assert turn.content_items[0]["type"] == "inputText"
+
+
+class TestNoReply:
+    @pytest.mark.asyncio
+    async def test_no_reply_suppresses_the_fallback_text(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(1, "band_no_reply", {"reason": "not for me"}),
+                _final_text("Nothing to add."),
+                _turn_completed(),
+            ]
+        )
+        assert turn.tools.messages_sent == []
+        assert reported_failures(turn.tools) == []
+
+    @pytest.mark.asyncio
+    async def test_no_reply_does_not_carry_into_the_next_turn(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            _tool_call_request(1, "band_no_reply"),
+            _turn_completed("turn-1"),
+            _final_text("Second answer"),
+            _turn_completed("turn-2"),
+        )
+
+        await room.send("First message")
+        await room.send("Second message")
+
+        assert room.chat == ["Second answer"]
+
+
+class StayQuietInput(BaseModel):
+    """Say nothing this turn."""
+
+
+def _undeclared(handler: Callable[..., Any]) -> Callable[..., Any]:
+    return handler
+
+
+class TestCustomToolEffect:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("declare", "chat"),
+        [
+            pytest.param(
+                declares_turn_effect(TurnEffect.DECLINE), [], id="declared-silence"
+            ),
+            pytest.param(_undeclared, ["Nothing to add."], id="undeclared"),
+        ],
+    )
+    async def test_only_a_declared_tool_settles_the_reply(
+        self, declare: Callable[..., Any], chat: list[str]
+    ) -> None:
+        async def stay_quiet(args: StayQuietInput) -> str:
+            return "quiet"
+
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(1, "stayquiet"),
+                _final_text("Nothing to add."),
+                _turn_completed(),
+            ],
+            additional_tools=[(StayQuietInput, declare(stay_quiet))],
+        )
+
+        assert [m["content"] for m in turn.tools.messages_sent] == chat

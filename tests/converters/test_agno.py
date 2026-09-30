@@ -165,6 +165,40 @@ class TestFromHistoryInvariant:
         assert all(m.from_history for m in result)
 
 
+class TestForeignAgentRehydration:
+    """A peer agent's marker must survive into Agno bootstrap input verbatim.
+
+    Cross-framework recall depends on the foreign line reaching the converter
+    unchanged; a regression here would make a prompt-only E2E fix look green
+    while the model never saw the full token.
+    """
+
+    def test_peer_agent_line_survives_verbatim(self):
+        marker = "note-DEADBEEF"
+        converter = AgnoHistoryConverter(agent_name="Me")
+        raw = [
+            {
+                "content": f"the note is {marker}",
+                "role": "assistant",
+                "sender_name": "speaker-langgraph",
+                "message_type": "text",
+            },
+            {
+                "content": "my own reply",
+                "role": "assistant",
+                "sender_name": "Me",
+                "message_type": "text",
+            },
+        ]
+
+        messages = converter.convert(raw)
+
+        assert [m.content for m in messages] == [
+            f"[speaker-langgraph]: the note is {marker}",
+            "my own reply",
+        ]
+
+
 class TestMalformedAndUnknown:
     def test_tool_call_missing_id_is_skipped(self):
         result = AgnoHistoryConverter().convert([dict(TOOL_CALL_SEARCH_EMPTY)])

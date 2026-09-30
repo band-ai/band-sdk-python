@@ -75,13 +75,17 @@ from band.integrations.mcp.backends import (
     create_band_mcp_backend,
 )
 from band.integrations.mcp.local_server import LocalMCPServer
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    custom_tool_effects,
+    get_custom_tool_name,
+)
 from band.runtime.formatters import messages_before
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
-    ROOM_POSTING_TOOL_NAMES,
+    LEGACY_SEND_MESSAGE_TOOL,
     ToolDefinition,
     canonicalize_mcp_tool_name,
     iter_tool_definitions,
@@ -214,7 +218,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS}
+    )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
@@ -268,6 +274,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._workspace_for_room = workspace_for_room
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
@@ -338,16 +345,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # external band-mcp's MCP-prefixed legacy call
             # (band-create_agent_chat_message) would canonicalize to nothing and
             # narrate under the raw prefixed name — the one case reply-suppression
-            # (is_room_posting_tool, same source set) already tolerates.
-            | ROOM_POSTING_TOOL_NAMES
+            # (settles_turn_reply) already tolerates.
+            | {LEGACY_SEND_MESSAGE_TOOL}
         )
         return definitions, names
 
     def _build_runtime(self, workspace: str | None = None) -> ACPRuntime:
         return ACPRuntime(
-            command=_resolve_launcher(self._command),
+            command=_resolve_launcher(self._spawn_command(workspace)),
             env=self._env,
-            cwd=workspace,
+            cwd=self._spawn_cwd(workspace),
             auth_method=self._auth_method,
             client_factory=self._runtime_client_factory,
             spawn_process=spawn_agent_process,
@@ -355,6 +362,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             use_unstable_protocol=self._use_unstable_protocol,
             pass_builtin_transport_options=self._pass_builtin_transport_options,
         )
+
+    def _spawn_command(self, workspace: str | None) -> list[str]:
+        """The argv to launch the ACP agent subprocess with, for this room's workspace."""
+        del workspace
+        return self._command
+
+    def _spawn_cwd(self, workspace: str | None) -> str | None:
+        """The subprocess-level cwd to launch the ACP agent with, for this room's workspace."""
+        return workspace
 
     def _runtime_client_factory(self) -> ACPCollectingClient:
         return BandACPClient(
@@ -449,6 +465,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 mentions=mentions,
                 session_id=session_id,
                 room_id=room_id,
+                emit=self.features.emit,
+                custom_effects=self._custom_effects,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,

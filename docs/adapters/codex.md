@@ -104,7 +104,7 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `workspace_for_room` | `Callable[[str], str] | None` | `None` | Optional override for a room workspace. By default, the adapter creates `./.band-workspaces/<room-id>`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
-| `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
+| `reasoning_effort` | `str \| None` | `None` | Reasoning effort for models that support it. Supported values vary by model and Codex CLI version (`model/list` reports them), so the adapter passes the value through and Codex rejects unknown ones on the next turn. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
 | `turn_timeout_s` | `float` | `180.0` | Maximum seconds to wait for one Codex turn. |
@@ -123,7 +123,7 @@ Pass these to `CodexAdapterConfig(...)`:
 | `approval_wait_timeout_s` | `float` | `300.0` | Seconds to wait for a manual approval. |
 | `approval_timeout_decision` | `"accept" \| "acceptForSession" \| "decline"` | `"decline"` | Decision when manual approval times out. |
 | `session_approval_granularity` | `"binary" \| "full_command"` | `"full_command"` | How `/approve-session` matches future commands. `"full_command"` matches the exact command string; `"binary"` matches the first command token. |
-| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approval requests per room. |
+| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approval requests per room (at least 1). The oldest unanswered one is evicted (declined) when full; a redelivered request id replaces its predecessor instead. |
 | `max_approval_audit_per_room` | `int` | `100` | Maximum approval audit entries kept per room. |
 | `max_session_approved_per_room` | `int` | `100` | Maximum session-level approval patterns kept per room. |
 
@@ -246,7 +246,7 @@ Type `/help` in the room to see the command list. Common commands:
 | `/model` or `/models` | Show the current model. |
 | `/model list` or `/models list` | List available Codex models. |
 | `/model <id>` | Use a model for subsequent turns. |
-| `/reasoning <level>` | Set reasoning effort for subsequent turns. |
+| `/reasoning <level>` | Set reasoning effort for subsequent turns. Refuses an effort the current model doesn't list (checked live against Codex's `model/list`). `/reasoning` alone shows the current effort and the efforts the current model supports. |
 | `/approvals` | List pending approvals. |
 | `/approve <id>` | Approve one pending request. |
 | `/approve-session <id>` | Approve this request and future similar requests in the room. |

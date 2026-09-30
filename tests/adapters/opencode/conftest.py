@@ -14,9 +14,16 @@ from band.core.types import FeatureKwargs
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
 from tests.adapters.opencode.helpers import (
+    AskFactory,
     FakeOpencodeClient,
     make_fake_mcp_backend_factory,
 )
+
+
+@pytest.fixture
+def asks() -> AskFactory:
+    """Builds OpenCode permission and question asks for a test."""
+    return AskFactory()
 
 
 @pytest.fixture

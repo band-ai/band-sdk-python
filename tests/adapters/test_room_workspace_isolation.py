@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -43,6 +44,67 @@ def test_custom_workspace_is_created_on_first_resolution(tmp_path: Path) -> None
 
     assert resolved == str(workspace)
     assert workspace.is_dir()
+
+
+def test_relative_custom_workspace_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="must return an absolute path"):
+        resolve_room_workspace("room-a", lambda _room_id: "workspace")
+
+    assert not (tmp_path / "workspace").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
+@pytest.mark.parametrize("workspace", [r"\workspace", "/workspace"])
+@pytest.mark.asyncio
+async def test_adapters_reject_windows_rooted_relative_workspaces(
+    workspace: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject_directory_creation(self: Path, **_kwargs: object) -> None:
+        pytest.fail(f"created directory for rooted-relative workspace: {self}")
+
+    codex = CodexAdapter(
+        CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
+    )
+    acp = ACPClientAdapter(
+        command="codex", workspace_for_room=lambda _room_id: workspace
+    )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "mkdir", reject_directory_creation)
+        with pytest.raises(ValueError, match="must return an absolute path"):
+            codex._room_client("room-a")
+        with pytest.raises(ValueError, match="must return an absolute path"):
+            await acp._runtime_for("room-a")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
+@pytest.mark.parametrize("forward_slashes", [False, True])
+def test_windows_drive_absolute_workspace_is_accepted(
+    tmp_path: Path, forward_slashes: bool
+) -> None:
+    workspace = tmp_path / "room-a"
+    path = workspace.as_posix() if forward_slashes else str(workspace)
+
+    resolved = resolve_room_workspace("room-a", lambda _room_id: path)
+
+    assert Path(resolved) == workspace
+    assert workspace.is_dir()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
+def test_windows_unc_workspace_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = r"\\server\share\workspace"
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os.path, "realpath", lambda path: path)
+        patch.setattr(Path, "mkdir", lambda *_args, **_kwargs: None)
+        resolved = resolve_room_workspace("room-a", lambda _room_id: workspace)
+
+    assert resolved == workspace
 
 
 @pytest.mark.asyncio
@@ -253,6 +315,20 @@ async def test_cleanup_all_attempts_every_codex_room_after_one_close_fails() -> 
 def test_codex_rejects_the_former_shared_cwd_option() -> None:
     with pytest.raises(ValueError, match="workspace_for_room or the default"):
         CodexAdapter(CodexAdapterConfig(cwd="/workspace"))
+
+
+def test_codex_config_ignores_an_ambient_codex_cwd_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CODEX_CWD`` is a plausible ambient env var (a Codex CLI convention,
+    this repo's own E2E harness) unrelated to this banned kwarg; it must never
+    silently populate ``cwd`` and trip the rejection above."""
+    monkeypatch.setenv("CODEX_CWD", "/some/unrelated/directory")
+
+    config = CodexAdapterConfig(workspace_for_room=lambda _room_id: "/tmp/x")
+
+    assert config.cwd is None
+    CodexAdapter(config)  # must not raise
 
 
 @pytest.mark.asyncio

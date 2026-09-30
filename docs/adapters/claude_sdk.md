@@ -103,6 +103,7 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `model` | `str \| None` | `None` | Claude model. Accepts full IDs or aliases such as `"sonnet"`, `"opus"`, `"haiku"`, and `"inherit"`. When `None`, no `--model` flag is sent and the `claude` binary chooses. |
 | `fallback_model` | `str \| None` | `None` | Fallback model for Claude Code if the primary model is unavailable. Aliases are accepted. |
 | `max_thinking_tokens` | `int \| None` | `None` | Maximum tokens for Claude extended thinking. |
+| `effort` | `EffortLevel \| None` | `None` | Response effort level. The accepted values are `claude_agent_sdk`'s `EffortLevel`. When `None`, the model default applies. |
 | `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. |
 | `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions. Must exist if provided. |
 
@@ -126,8 +127,8 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 | `approval_text_notifications` | `bool` | `True` | Send room messages for automatic approval or decline decisions. |
 | `approval_wait_timeout_s` | `float` | `300.0` | Seconds to wait for a manual approval. |
 | `approval_timeout_decision` | `"accept" \| "decline"` | `"decline"` | Decision when manual approval times out. |
-| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approvals per room. Oldest entries are evicted when full. |
-| `approval_authorized_senders` | `set[str] \| None` | `None` | Sender IDs allowed to `/approve` and `/decline`. `None` means any room participant. |
+| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approvals per room (at least 1). The oldest unanswered one is evicted (declined) when full. |
+| `approval_authorized_senders` | `set[str] \| None` | `None` | Sender IDs allowed to `/approve` and `/decline`. `None` means any room participant; an empty set means nobody. |
 
 When `approval_mode="manual"`, Claude pauses and the adapter posts a message like:
 

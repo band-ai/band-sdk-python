@@ -100,6 +100,7 @@ class AgentRuntime:
         room_filter: Callable[[dict], bool] | None = None,
         session_config: SessionConfig | None = None,
         on_session_cleanup: Callable[[str], Awaitable[None]] | None = None,
+        on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
     ):
@@ -114,6 +115,10 @@ class AgentRuntime:
             room_filter: Optional filter to decide which rooms to join
             session_config: Configuration for ExecutionContext
             on_session_cleanup: Optional callback for session cleanup (receives room_id)
+            on_control: Optional callback for an interrupt/stop control signal
+                (receives room_id and the ``ControlMode``), invoked in addition
+                to the execution's own ``interrupt()``/``stop_room()`` -- for
+                adapter work that keeps running after those return early
             on_participant_added: Optional callback for participant_added events
             on_participant_removed: Optional callback for participant_removed events
         """
@@ -123,6 +128,7 @@ class AgentRuntime:
         self._execution_factory = execution_factory
         self._session_config = session_config or SessionConfig()
         self._on_session_cleanup = on_session_cleanup
+        self._on_control = on_control
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
@@ -328,36 +334,39 @@ class AgentRuntime:
 
         Custom ``Execution`` implementations that omit the control methods are
         skipped with a log (mirrors how ``request_resync`` degrades).
+
+        INTERRUPT/STOP also notify ``on_control`` (the adapter's own
+        ``on_interrupt``), unconditionally -- the execution's own method only
+        reaches the task that's still running the handler; it cannot cancel
+        work an adapter has already returned from and kept running detached
+        (e.g. a turn parked on a human decision).
         """
-        if mode == ControlMode.INTERRUPT:
-            fn = getattr(execution, "interrupt", None)
-            if fn is None:
-                logger.debug(
-                    "Execution for room %s has no interrupt(); skipping",
-                    getattr(execution, "room_id", "?"),
-                )
-                return
-            fn()
-        elif mode == ControlMode.STOP:
-            fn = getattr(execution, "stop_room", None)
-            if fn is None:
-                logger.debug(
-                    "Execution for room %s has no stop_room(); skipping",
-                    getattr(execution, "room_id", "?"),
-                )
-                return
-            fn()
-        elif mode == ControlMode.PLAY:
-            fn = getattr(execution, "resume_room", None)
-            if fn is None:
-                logger.debug(
-                    "Execution for room %s has no resume_room(); skipping",
-                    getattr(execution, "room_id", "?"),
-                )
-                return
-            await fn()
-        else:
-            logger.warning("Unknown control mode %r; ignoring", mode)
+        match mode:
+            case ControlMode.INTERRUPT | ControlMode.STOP:
+                attr = "interrupt" if mode == ControlMode.INTERRUPT else "stop_room"
+                fn = getattr(execution, attr, None)
+                if fn is None:
+                    logger.debug(
+                        "Execution for room %s has no %s(); skipping",
+                        getattr(execution, "room_id", "?"),
+                        attr,
+                    )
+                else:
+                    fn()
+                room_id = getattr(execution, "room_id", None)
+                if self._on_control is not None and room_id is not None:
+                    await self._on_control(room_id, mode)
+            case ControlMode.PLAY:
+                fn = getattr(execution, "resume_room", None)
+                if fn is None:
+                    logger.debug(
+                        "Execution for room %s has no resume_room(); skipping",
+                        getattr(execution, "room_id", "?"),
+                    )
+                    return
+                await fn()
+            case _:
+                logger.warning("Unknown control mode %r; ignoring", mode)
 
     # --- Execution management ---
 

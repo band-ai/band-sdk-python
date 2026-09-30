@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from acp.schema import (
     AcceptElicitationResponse,
@@ -36,6 +36,7 @@ from band.integrations.acp.types import ACPToolCall
 from band.integrations.omp import (
     DEFAULT_OMP_ACP_COMMAND,
     OMP_APPROVAL_FORM_TOOL_NAME,
+    OMP_APPROVAL_MODE_ALWAYS_ASK,
     OMP_APPROVE_OPTION_ID,
     OMP_DENY_OPTION_ID,
     OMP_FORM_APPROVE,
@@ -95,6 +96,8 @@ class OmpACPAdapterConfig:
     ``workspace_for_room`` for new code.
     """
 
+    # Full access is opt-in; CLI approval flags in command remain forbidden.
+    approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = None
@@ -124,7 +127,9 @@ class OmpACPAdapter(ACPClientAdapter):
                 raise ValueError("set either cwd or workspace_for_room, not both")
             workspace_for_room = create_room_workspace_resolver(config.cwd)
         super().__init__(
-            command=finalize_omp_command(config.command),
+            command=finalize_omp_command(
+                config.command, approval_mode=config.approval_mode
+            ),
             env=config.env,
             workspace_for_room=workspace_for_room,
             mcp_servers=config.mcp_servers,
@@ -144,6 +149,35 @@ class OmpACPAdapter(ACPClientAdapter):
             own_tool_names=self._own_tool_names,
             canonicalize_tool_name=self._canonical_tool_name,
         )
+
+    def _spawn_command(self, workspace: str | None) -> list[str]:
+        if workspace is None:
+            return self._command
+        # omp's own --cwd flag ("Directory to start in (overrides the launch
+        # cwd)") gives the same per-room isolation _spawn_cwd would otherwise
+        # provide via the subprocess-level cwd -- confirmed live: a bash
+        # tool's `pwd`/`ls` inside the session reports this directory, not
+        # the subprocess's actual launch dir. See _spawn_cwd for why that
+        # path is avoided instead.
+        acp_index = self._command.index("acp")
+        return [
+            *self._command[: acp_index + 1],
+            f"--cwd={workspace}",
+            *self._command[acp_index + 1 :],
+        ]
+
+    def _spawn_cwd(self, workspace: str | None) -> str | None:
+        del workspace
+        # omp's Bun runtime completes the ACP handshake and session setup
+        # fine, then goes silent -- or degrades into a slow permission-request
+        # retry loop that never finishes -- on its first real turn when the
+        # *subprocess itself* is spawned with an explicit cwd. CPython's
+        # subprocess machinery only takes the fast posix_spawn() path when
+        # cwd is None, falling back to fork()+chdir() otherwise, and that
+        # fork()-based path is what breaks omp (never observed with
+        # codex-acp/copilot/cursor). omp's own --cwd flag (see
+        # _spawn_command) sidesteps this entirely.
+        return None
 
     def _make_elicitation_handler(
         self,
@@ -172,26 +206,32 @@ class OmpACPAdapter(ACPClientAdapter):
                 name=OMP_APPROVAL_FORM_TOOL_NAME,
                 arguments={"message": message},
             )
-            option_id: str | None = None
-            if self._resolve_permission is not None:
-                options = (
-                    PermissionOption(
-                        optionId=OMP_APPROVE_OPTION_ID,
-                        name=OMP_FORM_APPROVE,
-                        kind="allow_once",
-                    ),
-                    PermissionOption(
-                        optionId=OMP_DENY_OPTION_ID,
-                        name=OMP_FORM_DENY,
-                        kind="reject_once",
-                    ),
-                )
-                option_id = await self._resolve_permission_option(
-                    call=synthetic_call,
-                    options=options,
-                    room_id=room_id,
-                    session_id=session_id,
-                )
+            options = (
+                PermissionOption(
+                    optionId=OMP_APPROVE_OPTION_ID,
+                    name=OMP_FORM_APPROVE,
+                    kind="allow_once",
+                ),
+                PermissionOption(
+                    optionId=OMP_DENY_OPTION_ID,
+                    name=OMP_FORM_DENY,
+                    kind="reject_once",
+                ),
+            )
+            # Mirrors _make_permission_handler: always defer to
+            # _resolve_permission_option, which auto-approves via
+            # select_allow_option_id when no resolver is configured. Gating
+            # this call on self._resolve_permission being set (as before)
+            # left every OMP MCP/tool-call approval -- which OMP routes
+            # through this elicitation form, not session/request_permission
+            # -- declined by default, since most callers never configure a
+            # custom resolver.
+            option_id = await self._resolve_permission_option(
+                call=synthetic_call,
+                options=options,
+                room_id=room_id,
+                session_id=session_id,
+            )
             if option_id == OMP_APPROVE_OPTION_ID:
                 return AcceptElicitationResponse(
                     action="accept",

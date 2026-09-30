@@ -299,6 +299,7 @@ async def _probe_copilot_sdk() -> bool:
     adapter = CopilotSDKAdapter.__new__(CopilotSDKAdapter)
     adapter.features = SimpleNamespace(emit=())
     adapter._custom_tools = []
+    adapter._custom_effects = {}
     adapter._turn_state = {}
     adapter._room_tools = {"room-1": room_tools}
 

@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 from typing_extensions import Unpack
 
 from band.client.rest import AsyncRestClient
+from band.client.streaming import ControlMode
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol, HistoryConverter
 from band.core.types import (
@@ -277,6 +278,16 @@ class SimpleAdapter(ABC, Generic[H]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""
+
+    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        """Override to abort per-room work still running after ``on_message``/
+        ``on_event`` returned early (e.g. a turn parked on a human decision).
+
+        The runtime's own interrupt/stop only cancels the task that invoked
+        the handler; once that task has returned, this is the only signal
+        that still reaches work the adapter kept running detached. No-op by
+        default -- an adapter that never returns early needs no override.
+        """
 
     async def cleanup_all(self) -> None:
         """Override to release adapter-wide resources (clients, servers).

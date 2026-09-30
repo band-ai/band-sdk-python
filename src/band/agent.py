@@ -276,6 +276,10 @@ class Agent:
                 await self._runtime.start(
                     on_execute=self._on_execute,
                     on_cleanup=self._adapter.on_cleanup,
+                    # A bare FrameworkAdapter predates on_interrupt and needn't
+                    # implement it -- degrade to a no-op signal like other
+                    # optional protocol additions (e.g. Execution.request_resync).
+                    on_control=getattr(self._adapter, "on_interrupt", None),
                 )
             except BaseException:
                 # on_started may have acquired resources (e.g. a CLI runtime

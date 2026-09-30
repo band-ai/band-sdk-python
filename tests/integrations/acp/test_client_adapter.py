@@ -19,8 +19,9 @@ from acp.schema import (
 )
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
+from band.core.exceptions import BandConfigError
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
-from band.core.types import Capability
+from band.core.types import Capability, Emit
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -35,6 +36,7 @@ from band.integrations.acp.client_types import (
 )
 from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
+from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import inject_acp_spawn
 from tests.integrations.acp.conftest import make_platform_message
@@ -2252,6 +2254,32 @@ class TestTurnRepliedInRoom:
         ]
         assert not turn_replied_in_room(chunks)
 
+    @pytest.mark.parametrize("name", ["band_no_reply", "band-band_no_reply"])
+    def test_completed_no_reply_settles_the_turn(self, name: str) -> None:
+        chunks = [
+            self._chunk("tool_call", name, tool_call_id="tc-1", status="completed")
+        ]
+        assert turn_replied_in_room(chunks)
+
+    def test_failed_no_reply_keeps_the_text_fallback(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "band_no_reply", tool_call_id="tc-1", status="failed"
+            )
+        ]
+        assert not turn_replied_in_room(chunks)
+
+    def test_custom_tool_declaring_silence_settles_the_turn(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "stayquiet", tool_call_id="tc-1", status="completed"
+            )
+        ]
+        assert turn_replied_in_room(
+            chunks, custom_effects={"stayquiet": TurnEffect.DECLINE}
+        )
+        assert not turn_replied_in_room(chunks)
+
     def test_foreign_mcp_servers_own_tool_never_counts(self) -> None:
         """A non-Band MCP server's own tool that happens to end in
         ``-band_send_message`` must not suppress the text fallback -- only the
@@ -2265,3 +2293,30 @@ class TestTurnRepliedInRoom:
             )
         ]
         assert not turn_replied_in_room(chunks)
+
+
+class TestACPClientAdapterEmitSupport:
+    """Which ``Emit`` kinds the ACP client adapter declares.
+
+    All three ACP adapters (OMP / Copilot / Cursor) inherit this: room
+    narration is gated by the caller's ``emit=`` (see ``room_emitter``),
+    and kinds ACP cannot observe (``Emit.USAGE``) are rejected up front
+    instead of silently ignored.
+    """
+
+    def test_supported_emit_kinds_are_accepted(self) -> None:
+        adapter = ACPClientAdapter(
+            command=["omp", "acp"],
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
+        )
+        assert adapter.features.emit == frozenset(
+            {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        )
+
+    def test_silence_is_accepted(self) -> None:
+        adapter = ACPClientAdapter(command=["omp", "acp"], emit=())
+        assert adapter.features.emit == frozenset()
+
+    def test_an_unsupported_emit_kind_is_rejected(self) -> None:
+        with pytest.raises(BandConfigError):
+            ACPClientAdapter(command=["omp", "acp"], emit=Emit.USAGE)

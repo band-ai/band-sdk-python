@@ -3,12 +3,11 @@
 Run your Python agent on [Band](https://band.ai) inside a Docker
 [Sandbox](https://docs.docker.com/ai/sandboxes/): an isolated microVM with a
 default-deny egress allowlist, where your project's locked dependencies are
-installed automatically and your agent starts headlessly — no manual SDK
-installation, no host pollution.
+installed automatically — no manual SDK installation, no host pollution.
 
 Your workspace stays a plain `uv` project (`pyproject.toml` + committed
 `uv.lock`); the kit brings the Band SDK, the launcher, and the network
-policy. Tested with `sbx` v0.35.0.
+policy. Tested with `sbx` v0.43.0.
 
 ## Why use this kit?
 
@@ -66,10 +65,14 @@ curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags
 #      .band/secrets.env, which the proxy-managed launcher ignores. (The echo
 #      starter needs no LLM key.)
 
-# 4. Create the sandbox from the published kit — your agent starts immediately.
+# 4. Create the sandbox from the published kit.
 sbx create --name my-band-agent \
   --kit docker.io/bandhq/band-python-kit:<X.Y.Z> \
   band-python-kit ~/my-band-agent
+
+# 5. Attach to actually launch the agent — see "How the launch works" below
+#    for why this step is required, and for keeping it running unattended.
+sbx run --name my-band-agent
 ```
 
 Pin a concrete `X.Y.Z` for a frozen artifact, or ride `latest` / the major tag
@@ -157,7 +160,10 @@ sbx secret set-custom my-band-agent --host '**.band.ai' \
 ```
 
 — and then runs `sbx create`. Pass `--no-create` to only register and inject,
-and create the sandbox yourself later.
+and create the sandbox yourself later. Either way, `sbx create` only boots the
+sandbox — as in the manual quickstart above, attach with
+`sbx run --name my-band-agent` (under a supervisor for unattended operation;
+see "How the launch works") to actually start the agent.
 
 Idempotent, checked independently for registration and creation: re-running
 `provision` skips registration when the sandbox already has both a
@@ -228,10 +234,13 @@ tier.
 
 ## How the launch works
 
-At every sandbox start (creation and each restart — no attach session
-needed), the kit's startup command runs the image entrypoint as root to
-install the sandbox's per-session proxy CA, drops to the non-root `agent`
-user (uid 1000), and hands off to the Band launcher, which:
+The agent runs as the sandbox's attached foreground process
+(`sandbox.entrypoint`), not a background task: `sbx create` alone boots the
+sandbox but leaves it idle, and `sbx` auto-stops an idle, unattached sandbox
+within roughly a minute. Attaching — `sbx run --name <name>` — is what
+actually launches it, running the image entrypoint as root to install the
+sandbox's per-session proxy CA, dropping to the non-root `agent` user (uid
+1000), and handing off to the Band launcher, which:
 
 1. loads `band.yaml` and environment overrides (strict validation),
 2. optionally loads missing credentials from your opt-in env file,
@@ -245,12 +254,24 @@ user (uid 1000), and hands off to the Band launcher, which:
    `sbx stop`'s SIGTERM reach your code directly (the echo-agent starter
    handles them with `band.runtime.shutdown.run_with_graceful_shutdown`).
 
-Troubleshooting: startup output lands in `/var/log/sbx-kit-startup.log`
-inside the sandbox, launcher diagnostics under your configured
-`runtime.logPath`, and `sbx policy log <sandbox>` shows every allowed and
-blocked network request. Launch errors name their failing phase (`[config]`,
-`[credentials]`, `[paths]`, `[repo]`, `[sync]`, ...) and never contain
-secret values.
+**Keeping the agent up** therefore needs a host-side process holding that
+attach open for as long as you want the agent running — a `systemd`/`launchd`
+unit or a `tmux`/`screen` session running `sbx run --name <name>`, not a bare
+`sbx create`. Automating the attach yourself (rather than watching a
+terminal) needs a real pty, not a plain backgrounded process piped to a file
+or `/dev/null` — that fails after about 30 seconds with `sbx` reporting
+`inspect exec: context deadline exceeded`. Python's stdlib `pty`
+module (`pty.openpty()` + `subprocess.Popen` wired to the child fd) is one
+way to do this; `tests/docker/toolkit/sbx_cli.py`'s `Sandbox.create` is a
+worked example.
+
+Troubleshooting: the attached session's own output is the launcher's output
+— redirect or log whatever wraps `sbx run` (a `systemd` unit's journal, a
+`tmux` pane's capture, etc.). Launcher diagnostics also land under your
+configured `runtime.logPath`, and `sbx policy log <sandbox>` shows every
+allowed and blocked network request. Launch errors name their failing phase
+(`[config]`, `[credentials]`, `[paths]`, `[repo]`, `[sync]`, ...) and never
+contain secret values.
 
 ## Network access
 

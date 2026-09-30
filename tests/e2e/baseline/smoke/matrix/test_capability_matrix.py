@@ -20,7 +20,7 @@ from band.core.memory_types import MemoryListScope
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import Capability
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
-from tests.e2e.baseline.flaky import flaky_infra
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.scorecard import env_gated_skip
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -230,7 +230,10 @@ async def test_list_contacts_across_contacts_adapters(
 
 
 @per_adapter(supports={Capability.TASKS}, **TASK_AGENT)
-@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@flaky_model(
+    "six sequential tool calls across two turns is a lot to hold to exactly;"
+    " a capable model (esp. a smaller/free one) occasionally drops one"
+)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_task_lifecycle_across_task_adapters(
     agent: ProvisionedAgent,
