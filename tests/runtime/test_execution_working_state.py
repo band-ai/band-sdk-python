@@ -217,6 +217,10 @@ class TestSessionConfigGuards:
         with pytest.raises(ValueError, match="max_cycle_seconds"):
             SessionConfig(max_cycle_seconds=-1.0)
 
+    def test_start_stop_deadline_must_be_positive(self):
+        with pytest.raises(ValueError, match="start_stop_deadline_seconds"):
+            SessionConfig(start_stop_deadline_seconds=0)
+
     def test_disabled_skips_guards(self):
         # When disabled, odd values must not raise.
         cfg = SessionConfig(

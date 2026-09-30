@@ -22,8 +22,10 @@ from band.runtime.types import SessionConfig
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 ROOM = "room-1"
-#: Virtual seconds, ample for any number of creation retries.
-RETRY_HORIZON_S = 10 * CREATION_RETRY_WAIT_S
+#: Virtual seconds: the harness runtime's start/stop deadline.
+START_STOP_DEADLINE_S = 60.0
+#: Virtual seconds, ample for a deadline plus any number of retries.
+RETRY_HORIZON_S = 10 * max(START_STOP_DEADLINE_S, CREATION_RETRY_WAIT_S)
 
 
 async def elapse(seconds: float) -> None:
@@ -116,22 +118,29 @@ class GatedExecution:
         self.start_gate: asyncio.Event | None = None
         self.start_entered = asyncio.Event()
         self.start_cancelled = False
+        self.start_ignores_cancel = False
+        self.stop_cancelled = False
 
     async def start(self) -> None:
         self.start_entered.set()
-        if self.start_gate is not None:
+        while self.start_gate is not None and not self.start_gate.is_set():
             try:
                 await self.start_gate.wait()
             except asyncio.CancelledError:
                 self.start_cancelled = True
-                raise
+                if not self.start_ignores_cancel:
+                    raise
         if self.start_error is not None:
             raise self.start_error
 
     async def stop(self, timeout: float | None = None) -> bool:
         self.stop_calls += 1
         self.stop_entered.set()
-        await self.stop_gate.wait()
+        try:
+            await self.stop_gate.wait()
+        except asyncio.CancelledError:
+            self.stop_cancelled = True
+            raise
         if self.stop_errors:
             raise self.stop_errors.pop(0)
         return True
@@ -149,6 +158,7 @@ class GenerationRuntime:
         self.build_errors: list[Exception] = []
         self.start_errors: list[Exception] = []
         self.hold_starts = False
+        self.stubborn_starts = False
 
         def build(*_args: Any, **_kwargs: Any) -> GatedExecution:
             if self.build_errors:
@@ -156,6 +166,7 @@ class GenerationRuntime:
             execution = GatedExecution(len(self.generations))
             if self.hold_starts:
                 execution.start_gate = asyncio.Event()
+                execution.start_ignores_cancel = self.stubborn_starts
             if self.start_errors:
                 execution.start_error = self.start_errors.pop(0)
             self.generations.append(execution)
@@ -173,6 +184,9 @@ class GenerationRuntime:
             AsyncMock(),
             execution_factory=build,
             on_session_cleanup=cleanup,
+            session_config=SessionConfig(
+                start_stop_deadline_seconds=START_STOP_DEADLINE_S
+            ),
         )
 
     async def join(self) -> None:
@@ -191,15 +205,24 @@ class GenerationRuntime:
         await self.leave()
         return old
 
+    def release_all(self) -> None:
+        """Open every gate, so no execution outlives the test blocked on one."""
+        for execution in self.generations:
+            if execution.start_gate is not None:
+                execution.start_gate.set()
+            execution.stop_gate.set()
+
     async def until_live(self) -> None:
         await wait_for_condition(
             lambda: ROOM in self.runtime.executions, timeout=RETRY_HORIZON_S
         )
 
 
-@pytest.fixture
-def harness() -> GenerationRuntime:
-    return GenerationRuntime()
+@pytest_asyncio.fixture(loop_scope="function")
+async def harness():
+    generation_runtime = GenerationRuntime()
+    yield generation_runtime
+    generation_runtime.release_all()
 
 
 async def test_overlapping_stops_share_one_stop_and_one_cleanup(harness) -> None:
@@ -446,3 +469,69 @@ async def test_a_cancelled_runtime_stop_is_finished_by_the_next_stop(harness) ->
     assert (execution.stop_calls, harness.cleanups) == (1, [(ROOM, None)])
     await harness.runtime.stop()
     assert (execution.stop_calls, harness.cleanups) == (1, [(ROOM, None)])
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize("stop_timeout", [None, 30.0], ids=["immediate", "graceful"])
+async def test_a_stop_that_never_returns_is_abandoned_and_reported_failed(
+    harness, stop_timeout: float | None
+) -> None:
+    await harness.join()
+    [execution] = harness.generations  # its stop() waits on a gate nobody opens
+
+    first = await asyncio.wait_for(
+        harness.runtime.stop(timeout=stop_timeout), timeout=RETRY_HORIZON_S
+    )
+
+    assert (first, execution.stop_calls, harness.cleanups) == (False, 1, [])
+    assert execution.stop_cancelled, "the abandoned stop must not keep running"
+    execution.stop_gate.set()
+    second = await harness.runtime.stop(timeout=stop_timeout)
+    assert (second, execution.stop_calls, harness.cleanups) == (True, 2, [(ROOM, None)])
+
+
+@pytest.mark.looptime
+async def test_a_start_that_never_returns_is_abandoned_and_retried(harness) -> None:
+    harness.hold_starts = True
+    joining = asyncio.create_task(harness.join())
+    await wait_for_condition(
+        lambda: len(harness.generations) == 1, timeout=RETRY_HORIZON_S
+    )
+    [hung] = harness.generations
+    harness.hold_starts = False  # the retry's start completes
+    hung.stop_gate.set()
+
+    await asyncio.wait_for(joining, timeout=RETRY_HORIZON_S)
+
+    assert (ROOM in harness.runtime.executions, hung.start_cancelled) == (False, True)
+    await harness.until_live()
+    assert (hung.stop_calls, harness.cleanups) == (1, [(ROOM, None)])
+    assert (len(harness.generations), harness.runtime.executions[ROOM]) == (
+        2,
+        harness.generations[1],
+    )
+
+
+@pytest.mark.looptime
+async def test_a_leave_does_not_wait_forever_for_a_start_that_ignores_cancel(
+    harness,
+) -> None:
+    harness.hold_starts = True
+    harness.stubborn_starts = True
+    joining = asyncio.create_task(harness.join())
+    await wait_for_condition(
+        lambda: len(harness.generations) == 1, timeout=RETRY_HORIZON_S
+    )
+    [stubborn] = harness.generations
+    await stubborn.start_entered.wait()
+
+    first = await asyncio.wait_for(harness.runtime.stop(), timeout=RETRY_HORIZON_S)
+
+    assert (first, ROOM in harness.runtime.executions) == (False, False)
+    await asyncio.wait_for(joining, timeout=RETRY_HORIZON_S)
+    assert stubborn.start_gate is not None
+    stubborn.start_gate.set()  # the start finally returns, and must not go live
+    stubborn.stop_gate.set()
+    second = await asyncio.wait_for(harness.runtime.stop(), timeout=RETRY_HORIZON_S)
+    assert (second, ROOM in harness.runtime.executions) == (True, False)
+    assert (stubborn.stop_calls, harness.cleanups) == (1, [(ROOM, None)])

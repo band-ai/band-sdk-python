@@ -417,6 +417,8 @@ class AgentRuntime:
     #         one keeps retrying in the background until live or the room is left.
     #   leave (_destroy_execution): returns after one attempt; a failed one stays
     #         owned and is retried by the next leave or join.
+    # A start() or stop() that outlasts SessionConfig.start_stop_deadline_seconds
+    # is abandoned and counts as a failed attempt.
 
     async def _create_execution(self, room_id: str) -> Execution | None:
         """Bring up the room's execution through its single creation owner.
@@ -466,7 +468,11 @@ class AgentRuntime:
             return None
         try:
             with self._owning(room_id, execution):
-                await execution.start()
+                async with asyncio.timeout(
+                    self._session_config.start_stop_deadline_seconds
+                ):
+                    await execution.start()
+                self._raise_swallowed_cancel()
         except Exception:
             logger.warning(
                 "Starting the execution for %s failed", room_id, exc_info=True
@@ -520,7 +526,18 @@ class AgentRuntime:
             # Awaited, so a candidate the cancelled attempt was starting is
             # already owned as a teardown below.
             creation.task.cancel()
-            await asyncio.wait({creation.task})
+            _, unwinding = await asyncio.wait(
+                {creation.task},
+                timeout=self._session_config.start_stop_deadline_seconds,
+            )
+            if unwinding:
+                creation.settle(None)
+                logger.warning(
+                    "Starting the execution for %s ignored cancellation; "
+                    "the next leave retries",
+                    room_id,
+                )
+                return False
         teardown = self._teardowns.get(room_id)
         if teardown is None:
             execution = self.executions.pop(room_id, None)
@@ -539,6 +556,13 @@ class AgentRuntime:
             logger.warning("Tearing down room %s failed", room_id, exc_info=True)
             return False
 
+    @staticmethod
+    def _raise_swallowed_cancel() -> None:
+        """Honor a cancel that start() swallowed, so it cannot go live after a leave."""
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+
     @contextmanager
     def _owning(self, room_id: str, execution: Execution) -> Iterator[None]:
         """Own the execution while the block runs.
@@ -556,6 +580,7 @@ class AgentRuntime:
             execution,
             cleanup=partial(self._cleanup_room, room_id),
             forget=partial(self._forget_teardown, room_id),
+            deadline_s=self._session_config.start_stop_deadline_seconds,
         )
         self._teardowns[room_id] = teardown
         return teardown

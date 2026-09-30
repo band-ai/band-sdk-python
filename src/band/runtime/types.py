@@ -138,10 +138,22 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
+    # Upper bound on one execution start() or stop() call, and on how long a
+    # leave waits for a cancelled start to unwind. A call that outlasts it is
+    # abandoned and counts as a failed attempt: the execution stays owned and
+    # is retried. Generous on purpose (7200s, 2 hours): a backstop against a
+    # wedged adapter, not a pacing knob.
+    start_stop_deadline_seconds: float = 7200.0
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
                 f"idle_resync_seconds must be > 0 (got {self.idle_resync_seconds})"
+            )
+        if self.start_stop_deadline_seconds <= 0:
+            raise ValueError(
+                "start_stop_deadline_seconds must be > 0 "
+                f"(got {self.start_stop_deadline_seconds})"
             )
 
         # Working-state invariants only matter when reporting is enabled.
