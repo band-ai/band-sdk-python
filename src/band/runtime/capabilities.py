@@ -28,7 +28,9 @@ class FeatureFlag(StrEnum):
 
 
 # Capability -> the platform's `AgentMe.feature_flags` key that gates it.
-# Extend here as more capabilities gain a platform-side deployment flag.
+# Extend here as more capabilities gain a platform-side deployment flag. Only
+# add a key the platform already sends: a missing key prunes the capability on
+# every deployment.
 CAPABILITY_FEATURE_FLAGS: dict[Capability, FeatureFlag] = {
     Capability.FILES: FeatureFlag.FILE_TRANSFER,
 }
