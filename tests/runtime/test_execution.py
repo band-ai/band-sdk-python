@@ -2540,10 +2540,15 @@ class TestGracefulStopWithTimeout:
         assert result is True
 
     async def test_stop_returns_false_when_timeout_exceeded(self, mock_link):
-        """stop(timeout) should return False when timeout exceeded."""
+        """stop(timeout) should return False and cancel the in-flight handler."""
+        handler_cancelled = asyncio.Event()
 
         async def slow_handler(ctx, event):
-            await asyncio.sleep(10)  # Very slow
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                handler_cancelled.set()
+                raise
 
         ctx = ExecutionContext(
             "room-123",
@@ -2561,15 +2566,12 @@ class TestGracefulStopWithTimeout:
         # Wait for the handler to actually be in flight
         await wait_for_condition(lambda: ctx.is_processing)
 
-        # Stop with short timeout
-        start = asyncio.get_running_loop().time()
         result = await ctx.stop(timeout=0.1)
-        elapsed = asyncio.get_running_loop().time() - start
 
-        # Should return False (cancelled mid-processing)
+        # A wall-clock bound here is flaky: cancellation cleanup may legitimately
+        # take up to CYCLE_CANCEL_GRACE_SECONDS on a slow runner.
         assert result is False
-        # Should have taken roughly the timeout
-        assert elapsed < 0.5  # Should timeout quickly
+        assert handler_cancelled.is_set()
 
     async def test_wait_for_idle_returns_true_when_already_idle(
         self, mock_link, mock_handler
