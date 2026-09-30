@@ -58,12 +58,16 @@ from band.integrations.opencode import (
     describe_error,
     parse_opencode_event,
 )
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    custom_tool_effects,
+    get_custom_tool_name,
+)
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
-    is_room_posting_tool,
     iter_tool_definitions,
+    settles_turn_reply,
 )
 
 logger = logging.getLogger(__name__)
@@ -281,6 +285,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # concurrent agents sharing one serve.
         self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         # Startup reachability check only makes sense against a real server;
         # an injected factory fakes that boundary (tests, custom transports).
         self._preflight_enabled = client_factory is None
@@ -922,7 +927,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # compare by value (the StrEnum member equals its string).
         if (
             state.status == OpencodeToolStatus.COMPLETED
-            and is_room_posting_tool(tool_name)
+            and settles_turn_reply(tool_name, custom_effects=self._custom_effects)
             and room_state.turn is not None
         ):
             room_state.turn.replied_via_room_tool = True

@@ -2,7 +2,6 @@
 
 Single source of truth for schemas: each class's docstring is the tool
 description, and each ``Field(description=...)`` is an argument description.
-See ``docs/platform-tools.md``.
 """
 
 from __future__ import annotations
@@ -123,6 +122,21 @@ class GetParticipantsInput(BaseModel):
     """Get a list of all participants in the current chat room."""
 
     # No parameters required
+
+
+class NoReplyInput(BaseModel):
+    """End this turn without posting anything to the room.
+
+    Call this instead of band_send_message when the latest message needs no
+    answer from you: it was addressed to someone else, it is an FYI or an
+    acknowledgement, or another participant already answered it. It is a
+    complete turn, not an error; do not also send a message.
+    """
+
+    reason: str | None = Field(
+        default=None,
+        description="Short note on why no reply is needed (kept in local logs only)",
+    )
 
 
 class CreateChatroomInput(BaseModel):

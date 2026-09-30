@@ -171,6 +171,6 @@ on-disk Copilot sessions). Opt out with `AgentConfig(single_instance=False)`.
 | Agent startup is slow | Runtime downloading/spawning at boot | Pre-fetch with `python -m copilot download-runtime` |
 | Turn raises after `turn_timeout_s` (default 120s) | Long-running turn | Raise `CopilotSDKAdapterConfig(turn_timeout_s=...)` |
 | Agent replies but no tool/thought events appear | `emit=` was passed and narrowed past what's needed (default already includes everything) | Drop `emit=`, or widen it to include `Emit.TOOL_CALLS`/`Emit.THOUGHTS` |
-| `BandConfigError: … already running on this host` at startup | Another process runs the same agent id | Stop it, or set `AgentConfig(single_instance=False)` |
+| `AgentAlreadyRunningError: … already running on this host` at startup | Another process runs the same agent id | Stop it, or set `AgentConfig(single_instance=False)` |
 | Room reply says the operator did not answer (console handler) | `ask_user` question expired unanswered | Answer within `answer_timeout_s`, or raise it (keep it below `turn_timeout_s`) |
 | Every question answers "no operator is attached" (console handler) | stdin closed (headless run / piped input exhausted) | Run in a real terminal, or use `ask_user="room"` |

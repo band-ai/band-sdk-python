@@ -3,8 +3,8 @@
 Pure logic that would otherwise be skipped under ``tests/e2e/**`` (E2E-gated), so it
 lives here to run on every PR — no platform, no keys.
 
-* ``ToolSpec.as_callable`` must carry the ``band_terminal`` opt-in marker so the
-  callable path (pydantic-ai/agno) agrees with the CustomToolDef tuple path.
+* ``ToolSpec.as_callable`` must carry the declared turn effect so the callable
+  path (pydantic-ai/agno) agrees with the CustomToolDef tuple path.
 * ``_is_letta_cloud`` must match the Letta Cloud *host*, ignoring scheme/case/port/
   path, so a real self-hosted URL isn't misread as cloud (or vice versa).
 * ``Replies.assert_at_most`` — the narrow upper-bound runaway guard: passes at/below
@@ -17,7 +17,7 @@ lives here to run on every PR — no platform, no keys.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import cast
 from unittest import mock
@@ -27,6 +27,8 @@ import pytest
 from pydantic import BaseModel
 
 from band.client.streaming import MessageCreatedPayload
+from band.runtime.custom_tools import declared_effect, declares_turn_effect
+from band.runtime.tools import TurnEffect
 from tests.e2e.baseline.settings import Backends, BaselineSettings
 from tests.e2e.baseline.toolkit.deps import _is_letta_cloud, _omp_cli_responds
 from tests.e2e.baseline.toolkit.observations import Replies
@@ -55,11 +57,9 @@ def _handler(args: SampleInput) -> str:
     return args.text
 
 
-def test_as_callable_carries_band_terminal_marker() -> None:
-    handler = _handler
+def _terminal_shorthand(handler: Callable[..., str]) -> Callable[..., str]:
     handler.band_terminal = True  # type: ignore[attr-defined]
-    call = ToolSpec(SampleInput, handler).as_callable()
-    assert getattr(call, "band_terminal", False) is True
+    return handler
 
 
 def test_provisioned_agent_failure_repr_redacts_api_key() -> None:
@@ -69,12 +69,29 @@ def test_provisioned_agent_failure_repr_redacts_api_key() -> None:
     assert "private-agent-key" not in repr(agent)
 
 
-def test_as_callable_defaults_non_terminal() -> None:
+@pytest.mark.parametrize(
+    ("declare", "expected"),
+    [
+        (_terminal_shorthand, TurnEffect.ACT),
+        (declares_turn_effect(TurnEffect.DECLINE), TurnEffect.DECLINE),
+    ],
+)
+def test_as_callable_carries_the_declared_effect(
+    declare: Callable[[Callable[..., str]], Callable[..., str]], expected: TurnEffect
+) -> None:
+    def handler(args: SampleInput) -> str:
+        return args.text
+
+    call = ToolSpec(SampleInput, declare(handler)).as_callable()
+    assert declared_effect(call) is expected
+
+
+def test_as_callable_defaults_to_no_declared_effect() -> None:
     def plain(args: SampleInput) -> str:
         return args.text
 
     call = ToolSpec(SampleInput, plain).as_callable()
-    assert getattr(call, "band_terminal", False) is False
+    assert declared_effect(call) is None
 
 
 @pytest.mark.parametrize(
