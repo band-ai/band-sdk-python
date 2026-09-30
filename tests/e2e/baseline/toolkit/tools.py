@@ -18,7 +18,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    declared_effect,
+    declares_turn_effect,
+    get_custom_tool_name,
+)
 
 
 @dataclass(frozen=True)
@@ -111,8 +116,8 @@ class ToolSpec:
         tool: Callable[..., str] = ns[self.name]
         tool.__annotations__ = self._annotations(ctx_annotation)
         tool.__doc__ = self.description
-        # Carry the terminal opt-in marker so the callable path (pydantic-ai/agno)
-        # agrees with the CustomToolDef tuple path on band_terminal.
-        if getattr(self.handler, "band_terminal", False):
-            tool.band_terminal = True  # type: ignore[attr-defined]
+        # Carry the declared turn effect so the callable path (pydantic-ai/agno)
+        # agrees with the CustomToolDef tuple path.
+        if (effect := declared_effect(self.handler)) is not None:
+            declares_turn_effect(effect)(tool)
         return tool
