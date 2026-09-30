@@ -36,6 +36,7 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
+from band.runtime.types import AgentConfig
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -468,6 +469,7 @@ async def running_agent_with_handle(
     provisioned: ProvisionedAgent,
     adapter: SimpleAdapter[Any],
     settings: BaselineSettings,
+    config: AgentConfig | None = None,
 ) -> AsyncGenerator[Agent, None]:
     """Like ``running_agent``, but yields the live ``Agent`` itself.
 
@@ -482,6 +484,7 @@ async def running_agent_with_handle(
         api_key=provisioned.api_key,
         ws_url=endpoints.ws_url,
         rest_url=endpoints.rest_url,
+        config=config,
     )
     async with agent:
         yield agent

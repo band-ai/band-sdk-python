@@ -167,6 +167,7 @@ class PlatformRuntime:
             api_key=self._api_key,
             ws_url=self._ws_url,
             rest_url=self._rest_url,
+            conflict_policy=self._config.conflict_policy,
         )
 
         await self._fetch_agent_metadata()
@@ -191,8 +192,8 @@ class PlatformRuntime:
                 adapter work that outlives the message cycle it started in
 
         Raises:
-            BandConfigError: When another process on this host already runs
-                this agent id (see ``AgentConfig.single_instance``).
+            AgentAlreadyRunningError: When a duplicate start is refused, by the
+                host lock or by the platform (see ``AgentConfig``).
         """
         # Duplicates corrupt message claiming, so refuse before any
         # processing starts. A failed start releases the lock: the guard
@@ -262,7 +263,7 @@ class PlatformRuntime:
         No-op when ``AgentConfig.single_instance`` is off.
 
         Raises:
-            BandConfigError: When another process already holds the lock.
+            AgentAlreadyRunningError: When another process already holds the lock.
         """
         if self._config.single_instance and self._instance_guard is None:
             guard = SingleInstanceGuard(self._agent_id)

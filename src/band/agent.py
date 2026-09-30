@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
-from band.runtime.capabilities import prune_unsupported
 from band.runtime.platform_runtime import PlatformRuntime
+from band.runtime.startup import release_adapter, start_adapter
 from band.runtime.status import AgentStatus
 from band.runtime.types import (
     AgentConfig,
@@ -280,18 +280,11 @@ class Agent:
             # setattr rather than assignment: FrameworkAdapter is a Protocol, so
             # a duck-typed adapter may not declare the attribute.
             setattr(self._adapter, "platform", self._runtime.connection)  # noqa: B010
-            if isinstance(self._adapter, SimpleAdapter):
-                # A bare FrameworkAdapter has no SUPPORTED_CAPABILITIES, so it
-                # cannot request a gated capability in the first place and
-                # takes no part in negotiation.
-                self._adapter.apply_effective_features(
-                    prune_unsupported(
-                        self._adapter.features, self._runtime.feature_flags
-                    )
-                )
-            await self._adapter.on_started(
-                self._runtime.agent_name,
-                self._runtime.agent_description,
+            await start_adapter(
+                self._adapter,
+                agent_name=self._runtime.agent_name,
+                agent_description=self._runtime.agent_description,
+                feature_flags=self._runtime.feature_flags,
             )
 
             # 3. NOW start message processing (connects WebSocket)
@@ -305,10 +298,10 @@ class Agent:
                     on_control=getattr(self._adapter, "on_interrupt", None),
                 )
             except BaseException:
-                # on_started may have acquired resources (e.g. a CLI runtime
-                # subprocess); a failed start must release them — stop() won't
-                # run for an agent that never started.
-                await self._cleanup_adapter()
+                # Adapter startup may have acquired resources (e.g. a CLI
+                # runtime subprocess); a failed start must release them —
+                # stop() won't run for an agent that never started.
+                await release_adapter(self._adapter)
                 raise
         except BaseException:
             # Idempotent: a failure inside runtime.start() already released.
@@ -346,22 +339,13 @@ class Agent:
             # Always release adapter-wide resources (e.g. a CLI runtime
             # subprocess, a self-hosted MCP server, an external registration),
             # even when the runtime fails to stop cleanly.
-            await self._cleanup_adapter()
+            await release_adapter(self._adapter)
             self._started = False
             _running_agents.discard(self)
         logger.info(
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )
         return graceful
-
-    async def _cleanup_adapter(self) -> None:
-        """Release adapter-wide resources, best-effort."""
-        cleanup_all = getattr(self._adapter, "cleanup_all", None)
-        if cleanup_all is not None:
-            try:
-                await cleanup_all()
-            except Exception:
-                logger.exception("Adapter cleanup_all failed")
 
     async def run(
         self, shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT
