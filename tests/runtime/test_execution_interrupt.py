@@ -323,6 +323,49 @@ class TestStopRoomResumeRoom:
         assert not ctx._retry_tracker.is_permanently_failed("p1")
 
 
+class TestPlatformStoppedRoom:
+    """The platform can stop a room's execution without this process seeing
+    the signal (a stop issued while the process was offline, or by another
+    connection). The first rejected event post must adopt that state, as a
+    stop control would: abort the cycle, go quiet, and keep the room's stale
+    messages out of the recovery sweep."""
+
+    async def test_mark_stopped_by_platform_aborts_cycle_and_sets_flag(
+        self, mock_link, caplog
+    ):
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="x")))
+        await handler.started.wait()
+
+        with caplog.at_level(logging.WARNING, logger="band.runtime.execution"):
+            ctx.mark_stopped_by_platform()
+        result = await proc
+
+        assert ctx.is_stopped is True
+        assert result is True
+        mock_link.mark_processed.assert_not_awaited()
+        assert "the platform reports the room's execution as stopped" in caplog.text
+
+    async def test_mark_stopped_by_platform_skips_stale_recovery(self, mock_link):
+        """A room the platform reports stopped must not re-run its stale
+        processing messages on the recovery sweep (the restart loop that
+        otherwise re-posts against the platform's guard on every start)."""
+        mock_link.get_stale_processing_messages = AsyncMock(
+            return_value=[_backlog_message("stuck-in-processing")]
+        )
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        ctx.mark_stopped_by_platform()
+
+        ok = await ctx._recover_stale_processing_messages()
+
+        assert ok is True
+        assert handler.invoked == []  # adapter not invoked while stopped
+        mock_link.get_stale_processing_messages.assert_not_awaited()
+
+
 class TestBacklogInterrupt:
     async def test_interrupt_during_backlog_consumes_and_advances(self, mock_link):
         """Interrupt during a /next backlog cycle consumes the message and the

@@ -258,7 +258,10 @@ async def test_a_detached_report_never_marks_the_contexts_next_message(
 ) -> None:
     """A released turn reports after its delivery settled, while the context
     may already be processing a later message, judged or not."""
-    ctx = MagicMock(participants=[ALICE], agent_id="agent-1", hub_room_id=None)
+    # A running room: a stopped one skips the post entirely.
+    ctx = MagicMock(
+        participants=[ALICE], agent_id="agent-1", hub_room_id=None, is_stopped=False
+    )
     ctx.link.rest = mock_rest_client
     tools = AgentTools.from_context(ctx)
     tools.turn.judged = judged
