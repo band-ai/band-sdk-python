@@ -352,13 +352,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             effort: Response effort level. ``None`` uses the model default.
-            permission_mode: SDK permission mode. ``"dontAsk"`` never prompts
-                and denies any tool not pre-approved by allow rules;
-                ``"auto"`` lets a model classifier approve or deny each tool
-                call and depends on the Claude account and model. A mode the
-                CLI rejects fails the turn; there is no fallback. ``"dontAsk"``
-                with ``approval_mode="manual"`` raises ``ValueError``.
-                Modes: https://code.claude.com/docs/en/permission-modes
+            permission_mode: Claude Code permission mode, forwarded to the CLI
+                (https://code.claude.com/docs/en/permission-modes).
+                ``"dontAsk"`` denies every call that would otherwise prompt, so
+                it raises ``ValueError`` with ``approval_mode="manual"``.
+                ``"auto"`` lets a model classifier answer prompts; when the
+                account or model doesn't support it, the CLI starts the session
+                in ``"default"`` instead.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
