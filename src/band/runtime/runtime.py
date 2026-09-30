@@ -17,7 +17,6 @@ from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
-from tenacity import AsyncRetrying, retry_if_result, wait_fixed
 
 from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
@@ -172,14 +171,7 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
-        # A room's execution that is not (or not yet) live and whose stop and
-        # cleanup have not both succeeded. Destroy callers share its one
-        # in-flight attempt, a failed one leaves it for a retry, and room
-        # creation waits on it, so old cleanup never meets a rejoined room.
         self._teardowns: dict[str, RoomTeardown] = {}
-        # One owner per admitted room bringing its execution up: it finishes a
-        # predecessor's teardown, builds and starts a candidate, and retries
-        # after any failure until an execution is live or the room is left.
         self._pending_creations: dict[str, RoomCreation] = {}
 
         # Control-signal dedup. The server does not deduplicate
@@ -242,9 +234,7 @@ class AgentRuntime:
 
         # Stop all executions with timeout
         all_graceful = True
-        for room_id in list(
-            {**self._pending_creations, **self._teardowns, **self.executions}
-        ):
+        for room_id in list(self._room_ids_with_lifecycle_state()):
             graceful = await self._destroy_execution(room_id, timeout=timeout)
             all_graceful = all_graceful and graceful
 
@@ -433,19 +423,19 @@ class AgentRuntime:
         if creation is None:
             creation = RoomCreation(asyncio.get_running_loop().create_future())
             self._pending_creations[room_id] = creation
-            creation.task = asyncio.ensure_future(self._bring_up(room_id, creation))
+            creation.task = asyncio.create_task(self._bring_up(room_id, creation))
         return await asyncio.shield(creation.first_attempt)
 
     async def _bring_up(self, room_id: str, creation: RoomCreation) -> None:
         """Retry creation until an execution is live; cancelled by a leave."""
-        retrying = AsyncRetrying(
-            retry=retry_if_result(lambda execution: execution is None),
-            wait=wait_fixed(CREATION_RETRY_WAIT_S),
-            before_sleep=lambda _state: creation.settle(None),
-        )
         execution = None
         try:
-            execution = await retrying(self._attempt_creation, room_id)
+            while True:
+                execution = await self._attempt_creation(room_id)
+                if execution is not None:
+                    break
+                creation.settle(None)
+                await asyncio.sleep(CREATION_RETRY_WAIT_S)
         finally:
             creation.settle(execution)
             if self._pending_creations.get(room_id) is creation:
@@ -521,7 +511,7 @@ class AgentRuntime:
             True if stopped gracefully, False if cancelled mid-processing or
             if the stop or cleanup failed (still owned, retried by the next call).
         """
-        creation = self._pending_creations.pop(room_id, None)
+        creation = self._pending_creations.get(room_id)
         if creation is not None and creation.task is not None:
             # Awaited, so a candidate the cancelled attempt was starting is
             # already owned as a teardown below.
@@ -538,6 +528,9 @@ class AgentRuntime:
                     room_id,
                 )
                 return False
+            self._pending_creations.pop(room_id, None)
+        elif creation is not None:
+            self._pending_creations.pop(room_id, None)
         teardown = self._teardowns.get(room_id)
         if teardown is None:
             execution = self.executions.pop(room_id, None)
@@ -552,7 +545,7 @@ class AgentRuntime:
         """Run one teardown attempt; a failure is logged and reported as False."""
         try:
             return await teardown.run(timeout)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             logger.warning("Tearing down room %s failed", room_id, exc_info=True)
             return False
 
@@ -562,6 +555,14 @@ class AgentRuntime:
         task = asyncio.current_task()
         if task is not None and task.cancelling():
             raise asyncio.CancelledError
+
+    def _room_ids_with_lifecycle_state(self) -> Iterator[str]:
+        """Room ids with a live execution, pending creation, or owned teardown."""
+        yield from {
+            **self._pending_creations,
+            **self._teardowns,
+            **self.executions,
+        }
 
     @contextmanager
     def _owning(self, room_id: str, execution: Execution) -> Iterator[None]:
@@ -586,7 +587,7 @@ class AgentRuntime:
         return teardown
 
     def _forget_teardown(self, room_id: str) -> None:
-        del self._teardowns[room_id]
+        self._teardowns.pop(room_id, None)
 
     async def _cleanup_room(self, room_id: str) -> None:
         # Durable completion state is safe to release with the room. Pending

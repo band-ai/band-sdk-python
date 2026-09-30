@@ -12,10 +12,10 @@ class RoomTeardown:
     """Owns one execution from the moment it must be released.
 
     Callers share one in-flight attempt, and a cancelled caller leaves it
-    running for the next. An attempt whose stop or cleanup raised propagates
-    to its callers, and the next ``run`` starts a fresh one; a retry after a
-    failed cleanup does not stop the execution again. A stop that outlasts
-    ``deadline_s`` is abandoned and counts as a failed attempt.
+    running for the next. The next ``run`` after a failed stop or cleanup
+    starts a fresh attempt; a cleanup retry does not stop the execution again.
+    A stop that outlasts ``deadline_s`` is abandoned and counts as a failed
+    attempt.
     """
 
     def __init__(
@@ -43,7 +43,7 @@ class RoomTeardown:
             self._hurry()
         attempt = self._attempt
         if attempt is None or (attempt.done() and attempt.exception() is not None):
-            attempt = self._attempt = asyncio.ensure_future(self._finish(timeout))
+            attempt = self._attempt = asyncio.create_task(self._finish(timeout))
         return await asyncio.shield(attempt)
 
     def _hurry(self) -> None:
@@ -56,7 +56,8 @@ class RoomTeardown:
         if stopped is None:
             async with asyncio.timeout(self._deadline_s):
                 stopped = self._stopped = await self._stop(timeout)
-        await self._cleanup()
+        async with asyncio.timeout(self._deadline_s):
+            await self._cleanup()
         self._forget()
         return stopped
 
@@ -68,7 +69,7 @@ class RoomTeardown:
         """
         if timeout is None or self._immediate:
             return await self._execution.stop(timeout=None)
-        graceful_stop = self._graceful_stop = asyncio.ensure_future(
+        graceful_stop = self._graceful_stop = asyncio.create_task(
             self._execution.stop(timeout=timeout)
         )
         try:

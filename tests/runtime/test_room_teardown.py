@@ -9,7 +9,6 @@ and the session-cleanup callback. Retry waits run on looptime's virtual clock.
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -19,19 +18,18 @@ import pytest_asyncio
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import CREATION_RETRY_WAIT_S, AgentRuntime
 from band.runtime.types import SessionConfig
-from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
+from tests.runtime.conftest import (
+    elapse,
+    make_link_mock,
+    platform_msg,
+    wait_for_condition,
+)
 
 ROOM = "room-1"
 #: Virtual seconds: the harness runtime's start/stop deadline.
 START_STOP_DEADLINE_S = 60.0
 #: Virtual seconds, ample for a deadline plus any number of retries.
 RETRY_HORIZON_S = 10 * max(START_STOP_DEADLINE_S, CREATION_RETRY_WAIT_S)
-
-
-async def elapse(seconds: float) -> None:
-    """Let ``seconds`` of looptime's virtual clock pass."""
-    with suppress(TimeoutError):
-        await asyncio.wait_for(asyncio.Event().wait(), timeout=seconds)
 
 
 class Room:

@@ -17,6 +17,7 @@ conftest when building oneshot/REST-side fixtures.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -34,6 +35,12 @@ from band_rest import (
 
 from band.core.types import PlatformConnection, PlatformMessage
 from band.runtime.presence import RoomPresence
+
+
+async def elapse(seconds: float) -> None:
+    """Advance looptime's virtual clock by ``seconds``."""
+    with suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=seconds)
 
 
 async def wait_for_condition(
