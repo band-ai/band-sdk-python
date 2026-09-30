@@ -63,7 +63,6 @@ from band.core.types import (
 )
 from band.logging_config import current_traceparent
 from band.platform.link import BandLink
-from band.runtime.capabilities import prune_unsupported
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import (
     build_participants_message,
@@ -71,6 +70,7 @@ from band.runtime.formatters import (
     replace_uuid_mentions,
 )
 from band.runtime.participants import participant_snapshot
+from band.runtime.startup import start_adapter
 from band.runtime.tools import AgentTools
 
 # BandLink.get_next_message returns this dataclass, not band.core.types'
@@ -197,14 +197,12 @@ class OneShotInvoker:
             "platform",
             self._link.to_platform_connection(self._agent_id),
         )
-        if isinstance(self._adapter, SimpleAdapter):
-            # A bare FrameworkAdapter has no SUPPORTED_CAPABILITIES, so it
-            # cannot request a gated capability in the first place and takes
-            # no part in negotiation.
-            self._adapter.apply_effective_features(
-                prune_unsupported(self._adapter.features, self._feature_flags)
-            )
-        await self._adapter.on_started(self._agent_name, self._agent_description)
+        await start_adapter(
+            self._adapter,
+            agent_name=self._agent_name,
+            agent_description=self._agent_description,
+            feature_flags=self._feature_flags,
+        )
         self._started = True
         logger.info(
             "OneShotInvoker ready: agent_id=%s name=%s",

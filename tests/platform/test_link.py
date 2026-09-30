@@ -30,6 +30,7 @@ from band.client.streaming import (
     WebSocketClient,
     WebSocketDisconnectReason,
 )
+from band.core.types import ConflictPolicy
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -97,7 +98,11 @@ class TestBandLinkConnection:
         """connect() should create WebSocketClient and enter context."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(
+            agent_id="agent-123",
+            api_key="test-key",
+            conflict_policy=ConflictPolicy.REJECT,
+        )
         await link.connect()
 
         mock_ws_class.assert_called_once_with(
@@ -106,6 +111,7 @@ class TestBandLinkConnection:
             link.agent_id,
             on_reconnect=link._on_reconnected,
             on_disconnect=link._on_disconnected,
+            conflict_policy=ConflictPolicy.REJECT,
         )
         mock_ws_client.__aenter__.assert_called_once()
         mock_ws_client.join_agent_control_channel.assert_called_once_with(

@@ -18,19 +18,32 @@ from collections.abc import Callable
 
 import pytest
 
-from band.core.exceptions import AgentDisconnectedError
+from band.core.exceptions import AgentAlreadyRunningError, AgentDisconnectedError
+from band.core.types import ConflictPolicy
 from band.platform.link import BandLink
-from band.testing import JoinOutcome, fake_phoenix_server
+from band.testing import FakePhoenixServer, JoinOutcome, fake_phoenix_server
 from tests.conftest import spy_on_reconciliation_drain
 
 
-def make_link(server_url: str) -> BandLink:
+def make_link(
+    server_url: str, *, conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE
+) -> BandLink:
     return BandLink(
         agent_id="agent-123",
         api_key="test-key",
         ws_url=server_url,
         rest_url="https://test.invalid",
+        conflict_policy=conflict_policy,
     )
+
+
+def on_conflict_per_upgrade(server: FakePhoenixServer) -> list[ConflictPolicy | None]:
+    """The ``on_conflict`` value each upgrade request carried, in arrival order."""
+    values: list[ConflictPolicy | None] = []
+    for upgrade in server.upgrades:
+        raw = upgrade.query.get("on_conflict")
+        values.append(ConflictPolicy(raw) if raw is not None else None)
+    return values
 
 
 async def test_room_participants_rejection_rolls_back_chat_room_over_the_real_wire() -> (
@@ -248,3 +261,42 @@ async def _until(condition: Callable[[], bool], timeout_s: float = 5.0) -> None:
     async with asyncio.timeout(timeout_s):
         while not condition():
             await asyncio.sleep(0.01)
+
+
+async def test_default_policy_sends_no_conflict_param() -> None:
+    """Supersede is the platform's default, so the wire carries no conflict
+    param and platforms that predate the setting never see one."""
+    async with fake_phoenix_server() as server:
+        await make_link(server.url).connect()
+
+        assert on_conflict_per_upgrade(server) == [None]
+
+
+async def test_reject_policy_is_sent_on_the_first_connect_only() -> None:
+    """A reconnect after a network blip may meet this client's own socket
+    still tracked by the platform, so it must supersede it, never be refused
+    by it."""
+    async with fake_phoenix_server() as server:
+        link = make_link(server.url, conflict_policy=ConflictPolicy.REJECT)
+        await link.connect()
+
+        reconnect_handled = spy_on_reconciliation_drain(link)
+        await server.abort_connection()
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
+
+        assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT, None]
+
+
+async def test_refused_duplicate_raises_agent_already_running() -> None:
+    async with fake_phoenix_server(refuse_upgrades=True) as server:
+        link = make_link(server.url, conflict_policy=ConflictPolicy.REJECT)
+
+        with pytest.raises(AgentAlreadyRunningError, match="agent-123"):
+            await link.connect()
+
+        # The refused attempt and the probe that reads its HTTP error both
+        # asked for reject: a probe without it would supersede the incumbent.
+        assert on_conflict_per_upgrade(server) == [
+            ConflictPolicy.REJECT,
+            ConflictPolicy.REJECT,
+        ]
