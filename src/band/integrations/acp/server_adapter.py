@@ -560,24 +560,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             if pending is not None and not pending.posted:
                 pending = None
 
-        if pending and pending.outcome is not None:
-            pending = None
-
         if pending and msg.message_type == MessageType.ERROR:
-            if pending.outcome == ACPStopReason.END_TURN:
-                failure = decode_failure(msg)
-                if self._acp_client:
-                    try:
-                        chunk = EventConverter.convert(msg, failure=failure)
-                        if chunk is not None:
-                            await self._acp_client.session_update(
-                                session_id=pending.session_id, update=chunk
-                            )
-                    except Exception:
-                        logger.exception(
-                            "Failed to deliver post-turn ACP failure update"
-                        )
-                return
             failure = decode_failure(msg)
             claimed = await self._finish_pending_prompt(
                 room_id, expected=pending, outcome=failure
