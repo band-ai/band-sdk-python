@@ -59,9 +59,11 @@ from band.core.types import (
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
+    declared_effect,
+    declared_effects,
+    declares_turn_effect,
     get_custom_tool_name,
     invoke_validated_custom_tool,
-    is_marked_terminal,
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -167,7 +169,7 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     those. pydantic-ai has already validated ``args`` into the InputModel, so the
     instance is passed through directly — a dump/re-validate round-trip would break
     models using field aliases. The wrapper carries the stable tool name (derived
-    from the model) and the ``band_terminal`` marker, so the tool name and the
+    from the model) and its declared turn effect, so the tool name and the
     terminal-tool contract match the tuple adapters exactly.
     """
     input_model, handler = tool_def
@@ -178,8 +180,8 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
     native.__annotations__ = {"args": input_model, "return": str}
-    if is_marked_terminal(handler):
-        native.band_terminal = True  # type: ignore[attr-defined]
+    if (effect := declared_effect(handler)) is not None:
+        declares_turn_effect(effect)(native)
     return native
 
 
@@ -286,11 +288,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             _custom_tool_def_to_callable(tool) if isinstance(tool, tuple) else tool
             for tool in (additional_tools or [])
         ]
-        # Custom tools that opt in as terminal actions (band_terminal=True on the
-        # function). Only these let an empty final response be treated as benign;
-        # an undeclared custom tool does not (fail-loud — see is_terminal_success).
-        self._custom_terminal_names: frozenset[str] = frozenset(
-            fn.__name__ for fn in self._custom_tools if is_marked_terminal(fn)
+        # Effects the custom tools declared on their function. Only these let an
+        # empty final response be treated as benign; an undeclared custom tool
+        # does not (fail-loud — see is_terminal_success).
+        self._custom_effects = declared_effects(
+            (fn.__name__, fn) for fn in self._custom_tools
         )
 
     # --- Adapted from BandPydanticAgent._on_started ---
@@ -490,8 +492,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
-                        # Custom tools count as terminal only if they opted in
-                        # (band_terminal); undeclared customs fail loud. A failed band
+                        # Custom tools count as terminal only if they declared an
+                        # effect; undeclared customs fail loud. A failed band
                         # tool (its wrapper returns an "Error " string) is not terminal.
                         result_name = event.part.tool_name
                         if is_terminal_success(
@@ -499,7 +501,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             succeeded=not band_tool_errored(
                                 result_name, event.part.content
                             ),
-                            custom_terminal=result_name in self._custom_terminal_names,
+                            custom_effects=self._custom_effects,
                         ):
                             tool_executed = True
                         if Emit.TOOL_CALLS in self.features.emit:

@@ -68,6 +68,7 @@ from band.integrations.codex.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    custom_tool_effects,
     custom_tool_to_openai_schema,
     execute_custom_tool,
     find_custom_tool,
@@ -80,8 +81,8 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     image_block_placeholder,
     is_image_passthrough_result,
-    is_room_posting_tool,
     redact_tool_call_args,
+    settles_turn_reply,
 )
 from band.workspaces import (
     WorkspaceResolver,
@@ -344,7 +345,7 @@ class TurnResult:
     final_text: str = ""
     turn_status: str = "failed"
     turn_error: str = ""
-    saw_send_message_tool: bool = False
+    settled_reply: bool = False
 
 
 @dataclass
@@ -595,6 +596,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         if self.config.cwd is not None:
             raise ValueError(
                 "cwd is not supported; use workspace_for_room or the default"
@@ -1079,7 +1081,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     turn_status=result.turn_status,
                     turn_error=result.turn_error,
                     final_text=result.final_text,
-                    saw_send_message_tool=result.saw_send_message_tool,
+                    settled_reply=result.settled_reply,
                     duration_s=_turn_duration_s,
                 )
             except DeliveryFailedError as e:
@@ -1171,7 +1173,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             turn_status=result.turn_status,
             turn_error=result.turn_error,
             final_text=result.final_text,
-            saw_send_message_tool=result.saw_send_message_tool,
+            settled_reply=result.settled_reply,
             duration_s=_time.perf_counter() - turn_start,
             include_reply=False,
         )
@@ -1200,15 +1202,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 event = await self._client.recv_event(timeout_s=_remaining)
                 if event.kind == "request":
-                    used_send_message = await self._handle_server_request(
+                    settled_reply_now = await self._handle_server_request(
                         tools=tools,
                         msg=msg,
                         room_id=room_id,
                         event=event,
                     )
-                    result.saw_send_message_tool = (
-                        result.saw_send_message_tool or used_send_message
-                    )
+                    result.settled_reply = result.settled_reply or settled_reply_now
                     continue
 
                 params = event.params if isinstance(event.params, dict) else {}
@@ -2061,7 +2061,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
 
-            return is_room_posting_tool(tool_name) and tool_call_succeeded
+            return (
+                settles_turn_reply(tool_name, custom_effects=self._custom_effects)
+                and tool_call_succeeded
+            )
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(
@@ -2222,7 +2225,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         turn_status: str,
         turn_error: str,
         final_text: str,
-        saw_send_message_tool: bool,
+        settled_reply: bool,
         duration_s: float = 0.0,
         include_reply: bool = True,
     ) -> None:
@@ -2314,7 +2317,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if (
                 self.config.fallback_send_agent_text
                 and final_text.strip()
-                and not saw_send_message_tool
+                and not settled_reply
             ):
                 await deliver_reply(tools, final_text.strip(), mentions=mention)
             return

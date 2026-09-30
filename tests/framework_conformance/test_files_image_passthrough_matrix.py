@@ -49,7 +49,7 @@ except ImportError:
     _PYDANTIC_AI_AVAILABLE = False
 
 # crewai and pydantic-ai aren't both installed in every lane's venv (a
-# three-way conflict group with parlant -- see docs/dependency-conflicts.md):
+# three-way conflict group with parlant -- see `conflicts` in pyproject.toml):
 # dev-crewai lacks pydantic-ai, dev-parlant lacks both. These framework_ids
 # need a per-lane skip the other probes (all in every lane's `dev` baseline)
 # don't.
@@ -299,6 +299,7 @@ async def _probe_copilot_sdk() -> bool:
     adapter = CopilotSDKAdapter.__new__(CopilotSDKAdapter)
     adapter.features = SimpleNamespace(emit=())
     adapter._custom_tools = []
+    adapter._custom_effects = {}
     adapter._turn_state = {}
     adapter._room_tools = {"room-1": room_tools}
 

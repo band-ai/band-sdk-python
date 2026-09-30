@@ -16,7 +16,7 @@ set -euo pipefail
 # Pinned for the same reason as codex: an unpinned global install lets the CLI
 # float between runs, so a CLI change lands as an unrelated-looking lane
 # failure. Bump deliberately.
-COPILOT_CLI_VERSION="${COPILOT_CLI_VERSION:-1.0.80}"
+COPILOT_CLI_VERSION="${COPILOT_CLI_VERSION:-1.0.89}"
 
 npm install -g "@github/copilot@${COPILOT_CLI_VERSION}"
 copilot --version

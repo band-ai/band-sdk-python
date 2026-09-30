@@ -23,6 +23,7 @@ from band_rest import (
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
+from band.core.model_catalog import ModelSelection, ModelSelectionError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability
 from band.runtime.capabilities import FeatureFlag
@@ -34,6 +35,7 @@ from band.runtime.oneshot import (
     _lookup_sender_name,
     _parse_inserted_at,
 )
+from tests.catalogs import CatalogAdapter
 from tests.runtime.conftest import ctx_item, make_link_mock, platform_msg
 
 
@@ -231,6 +233,15 @@ class TestStartup:
         await invoker.startup()
 
         assert Capability.FILES in adapter.features.capabilities
+
+    async def test_startup_rejects_a_model_the_harness_does_not_offer(self) -> None:
+        adapter = CatalogAdapter(ModelSelection(model="gpt-9"))
+        invoker = OneShotInvoker(link=make_link_mock(), adapter=adapter, agent_id="a")
+
+        with pytest.raises(ModelSelectionError, match='model "gpt-9"'):
+            await invoker.startup()
+
+        assert adapter.cleaned_up
 
     async def test_startup_is_idempotent(self) -> None:
         link = make_link_mock()
