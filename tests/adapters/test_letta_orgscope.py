@@ -99,7 +99,7 @@ class TestFindOrCreateOrganization:
         assert len(httpx_mock.get_requests(method="POST")) == 0
 
     @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
-    async def test_duplicate_matches_across_pages_use_oldest_and_warn(
+    async def test_preexisting_duplicates_use_oldest_without_warning(
         self, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         httpx_mock.add_response(
@@ -135,15 +135,14 @@ class TestFindOrCreateOrganization:
             json=[],
         )
 
-        with caplog.at_level(logging.WARNING, logger=orgscope.__name__):
+        with caplog.at_level(logging.INFO, logger=orgscope.__name__):
             org_id = await _client().find_or_create_organization("band-x")
 
         assert org_id == "org-old"
         assert len(httpx_mock.get_requests(method="GET")) == 3
-        assert any(
-            record.levelno == logging.WARNING and "org-old" in record.message
-            for record in caplog.records
-        )
+        assert [
+            record.levelno for record in caplog.records if "org-old" in record.message
+        ] == [logging.INFO]
 
     @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
     async def test_created_organization_is_reconciled_with_existing_match(

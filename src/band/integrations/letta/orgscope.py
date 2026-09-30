@@ -92,7 +92,11 @@ class LettaOrgScopeClient:
         """Resolve the stable matching item on ``path``, creating it if absent."""
         matches = await self._paginated_matches(path, match=match)
         if matches:
-            return self._canonical_match(matches, log_label=log_label)
+            # Duplicates seen before creating predate this start and recur on
+            # every later one; only a race this start just lost is news.
+            return self._canonical_match(
+                matches, log_label=log_label, duplicate_log_level=logging.INFO
+            )
 
         response = await self._http.post(path, json=payload)
         response.raise_for_status()
@@ -104,10 +108,14 @@ class LettaOrgScopeClient:
             raise RuntimeError(
                 f"created Letta {log_label} (id={created['id']}) could not be read back"
             )
-        return self._canonical_match(matches, log_label=log_label)
+        return self._canonical_match(
+            matches, log_label=log_label, duplicate_log_level=logging.WARNING
+        )
 
     @staticmethod
-    def _canonical_match(matches: list[dict], *, log_label: str) -> dict:
+    def _canonical_match(
+        matches: list[dict], *, log_label: str, duplicate_log_level: int
+    ) -> dict:
         """Select one stable identity and report duplicate provisioning."""
         canonical = min(
             matches,
@@ -118,7 +126,8 @@ class LettaOrgScopeClient:
             ),
         )
         if len(matches) > 1:
-            logger.warning(
+            logger.log(
+                duplicate_log_level,
                 "Found %s Letta %s records; using id=%s",
                 len(matches),
                 log_label,
