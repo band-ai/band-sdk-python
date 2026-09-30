@@ -20,8 +20,13 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
   `["user", "project"]` to opt back in.
 - **`permission_mode` is forwarded to the CLI as given.** It takes the
   [Claude Code permission modes](https://code.claude.com/docs/en/permission-modes)
-  by config value. `"dontAsk"` denies every call that would otherwise prompt, so
-  it raises `ValueError` with `approval_mode="manual"`, whose room prompts it
-  would never reach. `"auto"` lets a model classifier answer prompts; when the
-  account or model doesn't support it, the CLI starts the session in
-  `"default"` instead, with no error.
+  by config value. `approval_mode` sends every native tool call to a prompt,
+  which changes two modes:
+  - `"dontAsk"` denies every prompt without asking the adapter, so it raises
+    `ValueError` with any `approval_mode`.
+  - `"auto"` has its classifier answer prompts only when `approval_mode` is
+    `None`. Prompts forced by the adapter's approval hook skip the classifier,
+    so with an `approval_mode` that approval policy decides instead.
+
+  When the account or model can't run `"auto"`, the CLI starts the session in
+  `"default"`. The adapter logs a warning and `/status` shows the mode in force.

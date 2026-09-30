@@ -28,6 +28,7 @@ try:
         ClaudeAgentOptions,
         ClaudeSDKClient,
         ResultMessage,
+        SystemMessage,
         TextBlock,
         ThinkingBlock,
         ToolResultBlock,
@@ -148,6 +149,10 @@ _PROVIDER = "claude_sdk"
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
+
+# dontAsk denies every prompt without calling can_use_tool, so no approval_mode
+# ever gets to decide.
+DONT_ASK_PERMISSION_MODE: PermissionMode = "dontAsk"
 
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
@@ -353,12 +358,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             max_thinking_tokens: Max tokens for extended thinking (optional)
             effort: Response effort level. ``None`` uses the model default.
             permission_mode: Claude Code permission mode, forwarded to the CLI
-                (https://code.claude.com/docs/en/permission-modes).
-                ``"dontAsk"`` denies every call that would otherwise prompt, so
-                it raises ``ValueError`` with ``approval_mode="manual"``.
-                ``"auto"`` lets a model classifier answer prompts; when the
-                account or model doesn't support it, the CLI starts the session
-                in ``"default"`` instead.
+                (https://code.claude.com/docs/en/permission-modes; how each
+                mode meets ``approval_mode`` is in docs/adapters/claude_sdk.md).
+                ``"dontAsk"`` with any ``approval_mode`` raises ``ValueError``.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -405,12 +407,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
         self.effort = effort
-        if permission_mode == "dontAsk" and approval_mode == "manual":
+        if permission_mode == DONT_ASK_PERMISSION_MODE and approval_mode is not None:
             raise ValueError(
-                'permission_mode="dontAsk" denies every tool call the room would '
-                'be asked to approve; it cannot be combined with approval_mode="manual"'
+                f"permission_mode={DONT_ASK_PERMISSION_MODE!r} denies tool calls "
+                f"without consulting approval_mode={approval_mode!r}; "
+                "set approval_mode=None"
             )
         self.permission_mode: PermissionMode = permission_mode
+        # What the CLI reports running, which differs when the requested mode
+        # is unavailable (e.g. "auto" starts the session in "default").
+        self._effective_permission_mode: str | None = None
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
@@ -958,6 +964,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                     replied_this_turn |= await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
+                case SystemMessage(subtype="init"):
+                    self._record_effective_permission_mode(sdk_message)
                 case ResultMessage():
                     await self._on_turn_complete(
                         sdk_message,
@@ -1748,6 +1756,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         selected.future.set_result(ApprovalReply(decision, sender["id"]))
 
+    def _record_effective_permission_mode(self, init: SystemMessage) -> None:
+        mode = init.data.get("permissionMode")
+        if mode is None or mode == self._effective_permission_mode:
+            return
+        self._effective_permission_mode = mode
+        if mode != self.permission_mode:
+            logger.warning(
+                "Claude CLI runs permission mode %s instead of the requested %s",
+                mode,
+                self.permission_mode,
+            )
+
     async def _handle_status_command(
         self,
         tools: AgentToolsProtocol,
@@ -1766,7 +1786,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             "**Claude SDK Status**",
             f"- model: `{self.model or 'auto'}`",
             f"- fallback_model: `{self.fallback_model or 'none'}`",
-            f"- permission_mode: `{self.permission_mode}`",
+            f"- permission_mode: `{self._effective_permission_mode or self.permission_mode}`",
             f"- approval_mode: `{self.approval_mode or 'disabled'}`",
             f"- pending_approvals: {pending_count}",
             f"- active_sessions: {session_count}",
