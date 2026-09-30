@@ -147,6 +147,13 @@ class OmpACPAdapter(ACPClientAdapter):
             **features,
         )
 
+    async def release_room_resources(self, room_id: str) -> None:
+        """Stop an idle room's ``omp acp`` process; the next turn reloads its session.
+
+        OMP persists sessions, so ``session/load`` restores one in a new process.
+        """
+        await self._release_loadable_session(room_id)
+
     def _runtime_client_factory(self) -> OmpACPCollectingClient:
         return OmpACPCollectingClient(
             own_tool_names=self._own_tool_names,
