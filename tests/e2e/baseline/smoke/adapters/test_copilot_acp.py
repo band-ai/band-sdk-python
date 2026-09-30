@@ -37,6 +37,10 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # -- that vocabulary answers a different question ("is this tool observational,
 # not terminal work, for no-reply detection"), which only coincides with this one today.
 BAND_EVENT_TOOL_NAME = "band_send_event"
+# What a BYOK turn posts for a typed model: the session advertises no model select.
+BYOK_TYPED_MODEL_FAILURE = (
+    "ACP session configuration failed: ACP session advertises no model option."
+)
 
 
 @with_adapters(Adapter.COPILOT_ACP, **TOOL_AGENT)
@@ -130,7 +134,12 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
 
 
 def hermetic_copilot_config(
-    settings: BaselineSettings, work_dir: Path, *, hosted: bool = False
+    settings: BaselineSettings,
+    work_dir: Path,
+    *,
+    hosted: bool = False,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> Any:
     """A per-test ``CopilotACPAdapterConfig`` with a fresh cwd + ``COPILOT_HOME``.
 
@@ -141,8 +150,9 @@ def hermetic_copilot_config(
     ``hosted=True`` omits it and authenticates with ``github_token`` — the
     Copilot-hosted path production users run. The hosted env also pins
     ``COPILOT_MODEL`` (``settings.backends.copilot_hosted_model``) so this
-    smoke's one billed turn uses a cheap, deterministic model instead of
-    Copilot's ``auto`` picker.
+    smoke's billed turns use a cheap, deterministic model instead of
+    Copilot's ``auto`` picker. ``model`` / ``reasoning_effort`` set the typed
+    selection the adapter applies from each session's advertised catalog.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapterConfig,
@@ -160,6 +170,10 @@ def hermetic_copilot_config(
     }
     if hosted:
         kwargs["github_token"] = settings.backends.github_token
+    if model is not None:
+        kwargs["model"] = model
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
     if settings.backends.copilot_command.strip():
         kwargs["command"] = tuple(settings.backends.copilot_command.split())
     return CopilotACPAdapterConfig(**kwargs)
@@ -169,19 +183,28 @@ def hermetic_copilot_config(
 @requires(Dep.COPILOT_CLI)
 @pytest.mark.timeout(extra=180)  # Copilot CLI cold boot + hosted-auth handshake
 @pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize(
+    "reasoning_effort",
+    # "high" differs from the hosted model's advertised default ("medium"),
+    # so the typed selection is really sent through session/set_config_option.
+    [pytest.param(None, id="default"), pytest.param("high", id="typed-effort")],
+)
 async def test_copilot_hosted_auth_replies(
     baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
     tmp_path: Any,
+    reasoning_effort: str | None,
 ) -> None:
     """One reply turn on Copilot-hosted auth (GITHUB_TOKEN, no BYOK).
 
     The matrix cells run Anthropic BYOK to spare the monthly Copilot-hosted
-    quota, but the hosted path is the one production users run — this single
-    cheap turn keeps it proven. Skips (not fails) without a token: hosted
-    auth is optional extra coverage, the BYOK cells are the lane's bar.
+    quota, but the hosted path is the one production users run — one cheap
+    turn per cell keeps it proven. Skips (not fails) without a token: hosted
+    auth is optional extra coverage, the BYOK cells are the lane's bar. Only
+    hosted sessions advertise model/effort selects, so the typed-effort cell
+    proves a typed selection is accepted against Copilot's live catalog.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapter,
@@ -197,7 +220,12 @@ async def test_copilot_hosted_auth_replies(
     )
 
     adapter = CopilotACPAdapter(
-        hermetic_copilot_config(baseline_settings, tmp_path / "hosted", hosted=True)
+        hermetic_copilot_config(
+            baseline_settings,
+            tmp_path / "hosted",
+            hosted=True,
+            reasoning_effort=reasoning_effort,
+        )
     )
     async with (
         running_agent(identity, adapter, baseline_settings),
@@ -213,6 +241,50 @@ async def test_copilot_hosted_auth_replies(
             mid, identity.id, deadline_s=baseline_settings.e2e_timeout
         )
         replies.assert_contains_any([marker])
+
+
+@lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
+@requires(Dep.COPILOT_CLI, Dep.ANTHROPIC)
+@pytest.mark.timeout(extra=180)  # Copilot CLI cold boot
+@pytest.mark.asyncio(loop_scope="session")
+async def test_copilot_byok_turn_fails_loudly_on_a_typed_model(
+    baseline_settings: BaselineSettings,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+    tmp_path: Any,
+) -> None:
+    """Under BYOK Copilot advertises no model select (the provider env picks the
+    model), so a typed ``model`` must fail the turn with a visible error rather
+    than be silently ignored, as the old ``--model`` flag was."""
+    from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+        CopilotACPAdapter,
+    )
+
+    identity = await resource_manager.provision_agent("copilot-byok-typed-model")
+    room_id = await resource_manager.provision_room(
+        title="e2e-copilot-byok-typed-model", participants=[identity.id]
+    )
+
+    adapter = CopilotACPAdapter(
+        hermetic_copilot_config(
+            baseline_settings, tmp_path / "byok", model=unique_marker("model")
+        )
+    )
+    async with (
+        running_agent(identity, adapter, baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "Reply with one short sentence.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        await capture.wait_for_processed(mid, identity.id)
+        errors = await capture.errors(sender_id=identity.id)
+
+    errors.assert_contains_any([BYOK_TYPED_MODEL_FAILURE])
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
