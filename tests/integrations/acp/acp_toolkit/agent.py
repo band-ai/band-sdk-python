@@ -520,9 +520,14 @@ class FakeACPAgent:
         del kwargs
         self.closed_sessions.append(session_id)
 
-    def config_selections(self) -> list[tuple[str, str]]:
-        """Each ``(option, value)`` the client set, in order, across sessions."""
-        return [(option, value) for _sid, option, value in self.config_option_requests]
+    def config_selections(self, session_id: str | None = None) -> list[tuple[str, str]]:
+        """Each ``(option, value)`` the client set, in order, on ``session_id``
+        or across sessions."""
+        return [
+            (option, value)
+            for sid, option, value in self.config_option_requests
+            if session_id in (None, sid)
+        ]
 
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""

@@ -34,6 +34,10 @@ class ModelSelection(BaseModel):
     def value_of(self, setting: ModelSetting) -> str | None:
         return getattr(self, setting)
 
+    def updated_by(self, change: ModelSelection) -> ModelSelection:
+        """This selection with every setting ``change`` names replaced."""
+        return self.model_copy(update=change.model_dump(exclude_none=True))
+
     @property
     def is_empty(self) -> bool:
         return self.model is None and self.reasoning_effort is None

@@ -350,6 +350,35 @@ class TestCopilotACPModelSelection:
         assert agent.current_value("model") == "claude-sonnet-5"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("history", "next_session"),
+        [
+            pytest.param(None, "fake-session-2", id="recreated"),
+            pytest.param(
+                ACPClientSessionState(room_to_session={"room-1": "persisted-session"}),
+                "persisted-session",
+                id="restored",
+            ),
+        ],
+    )
+    async def test_a_switch_outlives_the_session_it_was_made_on(
+        self, history: ACPClientSessionState | None, next_session: str
+    ) -> None:
+        # The switch changes the model only, so the configured effort stays.
+        agent = copilot()
+
+        async with copilot_room(agent, reasoning_effort="high") as session:
+            await session.send("Hello")
+            await switch_room(session, model="gpt-5.4")
+            await session.adapter.on_cleanup("room-1")
+            await session.send("Again", bootstrap=history is not None, history=history)
+
+        assert agent.config_selections(next_session) == [
+            ("model", "gpt-5.4"),
+            ("reasoning_effort", "high"),
+        ]
+
+    @pytest.mark.asyncio
     async def test_a_switch_queued_behind_a_room_cleanup_names_the_ended_session(
         self,
     ) -> None:

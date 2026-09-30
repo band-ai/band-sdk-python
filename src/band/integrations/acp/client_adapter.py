@@ -328,6 +328,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._turn_timeout_s = turn_timeout_s
 
         self._room_to_session: dict[str, str] = {}
+        # Each room's selection after its runtime switches. Kept for the
+        # adapter's lifetime, not its sessions', so a room's recreated or
+        # restored session starts on the model the room last switched to.
+        self._room_selections: dict[str, ModelSelection] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -355,8 +359,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """Switch ``room_id``'s live ACP session, checked against its catalog.
 
         Raises ``BandConfigError`` (an ``ACPConfigError`` naming what the
-        session offers, when it rejects ``selection``); new rooms keep the
-        configured selection.
+        session offers, when it rejects ``selection``). The switch stays with
+        the room: every later session for it starts from the configured
+        selection updated by each switch. Other rooms keep the configured one.
         """
         session = await self._live_session(room_id)
         session_id, runtime = session
@@ -365,9 +370,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if await self._live_session(room_id) != session:
                 raise BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
             await self._apply_model_selection(runtime, session_id, selection)
+            self._room_selections[room_id] = self._room_selection(room_id).updated_by(
+                selection
+            )
         logger.info(
             "Switched ACP session %s for room %s to %s", session_id, room_id, selection
         )
+
+    def _room_selection(self, room_id: str) -> ModelSelection:
+        return self._room_selections.get(room_id, self.model_selection)
 
     async def _live_session(self, room_id: str) -> tuple[str, ACPRuntime]:
         async with self._session_lock:
@@ -1092,7 +1103,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self, runtime: ACPRuntime, room_id: str, session_id: str
     ) -> None:
         """Apply caller-selected values from the session's live ACP catalog."""
-        selection = self.model_selection
+        selection = self._room_selection(room_id)
         if not selection.is_empty:
             await self._apply_model_selection(runtime, session_id, selection)
         elif self._resolve_session_config is not None:
