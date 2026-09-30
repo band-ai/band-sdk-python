@@ -154,6 +154,10 @@ class FakeCodexClient:
         self._thread_counter = 0
         self._turn_counter = 0
 
+    @property
+    def request_methods(self) -> list[str]:
+        return [method for method, _ in self.requests]
+
     async def connect(self) -> None:
         self.connected = True
 
@@ -179,43 +183,38 @@ class FakeCodexClient:
         payload = params or {}
         self.requests.append((method, dict(payload)))
 
-        if method == "model/list":
-            if self._model_list_error is not None:
-                raise self._model_list_error
-            if self._model_list_result is not None:
-                return self._model_list_result
-            return {"data": [{"id": "gpt-5.5", "hidden": False}]}
-
-        if (
-            method == CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET
-            and self._skill_roots_error is not None
-        ):
-            raise self._skill_roots_error
-
-        if method == "thread/resume":
-            if self._resume_error is not None:
-                raise self._resume_error
-            return {"thread": {"id": payload.get("threadId", "thr-resumed")}}
-
-        if method == "thread/start":
-            self._thread_counter += 1
-            return {"thread": {"id": f"thr-{self._thread_counter}"}}
-
-        if method == "turn/start":
-            if self._turn_start_error is not None:
-                err = self._turn_start_error
-                if self._turn_start_error_once:
-                    self._turn_start_error = None
-                raise err
-            self._turn_counter += 1
-            return {
-                "turn": {
-                    "id": f"turn-{self._turn_counter}",
-                    "status": "inProgress",
-                    "items": [],
-                    "error": None,
+        match method:
+            case CodexRequestMethod.MODEL_LIST:
+                if self._model_list_error is not None:
+                    raise self._model_list_error
+                if self._model_list_result is not None:
+                    return self._model_list_result
+                return {"data": [{"id": "gpt-5.5", "hidden": False}]}
+            case CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET:
+                if self._skill_roots_error is not None:
+                    raise self._skill_roots_error
+            case CodexRequestMethod.THREAD_RESUME:
+                if self._resume_error is not None:
+                    raise self._resume_error
+                return {"thread": {"id": payload.get("threadId", "thr-resumed")}}
+            case CodexRequestMethod.THREAD_START:
+                self._thread_counter += 1
+                return {"thread": {"id": f"thr-{self._thread_counter}"}}
+            case CodexRequestMethod.TURN_START:
+                if self._turn_start_error is not None:
+                    err = self._turn_start_error
+                    if self._turn_start_error_once:
+                        self._turn_start_error = None
+                    raise err
+                self._turn_counter += 1
+                return {
+                    "turn": {
+                        "id": f"turn-{self._turn_counter}",
+                        "status": "inProgress",
+                        "items": [],
+                        "error": None,
+                    }
                 }
-            }
 
         return {}
 
@@ -244,6 +243,19 @@ class FakeCodexClient:
 def patch_codex_client(adapter: CodexAdapter, client: FakeCodexClient) -> None:
     def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
         return client
+
+    adapter._build_client = _build  # type: ignore[method-assign]
+
+
+def patch_codex_clients_by_room(
+    adapter: CodexAdapter, clients: dict[str, FakeCodexClient]
+) -> None:
+    """Give each room its own fake app-server, as the real adapter does."""
+
+    def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+        room_id = adapter._active_room.get()
+        assert room_id is not None
+        return clients[room_id]
 
     adapter._build_client = _build  # type: ignore[method-assign]
 
@@ -462,7 +474,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        assert any(method == "thread/start" for method, _ in fake_client.requests)
+        assert CodexRequestMethod.THREAD_START in fake_client.request_methods
         thread_start = next(
             params
             for method, params in fake_client.requests
@@ -648,7 +660,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        methods = [method for method, _ in fake_client.requests]
+        methods = fake_client.request_methods
         assert "thread/resume" in methods
         assert "thread/start" in methods
 
@@ -842,13 +854,7 @@ class TestCodexAdapter:
             "room-2": FakeCodexClient(events=[_turn_completed()]),
         }
         adapter = CodexAdapter(config=CodexAdapterConfig())
-
-        def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
-            room_id = adapter._active_room.get()
-            assert room_id is not None
-            return clients[room_id]
-
-        adapter._build_client = _build  # type: ignore[method-assign]
+        patch_codex_clients_by_room(adapter, clients)
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
@@ -1011,7 +1017,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        methods = [method for method, _ in fake_client.requests]
+        methods = fake_client.request_methods
         assert "turn/start" not in methods
         assert "thread/start" not in methods
         assert len(tools.messages_sent) == 1
@@ -1035,7 +1041,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        methods = [method for method, _ in fake_client.requests]
+        methods = fake_client.request_methods
         assert "turn/start" not in methods
         assert "thread/start" not in methods
         assert adapter._selected_model == "gpt-5.5-codex"
@@ -1061,7 +1067,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        methods = [method for method, _ in fake_client.requests]
+        methods = fake_client.request_methods
         assert "turn/start" not in methods
         assert "thread/start" not in methods
         assert methods.count("model/list") >= 1
@@ -5707,7 +5713,7 @@ class TestApprovalFromASequentialRoom:
         await room.send("and lint too")
 
         assert room.chat[-1] == TURN_IN_PROGRESS_MESSAGE
-        methods = [method for method, _ in room.client.requests]
+        methods = room.client.request_methods
         assert methods.count("turn/start") == 1
 
     @pytest.mark.asyncio
@@ -6771,6 +6777,22 @@ class TestReadRoomFileImagePassthrough:
 
 
 SKILL_ROOT = "/opt/band/skills"
+REGISTER_SKILL_ROOT = (
+    CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET,
+    {"extraRoots": [SKILL_ROOT]},
+)
+
+
+async def send_bootstrap(adapter: CodexAdapter, room_id: str = ROOM_ID) -> None:
+    await adapter.on_message(
+        make_platform_message(room_id=room_id),
+        ToolSchemaFakeTools(),
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id=room_id,
+    )
 
 
 class TestSkillRoots:
@@ -6780,17 +6802,50 @@ class TestSkillRoots:
             events=[_turn_completed()],
             config=CodexAdapterConfig(skill_roots=[SKILL_ROOT]),
         )
-        assert turn.client.requests[0] == (
-            CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET,
-            {"extraRoots": [SKILL_ROOT]},
-        )
+        assert turn.client.requests[0] == REGISTER_SKILL_ROOT
 
     @pytest.mark.asyncio
     async def test_no_roots_sends_nothing(self) -> None:
         turn = await run_codex_turn(events=[_turn_completed()])
-        assert CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET not in dict(
-            turn.client.requests
+        assert (
+            CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET not in turn.client.request_methods
         )
+
+    @pytest.mark.asyncio
+    async def test_every_room_process_gets_the_roots(self) -> None:
+        clients = {
+            room_id: FakeCodexClient(events=[_turn_completed()])
+            for room_id in ("room-1", "room-2")
+        }
+        adapter = CodexAdapter(config=CodexAdapterConfig(skill_roots=[SKILL_ROOT]))
+        patch_codex_clients_by_room(adapter, clients)
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        for room_id in clients:
+            await send_bootstrap(adapter, room_id)
+
+        assert all(
+            client.requests[0] == REGISTER_SKILL_ROOT for client in clients.values()
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_restarted_process_gets_the_roots_again(self) -> None:
+        client = FakeCodexClient(
+            events=[
+                _event_notification("transport/closed", {"reason": "exited"}),
+                _turn_completed("turn-2"),
+            ]
+        )
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(skill_roots=[SKILL_ROOT])
+        )
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter)
+        await send_bootstrap(adapter)
+
+        assert client.requests.count(REGISTER_SKILL_ROOT) == 2
 
     @pytest.mark.asyncio
     async def test_rejected_roots_fail_the_room_start(self) -> None:
@@ -6801,13 +6856,15 @@ class TestSkillRoots:
             await run_codex_turn(
                 client=client, config=CodexAdapterConfig(skill_roots=[SKILL_ROOT])
             )
-        assert client.requests == [
-            (CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET, {"extraRoots": [SKILL_ROOT]})
-        ]
+        assert client.requests == [REGISTER_SKILL_ROOT]
 
     def test_relative_roots_are_refused(self) -> None:
         with pytest.raises(ValidationError, match="must be absolute"):
             CodexAdapterConfig(skill_roots=["relative/skills"])
+
+    def test_a_root_that_does_not_exist_yet_is_accepted(self, tmp_path) -> None:
+        missing = str(tmp_path / "created-later")
+        assert CodexAdapterConfig(skill_roots=[missing]).skill_roots == [missing]
 
     def test_roots_are_read_from_the_environment_as_json(
         self, monkeypatch: pytest.MonkeyPatch

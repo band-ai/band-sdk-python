@@ -480,8 +480,7 @@ class CodexAdapterConfig(BaseSettings):
     )
     enable_self_config_tools: bool = False
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
-    # Codex has no config key for extra skill folders; each room's app-server
-    # gets them via skills/extraRoots/set. CODEX_SKILL_ROOTS is a JSON list.
+    # CODEX_SKILL_ROOTS is a JSON list.
     skill_roots: list[str] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
