@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Protocol
@@ -463,17 +464,14 @@ class AgentRuntime:
                 "Building the execution for %s failed", room_id, exc_info=True
             )
             return None
-        # Owned before it starts, so a failed or cancelled start cannot leak it
-        # or leave it looking live.
-        self._own(room_id, execution)
         try:
-            await execution.start()
+            with self._owning(room_id, execution):
+                await execution.start()
         except Exception:
             logger.warning(
                 "Starting the execution for %s failed", room_id, exc_info=True
             )
             return None
-        self._forget_teardown(room_id)
         self.executions[room_id] = execution
         logger.debug("Created execution for room %s", room_id)
         return execution
@@ -540,6 +538,17 @@ class AgentRuntime:
         except Exception:
             logger.warning("Tearing down room %s failed", room_id, exc_info=True)
             return False
+
+    @contextmanager
+    def _owning(self, room_id: str, execution: Execution) -> Iterator[None]:
+        """Own the execution while the block runs.
+
+        Ownership ends only if the block completes; an error or a cancel leaves
+        the teardown registered, so a failed start cannot leak or look live.
+        """
+        self._own(room_id, execution)
+        yield
+        self._forget_teardown(room_id)
 
     def _own(self, room_id: str, execution: Execution) -> RoomTeardown:
         """Register the execution's teardown; it stays until stop and cleanup succeed."""
