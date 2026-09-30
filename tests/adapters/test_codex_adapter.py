@@ -49,7 +49,7 @@ from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
 from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
-from tests.adapters.codexturns import await_released_turn
+from tests.adapters.codexturns import RecordedRequests, await_released_turn
 
 
 def make_platform_message(
@@ -124,7 +124,7 @@ _LIVE_EFFORTS_MODEL_LIST: dict[str, Any] = {
 }
 
 
-class FakeCodexClient:
+class FakeCodexClient(RecordedRequests):
     """Minimal fake transport client for adapter tests."""
 
     def __init__(
@@ -153,10 +153,6 @@ class FakeCodexClient:
         self._skill_roots_error = skill_roots_error
         self._thread_counter = 0
         self._turn_counter = 0
-
-    @property
-    def request_methods(self) -> list[str]:
-        return [method for method, _ in self.requests]
 
     async def connect(self) -> None:
         self.connected = True
@@ -475,11 +471,7 @@ class TestCodexAdapter:
         )
 
         assert CodexRequestMethod.THREAD_START in fake_client.request_methods
-        thread_start = next(
-            params
-            for method, params in fake_client.requests
-            if method == "thread/start"
-        )
+        thread_start = fake_client.params_of(CodexRequestMethod.THREAD_START)[0]
         assert "dynamicTools" in thread_start
         dynamic_names = [t["name"] for t in thread_start["dynamicTools"]]
         assert "band_send_message" in dynamic_names
@@ -535,8 +527,7 @@ class TestCodexAdapter:
 
         turn_inputs = [
             params["input"]
-            for method, params in fake_client.requests
-            if method == "turn/start"
+            for params in fake_client.params_of(CodexRequestMethod.TURN_START)
         ]
         assert len(turn_inputs) == 2
         for turn_input in turn_inputs:
@@ -661,8 +652,8 @@ class TestCodexAdapter:
         )
 
         methods = fake_client.request_methods
-        assert "thread/resume" in methods
-        assert "thread/start" in methods
+        assert CodexRequestMethod.THREAD_RESUME in methods
+        assert CodexRequestMethod.THREAD_START in methods
 
     @pytest.mark.asyncio
     async def test_approval_request_auto_decline(self) -> None:
@@ -1018,8 +1009,8 @@ class TestCodexAdapter:
         )
 
         methods = fake_client.request_methods
-        assert "turn/start" not in methods
-        assert "thread/start" not in methods
+        assert CodexRequestMethod.TURN_START not in methods
+        assert CodexRequestMethod.THREAD_START not in methods
         assert len(tools.messages_sent) == 1
         assert "Codex status:" in tools.messages_sent[0]["content"]
         assert "thread_id: not mapped" in tools.messages_sent[0]["content"]
@@ -1042,8 +1033,8 @@ class TestCodexAdapter:
         )
 
         methods = fake_client.request_methods
-        assert "turn/start" not in methods
-        assert "thread/start" not in methods
+        assert CodexRequestMethod.TURN_START not in methods
+        assert CodexRequestMethod.THREAD_START not in methods
         assert adapter._selected_model == "gpt-5.5-codex"
         assert len(tools.messages_sent) == 1
         assert (
@@ -1068,9 +1059,9 @@ class TestCodexAdapter:
         )
 
         methods = fake_client.request_methods
-        assert "turn/start" not in methods
-        assert "thread/start" not in methods
-        assert methods.count("model/list") >= 1
+        assert CodexRequestMethod.TURN_START not in methods
+        assert CodexRequestMethod.THREAD_START not in methods
+        assert methods.count(CodexRequestMethod.MODEL_LIST) >= 1
         assert len(tools.messages_sent) == 1
         assert "Available models" in tools.messages_sent[0]["content"]
 
@@ -1096,9 +1087,7 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        turn_params = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_params = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         assert turn_params["effort"] == effort
         assert turn_params["summary"] == "concise"
 
@@ -1117,9 +1106,7 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        turn_params = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_params = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         assert "effort" not in turn_params
         assert "summary" not in turn_params
 
@@ -1251,11 +1238,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
         # Check that thread/start included setmodel and setreasoning dynamic tools
-        thread_params = next(
-            params
-            for method, params in fake_client.requests
-            if method == "thread/start"
-        )
+        thread_params = fake_client.params_of(CodexRequestMethod.THREAD_START)[0]
         tool_names = [t["name"] for t in thread_params.get("dynamicTools", [])]
         assert "setmodel" in tool_names
         assert "setreasoning" in tool_names
@@ -1278,11 +1261,7 @@ class TestCodexAdapter:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        thread_params = next(
-            params
-            for method, params in fake_client.requests
-            if method == "thread/start"
-        )
+        thread_params = fake_client.params_of(CodexRequestMethod.THREAD_START)[0]
         tool_names = [t["name"] for t in thread_params.get("dynamicTools", [])]
         assert "setmodel" not in tool_names
         assert "setreasoning" not in tool_names
@@ -1381,14 +1360,8 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        thread_start = next(
-            params
-            for method, params in fake_client.requests
-            if method == "thread/start"
-        )
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        thread_start = fake_client.params_of(CodexRequestMethod.THREAD_START)[0]
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         # thread/start only accepts the sandbox field (SandboxMode enum)
         assert thread_start["sandbox"] == "danger-full-access"
         # turn/start uses sandboxPolicy (full SandboxPolicy tagged union)
@@ -1414,14 +1387,8 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        thread_start = next(
-            params
-            for method, params in fake_client.requests
-            if method == "thread/start"
-        )
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        thread_start = fake_client.params_of(CodexRequestMethod.THREAD_START)[0]
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         # thread/start has no sandboxPolicy field; externalSandbox is
         # only representable at turn level
         assert "sandbox" not in thread_start
@@ -1624,11 +1591,8 @@ class TestCodexAdapter:
             )
 
         # Adapter should have sent turn/interrupt with both identifiers.
-        interrupt_requests = [
-            (m, p) for m, p in fake_client.requests if m == "turn/interrupt"
-        ]
-        assert interrupt_requests == [
-            ("turn/interrupt", {"threadId": "thr-1", "turnId": "turn-1"})
+        assert fake_client.params_of(CodexRequestMethod.TURN_INTERRUPT) == [
+            {"threadId": "thr-1", "turnId": "turn-1"}
         ]
 
         # The turn fails the platform's turn, so no separate "I stopped..."
@@ -2996,9 +2960,7 @@ class TestHistoryInjection:
         )
         await adapter.on_event(inp)
 
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
         history_items = [
             item for item in turn_input if "[Conversation History]" in item["text"]
@@ -3049,9 +3011,7 @@ class TestHistoryInjection:
         )
         await adapter.on_event(inp)
 
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
         assert not any("[Conversation History]" in item["text"] for item in turn_input)
 
@@ -3090,9 +3050,7 @@ class TestHistoryInjection:
         )
         await adapter.on_event(inp)
 
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
         assert not any("[Conversation History]" in item["text"] for item in turn_input)
 
@@ -3155,9 +3113,7 @@ class TestHistoryInjection:
         )
         await adapter.on_event(inp)
 
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
         history_items = [
             item for item in turn_input if "[Conversation History]" in item["text"]
@@ -3215,9 +3171,7 @@ class TestHistoryInjection:
         )
         await adapter.on_event(inp)
 
-        turn_start = next(
-            params for method, params in fake_client.requests if method == "turn/start"
-        )
+        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
         history_items = [
             item for item in turn_input if "[Conversation History]" in item["text"]
@@ -3299,8 +3253,7 @@ class TestHistoryInjection:
                 room_id="room-1",
             )
 
-        turn_start_calls = [m for m, _ in fake_client.requests if m == "turn/start"]
-        assert len(turn_start_calls) == 1
+        assert fake_client.request_methods.count(CodexRequestMethod.TURN_START) == 1
         assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
@@ -3356,8 +3309,7 @@ class TestHistoryInjection:
                 room_id="room-1",
             )
 
-        model_list_calls = [m for m, _ in fake_client.requests if m == "model/list"]
-        assert len(model_list_calls) == 0
+        assert CodexRequestMethod.MODEL_LIST not in fake_client.request_methods
 
         failures = reported_failures(tools)
         assert len(failures) == 1
@@ -5714,7 +5666,7 @@ class TestApprovalFromASequentialRoom:
 
         assert room.chat[-1] == TURN_IN_PROGRESS_MESSAGE
         methods = room.client.request_methods
-        assert methods.count("turn/start") == 1
+        assert methods.count(CodexRequestMethod.TURN_START) == 1
 
     @pytest.mark.asyncio
     async def test_interrupt_reaches_a_turn_parked_on_a_human(

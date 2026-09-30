@@ -17,6 +17,7 @@ from band.adapters.codex import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.codex import CodexRequestMethod
 from band.testing import FakeAgentTools
 from band.workspaces import resolve_room_workspace
 
@@ -144,7 +145,7 @@ async def test_model_override_survives_codex_client_rebuild() -> None:
         async def request(
             self, method: str, _params: dict[str, object]
         ) -> dict[str, object]:
-            assert method == "model/list"
+            assert method == CodexRequestMethod.MODEL_LIST
             self.model_list_calls += 1
             return {"data": [{"id": self.model, "hidden": False}]}
 
@@ -340,7 +341,7 @@ async def test_codex_starts_each_thread_in_its_room_workspace(tmp_path: Path) ->
         async def request(
             self, method: str, params: dict[str, object]
         ) -> dict[str, object]:
-            assert method == "thread/start"
+            assert method == CodexRequestMethod.THREAD_START
             self.params = params
             return {"thread": {"id": "thread"}}
 
