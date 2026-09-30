@@ -28,20 +28,25 @@ from typing import (
     runtime_checkable,
 )
 
-from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker, is_self_echo
-
-from band.client.rest import (
-    DEFAULT_REQUEST_OPTIONS,
-    ChatMessageRequest,
-    ChatMessageRequestMentionsItem,
+from band_sdk_core import (
+    AgentFailure,
+    ClaimRegistry,
+    ParticipantRoster,
+    RetryTracker,
+    is_self_echo,
 )
+
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import (
     ControlMode,
     DeliveryStatus,
     MessageCreatedPayload,
     MessageMetadata,
 )
-from band.core.protocols import TurnResultAlreadyReported
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
@@ -51,14 +56,13 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
-from band.platform.posting import post_message
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
+from band.runtime.tools.agent import AgentTools
 from band.runtime.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     SYNTHETIC_SENDER_TYPE,
-    USER_SENDER_TYPE,
     ConversationContext,
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
@@ -103,10 +107,9 @@ def _error_label(e: Exception) -> str:
     return str(e).strip() or type(e).__name__
 
 
-# Error type only: the message may carry secrets (it stays in mark_failed/logs).
-_TURN_FAILURE_NOTICE = (
-    "I hit an internal error and couldn't process your message ({error_type})."
-)
+# ``AgentFailure.provider`` for a turn failure the runtime reports on the
+# adapter's behalf.
+_TURN_FAILURE_PROVIDER = "band-runtime"
 
 
 @runtime_checkable
@@ -1572,7 +1575,7 @@ class ExecutionContext:
 
         except Exception as e:
             logger.exception("Error processing backlog message %s", msg_id)
-            await self._handle_turn_failure(msg_id, attempts, msg, e)
+            await self._handle_turn_failure(msg_id, attempts, e)
             return BacklogProcessResult.ADVANCED
 
         finally:
@@ -2001,13 +2004,13 @@ class ExecutionContext:
         self,
         msg_id: str,
         attempts: int | None,
-        message: PlatformMessage | MessageCreatedPayload,
         error: Exception,
     ) -> None:
-        """Mark a failed turn failed and, on its final attempt, tell the room.
+        """Mark a failed turn failed and, on its final attempt, report it to
+        the room as an ``error`` event.
 
-        Humans only: a notice mentioning an agent starts that agent's turn, so
-        two failing agents would loop. ``attempts`` is None when the failure
+        An event mentions no one and is never delivered as a turn, so it is
+        safe for agent senders too. ``attempts`` is None when the failure
         preceded ``record_attempt``, which can't be judged final.
         """
         if not await self.link.mark_failed(self.room_id, msg_id, _error_label(error)):
@@ -2017,7 +2020,6 @@ class ExecutionContext:
                 msg_id,
             )
 
-        sender_id = message.sender_id
         is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
         already_reported = self._turn_failure_reported or isinstance(
             error, TurnResultAlreadyReported
@@ -2026,40 +2028,23 @@ class ExecutionContext:
             self.config.report_turn_failures_to_room
             and is_final
             and not already_reported
-            and sender_id
-            and message.sender_type == USER_SENDER_TYPE
         ):
             logger.debug(
-                "ExecutionContext %s: No turn-failure notice for message %s "
-                "(enabled=%s, final=%s, already_reported=%s, sender_type=%s)",
+                "ExecutionContext %s: No turn-failure report for message %s "
+                "(enabled=%s, final=%s, already_reported=%s)",
                 self.room_id,
                 msg_id,
                 self.config.report_turn_failures_to_room,
                 is_final,
                 already_reported,
-                message.sender_type,
             )
             return
 
-        try:
-            await post_message(
-                rest=self.link.rest,
-                room_id=self.room_id,
-                request=ChatMessageRequest(
-                    content=_TURN_FAILURE_NOTICE.format(
-                        error_type=type(error).__name__
-                    ),
-                    mentions=[ChatMessageRequestMentionsItem(id=sender_id)],
-                ),
-            )
-        except Exception as post_error:  # noqa: BLE001 -- best-effort notice; the turn is already marked failed and logged
-            logger.warning(
-                "ExecutionContext %s: Failed to post turn-failure notice for "
-                "message %s: %s",
-                self.room_id,
-                msg_id,
-                _error_label(post_error),
-            )
+        # The exception text can carry credentials; it stays in mark_failed
+        # and the logs, and the room gets the generic message.
+        await AgentTools.from_context(self).send_failure(
+            AgentFailure(_TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+        )
 
     async def _process_event_body(
         self, event: PlatformEvent, msg_id: str | None, payload: Any
@@ -2183,8 +2168,8 @@ class ExecutionContext:
 
         except Exception as e:
             logger.exception("Error processing %s", event.type)
-            if isinstance(event, MessageEvent) and msg_id and payload:
-                await self._handle_turn_failure(msg_id, attempts, payload, e)
+            if isinstance(event, MessageEvent) and msg_id:
+                await self._handle_turn_failure(msg_id, attempts, e)
             return True
 
         finally:

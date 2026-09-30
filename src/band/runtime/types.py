@@ -31,9 +31,6 @@ from band.core.types import ConflictPolicy
 # for other system-generated content.
 SYNTHETIC_SENDER_TYPE = "System"
 
-# Platform sender type for messages authored by a human participant.
-USER_SENDER_TYPE = "User"
-
 # Sender ID for synthetic contact event messages. This is a logical identifier
 # (not a UUID) that allows filtering/identification of contact-related synthetic
 # messages. Used in MessageEvent.payload.sender_id for hub room injections.
@@ -147,8 +144,9 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
-    # Post a chat-visible notice when a human's message fails its final
-    # attempt; otherwise the room can't tell it from a message never received.
+    # Post an `error` event when a message fails its final attempt and the
+    # adapter didn't report it; otherwise the room can't tell it from a message
+    # never received.
     report_turn_failures_to_room: bool = True
 
     def __post_init__(self) -> None:
