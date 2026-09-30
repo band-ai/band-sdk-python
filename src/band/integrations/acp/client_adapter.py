@@ -75,13 +75,17 @@ from band.integrations.mcp.backends import (
     create_band_mcp_backend,
 )
 from band.integrations.mcp.local_server import LocalMCPServer
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    custom_tool_effects,
+    get_custom_tool_name,
+)
 from band.runtime.formatters import messages_before
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
-    ROOM_POSTING_TOOL_NAMES,
+    LEGACY_SEND_MESSAGE_TOOL,
     ToolDefinition,
     canonicalize_mcp_tool_name,
     iter_tool_definitions,
@@ -148,6 +152,7 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 # turn, so it cannot contain the marker the header names.
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
+DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
 
 
 def new_message_marker() -> str:
@@ -214,7 +219,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS}
+    )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
@@ -242,7 +249,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         spawn_process: SpawnProcess | None = None,
         client_capabilities: ClientCapabilities | None = None,
         use_unstable_protocol: bool = False,
-        turn_timeout_s: float = 300.0,
+        turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
@@ -268,6 +275,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._workspace_for_room = workspace_for_room
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
@@ -338,8 +346,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # external band-mcp's MCP-prefixed legacy call
             # (band-create_agent_chat_message) would canonicalize to nothing and
             # narrate under the raw prefixed name — the one case reply-suppression
-            # (is_room_posting_tool, same source set) already tolerates.
-            | ROOM_POSTING_TOOL_NAMES
+            # (settles_turn_reply) already tolerates.
+            | {LEGACY_SEND_MESSAGE_TOOL}
         )
         return definitions, names
 
@@ -458,6 +466,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 mentions=mentions,
                 session_id=session_id,
                 room_id=room_id,
+                emit=self.features.emit,
+                custom_effects=self._custom_effects,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,
