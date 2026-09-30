@@ -959,6 +959,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_duplicate_start.py::test_second_start_is_refused_and_the_incumbent_keeps_replying",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_isolation.py::test_capture_scopes_to_current_turn",
       "adapter": "suite",
       "lanes": [
