@@ -173,6 +173,7 @@ class TestCreateParlantTools:
         # Tools are ToolEntry objects with a .tool attribute containing the Tool
         tool_names = [t.tool.name for t in tools]
         assert "band_send_message" in tool_names
+        assert "band_no_reply" in tool_names
         assert "band_send_event" in tool_names
         assert "band_add_participant" in tool_names
         assert "band_remove_participant" in tool_names
@@ -500,6 +501,7 @@ class TestParlantToolFunctions:
         tools = MagicMock()
         tools.send_message = AsyncMock()
         tools.send_event = AsyncMock()
+        tools.no_reply = AsyncMock(return_value={"status": "no_reply"})
         tools.send_failure = AsyncMock()
         tools.add_participant = AsyncMock(return_value={"status": "added"})
         tools.remove_participant = AsyncMock()
@@ -586,6 +588,32 @@ class TestParlantToolFunctions:
         send_message = parlant_tools["band_send_message"]
         await send_message(mock_context, "Hello", "Alice")
 
+        assert was_message_sent(mock_context.session_id) is True
+
+    @pytest.mark.asyncio
+    async def test_no_reply_calls_tools_no_reply(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should end the turn locally without posting to the room."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        no_reply = parlant_tools["band_no_reply"]
+        result = await no_reply(mock_context, reason="addressed elsewhere")
+
+        mock_tools.no_reply.assert_awaited_once_with("addressed elsewhere")
+        assert "No reply sent" in result.data
+
+    @pytest.mark.asyncio
+    async def test_no_reply_marks_message_sent(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should mark message as sent so the adapter does not duplicate-reply."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        no_reply = parlant_tools["band_no_reply"]
+        await no_reply(mock_context, reason="")
+
+        mock_tools.no_reply.assert_awaited_once_with(None)
         assert was_message_sent(mock_context.session_id) is True
 
     @pytest.mark.asyncio

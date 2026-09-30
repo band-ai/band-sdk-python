@@ -149,7 +149,7 @@ async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
     # where an MCP client prefixes the server name onto the (legacy) tool name. The
     # in-process LocalMCPServer advertises the SDK-native names, so this prefixed
     # `band-create_agent_chat_message` spelling has no real-post equivalent; this
-    # test pins that is_room_posting_tool still matches it.
+    # test pins that settles_turn_reply still matches it.
     fake_agent.will_call_tool(
         "tc-1", "band-create_agent_chat_message", result='{"id": "msg-1"}'
     ).will_say("Done — posted the answer.")

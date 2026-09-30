@@ -17,6 +17,7 @@ class TestBandTools:
         expected = {
             "mcp__band__band_send_message",
             "mcp__band__band_send_event",
+            "mcp__band__band_no_reply",
             "mcp__band__band_add_participant",
             "mcp__band__band_remove_participant",
             "mcp__band__band_get_participants",

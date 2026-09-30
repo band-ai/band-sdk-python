@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from websockets.asyncio.client import connect
+
+CONNECTION_CONFLICT_CODE = "connection_conflict"
 
 
 class WebSocketUpgradeError(Exception):
@@ -24,6 +27,10 @@ class WebSocketUpgradeError(Exception):
         self.request_id = request_id
         self.retry_after = retry_after
         super().__init__(self.message)
+
+    @property
+    def is_connection_conflict(self) -> bool:
+        return self.code == CONNECTION_CONFLICT_CODE
 
     @classmethod
     def from_exception(cls, exc: Exception) -> WebSocketUpgradeError | None:
@@ -58,13 +65,16 @@ class WebSocketUpgradeError(Exception):
         )
 
 
-async def probe_upgrade_error(websocket_url: str) -> WebSocketUpgradeError | None:
+async def probe_upgrade_error(
+    websocket_url: str, headers: Mapping[str, str]
+) -> WebSocketUpgradeError | None:
     """Recover a platform upgrade error hidden by the Phoenix client
     supervisor's generic PHXConnectionError, via a fresh live-socket
     handshake (blocks for up to open_timeout=5s) -- the supervisor's own
-    exception carries no HTTP status of its own to classify."""
+    exception carries no HTTP status of its own to classify. ``headers`` must
+    authenticate the probe exactly as the attempt it re-runs."""
     try:
-        async with connect(websocket_url, open_timeout=5):
+        async with connect(websocket_url, additional_headers=headers, open_timeout=5):
             return None
     except Exception as probe_exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
         return WebSocketUpgradeError.from_exception(probe_exc)
