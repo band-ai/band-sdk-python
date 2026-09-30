@@ -266,7 +266,11 @@ def extend_with_chat_id(
                         # above still accepts a legacy "room_id" caller, but
                         # that alternate name must never appear in text the
                         # model sees.
-                        description="ID of the chat room.",
+                        description=(
+                            "ID of the existing chat room whose context owns this "
+                            "tool call. When creating a new room, use the source "
+                            "room ID."
+                        ),
                     ),
                 )
             },
