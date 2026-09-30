@@ -28,10 +28,14 @@ from band.adapters.codex import (
     CodexAdapterConfig,
     CodexCommand,
     PendingApproval,
+    fetch_codex_models,
+)
+from band.adapters.codex import (
+    list_models as codex_list_models,
 )
 from band.client.streaming import ControlMode
 from band.core.exceptions import BandConnectionError
-from band.core.harness import PreflightResult
+from band.core.harness import HarnessModel, PreflightResult
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -6819,7 +6823,161 @@ def _missing_codex() -> BandConnectionError:
     return error
 
 
+_LISTED_MODELS = {
+    "data": [
+        {
+            "id": "gpt-6-sol",
+            "displayName": "GPT-6-Sol",
+            "hidden": False,
+            "isDefault": True,
+            "defaultReasoningEffort": "medium",
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "medium"},
+                {"reasoningEffort": "max"},
+            ],
+        },
+        {"id": "internal-preview", "hidden": True},
+    ],
+    "nextCursor": None,
+}
+
+
+class TestModelListPagination:
+    @pytest.mark.asyncio
+    async def test_efforts_of_a_model_on_a_later_page_are_found(self) -> None:
+        page_two = {"data": _LISTED_MODELS["data"], "nextCursor": None}
+        client = PagedModelListClient(
+            pages=[{"data": [{"id": "gpt-5.5"}], "nextCursor": "page-2"}, page_two],
+        )
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(model="gpt-6-sol")
+        )
+        wire_codex_room(adapter, client, "room-1")
+
+        assert await adapter._current_model_efforts() == (
+            "gpt-6-sol",
+            ["medium", "max"],
+        )
+        assert [p for m, p in client.requests if m == "model/list"] == [
+            {},
+            {"cursor": "page-2"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_repeated_cursor_stops_the_listing_promptly(self) -> None:
+        stuck = {"data": [], "nextCursor": "same"}
+        client = PagedModelListClient(pages=[stuck] * 100)
+
+        with pytest.raises(RuntimeError, match="repeated cursor 'same'"):
+            await asyncio.wait_for(fetch_codex_models(client), timeout=1.0)
+        assert _methods(client).count("model/list") == 2
+
+    @pytest.mark.asyncio
+    async def test_endless_distinct_cursors_hit_the_page_ceiling(self) -> None:
+        pages = [{"data": [], "nextCursor": f"p{i}"} for i in range(200)]
+        client = PagedModelListClient(pages=pages)
+
+        with pytest.raises(RuntimeError, match="more than 50 pages"):
+            await fetch_codex_models(client)
+        assert _methods(client).count("model/list") == 50
+
+    @pytest.mark.asyncio
+    async def test_broken_pagination_falls_back_to_the_default_model(self) -> None:
+        stuck = {"data": [], "nextCursor": "same"}
+        client = PagedModelListClient(events=[_turn_completed()], pages=[stuck] * 10)
+        adapter = make_codex_adapter(client, config=CodexAdapterConfig())
+
+        await asyncio.wait_for(_bootstrap_turn(adapter), timeout=2.0)
+
+        assert "thread/start" in _methods(client)
+
+
+class PagedModelListClient(FakeCodexClient):
+    """Answers successive ``model/list`` calls from ``pages`` in order."""
+
+    def __init__(self, *, pages: list[dict[str, Any]], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pages = deque(pages)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "model/list":
+            self.requests.append((method, dict(params or {})))
+            return self._pages.popleft()
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class ModelListFailingClient(FakeCodexClient):
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == "model/list":
+            raise CodexJsonRpcError(code=-32601, message="Method not found")
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+async def _bootstrap_turn(adapter: CodexAdapter) -> FakeAgentTools:
+    tools = ToolSchemaFakeTools()
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools,
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+    return tools
+
+
+def _methods(client: FakeCodexClient) -> list[str]:
+    return [method for method, _ in client.requests]
+
+
 class TestProbes:
+    @pytest.mark.asyncio
+    async def test_list_models_returns_visible_models_and_closes(
+        self, probe_client
+    ) -> None:
+        client = probe_client(replies={"model/list": _LISTED_MODELS})
+
+        models = await codex_list_models(CodexAdapterConfig())
+
+        assert models == [
+            HarnessModel(
+                id="gpt-6-sol",
+                label="GPT-6-Sol",
+                provider="openai",
+                efforts=("medium", "max"),
+                default_effort="medium",
+                is_default=True,
+            )
+        ]
+        assert client.closed
+
+    @pytest.mark.asyncio
+    async def test_list_models_closes_the_client_on_cancellation(
+        self, probe_client
+    ) -> None:
+        client = probe_client(initialize_error=asyncio.CancelledError())
+        with pytest.raises(asyncio.CancelledError):
+            await codex_list_models(CodexAdapterConfig())
+        assert client.closed
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("kwargs", "reason_part"),
