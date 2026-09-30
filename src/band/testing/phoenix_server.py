@@ -13,10 +13,15 @@ actually exercised instead of assumed.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from enum import StrEnum
+from http import HTTPStatus
+from typing import TypeVar
+from urllib.parse import parse_qsl, urlsplit
 
 from phoenix_channels_python_client.phx_messages import ChannelMessage, Event, PHXEvent
 from phoenix_channels_python_client.protocol_handler import (
@@ -25,9 +30,13 @@ from phoenix_channels_python_client.protocol_handler import (
 )
 from phoenix_channels_python_client.utils import make_message
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
+from websockets.http11 import Request, Response
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class JoinOutcome(StrEnum):
@@ -37,22 +46,81 @@ class JoinOutcome(StrEnum):
     REJECTED = "rejected"
 
 
+class UpgradeOutcome(StrEnum):
+    """What the fake server answers one WebSocket upgrade request with."""
+
+    ACCEPT = "accept"
+    CONFLICT = "conflict"
+
+
+# The platform's refusal of `on_conflict=reject` when the agent already has a
+# live connection (HTTP 409); request_id is null on a real upgrade.
+CONFLICT_BODY = json.dumps(
+    {
+        "error": {
+            "code": "connection_conflict",
+            "message": (
+                "An active connection already exists for this agent. "
+                "Set on_conflict=supersede or omit on_conflict to take over."
+            ),
+            "request_id": None,
+        }
+    }
+)
+
+
+@dataclass(frozen=True)
+class Upgrade:
+    """One WebSocket upgrade request the server received, accepted or not."""
+
+    query: dict[str, str]
+    headers: Headers
+
+    @classmethod
+    def from_request(cls, request: Request) -> Upgrade:
+        return cls(
+            query=dict(parse_qsl(urlsplit(request.path).query)),
+            headers=request.headers,
+        )
+
+
+def _next_outcome(outcomes: list[T], default: T) -> T:
+    """Consume one outcome off a declared sequence, holding on the last entry
+    once exhausted (an empty sequence always yields ``default``)."""
+    if not outcomes:
+        return default
+    outcome = outcomes[0]
+    if len(outcomes) > 1:
+        outcomes.pop(0)
+    return outcome
+
+
 class FakePhoenixServer:
     """A real loopback WebSocket server speaking Phoenix Channels V2.
 
     Construct only via :func:`fake_phoenix_server` -- never directly.
     """
 
-    def __init__(self, *, join_outcomes: dict[str, Sequence[JoinOutcome]]) -> None:
+    def __init__(
+        self,
+        *,
+        join_outcomes: dict[str, Sequence[JoinOutcome]],
+        upgrade_outcomes: Sequence[UpgradeOutcome],
+    ) -> None:
         self._join_outcomes = {
             topic: list(outcomes) for topic, outcomes in join_outcomes.items()
         }
+        self._upgrade_outcomes = list(upgrade_outcomes)
         self._protocol = PHXProtocolHandler(
             protocol_version=PhoenixChannelsProtocolVersion.V2
         )
         self.url: str = ""
         self.joined_topics: set[str] = set()
         self.received: list[ChannelMessage] = []
+        # Every upgrade request in arrival order -- refused ones and the
+        # client's error probe included; connection_count only counts
+        # upgrades that were accepted.
+        self.upgrades: list[Upgrade] = []
         self.connection_count = 0
         self._connection: ServerConnection | None = None
         self._connection_ready = asyncio.Event()
@@ -62,15 +130,21 @@ class FakePhoenixServer:
         self._join_refs: dict[str, str | None] = {}
 
     def _next_join_outcome(self, topic: str) -> JoinOutcome:
-        """Consume one outcome off ``topic``'s declared sequence, holding on
-        the last entry once exhausted (unlisted topics always succeed)."""
-        outcomes = self._join_outcomes.get(topic)
-        if not outcomes:
-            return JoinOutcome.OK
-        outcome = outcomes[0]
-        if len(outcomes) > 1:
-            outcomes.pop(0)
-        return outcome
+        """Unlisted topics always succeed."""
+        outcomes = self._join_outcomes.get(topic, [])
+        return _next_outcome(outcomes, JoinOutcome.OK)
+
+    def _process_request(
+        self, connection: ServerConnection, request: Request
+    ) -> Response | None:
+        """Decide the upgrade's fate before the handshake completes: a
+        response is an HTTP refusal, ``None`` lets the handshake proceed."""
+        self.upgrades.append(Upgrade.from_request(request))
+        match _next_outcome(self._upgrade_outcomes, UpgradeOutcome.ACCEPT):
+            case UpgradeOutcome.CONFLICT:
+                return connection.respond(HTTPStatus.CONFLICT, CONFLICT_BODY)
+            case UpgradeOutcome.ACCEPT:
+                return None
 
     def _forget_topic(self, topic: str) -> None:
         """Drop ``topic`` from joined-membership bookkeeping -- shared by a
@@ -176,20 +250,32 @@ class FakePhoenixServer:
 
 @asynccontextmanager
 async def fake_phoenix_server(
-    *, join_outcomes: dict[str, Sequence[JoinOutcome]] | None = None
+    *,
+    join_outcomes: dict[str, Sequence[JoinOutcome]] | None = None,
+    upgrade_outcomes: Sequence[UpgradeOutcome] = (),
 ) -> AsyncIterator[FakePhoenixServer]:
     """A real loopback Phoenix Channels server for exercising BandLink's real
     WebSocketClient/PHXChannelsClient stack, no mocks below BandLink.
 
     ``join_outcomes`` declares the whole join scenario up front, as data: a
     topic maps to the sequence of outcomes its successive join attempts get.
-    Everything else about the scenario -- when the network drops, what
-    events arrive -- is inherently a sequence of events in time, so it stays
-    as explicit calls on the yielded server (``push``, ``close_connection``,
-    ``abort_connection``).
+    ``upgrade_outcomes`` does the same for the upgrade requests themselves, in
+    arrival order. The last entry repeats, because a client that hits a
+    refusal re-handshakes once to read the HTTP error, and that probe must
+    get the same answer. Everything else about the scenario -- when the
+    network drops, what events arrive -- is inherently a sequence of events in
+    time, so it stays as explicit calls on the yielded server (``push``,
+    ``close_connection``, ``abort_connection``).
     """
-    server = FakePhoenixServer(join_outcomes=join_outcomes or {})
-    async with serve(server._handler, "127.0.0.1", 0) as ws_server:
+    server = FakePhoenixServer(
+        join_outcomes=join_outcomes or {}, upgrade_outcomes=upgrade_outcomes
+    )
+    async with serve(
+        server._handler,
+        "127.0.0.1",
+        0,
+        process_request=server._process_request,
+    ) as ws_server:
         bound_socket = next(iter(ws_server.sockets))
         port = bound_socket.getsockname()[1]
         server.url = f"ws://127.0.0.1:{port}"

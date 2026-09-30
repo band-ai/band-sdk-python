@@ -29,6 +29,12 @@ if TYPE_CHECKING:
         JoinOutcome as JoinOutcome,
     )
     from band.testing.phoenix_server import (
+        Upgrade as Upgrade,
+    )
+    from band.testing.phoenix_server import (
+        UpgradeOutcome as UpgradeOutcome,
+    )
+    from band.testing.phoenix_server import (
         fake_phoenix_server as fake_phoenix_server,
     )
     from band.testing.platform import (
@@ -57,7 +63,13 @@ __all__, __getattr__ = lazy_exports(
     __name__,
     fake_tools=["FakeAgentTools", "events_of_type", "reported_failures"],
     features=["feature_kwargs"],
-    phoenix_server=["FakePhoenixServer", "JoinOutcome", "fake_phoenix_server"],
+    phoenix_server=[
+        "FakePhoenixServer",
+        "JoinOutcome",
+        "Upgrade",
+        "UpgradeOutcome",
+        "fake_phoenix_server",
+    ],
     platform=["platform_connection_stub"],
     strands=[
         "ErrorTurn",
