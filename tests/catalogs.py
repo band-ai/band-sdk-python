@@ -13,20 +13,20 @@ SONNET_CATALOG = ModelCatalog(models=(ModelChoice(id="sonnet", efforts=("high",)
 
 
 class CatalogAdapter(SimpleAdapter[None]):
-    """Lists ``catalog``, but only once ``on_started`` has run."""
+    """Lists ``SONNET_CATALOG``, but only once ``on_started`` has run."""
 
     def __init__(
-        self, selection: ModelSelection, catalog: ModelCatalog = SONNET_CATALOG
+        self, selection: ModelSelection, *, cleanup_fails: bool = False
     ) -> None:
         super().__init__()
         self._selection = selection
-        self._catalog = catalog
+        self._cleanup_fails = cleanup_fails
         self._started_catalog: ModelCatalog | None = None
         self.cleaned_up = False
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
-        self._started_catalog = self._catalog
+        self._started_catalog = SONNET_CATALOG
 
     @property
     def model_selection(self) -> ModelSelection:
@@ -41,3 +41,5 @@ class CatalogAdapter(SimpleAdapter[None]):
 
     async def cleanup_all(self) -> None:
         self.cleaned_up = True
+        if self._cleanup_fails:
+            raise RuntimeError("cleanup failed")

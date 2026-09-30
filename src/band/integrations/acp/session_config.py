@@ -15,7 +15,8 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
-from band.core.model_catalog import advertised_listing
+from band.core.exceptions import BandConfigError
+from band.core.validation import listing
 
 SessionConfigOption: TypeAlias = SessionConfigOptionSelect | SessionConfigOptionBoolean
 SessionConfigSelections: TypeAlias = Mapping[str, str | None]
@@ -28,6 +29,8 @@ SessionConfigResolver: TypeAlias = Callable[
 
 SESSION_CONFIG_TIMEOUT_SECONDS = 10.0
 RESOLVER_CONFIG_OPTION_ID = "resolver"
+# How the room reads a failure to apply a session configuration.
+CONFIG_FAILURE_PREFIX = "ACP session configuration failed: "
 
 
 @dataclass(frozen=True)
@@ -39,7 +42,9 @@ class ACPConfigRequest:
     config_options: tuple[SessionConfigOption, ...]
 
 
-class ACPConfigError(RuntimeError):
+# RuntimeError stays a base so handlers written against earlier releases
+# still catch it.
+class ACPConfigError(BandConfigError, RuntimeError):
     """A requested ACP session configuration could not be applied."""
 
     def __init__(
@@ -125,8 +130,8 @@ async def apply_session_config_selections(
                 option_id=option_id,
                 selected_value=selected_value,
                 message=(
-                    f'ACP config option "{option_id}" is not available; advertised '
-                    f"options: {advertised_listing(select_ids)}."
+                    f'ACP session offers no config option "{option_id}"; '
+                    f"available: {listing(select_ids)}."
                 ),
             )
 
@@ -141,8 +146,8 @@ async def apply_session_config_selections(
                 selected_value=selected_value,
                 message=(
                     f'ACP config value "{selected_value}" is not advertised '
-                    f'for option "{option_id}"; advertised values: '
-                    f"{advertised_listing(available_values)}."
+                    f'for option "{option_id}"; available: '
+                    f"{listing(available_values)}."
                 ),
             )
 

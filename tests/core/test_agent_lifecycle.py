@@ -7,7 +7,7 @@ resources (e.g. a CLI runtime subprocess) don't outlive the agent.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -20,6 +20,8 @@ def make_agent(adapter: object, *, started: bool = True) -> Agent:
     runtime = AsyncMock()
     runtime.stop.return_value = True
     runtime.feature_flags = None
+    runtime.claim_single_instance = MagicMock()
+    runtime.release_single_instance = MagicMock()
     agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
     agent._started = started
     return agent
@@ -64,6 +66,17 @@ class TestStartValidatesModelSelection:
 
         agent._runtime.start.assert_not_awaited()
         assert adapter.cleaned_up
+
+    @pytest.mark.asyncio
+    async def test_a_failing_release_does_not_mask_the_rejection(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        adapter = CatalogAdapter(ModelSelection(model="gpt-9"), cleanup_fails=True)
+
+        with pytest.raises(ModelSelectionError, match='model "gpt-9"'):
+            await make_agent(adapter, started=False).start()
+
+        assert "Adapter cleanup_all failed" in caplog.text
 
 
 class TestStopCleansUpAdapter:

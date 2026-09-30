@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from acp import RequestError
@@ -19,6 +21,7 @@ from acp.helpers import (
 )
 from acp.schema import (
     AgentCapabilities,
+    ConfigOptionUpdate,
     InitializeResponse,
     LoadSessionResponse,
     McpCapabilities,
@@ -45,6 +48,14 @@ PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
     ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
 ]
+
+
+@dataclass
+class ReplyGate:
+    """Holds ``set_config_option`` replies: each is applied, then waits."""
+
+    received: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class FakeACPAgent:
@@ -81,6 +92,7 @@ class FakeACPAgent:
         self._custom: PromptHandler | None = None
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
+        self._reply_gate: ReplyGate | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -107,6 +119,11 @@ class FakeACPAgent:
         """Set dynamic behavior for every ``session/set_config_option`` call."""
         self._config_option_handler = handler
         return handler
+
+    def holds_config_replies(self) -> ReplyGate:
+        """Apply each ``set_config_option`` at once but reply only on release."""
+        self._reply_gate = ReplyGate()
+        return self._reply_gate
 
     def advertises_models(
         self, efforts_by_model: Mapping[str, Sequence[str]], *, current: str
@@ -328,6 +345,20 @@ class FakeACPAgent:
     async def emit(self, session_id: str, update: Any) -> None:
         await self._conn_for(session_id).session_update(session_id, update)
 
+    async def selects_on_its_own(
+        self, session_id: str, option_id: str, value: str
+    ) -> None:
+        """Change an option agent-side and push ``config_option_update``, as
+        Copilot's in-session ``/model`` does."""
+        self._config_options = await self._select(session_id, option_id, value)
+        await self.emit(
+            session_id,
+            ConfigOptionUpdate(
+                session_update="config_option_update",
+                config_options=self._config_options,
+            ),
+        )
+
     async def ask_permission(
         self, session_id: str, tool_call: Any, options: list[Any]
     ) -> Any:
@@ -433,20 +464,37 @@ class FakeACPAgent:
         """Apply one advertised select option and return the full live catalog."""
         del kwargs
         self.config_option_requests.append((session_id, config_id, value))
-        if self._config_option_handler is not None:
-            self._config_options = list(
-                await self._config_option_handler(self, session_id, config_id, value)
-            )
-            return SetSessionConfigOptionResponse(config_options=self._config_options)
-
-        updated: list[SessionConfigOption] = []
-        for option in self._config_options:
-            if option.id == config_id and isinstance(option, SessionConfigOptionSelect):
-                updated.append(option.model_copy(update={"current_value": value}))
-            else:
-                updated.append(option)
-        self._config_options = updated
+        self._config_options = await self._select(session_id, config_id, value)
+        if self._reply_gate is not None:
+            self._reply_gate.received.set()
+            await self._reply_gate.release.wait()
         return SetSessionConfigOptionResponse(config_options=self._config_options)
+
+    async def _select(
+        self, session_id: str, option_id: str, value: str
+    ) -> list[SessionConfigOption]:
+        if self._config_option_handler is not None:
+            return list(
+                await self._config_option_handler(self, session_id, option_id, value)
+            )
+        return [
+            option.model_copy(update={"current_value": value})
+            if option.id == option_id and isinstance(option, SessionConfigOptionSelect)
+            else option
+            for option in self._config_options
+        ]
+
+    def current_value(self, option_id: str) -> str | None:
+        """The value the agent currently has selected for ``option_id``."""
+        return next(
+            (
+                option.current_value
+                for option in self._config_options
+                if option.id == option_id
+                and isinstance(option, SessionConfigOptionSelect)
+            ),
+            None,
+        )
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""

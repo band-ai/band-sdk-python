@@ -20,6 +20,7 @@ from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.model_selection import ACPModelOptions
 from band.integrations.acp.session_config import (
+    CONFIG_FAILURE_PREFIX,
     RESOLVER_CONFIG_OPTION_ID,
     ACPConfigError,
     ACPConfigRequest,
@@ -128,7 +129,7 @@ class TestApplySessionConfigSelections:
             )
         )
 
-        with pytest.raises(ACPConfigError, match='"reasoning_effort" is not available'):
+        with pytest.raises(ACPConfigError) as rejected:
             await apply_session_config_selections(
                 session_id="session-1",
                 config_options=[model, effort],
@@ -136,7 +137,24 @@ class TestApplySessionConfigSelections:
                 set_option=set_option,
             )
 
+        assert str(rejected.value) == (
+            'ACP session offers no config option "reasoning_effort"; available: model.'
+        )
         set_option.assert_awaited_once_with("session-1", "model", "auto")
+
+    @pytest.mark.asyncio
+    async def test_an_option_on_an_empty_catalog_is_refused_naming_none(self) -> None:
+        with pytest.raises(ACPConfigError) as rejected:
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[],
+                selections={"model": "auto"},
+                set_option=AsyncMock(),
+            )
+
+        assert str(rejected.value) == (
+            'ACP session offers no config option "model"; available: (none).'
+        )
 
     @pytest.mark.asyncio
     async def test_rejects_a_malformed_refreshed_catalog(self) -> None:
@@ -233,9 +251,9 @@ class TestACPConfigurationHarness:
         )
         assert reply.errors == [
             (
-                "ACP session configuration failed: ACP config value "
+                f"{CONFIG_FAILURE_PREFIX}ACP config value "
                 '"unsupported" is not advertised for option "reasoning_effort"; '
-                "advertised values: medium, high."
+                "available: medium, high."
             )
         ]
         assert agent.prompt_texts() == []
@@ -531,6 +549,6 @@ class TestTypedModelSelection:
             reply = await session.send("Hello")
 
         assert reply.errors == [
-            "ACP session configuration failed: ACP session advertises no model option."
+            f"{CONFIG_FAILURE_PREFIX}ACP session advertises no model option."
         ]
         assert agent.prompt_texts() == []

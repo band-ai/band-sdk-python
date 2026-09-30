@@ -91,10 +91,8 @@ async def apply_model_selection(
     Returns the catalog after the last change.
     """
     catalog = tuple(config_options)
-    for setting, value in (
-        (ModelSetting.MODEL, selection.model),
-        (ModelSetting.REASONING_EFFORT, selection.reasoning_effort),
-    ):
+    for setting in ModelSetting:
+        value = selection.value_of(setting)
         if value is None:
             continue
         catalog = await _apply_setting(
@@ -121,7 +119,9 @@ async def _apply_setting(
     option = located.option_for(setting)
     option_id = option.id if option is not None else setting
     try:
-        check_model_selection(_selection_of(setting, value), located.model_catalog())
+        check_model_selection(
+            ModelSelection.only(setting, value), located.model_catalog()
+        )
     except ModelSelectionError as error:
         raise ACPConfigError(
             session_id=session_id,
@@ -142,14 +142,6 @@ async def _apply_setting(
         selections={option.id: value},
         set_option=set_option,
     )
-
-
-def _selection_of(setting: ModelSetting, value: str) -> ModelSelection:
-    match setting:
-        case ModelSetting.MODEL:
-            return ModelSelection(model=value)
-        case ModelSetting.REASONING_EFFORT:
-            return ModelSelection(reasoning_effort=value)
 
 
 def _select_in_category(

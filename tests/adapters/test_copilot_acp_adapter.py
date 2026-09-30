@@ -9,6 +9,7 @@ adapter against an in-process fake shaped like Copilot's live catalog.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,7 +29,10 @@ from band.core.model_catalog import ModelSelection
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_profiles import NoopACPClientProfile
 from band.integrations.acp.client_types import ACPClientSessionState
-from band.integrations.acp.session_config import ACPConfigError, ACPConfigRequest
+from band.integrations.acp.session_config import (
+    CONFIG_FAILURE_PREFIX,
+    ACPConfigRequest,
+)
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import AcpSession, started_acp_adapter
 
@@ -175,7 +179,6 @@ COPILOT_EFFORTS = {
     "gpt-5.4": ("none", "low", "medium", "high", "xhigh"),
     "claude-haiku-4.5": (),
 }
-CONFIG_FAILED = "ACP session configuration failed: "
 
 
 def copilot(current: str = "claude-sonnet-5") -> FakeACPAgent:
@@ -195,6 +198,13 @@ async def copilot_room(agent: FakeACPAgent, **config: Any) -> AsyncIterator[AcpS
     )
     async with started_acp_adapter(adapter, agent) as session:
         yield session
+
+
+async def switch_room(session: AcpSession, **selection: str) -> None:
+    """Switch the live session of the room ``session.send`` talks to."""
+    await session.adapter.apply_model_selection(
+        ModelSelection(**selection), room_id="room-1"
+    )
 
 
 class TestCopilotACPModelSelection:
@@ -272,7 +282,7 @@ class TestCopilotACPModelSelection:
         async with copilot_room(agent, **config) as session:
             reply = await session.send("Hello")
 
-        assert reply.errors == [CONFIG_FAILED + error]
+        assert reply.errors == [CONFIG_FAILURE_PREFIX + error]
         assert agent.config_selections() == set_first
         assert agent.prompt_texts() == []
 
@@ -284,13 +294,9 @@ class TestCopilotACPModelSelection:
 
         async with copilot_room(agent) as session:
             await session.send("Hello")
-            await session.adapter.apply_model_selection(
-                ModelSelection(model="claude-haiku-4.5"), room_id="room-1"
-            )
-            with pytest.raises(ACPConfigError) as rejected:
-                await session.adapter.apply_model_selection(
-                    ModelSelection(reasoning_effort="high"), room_id="room-1"
-                )
+            await switch_room(session, model="claude-haiku-4.5")
+            with pytest.raises(BandConfigError) as rejected:
+                await switch_room(session, reasoning_effort="high")
 
         assert str(rejected.value) == (
             'model "claude-haiku-4.5" offers no reasoning effort'
@@ -298,12 +304,56 @@ class TestCopilotACPModelSelection:
         assert agent.config_selections() == [("model", "claude-haiku-4.5")]
 
     @pytest.mark.asyncio
+    async def test_a_partly_applied_switch_leaves_the_room_on_what_the_agent_runs(
+        self,
+    ) -> None:
+        # The model lands before the effort is refused, so switching back
+        # must reach the agent rather than match the pre-switch catalog.
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            with pytest.raises(BandConfigError):
+                await switch_room(session, model="gpt-5.4", reasoning_effort="max")
+            await switch_room(session, model="claude-sonnet-5")
+
+        assert agent.current_value("model") == "claude-sonnet-5"
+
+    @pytest.mark.asyncio
+    async def test_a_switch_follows_a_model_the_agent_chose_itself(self) -> None:
+        agent = copilot()
+
+        @agent.on_prompt
+        async def pick_gpt(fake: FakeACPAgent, session_id: str) -> None:
+            await fake.selects_on_its_own(session_id, "model", "gpt-5.4")
+            await fake.say(session_id, "Switched")
+
+        async with copilot_room(agent) as session:
+            await session.send("Use gpt")
+            await switch_room(session, model="claude-sonnet-5")
+
+        assert agent.current_value("model") == "claude-sonnet-5"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_switches_on_a_room_apply_in_call_order(self) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            gate = agent.holds_config_replies()
+            first = asyncio.create_task(switch_room(session, model="gpt-5.4"))
+            await gate.received.wait()
+            second = asyncio.create_task(switch_room(session, model="claude-sonnet-5"))
+            gate.release.set()
+            await asyncio.gather(first, second)
+
+        assert agent.current_value("model") == "claude-sonnet-5"
+
+    @pytest.mark.asyncio
     async def test_switching_a_room_without_a_live_session_is_refused(self) -> None:
         async with copilot_room(copilot()) as session:
             with pytest.raises(BandConfigError, match="no live ACP session"):
-                await session.adapter.apply_model_selection(
-                    ModelSelection(model="gpt-5.4"), room_id="room-1"
-                )
+                await switch_room(session, model="gpt-5.4")
 
     def test_typed_selection_and_a_resolver_are_exclusive(self) -> None:
         async def resolver(request: ACPConfigRequest) -> dict[str, str]:

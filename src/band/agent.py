@@ -14,7 +14,7 @@ from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.startup import start_adapter
+from band.runtime.startup import release_adapter, start_adapter
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -278,7 +278,7 @@ class Agent:
                 # on_started may have acquired resources (e.g. a CLI runtime
                 # subprocess); a failed start must release them — stop() won't
                 # run for an agent that never started.
-                await self._cleanup_adapter()
+                await release_adapter(self._adapter)
                 raise
         except BaseException:
             # Idempotent: a failure inside runtime.start() already released.
@@ -316,22 +316,13 @@ class Agent:
             # Always release adapter-wide resources (e.g. a CLI runtime
             # subprocess, a self-hosted MCP server, an external registration),
             # even when the runtime fails to stop cleanly.
-            await self._cleanup_adapter()
+            await release_adapter(self._adapter)
             self._started = False
             _running_agents.discard(self)
         logger.info(
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )
         return graceful
-
-    async def _cleanup_adapter(self) -> None:
-        """Release adapter-wide resources, best-effort."""
-        cleanup_all = getattr(self._adapter, "cleanup_all", None)
-        if cleanup_all is not None:
-            try:
-                await cleanup_all()
-            except Exception:
-                logger.exception("Adapter cleanup_all failed")
 
     async def run(
         self, shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT

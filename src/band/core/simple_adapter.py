@@ -31,6 +31,7 @@ from band.core.types import (
     PlatformMessage,
     TurnUsage,
 )
+from band.core.validation import listing
 from band.logging_config import trace_context_scope
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def _normalize_flags(
 
 
 def _describe(values: Iterable[Emit] | Iterable[Capability]) -> str:
-    return ", ".join(sorted(v.value for v in values)) or "(none)"
+    return listing(sorted(v.value for v in values))
 
 
 class SimpleAdapter(ABC, Generic[H]):
@@ -345,28 +346,17 @@ class SimpleAdapter(ABC, Generic[H]):
         model-selection check.
 
         The runtime calls this once per start; adapters override the hooks it
-        runs, not this. A rejected selection releases what ``on_started``
-        acquired before the ``ModelSelectionError`` propagates.
+        runs, not this.
         """
         self.apply_effective_features(features)
         await self.on_started(agent_name, agent_description)
-        try:
-            await self._validate_model_selection()
-        except BaseException:
-            await self._release_after_failed_start()
-            raise
+        await self._validate_model_selection()
 
     async def _validate_model_selection(self) -> None:
         selection = self.model_selection
         if selection.is_empty:
             return
         check_model_selection(selection, await self.list_models())
-
-    async def _release_after_failed_start(self) -> None:
-        try:
-            await self.cleanup_all()
-        except Exception:
-            logger.exception("Adapter cleanup_all failed after a rejected start")
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""

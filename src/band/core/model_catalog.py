@@ -9,16 +9,19 @@ or effort name.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
 from band.core.exceptions import BandConfigError
+from band.core.validation import listing
 
 
 class ModelSetting(StrEnum):
-    """A selectable model setting."""
+    """A selectable model setting, valued as its ``ModelSelection`` field.
+
+    Declared in apply order: the model decides which efforts exist.
+    """
 
     MODEL = "model"
     REASONING_EFFORT = "reasoning_effort"
@@ -34,6 +37,14 @@ class ModelSelection(BaseModel):
 
     model: str | None = None
     reasoning_effort: str | None = None
+
+    @classmethod
+    def only(cls, setting: ModelSetting, value: str) -> ModelSelection:
+        """A selection of ``value`` for ``setting`` alone."""
+        return cls.model_validate({setting: value})
+
+    def value_of(self, setting: ModelSetting) -> str | None:
+        return getattr(self, setting)
 
     @property
     def is_empty(self) -> bool:
@@ -114,7 +125,7 @@ def _check_model(model_id: str, catalog: ModelCatalog) -> None:
         return
     raise ModelSelectionError(
         f'model "{model_id}" is not advertised; available: '
-        f"{advertised_listing(catalog.model_ids)}",
+        f"{listing(catalog.model_ids)}",
         setting=ModelSetting.MODEL,
         value=model_id,
         advertised=catalog.model_ids,
@@ -127,7 +138,7 @@ def _check_effort(effort: str, *, model_id: str | None, catalog: ModelCatalog) -
         return
     message = (
         f'reasoning effort "{effort}" is not advertised for model "{model_id}"; '
-        f"available: {advertised_listing(choice.efforts)}"
+        f"available: {listing(choice.efforts)}"
         if choice.efforts
         else f'model "{model_id}" offers no reasoning effort'
     )
@@ -139,17 +150,11 @@ def _check_effort(effort: str, *, model_id: str | None, catalog: ModelCatalog) -
     )
 
 
-def advertised_listing(values: Sequence[str]) -> str:
-    """Advertised values as shown in a rejection message."""
-    return ", ".join(values) or "(none)"
-
-
 __all__ = [
     "ModelCatalog",
     "ModelChoice",
     "ModelSelection",
     "ModelSelectionError",
     "ModelSetting",
-    "advertised_listing",
     "check_model_selection",
 ]
