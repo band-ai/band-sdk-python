@@ -21,7 +21,7 @@ class BandTool(StrEnum):
     """The agent-surface Band tool names.
 
     One vocabulary for every site that checks a tool's identity by name:
-    room-posting detection, room-binding classification, capability gating,
+    turn-effect classification, room-binding classification, capability gating,
     mention-hint enrichment, and the adapters' own per-tool branches (the
     send-message special cases in crewai/claude_sdk/agno/letta, the
     image-vision passthrough only a ``READ_ROOM_FILE`` result can trigger).
@@ -32,6 +32,7 @@ class BandTool(StrEnum):
 
     SEND_MESSAGE = "band_send_message"
     SEND_EVENT = "band_send_event"
+    NO_REPLY = "band_no_reply"
     ADD_PARTICIPANT = "band_add_participant"
     REMOVE_PARTICIPANT = "band_remove_participant"
     GET_PARTICIPANTS = "band_get_participants"
@@ -73,6 +74,28 @@ class ToolCategory(StrEnum):
     MEMORY = "memory"
     FILES = "files"
     TASKS = "tasks"
+
+
+class TurnEffect(StrEnum):
+    """What a successful call of a Band tool does to the turn's reply obligation.
+
+    The one classification behind both turn-outcome questions: whether the
+    turn did any work (an empty final answer is then benign) and whether its
+    reply is settled (no fallback text may be relayed).
+    """
+
+    OBSERVE = "observe"  # fetches state or narrates; the turn still owes a reply
+    ACT = "act"  # a durable side effect; silence afterwards is benign
+    REPLY = "reply"  # posts to the room
+    DECLINE = "decline"  # deliberate silence (band_no_reply)
+
+    @property
+    def did_work(self) -> bool:
+        return self is not TurnEffect.OBSERVE
+
+    @property
+    def settles_reply(self) -> bool:
+        return self in (TurnEffect.REPLY, TurnEffect.DECLINE)
 
 
 @dataclass(frozen=True)
