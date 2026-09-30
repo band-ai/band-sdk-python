@@ -545,7 +545,7 @@ class AgentRuntime:
         """Run one teardown attempt; a failure is logged and reported as False."""
         try:
             return await teardown.run(timeout)
-        except Exception:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
+        except Exception:
             logger.warning("Tearing down room %s failed", room_id, exc_info=True)
             return False
 
