@@ -21,7 +21,7 @@ from band.client.streaming import (
     WebSocketUpgradeError,
 )
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
-from band.core.exceptions import AgentAlreadyRunningError
+from band.core.exceptions import AgentAlreadyRunningError, AgentDisconnectedError
 from band.core.types import ConflictPolicy, PlatformConnection
 from band.platform.event import (
     ContactAddedEvent,
@@ -132,6 +132,10 @@ class BandLink:
 
         # Durable terminal disconnect reason for the current connection lifecycle.
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+        # Set once the host asks this link to disconnect, before teardown
+        # starts, so run_forever() can tell a requested stop from a platform
+        # disconnect that happens to land during shutdown.
+        self._disconnect_requested = False
 
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
         # runtime. Invoked DIRECTLY from the WebSocket receive task — never via
@@ -186,6 +190,7 @@ class BandLink:
         self._connecting = True
         try:
             self._last_disconnect_reason = None
+            self._disconnect_requested = False
             ws = WebSocketClient(
                 self.ws_url,
                 self.api_key,
@@ -224,6 +229,7 @@ class BandLink:
             self._connecting = False
 
     async def disconnect(self) -> None:
+        self._disconnect_requested = True
         if not self._ws:
             return
 
@@ -241,14 +247,21 @@ class BandLink:
     async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
         """Block until the connection ends.
 
+        Returns normally when the host asked the link to disconnect (or, with
+        ``install_signal_handlers``, on SIGTERM/SIGINT). A terminal platform
+        disconnect such as a supersede raises :class:`AgentDisconnectedError`
+        with its typed reason instead. The host request wins when both
+        happen, so an explicit stop always returns.
+
         ``install_signal_handlers`` is off by default: a library that embeds
-        the agent keeps its own process-wide signal handlers. ``Agent.run()``
-        turns it on for a standalone script, where SIGTERM/SIGINT should stop
-        the process.
+        the agent keeps its own process-wide signal handlers.
         """
         if not self._ws:
             raise RuntimeError("Not connected")
         await self._ws.run_forever(install_signal_handlers=install_signal_handlers)
+        reason = self._last_disconnect_reason
+        if reason is not None and not self._disconnect_requested:
+            raise AgentDisconnectedError(reason)
 
     async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
         """Shared join call for agent_control -- used by both the initial
