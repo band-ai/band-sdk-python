@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
@@ -18,6 +25,7 @@ from acp.schema import (
     HttpMcpServer,
     NewSessionResponse,
     PermissionOption,
+    SetSessionConfigOptionResponse,
     SseMcpServer,
 )
 from band_sdk_core import AgentFailure
@@ -26,6 +34,8 @@ from typing_extensions import Unpack
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.exceptions import BandConfigError
+from band.core.model_catalog import ModelSelection
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -58,6 +68,11 @@ from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
+from band.integrations.acp.model_selection import (
+    ACPModelOptions,
+    apply_model_selection,
+    locate_model_options,
+)
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.session_config import (
     RESOLVER_CONFIG_OPTION_ID,
@@ -65,6 +80,7 @@ from band.integrations.acp.session_config import (
     ACPConfigRequest,
     SessionConfigOption,
     SessionConfigResolver,
+    SessionConfigSetter,
     apply_session_config_selections,
     session_config_options,
 )
@@ -198,6 +214,19 @@ def _resolve_launcher(command: list[str]) -> list[str]:
     return [resolved, *command[1:]] if resolved else list(command)
 
 
+def _config_setter(runtime: ACPRuntime) -> SessionConfigSetter:
+    """``session/set_config_option`` on ``runtime``, in the applier's shape."""
+
+    async def set_option(
+        session_id: str, option_id: str, value: str
+    ) -> SetSessionConfigOptionResponse | None:
+        return await runtime.set_config_option(
+            session_id=session_id, config_id=option_id, value=value
+        )
+
+    return set_option
+
+
 def _to_agent_failure(exc: Exception) -> AgentFailure:
     """Parse a turn-ending exception into the shared provider-failure shape.
 
@@ -250,12 +279,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         client_capabilities: ClientCapabilities | None = None,
         use_unstable_protocol: bool = False,
         turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS,
+        model_selection: ModelSelection | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
             **features,
         )
+        model_selection = model_selection or ModelSelection()
+        if not model_selection.is_empty and resolve_session_config is not None:
+            raise ValueError(
+                "set either model_selection or resolve_session_config, not both"
+            )
         if cwd is not None:
             raise ValueError(
                 "cwd is not supported; use workspace_for_room or the default"
@@ -281,6 +316,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._auth_method = auth_method
         self._profile = profile
         self._resolve_session_config = resolve_session_config
+        self._model_selection = model_selection
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
         self._use_unstable_protocol = use_unstable_protocol
@@ -292,6 +328,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._turn_timeout_s = turn_timeout_s
 
         self._room_to_session: dict[str, str] = {}
+        # Each live session's config catalog as of its last change, so a runtime
+        # model switch is checked against what the session now advertises.
+        self._room_catalogs: dict[str, tuple[SessionConfigOption, ...]] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -307,6 +346,46 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # _band_mcp_backend None and start a fresh one that outlives shutdown
         # and is never stopped -- a real leaked server, not just a failed turn.
         self._stopped = False
+
+    @property
+    def model_selection(self) -> ModelSelection:
+        """Applied per session from its live catalog, not checked at start."""
+        return self._model_selection
+
+    async def apply_model_selection(
+        self, selection: ModelSelection, *, room_id: str
+    ) -> None:
+        """Switch ``room_id``'s live ACP session, checked against its catalog.
+
+        Raises ``ACPConfigError`` naming what the session offers when it
+        rejects ``selection``; new rooms keep the configured selection.
+        """
+        async with self._session_lock:
+            session_id = self._room_to_session.get(room_id)
+            runtime = self._runtimes.get(room_id)
+            catalog = self._room_catalogs.get(room_id, ())
+        if session_id is None or runtime is None:
+            raise BandConfigError(f"room {room_id} has no live ACP session to switch")
+        catalog = await apply_model_selection(
+            session_id=session_id,
+            config_options=catalog,
+            selection=selection,
+            locate=self.locate_model_options,
+            set_option=_config_setter(runtime),
+        )
+        async with self._session_lock:
+            if self._room_to_session.get(room_id) == session_id:
+                self._room_catalogs[room_id] = catalog
+
+    def locate_model_options(
+        self, options: Sequence[SessionConfigOption]
+    ) -> ACPModelOptions:
+        """Find the session's model and effort selects.
+
+        The default reads the spec-reserved categories; agents that publish
+        them under other ids or categories override this.
+        """
+        return locate_model_options(options)
 
     def apply_effective_features(self, features: AdapterFeatures) -> None:
         """Rebuild the lazy MCP registration after capability negotiation."""
@@ -893,7 +972,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             return None
 
         try:
-            await self._configure_session(
+            catalog = await self._configure_session(
                 runtime,
                 room_id,
                 session_id,
@@ -902,7 +981,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         except BaseException:
             await self._close_fresh_session(runtime, session_id)
             raise
-        await self._record_session(room_id, session_id)
+        await self._record_session(room_id, session_id, catalog)
         logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
         return session_id
 
@@ -911,13 +990,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     ) -> str:
         """Create, configure, and publish a session for one room."""
         async with self._fresh_session(runtime, room_id, mcp_servers) as session:
-            await self._configure_session(
+            catalog = await self._configure_session(
                 runtime,
                 room_id,
                 session.session_id,
                 session_config_options(session),
             )
-            await self._record_session(room_id, session.session_id)
+            await self._record_session(room_id, session.session_id, catalog)
 
         logger.info(
             "Created ACP session %s for room %s (mcp_servers=%d)",
@@ -950,10 +1029,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await self._close_fresh_session(runtime, session.session_id)
             raise
 
-    async def _record_session(self, room_id: str, session_id: str) -> None:
+    async def _record_session(
+        self,
+        room_id: str,
+        session_id: str,
+        catalog: tuple[SessionConfigOption, ...],
+    ) -> None:
         """Publish a fully initialized session to its room."""
         async with self._session_lock:
             self._room_to_session[room_id] = session_id
+            self._room_catalogs[room_id] = catalog
 
     async def _close_fresh_session(self, runtime: ACPRuntime, session_id: str) -> None:
         """Best-effort cleanup when configuration prevented first use."""
@@ -1025,14 +1110,40 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         room_id: str,
         session_id: str,
         config_options: tuple[SessionConfigOption, ...] | None,
-    ) -> None:
-        """Apply caller-selected values from the session's live ACP catalog."""
-        if self._resolve_session_config is None:
-            return
-
+    ) -> tuple[SessionConfigOption, ...]:
+        """Apply caller-selected values; return the session's resulting catalog."""
         catalog = tuple(config_options or ())
+        selection = self.model_selection
+        if not selection.is_empty:
+            return await apply_model_selection(
+                session_id=session_id,
+                config_options=catalog,
+                selection=selection,
+                locate=self.locate_model_options,
+                set_option=_config_setter(runtime),
+            )
+        if self._resolve_session_config is not None:
+            return await self._apply_resolved_config(
+                resolver=self._resolve_session_config,
+                room_id=room_id,
+                session_id=session_id,
+                catalog=catalog,
+                set_option=_config_setter(runtime),
+            )
+        return catalog
+
+    async def _apply_resolved_config(
+        self,
+        *,
+        resolver: SessionConfigResolver,
+        room_id: str,
+        session_id: str,
+        catalog: tuple[SessionConfigOption, ...],
+        set_option: SessionConfigSetter,
+    ) -> tuple[SessionConfigOption, ...]:
+        """Apply what the caller's ``resolve_session_config`` selects."""
         try:
-            selections = await self._resolve_session_config(
+            selections = await resolver(
                 ACPConfigRequest(
                     room_id=room_id,
                     session_id=session_id,
@@ -1049,17 +1160,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 message=f"ACP session configuration resolver failed: {error}",
             ) from error
         if selections is None:
-            return
+            return catalog
 
-        await apply_session_config_selections(
+        return await apply_session_config_selections(
             session_id=session_id,
             config_options=catalog,
             selections=selections,
-            set_option=lambda session_id, option_id, value: runtime.set_config_option(
-                session_id=session_id,
-                config_id=option_id,
-                value=value,
-            ),
+            set_option=set_option,
         )
 
     async def _report_config_error(
@@ -1158,6 +1265,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     async def on_cleanup(self, room_id: str) -> None:
         async with self._session_lock:
             session_id = self._room_to_session.pop(room_id, None)
+            self._room_catalogs.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
             if session_id:
@@ -1196,6 +1304,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             initializers = tuple(self._session_initializers.values())
             self._session_initializers.clear()
             self._room_to_session.clear()
+            self._room_catalogs.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())

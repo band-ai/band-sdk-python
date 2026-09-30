@@ -15,6 +15,8 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
+from band.core.model_catalog import advertised_listing
+
 SessionConfigOption: TypeAlias = SessionConfigOptionSelect | SessionConfigOptionBoolean
 SessionConfigSelections: TypeAlias = Mapping[str, str | None]
 SessionConfigSetter: TypeAlias = Callable[
@@ -67,6 +69,11 @@ def flatten_select_options(
     return tuple(flattened)
 
 
+def select_values(option: SessionConfigOptionSelect) -> tuple[str, ...]:
+    """The values an ACP select option advertises, groups flattened."""
+    return tuple(entry.value for entry in flatten_select_options(option.options))
+
+
 def session_config_options(response: object) -> tuple[SessionConfigOption, ...] | None:
     """Return a response's complete, typed ACP configuration catalog."""
     options = getattr(response, "config_options", None)
@@ -108,19 +115,25 @@ async def apply_session_config_selections(
 
         option = next((entry for entry in catalog if entry.id == option_id), None)
         if not isinstance(option, SessionConfigOptionSelect):
+            select_ids = tuple(
+                entry.id
+                for entry in catalog
+                if isinstance(entry, SessionConfigOptionSelect)
+            )
             raise ACPConfigError(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,
-                message=f'ACP config option "{option_id}" is not available.',
+                message=(
+                    f'ACP config option "{option_id}" is not available; advertised '
+                    f"options: {advertised_listing(select_ids)}."
+                ),
             )
 
         if selected_value == option.current_value:
             continue
 
-        available_values = {
-            entry.value for entry in flatten_select_options(option.options)
-        }
+        available_values = select_values(option)
         if selected_value not in available_values:
             raise ACPConfigError(
                 session_id=session_id,
@@ -128,7 +141,8 @@ async def apply_session_config_selections(
                 selected_value=selected_value,
                 message=(
                     f'ACP config value "{selected_value}" is not advertised '
-                    f'for option "{option_id}".'
+                    f'for option "{option_id}"; advertised values: '
+                    f"{advertised_listing(available_values)}."
                 ),
             )
 

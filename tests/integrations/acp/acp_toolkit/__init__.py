@@ -22,7 +22,11 @@ Example::
 
 from __future__ import annotations
 
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, PromptHandler
+from tests.integrations.acp.acp_toolkit.agent import (
+    FakeACPAgent,
+    PromptHandler,
+    select_option,
+)
 from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
     FakeSpawn,
@@ -33,6 +37,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     inject_acp_spawn,
     live_line,
     make_acp_connection,
+    started_acp_adapter,
 )
 
 __all__ = [
@@ -47,4 +52,6 @@ __all__ = [
     "inject_acp_spawn",
     "live_line",
     "make_acp_connection",
+    "select_option",
+    "started_acp_adapter",
 ]

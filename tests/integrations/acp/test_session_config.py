@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,7 +15,10 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
+from band.core.model_catalog import ModelCatalog, ModelChoice, ModelSelection
+from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.model_selection import ACPModelOptions
 from band.integrations.acp.session_config import (
     RESOLVER_CONFIG_OPTION_ID,
     ACPConfigError,
@@ -22,25 +26,13 @@ from band.integrations.acp.session_config import (
     SessionConfigOption,
     apply_session_config_selections,
 )
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, Reply, acp_adapter
-
-
-def select_option(
-    option_id: str,
-    current_value: str,
-    values: list[str],
-) -> SessionConfigOptionSelect:
-    """A concise ACP select catalog entry for one test."""
-    return SessionConfigOptionSelect(
-        id=option_id,
-        name=option_id.replace("_", " ").title(),
-        type="select",
-        current_value=current_value,
-        options=[
-            SessionConfigSelectOption(value=value, name=value.title())
-            for value in values
-        ],
-    )
+from tests.integrations.acp.acp_toolkit import (
+    FakeACPAgent,
+    Reply,
+    acp_adapter,
+    select_option,
+    started_acp_adapter,
+)
 
 
 def malformed_catalog_response() -> SimpleNamespace:
@@ -239,6 +231,13 @@ class TestACPConfigurationHarness:
                 "selected_value": "unsupported",
             },
         )
+        assert reply.errors == [
+            (
+                "ACP session configuration failed: ACP config value "
+                '"unsupported" is not advertised for option "reasoning_effort"; '
+                "advertised values: medium, high."
+            )
+        ]
         assert agent.prompt_texts() == []
         assert agent.closed_sessions == ["fake-session-1"]
 
@@ -457,3 +456,81 @@ class TestACPConfigurationHarness:
             },
         )
         assert agent.closed_sessions == ["persisted-session"]
+
+
+class ThinkingIdAdapter(ACPClientAdapter):
+    """An ACP adapter for an agent that publishes uncategorized ``model`` and
+    ``thinking`` selects, the way OMP does."""
+
+    def locate_model_options(
+        self, options: Sequence[SessionConfigOption]
+    ) -> ACPModelOptions:
+        selects = {
+            option.id: option
+            for option in options
+            if isinstance(option, SessionConfigOptionSelect)
+        }
+        return ACPModelOptions(
+            model=selects.get("model"), effort=selects.get("thinking")
+        )
+
+
+class TestTypedModelSelection:
+    def test_the_catalog_knows_efforts_only_for_the_current_model(self) -> None:
+        # ACP advertises efforts for the active model alone: the others are
+        # unknown (None), which a host must not show as "offers none" (()).
+        located = ACPModelOptions(
+            model=select_option("model", "large", ["small", "large"]),
+            effort=select_option("thinking", "low", ["low", "high"]),
+        )
+
+        assert located.model_catalog() == ModelCatalog(
+            models=(
+                ModelChoice(id="small", label="Small", efforts=None),
+                ModelChoice(
+                    id="large",
+                    label="Large",
+                    efforts=("low", "high"),
+                    default_effort="low",
+                ),
+            ),
+            current_model="large",
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_adapter_can_locate_selects_that_carry_no_category(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(
+            config_options=[
+                select_option("model", "small", ["small", "large"]),
+                select_option("thinking", "low", ["low", "high"]),
+            ]
+        ).will_say("Configured")
+        adapter = ThinkingIdAdapter(
+            command="fake-agent",
+            inject_band_tools=False,
+            model_selection=ModelSelection(model="large", reasoning_effort="high"),
+        )
+
+        async with started_acp_adapter(adapter, agent) as session:
+            reply = await session.send("Hello")
+
+        assert reply.texts == ["Configured"]
+        assert agent.config_selections() == [("model", "large"), ("thinking", "high")]
+
+    @pytest.mark.asyncio
+    async def test_a_model_is_refused_when_the_agent_advertises_no_model_option(
+        self,
+    ) -> None:
+        agent = FakeACPAgent().will_say("unreachable")
+
+        async with acp_adapter(
+            agent, model_selection=ModelSelection(model="large")
+        ) as session:
+            reply = await session.send("Hello")
+
+        assert reply.errors == [
+            "ACP session configuration failed: ACP session advertises no model option."
+        ]
+        assert agent.prompt_texts() == []

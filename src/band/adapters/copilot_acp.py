@@ -31,6 +31,7 @@ from typing import Any
 
 from typing_extensions import Unpack
 
+from band.core.model_catalog import ModelSelection
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
     DEFAULT_TURN_TIMEOUT_SECONDS,
@@ -44,8 +45,6 @@ from band.workspaces import WorkspaceResolver, workspace_resolver_for
 logger = logging.getLogger(__name__)
 
 DEFAULT_COPILOT_COMMAND: tuple[str, ...] = ("copilot", "--acp")
-_MODEL_FLAG = "--model"
-_REASONING_EFFORT_FLAG = "--reasoning-effort"
 
 
 @dataclass(frozen=True)
@@ -72,9 +71,10 @@ class CopilotACPAdapterConfig:
     resolve_session_config: SessionConfigResolver | None = None
     resolve_permission: PermissionResolver | None = None
     turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
-    # Appended to the stdio command as --model/--reasoning-effort. Copilot's
-    # ACP session exposes no model option, and the CLI accepts an unknown
-    # model at session/new.
+    # Selected from each session's advertised catalog; a value it does not
+    # offer fails the turn. Only GitHub-hosted sessions advertise these; under
+    # BYOK the provider env (COPILOT_MODEL) picks the model. Exclusive with
+    # resolve_session_config.
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -101,11 +101,6 @@ class CopilotACPAdapter(ACPClientAdapter):
         # is misconfigured — fail loudly rather than silently dropping the command.
         if use_tcp and tuple(config.command) != DEFAULT_COPILOT_COMMAND:
             raise ValueError("set either command (stdio) or host/port (TCP), not both")
-        if use_tcp and (config.model or config.reasoning_effort):
-            raise ValueError(
-                "model/reasoning_effort are CLI flags and need the stdio transport; "
-                "configure them on the TCP server instead"
-            )
 
         # A rejected remote transport owns its environment, so any auth supplied
         # with it is ignored after this warning.
@@ -138,6 +133,9 @@ class CopilotACPAdapter(ACPClientAdapter):
             "inject_band_tools": config.inject_band_tools,
             "custom_section": config.custom_section,
             "resolve_session_config": config.resolve_session_config,
+            "model_selection": ModelSelection(
+                model=config.model, reasoning_effort=config.reasoning_effort
+            ),
             "resolve_permission": config.resolve_permission,
             "turn_timeout_s": config.turn_timeout_s,
         }
@@ -145,26 +143,7 @@ class CopilotACPAdapter(ACPClientAdapter):
         if use_tcp:
             super().__init__(host=config.host, port=config.port, **common, **features)
         else:
-            super().__init__(
-                command=_command_with_model_flags(config), **common, **features
-            )
-
-
-def _command_with_model_flags(config: CopilotACPAdapterConfig) -> list[str]:
-    """``command`` plus the typed model flags, each given exactly once."""
-    command = list(config.command)
-    for flag, value in (
-        (_MODEL_FLAG, config.model),
-        (_REASONING_EFFORT_FLAG, config.reasoning_effort),
-    ):
-        if value is None:
-            continue
-        if any(arg == flag or arg.startswith(f"{flag}=") for arg in command):
-            raise ValueError(
-                f"{flag} is set both in command and as a typed config field"
-            )
-        command.extend((flag, value))
-    return command
+            super().__init__(command=list(config.command), **common, **features)
 
 
 __all__ = [

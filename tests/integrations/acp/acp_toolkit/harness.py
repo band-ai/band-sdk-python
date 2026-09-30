@@ -183,6 +183,10 @@ class Reply:
         return [e["content"] for e in self._events_of("thought")]
 
     @property
+    def errors(self) -> list[str]:
+        return [e["content"] for e in self._events_of("error")]
+
+    @property
     def tool_calls(self) -> list[dict[str, Any]]:
         return [
             e
@@ -310,6 +314,18 @@ async def acp_adapter(
         inject_band_tools=inject_band_tools,
         **adapter_kwargs,
     )
+    async with started_acp_adapter(adapter, agent) as session:
+        yield session
+
+
+@asynccontextmanager
+async def started_acp_adapter(
+    adapter: ACPClientAdapter, agent: FakeACPAgent
+) -> AsyncIterator[AcpSession]:
+    """Start any ``ACPClientAdapter`` (or subclass) wired to ``agent`` in process.
+
+    Yields an :class:`AcpSession`; tears the adapter down on exit.
+    """
     pair_in_process(adapter, agent)
     await adapter.on_started("Fake Agent", "in-process fake")
     try:

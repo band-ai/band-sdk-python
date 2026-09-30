@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 from acp import RequestError
@@ -28,12 +28,17 @@ from acp.schema import (
     SessionCapabilities,
     SessionCloseCapabilities,
     SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from band.integrations.acp.model_selection import (
+    MODEL_CATEGORY,
+    THOUGHT_LEVEL_CATEGORY,
+)
 from band.integrations.acp.session_config import SessionConfigOption
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
@@ -102,6 +107,45 @@ class FakeACPAgent:
         """Set dynamic behavior for every ``session/set_config_option`` call."""
         self._config_option_handler = handler
         return handler
+
+    def advertises_models(
+        self, efforts_by_model: Mapping[str, Sequence[str]], *, current: str
+    ) -> FakeACPAgent:
+        """Advertise a model select whose effort select follows the chosen model.
+
+        Mirrors Copilot CLI: selecting a model replaces the effort select with
+        that model's levels (current = its first), or drops it for a model
+        with none.
+        """
+        active = {"model": current}
+
+        def catalog(model: str, effort: str | None = None) -> list[SessionConfigOption]:
+            options: list[SessionConfigOption] = [
+                select_option("model", model, efforts_by_model, category=MODEL_CATEGORY)
+            ]
+            if efforts := efforts_by_model[model]:
+                options.append(
+                    select_option(
+                        "reasoning_effort",
+                        effort or efforts[0],
+                        efforts,
+                        category=THOUGHT_LEVEL_CATEGORY,
+                    )
+                )
+            return options
+
+        @self.on_config_option
+        async def select(
+            fake: FakeACPAgent, session_id: str, option_id: str, value: str
+        ) -> list[SessionConfigOption]:
+            del fake, session_id
+            if option_id == "model":
+                active["model"] = value
+                return catalog(value)
+            return catalog(active["model"], effort=value)
+
+        self._config_options = catalog(current)
+        return self
 
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
@@ -409,6 +453,10 @@ class FakeACPAgent:
         del kwargs
         self.closed_sessions.append(session_id)
 
+    def config_selections(self) -> list[tuple[str, str]]:
+        """Each ``(option, value)`` the client set, in order, across sessions."""
+        return [(option, value) for _sid, option, value in self.config_option_requests]
+
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""
         return [
@@ -435,3 +483,24 @@ class FakeACPAgent:
             for action in self._script:
                 await action(self, session_id)
         return PromptResponse(stop_reason="end_turn")
+
+
+def select_option(
+    option_id: str,
+    current_value: str,
+    values: Iterable[str],
+    *,
+    category: str | None = None,
+) -> SessionConfigOptionSelect:
+    """A concise ACP select catalog entry, optionally in a spec category."""
+    return SessionConfigOptionSelect(
+        id=option_id,
+        name=option_id.replace("_", " ").title(),
+        type="select",
+        category=category,
+        current_value=current_value,
+        options=[
+            SessionConfigSelectOption(value=value, name=value.title())
+            for value in values
+        ],
+    )
