@@ -9,6 +9,7 @@ What a host that embeds a harness adapter can rely on beyond each adapter guide.
 | Adapter | Checks | Login |
 |---|---|---|
 | Claude SDK | spawns `claude` (`cli_path`/`env`), `get_server_info()` | not reported by the handshake; a logged-out CLI fails on its first turn |
+| Codex | spawns the app-server (`codex_command`/`codex_env`), `initialize`, then `account/read` | reported: `account` missing with `requiresOpenaiAuth` → "run `codex login`" |
 
 Any other `SimpleAdapter` returns `ok` from the default implementation. Hosts that reimplemented each harness handshake to fail fast can drop it.
 
