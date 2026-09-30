@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from acp import RequestError
@@ -19,6 +21,7 @@ from acp.helpers import (
 )
 from acp.schema import (
     AgentCapabilities,
+    ConfigOptionUpdate,
     InitializeResponse,
     LoadSessionResponse,
     McpCapabilities,
@@ -28,6 +31,7 @@ from acp.schema import (
     SessionCapabilities,
     SessionCloseCapabilities,
     SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
     Usage,
@@ -35,12 +39,28 @@ from acp.schema import (
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from band.integrations.acp.session_config import SessionConfigOption
+from band.integrations.acp.model_selection import (
+    MODEL_CATEGORY,
+    THOUGHT_LEVEL_CATEGORY,
+)
+from band.integrations.acp.session_config import SessionConfigOption, find_select
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
     ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
 ]
+
+# The option ids Copilot CLI publishes its model and effort selects under.
+MODEL_OPTION_ID = "model"
+EFFORT_OPTION_ID = "reasoning_effort"
+
+
+@dataclass
+class ReplyGate:
+    """Holds ``set_config_option`` replies: each is applied, then waits."""
+
+    received: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class FakeACPAgent:
@@ -77,6 +97,10 @@ class FakeACPAgent:
         self._custom: PromptHandler | None = None
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
+        self._reply_gate: ReplyGate | None = None
+        self._hangs_up_on_config = False
+        # Closes this agent's end of the transport; the harness binds it.
+        self.hang_up: Callable[[], None] = lambda: None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -106,6 +130,75 @@ class FakeACPAgent:
         """Set dynamic behavior for every ``session/set_config_option`` call."""
         self._config_option_handler = handler
         return handler
+
+    def hangs_up_on_next_config_option(self) -> None:
+        """Drop the connection on the next ``set_config_option``, unanswered,
+        as a crashed agent process does."""
+        self._hangs_up_on_config = True
+
+    def holds_config_replies(self) -> ReplyGate:
+        """Apply each ``set_config_option`` at once but reply only on release."""
+        self._reply_gate = ReplyGate()
+        return self._reply_gate
+
+    def advertises_models(
+        self,
+        efforts_by_model: Mapping[str, Sequence[str]],
+        *,
+        current: str,
+        default_effort: str = "medium",
+        pushes_updates: bool = True,
+    ) -> FakeACPAgent:
+        """Advertise a model select whose effort select follows the chosen model.
+
+        Mirrors Copilot CLI 1.0.89 (probed live): selecting a model replaces
+        the effort select with that model's levels, or drops it for a model
+        with none; the current effort carries over when the new model offers
+        it, else falls back to ``default_effort``; an unoffered effort is
+        silently ignored; and every change is also pushed as a
+        ``config_option_update``. ``pushes_updates=False`` models a spec agent
+        whose set replies are the only record of a change.
+        """
+        active = {"model": current, "effort": default_effort}
+
+        def catalog() -> list[SessionConfigOption]:
+            options: list[SessionConfigOption] = [
+                select_option(
+                    MODEL_OPTION_ID,
+                    active["model"],
+                    efforts_by_model,
+                    category=MODEL_CATEGORY,
+                )
+            ]
+            efforts = efforts_by_model[active["model"]]
+            if efforts:
+                if active["effort"] not in efforts:
+                    active["effort"] = default_effort
+                options.append(
+                    select_option(
+                        EFFORT_OPTION_ID,
+                        active["effort"],
+                        efforts,
+                        category=THOUGHT_LEVEL_CATEGORY,
+                    )
+                )
+            return options
+
+        @self.on_config_option
+        async def select(
+            fake: FakeACPAgent, session_id: str, option_id: str, value: str
+        ) -> list[SessionConfigOption]:
+            if option_id == MODEL_OPTION_ID:
+                active["model"] = value
+            elif value in efforts_by_model[active["model"]]:
+                active["effort"] = value
+            options = catalog()
+            if pushes_updates:
+                await fake.push_config_options(session_id, options)
+            return options
+
+        self._config_options = catalog()
+        return self
 
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
@@ -321,6 +414,24 @@ class FakeACPAgent:
     async def emit(self, session_id: str, update: Any) -> None:
         await self._conn_for(session_id).session_update(session_id, update)
 
+    async def selects_on_its_own(
+        self, session_id: str, option_id: str, value: str
+    ) -> None:
+        """Change an option agent-side and push ``config_option_update``, as
+        Copilot's in-session ``/model`` does."""
+        self._config_options = await self._select(session_id, option_id, value)
+        await self.push_config_options(session_id, self._config_options)
+
+    async def push_config_options(
+        self, session_id: str, options: Sequence[SessionConfigOption]
+    ) -> None:
+        await self.emit(
+            session_id,
+            ConfigOptionUpdate(
+                session_update="config_option_update", config_options=list(options)
+            ),
+        )
+
     async def ask_permission(
         self, session_id: str, tool_call: Any, options: list[Any]
     ) -> Any:
@@ -427,29 +538,52 @@ class FakeACPAgent:
         """Apply one advertised select option and return the full live catalog."""
         del kwargs
         self.config_option_requests.append((session_id, config_id, value))
-        if self._config_option_handler is not None:
-            self._config_options = list(
-                await self._config_option_handler(self, session_id, config_id, value)
-            )
-            return SetSessionConfigOptionResponse(config_options=self._config_options)
-
-        updated: list[SessionConfigOption] = []
-        for option in self._config_options:
-            if option.id == config_id and isinstance(option, SessionConfigOptionSelect):
-                updated.append(option.model_copy(update={"current_value": value}))
-            else:
-                updated.append(option)
-        self._config_options = updated
+        if self._hangs_up_on_config:
+            self._hangs_up_on_config = False
+            self.hang_up()
+            await asyncio.Event().wait()
+        self._config_options = await self._select(session_id, config_id, value)
+        if self._reply_gate is not None:
+            self._reply_gate.received.set()
+            await self._reply_gate.release.wait()
         return SetSessionConfigOptionResponse(config_options=self._config_options)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         del kwargs
         self.cancelled_sessions.append(session_id)
 
+    async def _select(
+        self, session_id: str, option_id: str, value: str
+    ) -> list[SessionConfigOption]:
+        if self._config_option_handler is not None:
+            return list(
+                await self._config_option_handler(self, session_id, option_id, value)
+            )
+        return [
+            option.model_copy(update={"current_value": value})
+            if option.id == option_id and isinstance(option, SessionConfigOptionSelect)
+            else option
+            for option in self._config_options
+        ]
+
+    def current_value(self, option_id: str) -> str | None:
+        """The value the agent currently has selected for ``option_id``."""
+        option = find_select(self._config_options, option_id)
+        return option.current_value if option is not None else None
+
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""
         del kwargs
         self.closed_sessions.append(session_id)
+
+    def config_selections(self, session_id: str | None = None) -> list[tuple[str, str]]:
+        """Each ``(option, value)`` the client set, in order, on ``session_id``
+        or across sessions."""
+        return [
+            (option, value)
+            for sid, option, value in self.config_option_requests
+            if session_id in (None, sid)
+        ]
 
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""
@@ -477,3 +611,24 @@ class FakeACPAgent:
             for action in self._script:
                 await action(self, session_id)
         return PromptResponse(stop_reason="end_turn", usage=self._usage)
+
+
+def select_option(
+    option_id: str,
+    current_value: str,
+    values: Iterable[str],
+    *,
+    category: str | None = None,
+) -> SessionConfigOptionSelect:
+    """A concise ACP select catalog entry, optionally in a spec category."""
+    return SessionConfigOptionSelect(
+        id=option_id,
+        name=option_id.replace("_", " ").title(),
+        type="select",
+        category=category,
+        current_value=current_value,
+        options=[
+            SessionConfigSelectOption(value=value, name=value.title())
+            for value in values
+        ],
+    )

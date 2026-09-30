@@ -24,6 +24,9 @@ from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
+# The room ``AcpSession.send`` talks to unless told otherwise.
+DEFAULT_ROOM = "room-1"
+
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
 
 
@@ -192,6 +195,10 @@ class Reply:
         return [e["content"] for e in self._events_of("thought")]
 
     @property
+    def errors(self) -> list[str]:
+        return [e["content"] for e in self._events_of("error")]
+
+    @property
     def tool_calls(self) -> list[dict[str, Any]]:
         return [
             e
@@ -297,7 +304,7 @@ class AcpSession:
         self,
         content: str,
         *,
-        room: str = "room-1",
+        room: str = DEFAULT_ROOM,
         history: ACPClientSessionState | None = None,
         bootstrap: bool = False,
         room_context: list[dict[str, Any]] | None = None,
@@ -351,6 +358,18 @@ async def acp_adapter(
         inject_band_tools=inject_band_tools,
         **adapter_kwargs,
     )
+    async with started_acp_adapter(adapter, agent) as session:
+        yield session
+
+
+@asynccontextmanager
+async def started_acp_adapter(
+    adapter: ACPClientAdapter, agent: FakeACPAgent
+) -> AsyncIterator[AcpSession]:
+    """Start any ``ACPClientAdapter`` (or subclass) wired to ``agent`` in process.
+
+    Yields an :class:`AcpSession`; tears the adapter down on exit.
+    """
     pair_in_process(adapter, agent)
     await adapter.on_started("Fake Agent", "in-process fake")
     try:
@@ -388,6 +407,7 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
             use_unstable_protocol=True,
         )
         conn = connect_to_agent(client, writer_c, reader_c)
+        agent.hang_up = writer_a.close
         try:
             yield conn, agent_conn
         finally:

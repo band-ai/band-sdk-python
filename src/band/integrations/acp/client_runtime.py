@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
@@ -15,6 +15,7 @@ from acp.exceptions import RequestError
 from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
+    ConfigOptionUpdate,
     DeclineElicitationResponse,
     LoadSessionResponse,
     NewSessionResponse,
@@ -26,6 +27,10 @@ from acp.schema import (
 from band.integrations.acp.client_profiles import (
     ACPClientProfile,
     NoopACPClientProfile,
+)
+from band.integrations.acp.session_config import (
+    SessionConfigOption,
+    session_config_options,
 )
 from band.integrations.acp.types import (
     ACPToolCall,
@@ -369,6 +374,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         # Never popped in reset_session: replacing a lock a straggler task still
         # holds would let two tasks into the session's critical section.
         self._session_locks: dict[str, asyncio.Lock] = {}
+        # Each session's latest advertised config catalog; like the locks,
+        # it outlives reset_session, which runs every turn.
+        self._config_options: dict[str, tuple[SessionConfigOption, ...]] = {}
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         return self._session_locks.setdefault(session_id, asyncio.Lock())
@@ -388,6 +396,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self, session_id: str, update: object, **kwargs: object
     ) -> None:
         del kwargs
+        if isinstance(update, ConfigOptionUpdate):
+            logger.debug("ACP session %s pushed new config options", session_id)
+            self.record_config_options(session_id, update.config_options)
+            return
         async with self._session_lock(session_id):
             chunk = self._chunk_from_update(update)
             if chunk is not None:
@@ -716,6 +728,17 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         else:
             self._permission_handlers[session_id] = handler
 
+    def record_config_options(
+        self, session_id: str, options: Sequence[SessionConfigOption]
+    ) -> None:
+        self._config_options[session_id] = tuple(options)
+
+    def config_options(self, session_id: str) -> tuple[SessionConfigOption, ...]:
+        return self._config_options.get(session_id, ())
+
+    def forget_config_options(self, session_id: str) -> None:
+        self._config_options.pop(session_id, None)
+
     def reset_session(self, session_id: str) -> None:
         self._session_chunks.pop(session_id, None)
         self._permission_handlers.pop(session_id, None)
@@ -845,6 +868,7 @@ class ACPRuntime:
         self._agent_mcp_transport: MCPTransportKind = "http"
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
+        self._config_lock = asyncio.Lock()
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -924,10 +948,12 @@ class ACPRuntime:
         self, *, cwd: str, mcp_servers: list[object]
     ) -> NewSessionResponse:
         conn = await self.ensure_connection(can_respawn=False)
-        return cast(
+        response = cast(
             NewSessionResponse,
             await conn.new_session(cwd=cwd, mcp_servers=mcp_servers),
         )
+        self._record_config_options(response.session_id, response)
+        return response
 
     async def load_session(
         self,
@@ -992,6 +1018,7 @@ class ACPRuntime:
                     error,
                 )
             return None
+        self._record_config_options(session_id, response)
         return response
 
     async def set_config_option(
@@ -1003,14 +1030,39 @@ class ACPRuntime:
     ) -> SetSessionConfigOptionResponse | None:
         """Set one advertised select option and return the refreshed catalog."""
         conn = await self.ensure_connection(can_respawn=False)
-        return await conn.set_config_option(
+        response = await conn.set_config_option(
             session_id=session_id,
             config_id=config_id,
             value=value,
         )
+        self._record_config_options(session_id, response)
+        return response
+
+    def config_options(self, session_id: str) -> tuple[SessionConfigOption, ...]:
+        """The session's live catalog: its setup response, then every change."""
+        if self._client is None:
+            return ()
+        return self._client.config_options(session_id)
+
+    @property
+    def config_lock(self) -> asyncio.Lock:
+        """Held across a runtime switch.
+
+        Each step is checked against the catalog the previous one returned, so
+        an interleaved switch would validate against a model no longer current.
+        Session setup needs no lock: its room is not yet published to switch.
+        """
+        return self._config_lock
+
+    def _record_config_options(self, session_id: str, response: object) -> None:
+        options = session_config_options(response)
+        if options is not None and self._client is not None:
+            self._client.record_config_options(session_id, options)
 
     async def close_session(self, session_id: str) -> None:
         """Close a session when the agent advertised lifecycle support."""
+        if self._client is not None:
+            self._client.forget_config_options(session_id)
         if not self._agent_supports_session_close:
             return
         conn = await self.ensure_connection(can_respawn=False)
