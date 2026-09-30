@@ -86,6 +86,18 @@ def _upgrade_exception(
     )
 
 
+def _connection_conflict_error_body(*, request_id: str = "req-409") -> bytes:
+    return json.dumps(
+        {
+            "error": {
+                "code": CONNECTION_CONFLICT_CODE,
+                "message": "already connected",
+                "request_id": request_id,
+            }
+        }
+    ).encode()
+
+
 # --- Invalid payload tests: verify graceful handling (log + skip) ---
 
 
@@ -241,7 +253,7 @@ def test_parses_distinct_upgrade_errors_from_http_json_response():
     cases = [
         (
             409,
-            b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+            _connection_conflict_error_body(),
             CONNECTION_CONFLICT_CODE,
             None,
         ),
@@ -299,7 +311,7 @@ def test_ignores_generic_auth_upgrade_error_without_json_contract():
 async def test_aenter_wraps_upgrade_error(monkeypatch):
     upgrade_exc = _upgrade_exception(
         409,
-        b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+        _connection_conflict_error_body(),
     )
 
     class FailingPHXClient:

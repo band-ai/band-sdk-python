@@ -33,9 +33,13 @@ def make_link(
     )
 
 
-def on_conflict_per_upgrade(server: FakePhoenixServer) -> list[str | None]:
+def on_conflict_per_upgrade(server: FakePhoenixServer) -> list[ConflictPolicy | None]:
     """The ``on_conflict`` value each upgrade request carried, in arrival order."""
-    return [upgrade.query.get("on_conflict") for upgrade in server.upgrades]
+    values: list[ConflictPolicy | None] = []
+    for upgrade in server.upgrades:
+        raw = upgrade.query.get("on_conflict")
+        values.append(ConflictPolicy(raw) if raw is not None else None)
+    return values
 
 
 async def test_room_participants_rejection_rolls_back_chat_room_over_the_real_wire() -> (
