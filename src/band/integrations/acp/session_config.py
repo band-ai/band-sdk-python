@@ -135,9 +135,8 @@ async def apply_session_config_selections(
                 ),
             )
 
-        if selected_value == option.current_value:
-            continue
-
+        # Sent even when the catalog already shows it: a set whose reply was
+        # lost leaves that catalog stale, and only the agent's reply is proof.
         available_values = select_values(option)
         if selected_value not in available_values:
             raise ACPConfigError(

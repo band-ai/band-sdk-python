@@ -1023,10 +1023,11 @@ class ACPRuntime:
         return self._client.config_options(session_id)
 
     def config_lock(self, session_id: str) -> asyncio.Lock:
-        """Held across a multi-step config change on ``session_id``.
+        """Held across a runtime switch on ``session_id``.
 
         Each step is checked against the catalog the previous one returned, so
-        an interleaved change would validate against a model no longer current.
+        an interleaved switch would validate against a model no longer current.
+        Session setup needs no lock: its room is not yet published to switch.
         """
         return self._config_locks.setdefault(session_id, asyncio.Lock())
 

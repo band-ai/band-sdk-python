@@ -354,18 +354,28 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     ) -> None:
         """Switch ``room_id``'s live ACP session, checked against its catalog.
 
-        Raises ``ACPConfigError`` naming what the session offers when it
-        rejects ``selection``; new rooms keep the configured selection.
+        Raises ``BandConfigError`` (an ``ACPConfigError`` naming what the
+        session offers, when it rejects ``selection``); new rooms keep the
+        configured selection.
         """
+        session = await self._live_session(room_id)
+        session_id, runtime = session
+        async with runtime.config_lock(session_id):
+            # A cleanup may have ended the session while this switch queued.
+            if await self._live_session(room_id) != session:
+                raise BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
+            await self._apply_model_selection(runtime, session_id, selection)
+        logger.info(
+            "Switched ACP session %s for room %s to %s", session_id, room_id, selection
+        )
+
+    async def _live_session(self, room_id: str) -> tuple[str, ACPRuntime]:
         async with self._session_lock:
             session_id = self._room_to_session.get(room_id)
             runtime = self._runtimes.get(room_id)
         if session_id is None or runtime is None:
             raise BandConfigError(f"room {room_id} has no live ACP session to switch")
-        await self._apply_model_selection(runtime, session_id, selection)
-        logger.info(
-            "Switched ACP session %s for room %s to %s", session_id, room_id, selection
-        )
+        return session_id, runtime
 
     def locate_model_options(
         self, options: Sequence[SessionConfigOption]
@@ -1096,14 +1106,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     async def _apply_model_selection(
         self, runtime: ACPRuntime, session_id: str, selection: ModelSelection
     ) -> None:
-        async with runtime.config_lock(session_id):
-            await apply_model_selection(
-                session_id=session_id,
-                config_options=runtime.config_options(session_id),
-                selection=selection,
-                locate=self.locate_model_options,
-                set_option=_config_setter(runtime),
-            )
+        await apply_model_selection(
+            session_id=session_id,
+            config_options=runtime.config_options(session_id),
+            selection=selection,
+            locate=self.locate_model_options,
+            set_option=_config_setter(runtime),
+        )
 
     async def _apply_resolved_config(
         self,

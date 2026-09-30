@@ -350,6 +350,25 @@ class TestCopilotACPModelSelection:
         assert agent.current_value("model") == "claude-sonnet-5"
 
     @pytest.mark.asyncio
+    async def test_a_switch_queued_behind_a_room_cleanup_names_the_ended_session(
+        self,
+    ) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            gate = agent.holds_config_replies()
+            first = asyncio.create_task(switch_room(session, model="gpt-5.4"))
+            await gate.received.wait()
+            queued = asyncio.create_task(switch_room(session, model="claude-haiku-4.5"))
+            await asyncio.sleep(0)  # one tick: the queued switch parks on the lock
+            await session.adapter.on_cleanup("room-1")
+            results = await asyncio.gather(first, queued, return_exceptions=True)
+
+        assert isinstance(results[1], BandConfigError)
+        assert "no live ACP session" in str(results[1])
+
+    @pytest.mark.asyncio
     async def test_switching_a_room_without_a_live_session_is_refused(self) -> None:
         async with copilot_room(copilot()) as session:
             with pytest.raises(BandConfigError, match="no live ACP session"):

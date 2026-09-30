@@ -15,7 +15,9 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
+from band.core.exceptions import BandConfigError
 from band.core.model_catalog import ModelCatalog, ModelChoice, ModelSelection
+from band.integrations.acp import session_config
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.model_selection import ACPModelOptions
@@ -557,6 +559,33 @@ class TestTypedModelSelection:
                 )
 
         assert agent.config_selections() == [("model", "large"), ("model", "small")]
+
+    @pytest.mark.asyncio
+    async def test_a_switch_back_after_a_timed_out_switch_reaches_the_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The agent applies "large" but its reply misses the deadline, so the
+        # client never sees the session leave "small".
+        monkeypatch.setattr(session_config, "SESSION_CONFIG_TIMEOUT_SECONDS", 0.05)
+        agent = FakeACPAgent(
+            config_options=[
+                select_option("model", "small", ["small", "large"], category="model")
+            ]
+        ).will_say("ok")
+
+        async with acp_adapter(agent) as session:
+            await session.send("Hello")
+            gate = agent.holds_config_replies()
+            with pytest.raises(BandConfigError, match="did not respond"):
+                await session.adapter.apply_model_selection(
+                    ModelSelection(model="large"), room_id="room-1"
+                )
+            gate.release.set()
+            await session.adapter.apply_model_selection(
+                ModelSelection(model="small"), room_id="room-1"
+            )
+
+        assert agent.current_value("model") == "small"
 
     @pytest.mark.asyncio
     async def test_a_model_is_refused_when_the_agent_advertises_no_model_option(
