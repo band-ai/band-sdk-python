@@ -218,7 +218,7 @@ class PendingACPPrompt:
         done_event: Signals when the prompt has ended.
         outcome: The first terminal result, once settled.
         completion_task: Debounced completion task for multi-message replies.
-        posted: True once this prompt is committed to the room send.
+        posted: True once the room accepted this prompt's post.
         reply_started: True once a text reply has opened the grace window.
     """
 

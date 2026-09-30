@@ -1,6 +1,42 @@
 """Credential redaction for failure payloads sent to external clients."""
 
-from band.core.redaction import redact_credentials_deep
+from __future__ import annotations
+
+import pytest
+
+from band.core.redaction import redact_credentials, redact_credentials_deep
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "Invalid credentials: check BAND_API_KEY, then retry",
+        "Could not read cookies: permission denied",
+    ],
+)
+def test_credential_words_in_prose_stay_readable(prose: str) -> None:
+    assert redact_credentials(prose) == prose
+
+
+def test_basic_auth_value_is_redacted() -> None:
+    assert redact_credentials("sent Basic dXNlcjpwYXNz upstream") == (
+        "sent Basic [REDACTED] upstream"
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["tokenValue", "auth", "OpenAIAPIKey", "passwd", "api_key_value", "refresh_tokens"],
+)
+def test_common_credential_field_spellings_are_redacted(field: str) -> None:
+    assert redact_credentials_deep({field: "leak"}) == {field: "[REDACTED]"}
+
+
+def test_scalar_flags_under_credential_names_keep_their_type() -> None:
+    assert redact_credentials_deep({"has_credentials": True, "max_token": 5}) == {
+        "has_credentials": True,
+        "max_token": 5,
+    }
 
 
 def test_credential_field_suffixes_redact_the_whole_value() -> None:

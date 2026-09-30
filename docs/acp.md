@@ -54,9 +54,10 @@ failure fails that room turn visibly instead of falling back.
   rejects the prompt with JSON-RPC `internal_error`, the Core failure projection in
   `error.data`; room cleanup and agent shutdown also fail it. A second prompt while one is
   pending in that room is rejected with `invalid_params`.
-- Room events bind to a prompt only after it is posted, so an earlier event stays
-  unsolicited and cannot drop the send. A terminal outcome releases the prompt even while
-  its Band REST send is still pending.
+- Room events bind to a prompt only once its Band post returns, so a previous turn's
+  late event stays unsolicited and cannot settle the prompt or drop the send. A terminal
+  outcome releases the prompt even while its Band REST send is still pending. One
+  timeout bounds the send and the reply together.
 - Error updates carry the same projection on the agent-message chunk's `_meta`, unsolicited
   errors in mapped rooms included. Their text and projected keys and values are
   credential-redacted; values under credential-named fields are redacted in full.

@@ -13,6 +13,7 @@ from band.core.redaction import redact_credentials, redact_credentials_deep
 from band.core.types import PlatformMessage, metadata_to_dict
 
 _JSON_VALUE = TypeAdapter(JsonValue)
+_GENERIC_PEER_FAILURE = "Band peer reported a failure."
 
 
 class ACPFailureProvider(StrEnum):
@@ -46,7 +47,7 @@ def decode_failure(msg: PlatformMessage) -> AgentFailure:
     # ``to_failure_event`` keeps a blank ``message`` and puts the readable
     # fallback in the event content. That is still a valid Core failure.
     if not has_visible_content(message):
-        message = msg.content.strip() or "Band peer reported a failure."
+        message = msg.content.strip() or _GENERIC_PEER_FAILURE
 
     return AgentFailure(
         provider,
@@ -60,7 +61,7 @@ def _fallback_failure(msg: PlatformMessage) -> AgentFailure:
     """Use redacted event content when structured failure metadata is malformed."""
     return AgentFailure(
         ACPFailureProvider.BAND,
-        redact_credentials(msg.content.strip() or "Band peer reported a failure."),
+        redact_credentials(msg.content.strip() or _GENERIC_PEER_FAILURE),
     )
 
 

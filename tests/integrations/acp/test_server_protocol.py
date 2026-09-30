@@ -150,7 +150,7 @@ async def test_interleaved_rooms_keep_failure_and_completion_separate_over_acp_w
         "peer",
         "Bearer secret-token",
         detail={
-            "token=private-key": {"nested": "token=private-value"},
+            "token=sk-private": {"nested": "token=private-value"},
             "headers": {"Authorization": "ApiKey sk-live-value"},
             "token_count": 12,
         },

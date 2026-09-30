@@ -59,7 +59,7 @@ _PROMPT_TIMEOUT_SECONDS = 300
 _PROMPT_COMPLETION_GRACE_SECONDS = 0.25
 
 
-def _observe_prompt_send(task: asyncio.Task[bool]) -> None:
+def _observe_prompt_send(task: asyncio.Task[None]) -> None:
     if task.cancelled():
         return
     error = task.exception()
@@ -395,70 +395,55 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._send_prompt(room_id, session_id, text, current_mode, pending)
         )
         send_task.add_done_callback(_observe_prompt_send)
-        settled_task = asyncio.create_task(pending.done_event.wait())
         try:
-            done, _ = await asyncio.wait(
-                {send_task, settled_task},
-                return_when=asyncio.FIRST_COMPLETED,
-                timeout=_PROMPT_TIMEOUT_SECONDS,
+            async with asyncio.timeout(_PROMPT_TIMEOUT_SECONDS):
+                await self._await_prompt_settled(room_id, pending, send_task)
+        except TimeoutError:
+            logger.error(
+                "Prompt timed out after %ds for session %s (room %s)",
+                _PROMPT_TIMEOUT_SECONDS,
+                session_id,
+                room_id,
             )
-            if not done:
-                logger.error(
-                    "Prompt timed out after %ds for session %s (room %s) "
-                    "before the peer replied",
-                    _PROMPT_TIMEOUT_SECONDS,
-                    session_id,
-                    room_id,
-                )
-                failure = prompt_timeout_failure(_PROMPT_TIMEOUT_SECONDS)
-                await self._finish_pending_prompt(
-                    room_id, expected=pending, outcome=failure
-                )
-                return failure
-            try:
-                if pending.outcome is None:
-                    sent = await send_task
-                    if sent:
-                        logger.debug(
-                            "Sent prompt to room %s, awaiting response", room_id
-                        )
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                raise
-            except Exception as exc:
-                if pending.outcome is None:
-                    failure = prompt_exception_failure(exc)
-                    await self._finish_pending_prompt(
-                        room_id, expected=pending, outcome=failure
-                    )
-                    return failure
-                raise
-            if pending.outcome is not None:
-                return pending.outcome
-            try:
-                await asyncio.wait_for(
-                    pending.done_event.wait(), timeout=_PROMPT_TIMEOUT_SECONDS
-                )
-            except TimeoutError:
-                logger.error(
-                    "Prompt timed out after %ds for session %s (room %s)",
-                    _PROMPT_TIMEOUT_SECONDS,
-                    session_id,
-                    room_id,
-                )
-                failure = prompt_timeout_failure(_PROMPT_TIMEOUT_SECONDS)
-                await self._finish_pending_prompt(
-                    room_id, expected=pending, outcome=failure
-                )
-                return failure
+            await self._finish_pending_prompt(
+                room_id,
+                expected=pending,
+                outcome=prompt_timeout_failure(_PROMPT_TIMEOUT_SECONDS),
+            )
         finally:
             await self._finish_pending_prompt(room_id, expected=pending)
             send_task.cancel()
-            settled_task.cancel()
-            await asyncio.gather(settled_task, return_exceptions=True)
 
         if pending.outcome is None:
             raise RuntimeError("ACP prompt completed without a terminal outcome")
         return pending.outcome
+
+    async def _await_prompt_settled(
+        self,
+        room_id: str,
+        pending: PendingACPPrompt,
+        send_task: asyncio.Task[None],
+    ) -> None:
+        """Wait for a terminal outcome, failing the prompt if its send raises."""
+        settled_task = asyncio.create_task(pending.done_event.wait())
+        try:
+            await asyncio.wait(
+                {send_task, settled_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            settled_task.cancel()
+        if pending.done_event.is_set():
+            return
+        try:
+            await send_task
+        except Exception as exc:
+            logger.exception("Failed to send prompt to room %s", room_id)
+            await self._finish_pending_prompt(
+                room_id, expected=pending, outcome=prompt_exception_failure(exc)
+            )
+            return
+        logger.debug("Sent prompt to room %s, awaiting response", room_id)
+        await pending.done_event.wait()
 
     async def _send_prompt(
         self,
@@ -467,7 +452,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         text: str,
         current_mode: str | None,
         pending: PendingACPPrompt,
-    ) -> bool:
+    ) -> None:
         """Route and post one editor prompt to its Band room."""
         cleaned_text = text
         target_peer: str | None = None
@@ -498,17 +483,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             ]
         mention_text = " ".join(f"@{m.name}" for m in mentions)
 
-        if pending.done_event.is_set():
-            return False
-
         async with self._state_lock:
-            if (
-                pending.done_event.is_set()
-                or self._pending_prompts.get(room_id) is not pending
-            ):
-                return False
-            # Room events before this point belong to the previous turn.
-            pending.posted = True
+            if self._pending_prompts.get(room_id) is not pending:
+                return
 
         sent = await post_message(
             rest=self.rest,
@@ -524,7 +501,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             # now rather than wait out the full timeout for a reply to a
             # message that was never sent.
             raise ValueError(BLANK_CONTENT_ERROR)
-        return True
+
+        # Room events that arrived before the post returned belong to the
+        # previous turn.
+        pending.posted = True
 
     async def on_message(
         self,
@@ -553,53 +533,53 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             async with self._state_lock:
                 self._rehydrate(history)
 
-        # Find pending prompt for this room. Events that arrive before the
-        # prompt is posted are not its reply.
+        failure = decode_failure(msg) if msg.message_type == MessageType.ERROR else None
         async with self._state_lock:
             pending = self._pending_prompts.get(room_id)
             if pending is not None and not pending.posted:
                 pending = None
+            if pending is not None and failure is not None:
+                self._settle_prompt_locked(room_id, expected=pending, outcome=failure)
 
-        if pending and msg.message_type == MessageType.ERROR:
-            failure = decode_failure(msg)
-            claimed = await self._finish_pending_prompt(
-                room_id, expected=pending, outcome=failure
-            )
-            if claimed and self._acp_client:
-                try:
-                    chunk = EventConverter.convert(msg, failure=failure)
-                    if chunk is not None:
-                        await self._acp_client.session_update(
-                            session_id=pending.session_id, update=chunk
-                        )
-                except Exception:
-                    logger.exception("Failed to deliver ACP failure update")
+        if pending is None:
+            await self._push_unsolicited(msg, room_id)
             return
 
-        if pending and self._acp_client:
-            # Convert message to rich ACP chunk
-            chunk = EventConverter.convert(msg)
+        await self._forward_to_session(pending.session_id, msg, failure)
+        if failure is not None:
+            return
+        if msg.message_type == MessageType.TEXT:
+            pending.reply_started = True
+        if pending.reply_started:
+            await self._schedule_prompt_completion(room_id, pending)
+
+    async def _forward_to_session(
+        self, session_id: str, msg: PlatformMessage, failure: AgentFailure | None
+    ) -> None:
+        """Send one room event to the editor; a failed update never strands a prompt."""
+        if self._acp_client is None:
+            return
+        try:
+            chunk = EventConverter.convert(msg, failure=failure)
             if chunk is not None:
                 await self._acp_client.session_update(
-                    session_id=pending.session_id,
-                    update=chunk,
+                    session_id=session_id, update=chunk
                 )
+        except Exception:
+            logger.exception("Failed to deliver ACP update for session %s", session_id)
 
-            if msg.message_type == MessageType.TEXT:
-                pending.reply_started = True
-            if pending.reply_started:
-                await self._schedule_prompt_completion(room_id, pending)
-        elif self._acp_client and self._push_handler:
-            # No pending prompt — push unsolicited update
-            try:
-                await self._push_handler.handle_push_event(msg, room_id)
-            except Exception:
-                logger.exception("Push handler failed for room %s", room_id)
-        else:
+    async def _push_unsolicited(self, msg: PlatformMessage, room_id: str) -> None:
+        """Push a room event that no pending prompt owns."""
+        if self._acp_client is None or self._push_handler is None:
             logger.debug(
                 "Dropping message for room %s: no ACP client or pending prompt",
                 room_id,
             )
+            return
+        try:
+            await self._push_handler.handle_push_event(msg, room_id)
+        except Exception:
+            logger.exception("Push handler failed for room %s", room_id)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Remove all state for a room. Idempotent.

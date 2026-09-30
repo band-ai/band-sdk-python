@@ -11,6 +11,7 @@ from band_sdk_core import AgentFailure
 
 from band.agent import Agent
 from band.core.types import MessageType
+from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from tests.integrations.acp.conftest import (
@@ -259,11 +260,83 @@ async def test_failed_error_update_does_not_change_prompt_failure(
 
 
 @pytest.mark.asyncio
+async def test_previous_turn_text_during_post_stays_unsolicited(
+    mock_rest_client: MagicMock,
+) -> None:
+    adapter, server = running_server(mock_rest_client)
+    push = MagicMock()
+    push.handle_push_event = AsyncMock()
+    adapter.set_push_handler(push)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    posted = mock_rest_client.agent_api_messages.create_agent_chat_message.return_value
+
+    async def slow_post(**kwargs: object) -> object:
+        entered.set()
+        await release.wait()
+        return posted
+
+    mock_rest_client.agent_api_messages.create_agent_chat_message = AsyncMock(
+        side_effect=slow_post
+    )
+    task = prompt(server)
+    await entered.wait()
+    straggler = make_platform_message("Previous answer")
+    await deliver_server_message(adapter, straggler)
+    push.handle_push_event.assert_awaited_once_with(straggler, "room-123")
+
+    release.set()
+    await wait_for_pending_prompt(adapter, "room-123")
+    assert not task.done()
+    await deliver_server_message(adapter, make_platform_message("Done"))
+    assert (await task).stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_failed_text_update_still_completes_the_prompt(
+    mock_rest_client: MagicMock,
+) -> None:
+    adapter, server = running_server(mock_rest_client)
+    adapter.get_acp_client().session_update = AsyncMock(
+        side_effect=RuntimeError("Editor unavailable")
+    )
+    task = prompt(server)
+    await wait_for_pending_prompt(adapter, "room-123")
+    await deliver_server_message(adapter, make_platform_message("Done"))
+    assert (await asyncio.wait_for(task, 5)).stop_reason == "end_turn"
+
+
+@pytest.mark.looptime
+async def test_prompt_timeout_bounds_send_and_reply_together(
+    mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "band.integrations.acp.server_adapter._PROMPT_TIMEOUT_SECONDS", 10
+    )
+    _, server = running_server(mock_rest_client)
+    participants = mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value
+
+    async def slow_participants(**kwargs: object) -> object:
+        await asyncio.sleep(6)
+        return participants
+
+    mock_rest_client.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        side_effect=slow_participants
+    )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(RequestError) as raised:
+        await prompt(server)
+    assert loop.time() - started == pytest.approx(10)
+    assert raised.value.data == prompt_timeout_failure(10).to_extension_data()
+
+
+@pytest.mark.looptime
 async def test_tool_activity_after_text_keeps_the_prompt_open(
     mock_rest_client: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS", 0.05
+        "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS", 1.0
     )
     adapter, server = running_server(mock_rest_client)
     task = prompt(server)
@@ -271,11 +344,12 @@ async def test_tool_activity_after_text_keeps_the_prompt_open(
     await deliver_server_message(
         adapter, make_platform_message("Looking into it", message_type=MessageType.TEXT)
     )
-    await asyncio.sleep(0.03)
+    await asyncio.sleep(0.6)
     await deliver_server_message(adapter, make_tool_call_message())
-    await asyncio.sleep(0.03)
+    await asyncio.sleep(0.6)
     assert not task.done()
-    await asyncio.sleep(0.08)
+    await asyncio.sleep(0.6)
+    assert task.done()
     assert (await task).stop_reason == "end_turn"
 
 
