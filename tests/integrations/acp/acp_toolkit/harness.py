@@ -24,6 +24,9 @@ from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
+# The room ``AcpSession.send`` talks to unless told otherwise.
+DEFAULT_ROOM = "room-1"
+
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
 
 
@@ -262,7 +265,7 @@ class AcpSession:
         self,
         content: str,
         *,
-        room: str = "room-1",
+        room: str = DEFAULT_ROOM,
         history: ACPClientSessionState | None = None,
         bootstrap: bool = False,
         room_context: list[dict[str, Any]] | None = None,
@@ -363,6 +366,7 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
             use_unstable_protocol=True,
         )
         conn = connect_to_agent(client, writer_c, reader_c)
+        agent.hang_up = writer_a.close
         try:
             yield conn, agent_conn
         finally:

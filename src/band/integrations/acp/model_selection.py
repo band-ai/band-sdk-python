@@ -24,6 +24,7 @@ from band.integrations.acp.session_config import (
     flatten_select_options,
     select_ids,
     select_values,
+    selects,
 )
 
 # Category ids the ACP spec reserves for these selectors.
@@ -65,15 +66,16 @@ class ACPModelOptions:
         )
 
     def _choice(self, entry: SessionConfigSelectOption, *, current: str) -> ModelChoice:
-        if entry.value != current:
-            return ModelChoice(id=entry.value, label=entry.name)
-        if self.effort is None:
-            return ModelChoice(id=entry.value, label=entry.name, efforts=())
+        efforts: tuple[str, ...] | None = None
+        default_effort: str | None = None
+        if entry.value == current:
+            efforts = select_values(self.effort) if self.effort else ()
+            default_effort = self.effort.current_value if self.effort else None
         return ModelChoice(
             id=entry.value,
             label=entry.name,
-            efforts=select_values(self.effort),
-            default_effort=self.effort.current_value,
+            efforts=efforts,
+            default_effort=default_effort,
         )
 
 
@@ -159,13 +161,7 @@ def _select_in_category(
     options: Sequence[SessionConfigOption], category: str
 ) -> SessionConfigOptionSelect | None:
     return next(
-        (
-            option
-            for option in options
-            if isinstance(option, SessionConfigOptionSelect)
-            and option.category == category
-        ),
-        None,
+        (option for option in selects(options) if option.category == category), None
     )
 
 

@@ -8,14 +8,15 @@ suppression for Band messaging tools.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from band.converters.acp_client import ACPClientHistoryConverter
 from band.core.model_catalog import ModelSelection
 from band.core.types import MessageType, metadata_to_dict
-from band.workspaces import create_room_workspace_resolver
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
@@ -154,11 +155,11 @@ def hermetic_copilot_config(
     ``session/load`` deterministically miss. ``hosted=False`` (default)
     mirrors the registry builder's Anthropic BYOK env (``copilot_acp_env``);
     ``hosted=True`` omits it and authenticates with ``github_token`` — the
-    Copilot-hosted path production users run. The hosted env also pins
-    ``COPILOT_MODEL`` (``settings.backends.copilot_hosted_model``) so this
-    smoke's billed turns use a cheap, deterministic model instead of
-    Copilot's ``auto`` picker. ``model`` / ``reasoning_effort`` set the typed
-    selection the adapter applies from each session's advertised catalog.
+    Copilot-hosted path production users run. ``model`` / ``reasoning_effort``
+    set the typed selection the adapter applies from each session's
+    advertised catalog; a hosted ``model`` defaults to
+    ``settings.backends.copilot_hosted_model``, since the env's
+    ``COPILOT_MODEL`` does not pick an ACP session's model.
     ``inject_band_tools=False`` leaves the agent without Band tools, so the
     adapter posts its text as the room reply.
     """
@@ -167,14 +168,12 @@ def hermetic_copilot_config(
     )
 
     home = copilot_home_dir(str(work_dir))
-    hosted_env = {
-        "COPILOT_HOME": home,
-        "COPILOT_MODEL": settings.backends.copilot_hosted_model,
-    }
+    if hosted and model is None:
+        model = settings.backends.copilot_hosted_model
     kwargs: dict[str, Any] = {
         "cwd": str(work_dir),
         "custom_section": "Keep responses short and concise.",
-        "env": (hosted_env if hosted else copilot_acp_env(settings, home)),
+        "env": ({"COPILOT_HOME": home} if hosted else copilot_acp_env(settings, home)),
         "model": model,
         "reasoning_effort": reasoning_effort,
         "inject_band_tools": inject_band_tools,
@@ -186,13 +185,35 @@ def hermetic_copilot_config(
     return CopilotACPAdapterConfig(**kwargs)
 
 
+async def reply_with(
+    capture: ReplyCapture,
+    *,
+    marker: str,
+    user_ops: UserOps,
+    identity: ProvisionedAgent,
+    settings: BaselineSettings,
+) -> None:
+    """One room turn whose reply must carry ``marker``."""
+    mark = capture.messages.snapshot()
+    mid = await user_ops.send_message(
+        capture.room_id,
+        f"Reply with one short sentence that includes the marker {marker}.",
+        mention_id=identity.id,
+        mention_name=identity.name,
+    )
+    replies = await capture.wait_for_reply(
+        mid, identity.id, since=mark, deadline_s=settings.e2e_timeout
+    )
+    replies.assert_contains_any([marker])
+
+
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
 @requires(Dep.COPILOT_CLI)
 @pytest.mark.timeout(extra=180)  # Copilot CLI cold boot + hosted-auth handshake
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize(
     "reasoning_effort",
-    # A non-default effort the hosted model advertises (its default: "medium").
+    # A non-default effort copilot_hosted_model advertises (its default: "medium").
     [pytest.param(None, id="default"), pytest.param("high", id="typed-effort")],
 )
 async def test_copilot_hosted_auth_replies(
@@ -207,8 +228,10 @@ async def test_copilot_hosted_auth_replies(
 
     The matrix cells run Anthropic BYOK to spare the monthly Copilot-hosted
     quota, but the hosted path is the one production users run — one cheap
-    turn per cell keeps it proven. Only hosted sessions advertise model/effort selects, so the typed-effort cell
-    proves a typed selection is accepted against Copilot's live catalog.
+    turn per cell keeps it proven. Only hosted sessions advertise model/effort
+    selects, so the typed-effort cell proves a typed selection is accepted
+    against Copilot's live catalog. Band tools stay off: with them, a hosted
+    turn keeps calling band_send_message after its reply and never ends.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapter,
@@ -216,7 +239,6 @@ async def test_copilot_hosted_auth_replies(
 
     skip_without_github_token(baseline_settings)
 
-    marker = unique_marker("hosted")
     identity = await resource_manager.provision_agent("copilot-hosted-auth")
     room_id = await resource_manager.provision_room(
         title="e2e-copilot-hosted-auth", participants=[identity.id]
@@ -228,22 +250,20 @@ async def test_copilot_hosted_auth_replies(
             tmp_path / "hosted",
             hosted=True,
             reasoning_effort=reasoning_effort,
+            inject_band_tools=False,
         )
     )
     async with (
         running_agent(identity, adapter, baseline_settings),
         reply_capture(room_id) as capture,
     ):
-        mid = await user_ops.send_message(
-            room_id,
-            f"Reply with one short sentence that includes the marker {marker}.",
-            mention_id=identity.id,
-            mention_name=identity.name,
+        await reply_with(
+            capture,
+            marker=unique_marker("hosted"),
+            user_ops=user_ops,
+            identity=identity,
+            settings=baseline_settings,
         )
-        replies = await capture.wait_for_reply(
-            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-        )
-        replies.assert_contains_any([marker])
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
@@ -320,23 +340,25 @@ async def test_copilot_turn_fails_loudly_on_an_unadvertised_selection(
 
 
 def room_session_id(tasks: Tasks, room_id: str) -> str:
-    """The ACP session id the adapter last reported for ``room_id``."""
-    reported = [
-        metadata["acp_client_session_id"]
-        for metadata in (metadata_to_dict(task.metadata) for task in tasks)
-        if metadata.get("acp_client_room_id") == room_id
-    ]
-    assert reported, f"no ACP session reported for room {room_id}"
-    return reported[-1]
+    """The ACP session the adapter last reported for ``room_id``, read the way
+    it reads one back to restore it."""
+    reported = (
+        ACPClientHistoryConverter()
+        .convert([{"metadata": metadata_to_dict(task.metadata)} for task in tasks])
+        .room_to_session
+    )
+    assert room_id in reported, f"no ACP session reported for room {room_id}"
+    return reported[room_id]
 
 
 async def copilot_persisted_selection(
     config: Any, *, room_id: str, session_id: str
 ) -> ModelSelection:
     """What a fresh ``copilot --acp`` reports ``session_id`` runs after
-    ``session/load``: Copilot's own record, not the adapter's."""
-    from band.integrations.acp.client_runtime import (  # noqa: PLC0415 -- the acp extra, as above
-        ACPRuntime,
+    ``session/load``: Copilot's own record, not the adapter's. It is spawned
+    by a fresh adapter's own runtime wiring (launcher, env, workspace)."""
+    from band.adapters.copilot_acp import (  # noqa: PLC0415 -- the acp extra, as above
+        CopilotACPAdapter,
     )
     from band.integrations.acp.model_selection import (  # noqa: PLC0415 -- the acp extra, as above
         locate_model_options,
@@ -345,12 +367,9 @@ async def copilot_persisted_selection(
         session_config_options,
     )
 
-    workspace = create_room_workspace_resolver(config.cwd)(room_id)
-    runtime = ACPRuntime(
-        command=list(config.command),
-        env={**config.env, "GITHUB_TOKEN": config.github_token},
-        cwd=workspace,
-    )
+    spawner = CopilotACPAdapter(config)
+    workspace = spawner._workspace(room_id)
+    runtime = spawner._build_runtime(workspace)
     await runtime.start()
     try:
         loaded = await runtime.load_session_response(
@@ -364,10 +383,8 @@ async def copilot_persisted_selection(
     ).current_selection()
 
 
-# Both differ from what a hosted ACP session starts on (claude-sonnet-5 /
-# medium: the env's COPILOT_MODEL does not pick an ACP session's model), so
-# Copilot reporting them proves each was applied. Probed as advertised; an
-# account without them fails the switch naming what it offers.
+# Probed as advertised; an account without them fails the switch naming
+# what it offers.
 SWITCHED = ModelSelection(model="gpt-5.4", reasoning_effort="low")
 
 
@@ -402,31 +419,27 @@ async def test_copilot_switches_model_and_effort_in_a_live_room(
         title="e2e-copilot-live-switch", participants=[identity.id]
     )
     config = hermetic_copilot_config(
-        baseline_settings, tmp_path / "copilot", hosted=True, inject_band_tools=False
+        baseline_settings,
+        tmp_path / "copilot",
+        hosted=True,
+        reasoning_effort="high",
+        inject_band_tools=False,
     )
+    # Only a switch away from what the session starts on proves anything.
+    assert config.model != SWITCHED.model, "COPILOT_HOSTED_MODEL is the switch target"
     adapter = CopilotACPAdapter(config)
-
-    async def reply_with(capture: ReplyCapture, marker: str) -> None:
-        mark = capture.messages.snapshot()
-        mid = await user_ops.send_message(
-            room_id,
-            f"Reply with one short sentence that includes the marker {marker}.",
-            mention_id=identity.id,
-            mention_name=identity.name,
-        )
-        replies = await capture.wait_for_reply(
-            mid, identity.id, since=mark, deadline_s=baseline_settings.e2e_timeout
-        )
-        replies.assert_contains_any([marker])
+    turn = partial(
+        reply_with, user_ops=user_ops, identity=identity, settings=baseline_settings
+    )
 
     async with (
         running_agent(identity, adapter, baseline_settings),
         reply_capture(room_id) as capture,
     ):
-        await reply_with(capture, unique_marker("before-switch"))
+        await turn(capture, marker=unique_marker("before-switch"))
         await adapter.apply_model_selection(SWITCHED, room_id=room_id)
         # Also the prompt Copilot persists the switched session on.
-        await reply_with(capture, unique_marker("after-switch"))
+        await turn(capture, marker=unique_marker("after-switch"))
         session_id = room_session_id(
             await capture.tasks(sender_id=identity.id), room_id
         )

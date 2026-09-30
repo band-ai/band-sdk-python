@@ -177,11 +177,11 @@ class Backends(BaseSettings):
     # Copilot-hosted auth for the non-BYOK smokes in test_copilot_acp.py; the
     # BYOK matrix cells never read it. Those smokes skip when unset.
     github_token: str = ""  # GITHUB_TOKEN
-    # Pins those smokes' model instead of leaving it to Copilot's `auto`
-    # picker, which can land on an expensive reasoning-tier model (observed:
-    # gpt-5.6-terra). gpt-5.6-luna is the cheapest model in the GPT-5.6 family
-    # while still agentic/tool-calling, so their billed turns stay cheap and
-    # deterministic across runs.
+    # Those smokes' typed model (see hermetic_copilot_config) rather than
+    # Copilot's own pick, which can be an expensive reasoning-tier model
+    # (observed: gpt-5.6-terra). gpt-5.6-luna is the cheapest model in the
+    # GPT-5.6 family while still agentic/tool-calling, so their billed turns
+    # stay cheap and deterministic across runs.
     copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
 

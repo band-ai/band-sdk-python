@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -44,8 +44,7 @@ class ACPConfigRequest:
     config_options: tuple[SessionConfigOption, ...]
 
 
-# RuntimeError stays a base so handlers written against earlier releases
-# still catch it.
+# Also a RuntimeError, so existing ``except RuntimeError`` handlers catch it.
 class ACPConfigError(BandConfigError, RuntimeError):
     """A requested ACP session configuration could not be applied."""
 
@@ -86,25 +85,25 @@ def select_values(option: SessionConfigOptionSelect) -> tuple[str, ...]:
     return tuple(entry.value for entry in flatten_select_options(option.options))
 
 
+def selects(
+    options: Sequence[SessionConfigOption],
+) -> Iterator[SessionConfigOptionSelect]:
+    """The select options in an ACP catalog."""
+    return (
+        option for option in options if isinstance(option, SessionConfigOptionSelect)
+    )
+
+
 def find_select(
     options: Sequence[SessionConfigOption], option_id: str
 ) -> SessionConfigOptionSelect | None:
     """The select option with ``option_id`` in an ACP catalog, if any."""
-    return next(
-        (
-            option
-            for option in options
-            if isinstance(option, SessionConfigOptionSelect) and option.id == option_id
-        ),
-        None,
-    )
+    return next((option for option in selects(options) if option.id == option_id), None)
 
 
 def select_ids(options: Sequence[SessionConfigOption]) -> tuple[str, ...]:
     """The ids of the select options in an ACP catalog."""
-    return tuple(
-        option.id for option in options if isinstance(option, SessionConfigOptionSelect)
-    )
+    return tuple(option.id for option in selects(options))
 
 
 def session_config_options(response: object) -> tuple[SessionConfigOption, ...] | None:

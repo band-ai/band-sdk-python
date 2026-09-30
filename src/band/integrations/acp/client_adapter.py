@@ -379,9 +379,19 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             raise BandConfigError(f"room {room_id} has no live ACP session to switch")
         session_id, runtime = session
         async with runtime.config_lock:
-            # A cleanup may have ended the session while this switch queued.
-            await self._ensure_session_live(room_id, session)
-            await self._apply_model_selection(runtime, session_id, selection)
+            try:
+                await self._apply_model_selection(runtime, session_id, selection)
+            except ACPConfigError:
+                # A cleanup while this switch queued or ran fails it however
+                # the dead runtime answered; the ended session is the cause.
+                await self._ensure_session_live(room_id, session)
+                logger.warning(
+                    "Switching room %s to %s failed; its session runs %s",
+                    room_id,
+                    selection,
+                    self._running_selection(runtime, session_id),
+                )
+                raise
             await self._ensure_session_live(room_id, session)
             self._remember_room_selection(room_id, session_id, runtime)
 
@@ -391,12 +401,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if await self._live_session(room_id) != session:
             raise BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
 
+    def _running_selection(
+        self, runtime: ACPRuntime, session_id: str
+    ) -> ModelSelection:
+        return self.locate_model_options(
+            runtime.config_options(session_id)
+        ).current_selection()
+
     def _remember_room_selection(
         self, room_id: str, session_id: str, runtime: ACPRuntime
     ) -> None:
-        running = self.locate_model_options(
-            runtime.config_options(session_id)
-        ).current_selection()
+        running = self._running_selection(runtime, session_id)
         self._room_selections[room_id] = running
         logger.info(
             "ACP session %s for room %s now runs %s", session_id, room_id, running
@@ -542,6 +557,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 history if is_session_bootstrap else None,
             )
         except ACPConfigError as error:
+            # An unanswered set may have left a dead connection the runtime
+            # never replaces; only a fresh runtime lets the next turn retry.
+            if isinstance(error, ACPConfigUnreachableError):
+                await self.on_cleanup(room_id)
             await self._report_config_error(tools, error)
             return
         runtime.reset_session(session_id)

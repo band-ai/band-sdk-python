@@ -97,6 +97,9 @@ class FakeACPAgent:
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
         self._reply_gate: ReplyGate | None = None
+        self._hangs_up_on_config = False
+        # Closes this agent's end of the transport; the harness binds it.
+        self.hang_up: Callable[[], None] = lambda: None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -123,6 +126,11 @@ class FakeACPAgent:
         """Set dynamic behavior for every ``session/set_config_option`` call."""
         self._config_option_handler = handler
         return handler
+
+    def hangs_up_on_next_config_option(self) -> None:
+        """Drop the connection on the next ``set_config_option``, unanswered,
+        as a crashed agent process does."""
+        self._hangs_up_on_config = True
 
     def holds_config_replies(self) -> ReplyGate:
         """Apply each ``set_config_option`` at once but reply only on release."""
@@ -492,6 +500,10 @@ class FakeACPAgent:
         """Apply one advertised select option and return the full live catalog."""
         del kwargs
         self.config_option_requests.append((session_id, config_id, value))
+        if self._hangs_up_on_config:
+            self._hangs_up_on_config = False
+            self.hang_up()
+            await asyncio.Event().wait()
         self._config_options = await self._select(session_id, config_id, value)
         if self._reply_gate is not None:
             self._reply_gate.received.set()

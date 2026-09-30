@@ -380,6 +380,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     ) -> None:
         del kwargs
         if isinstance(update, ConfigOptionUpdate):
+            logger.debug("ACP session %s pushed new config options", session_id)
             self.record_config_options(session_id, update.config_options)
             return
         async with self._session_lock(session_id):

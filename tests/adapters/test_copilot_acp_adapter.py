@@ -39,7 +39,11 @@ from tests.integrations.acp.acp_toolkit.agent import (
     MODEL_OPTION_ID,
     FakeACPAgent,
 )
-from tests.integrations.acp.acp_toolkit.harness import AcpSession, started_acp_adapter
+from tests.integrations.acp.acp_toolkit.harness import (
+    DEFAULT_ROOM,
+    AcpSession,
+    started_acp_adapter,
+)
 
 
 class TestCopilotACPAdapterConstruction:
@@ -207,7 +211,7 @@ async def copilot_room(agent: FakeACPAgent, **config: Any) -> AsyncIterator[AcpS
 async def switch_room(session: AcpSession, **selection: str) -> None:
     """Switch the live session of the room ``session.send`` talks to."""
     await session.adapter.apply_model_selection(
-        ModelSelection(**selection), room_id="room-1"
+        ModelSelection(**selection), room_id=DEFAULT_ROOM
     )
 
 
@@ -512,6 +516,84 @@ class TestCopilotACPModelSelection:
 
         assert isinstance(results[1], BandConfigError)
         assert str(results[1]) == "room room-1's ACP session ended mid-switch"
+
+    @pytest.mark.asyncio
+    async def test_a_cleanup_at_any_point_of_a_switch_names_the_ended_session(
+        self,
+    ) -> None:
+        # Sweeps where the cleanup lands: before the model reply, between the
+        # model and effort steps, and after the switch completes.
+        outcomes = {await self._switch_cleaned_up_after(ticks) for ticks in range(12)}
+
+        assert outcomes <= {"ok", "room room-1's ACP session ended mid-switch"}
+        assert "room room-1's ACP session ended mid-switch" in outcomes
+
+    @staticmethod
+    async def _switch_cleaned_up_after(ticks: int) -> str:
+        agent = copilot()
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            gate = agent.holds_config_replies()
+            switch = asyncio.create_task(
+                switch_room(session, model="gpt-5.4", reasoning_effort="high")
+            )
+            await gate.received.wait()
+            gate.release.set()
+            for _ in range(ticks):
+                await asyncio.sleep(0)
+            await session.adapter.on_cleanup(DEFAULT_ROOM)
+            (result,) = await asyncio.gather(switch, return_exceptions=True)
+        return "ok" if result is None else str(result)
+
+    @pytest.mark.asyncio
+    async def test_a_setup_that_loses_its_connection_retries_on_the_next_turn(
+        self,
+    ) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            await switch_room(session, model="gpt-5.4")
+            await session.adapter.on_cleanup(DEFAULT_ROOM)
+            agent.hangs_up_on_next_config_option()
+            lost = await session.send("Again")
+            healed = await session.send("And again")
+
+        assert lost.errors == [CONFIG_FAILURE_PREFIX + "Connection closed"]
+        assert healed.texts == ["Configured"]
+        assert agent.config_selections("fake-session-3") == [
+            (MODEL_OPTION_ID, "gpt-5.4"),
+            (EFFORT_OPTION_ID, "medium"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_switch_leaves_other_rooms_on_the_configured_selection(
+        self,
+    ) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            await switch_room(session, model="gpt-5.4")
+            await session.send("Hi", room="room-2")
+
+        assert agent.config_selections("fake-session-2") == []
+
+    @pytest.mark.asyncio
+    async def test_a_switch_survives_an_adapter_restart(self) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            await switch_room(session, model="gpt-5.4")
+            await session.adapter.cleanup_all()
+            await session.adapter.on_started("Fake Agent", "restarted")
+            await session.send("Again")
+
+        assert agent.config_selections("fake-session-2") == [
+            (MODEL_OPTION_ID, "gpt-5.4"),
+            (EFFORT_OPTION_ID, "medium"),
+        ]
 
     @pytest.mark.asyncio
     async def test_switching_a_room_without_a_live_session_is_refused(self) -> None:
