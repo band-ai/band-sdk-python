@@ -123,7 +123,10 @@ def test_handler_attached_before_band_config_is_dropped(
         band_log_env(monkeypatch, FILE=None),
         otel_setup.telemetry(SERVICE) as pipeline,
     ):
-        pipeline.attach_log_handler()
+        handler = pipeline.attach_log_handler()
+        # dictConfig flushes handlers while holding logging's lock, and this
+        # handler's flush starts a thread that can block on that same lock.
+        monkeypatch.setattr(handler, "flush", lambda: None)
         LogSettings().configure()
 
         assert otel_handlers() == []
