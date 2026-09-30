@@ -169,6 +169,7 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
+_EMPTY_MODEL_SELECTION = ModelSelection()
 
 
 def new_message_marker() -> str:
@@ -279,14 +280,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         client_capabilities: ClientCapabilities | None = None,
         use_unstable_protocol: bool = False,
         turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS,
-        model_selection: ModelSelection | None = None,
+        model_selection: ModelSelection = _EMPTY_MODEL_SELECTION,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
             **features,
         )
-        model_selection = model_selection or ModelSelection()
         if not model_selection.is_empty and resolve_session_config is not None:
             raise ValueError(
                 "set either model_selection or resolve_session_config, not both"

@@ -176,12 +176,11 @@ class SimpleAdapter(ABC, Generic[H]):
     def apply_effective_features(self, features: AdapterFeatures) -> None:
         """Adopt ``features`` as the post-negotiation feature set.
 
-        Called by ``Agent.start()``/``OneShotInvoker.startup()`` after pruning
-        capabilities the deployment doesn't serve (see
-        ``runtime.capabilities.prune_unsupported``). Override if the adapter
-        caches something derived from ``self.features`` at construction (e.g.
-        a tool-definition list built in ``__init__``) so that cache rebuilds
-        too.
+        Called from ``runtime.startup.start_adapter`` after pruning capabilities
+        the deployment doesn't serve (see ``runtime.capabilities.prune_unsupported``).
+        Override if the adapter caches something derived from ``self.features`` at
+        construction (e.g. a tool-definition list built in ``__init__``) so that
+        cache rebuilds too.
         """
         self.features = features
 
@@ -350,13 +349,9 @@ class SimpleAdapter(ABC, Generic[H]):
         """
         self.apply_effective_features(features)
         await self.on_started(agent_name, agent_description)
-        await self._validate_model_selection()
-
-    async def _validate_model_selection(self) -> None:
         selection = self.model_selection
-        if selection.is_empty:
-            return
-        check_model_selection(selection, await self.list_models())
+        if not selection.is_empty:
+            check_model_selection(selection, await self.list_models())
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""

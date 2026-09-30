@@ -1,11 +1,4 @@
-"""Model and reasoning-effort selection, checked against what a harness offers.
-
-Every adapter speaks this vocabulary: ``SimpleAdapter.model_selection`` is what
-it is configured to use, ``SimpleAdapter.list_models()`` is what its harness
-advertises, and ``check_model_selection`` is the one rule deciding whether the
-two agree. Harnesses report their own catalogs; nothing here hardcodes a model
-or effort name.
-"""
+"""Model and reasoning-effort selection checked against a harness catalog."""
 
 from __future__ import annotations
 
@@ -37,11 +30,6 @@ class ModelSelection(BaseModel):
 
     model: str | None = None
     reasoning_effort: str | None = None
-
-    @classmethod
-    def only(cls, setting: ModelSetting, value: str) -> ModelSelection:
-        """A selection of ``value`` for ``setting`` alone."""
-        return cls.model_validate({setting: value})
 
     def value_of(self, setting: ModelSetting) -> str | None:
         return getattr(self, setting)

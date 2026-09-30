@@ -275,9 +275,9 @@ class Agent:
                     on_control=getattr(self._adapter, "on_interrupt", None),
                 )
             except BaseException:
-                # on_started may have acquired resources (e.g. a CLI runtime
-                # subprocess); a failed start must release them — stop() won't
-                # run for an agent that never started.
+                # Adapter startup may have acquired resources (e.g. a CLI
+                # runtime subprocess); a failed start must release them —
+                # stop() won't run for an agent that never started.
                 await release_adapter(self._adapter)
                 raise
         except BaseException:

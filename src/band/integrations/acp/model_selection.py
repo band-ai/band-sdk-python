@@ -90,37 +90,38 @@ async def apply_model_selection(
     effort is located and checked only after the model has been applied.
     Returns the catalog after the last change.
     """
-    catalog = tuple(config_options)
+    options = tuple(config_options)
     for setting in ModelSetting:
         value = selection.value_of(setting)
         if value is None:
             continue
-        catalog = await _apply_setting(
+        options = await _apply_setting(
             session_id=session_id,
-            catalog=catalog,
+            config_options=options,
             setting=setting,
             value=value,
             locate=locate,
             set_option=set_option,
         )
-    return catalog
+    return options
 
 
 async def _apply_setting(
     *,
     session_id: str,
-    catalog: tuple[SessionConfigOption, ...],
+    config_options: tuple[SessionConfigOption, ...],
     setting: ModelSetting,
     value: str,
     locate: Callable[[Sequence[SessionConfigOption]], ACPModelOptions],
     set_option: SessionConfigSetter,
 ) -> tuple[SessionConfigOption, ...]:
-    located = locate(catalog)
+    located = locate(config_options)
     option = located.option_for(setting)
     option_id = option.id if option is not None else setting
     try:
         check_model_selection(
-            ModelSelection.only(setting, value), located.model_catalog()
+            ModelSelection.model_validate({setting: value}),
+            located.model_catalog(),
         )
     except ModelSelectionError as error:
         raise ACPConfigError(
@@ -138,7 +139,7 @@ async def _apply_setting(
         )
     return await apply_session_config_selections(
         session_id=session_id,
-        config_options=catalog,
+        config_options=config_options,
         selections={option.id: value},
         set_option=set_option,
     )
