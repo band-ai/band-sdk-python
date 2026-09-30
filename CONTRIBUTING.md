@@ -250,7 +250,7 @@ CHANGELOG) that Release Please maintains; nothing publishes until a maintainer
 merges that release PR. Merging it tags the release and triggers `release.yml`,
 which publishes `band-sdk` to PyPI and dual-publishes the sandbox kit to
 Docker Hub and GHCR. See [`docs/ci-cd-workflows.md`](docs/ci-cd-workflows.md)
-for the full flow.
+for the server-side rules those workflows depend on.
 
 ### Hotfixes
 

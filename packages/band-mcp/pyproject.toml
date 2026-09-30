@@ -29,12 +29,12 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
     # for band-client-rest Bugs" for why this stays exact.
-    "band-client-rest==0.0.40",
+    "band-client-rest==0.0.41",
     # Auto-bumped after every band-sdk release by release.yml's
     # bump-mcp-sdk-floor job, so this always tracks the most recently
     # published band-sdk version -- band-mcp is developed in lockstep in
     # this monorepo and can depend on any already-released SDK feature.
-    "band-sdk>=3.1.1",
+    "band-sdk>=3.2.1",
     "uvicorn>=0.30.0",  # Required for SSE transport mode
 ]
 
@@ -54,7 +54,7 @@ module-name = "band_mcp"
 module-root = "src"
 
 [build-system]
-requires = ["uv_build>=0.8.22,<0.12.0"]
+requires = ["uv_build>=0.8.22,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.commitizen]

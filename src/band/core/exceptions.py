@@ -40,6 +40,12 @@ class BandConfigError(BandError):
         return cls(message)
 
 
+class AgentAlreadyRunningError(BandConfigError):
+    """A second instance of this agent id was refused, by the host lock
+    (``AgentConfig.single_instance``) or the platform
+    (``AgentConfig.conflict_policy``)."""
+
+
 class BandConnectionError(BandError):
     """Transport failures (WebSocket, REST). Actionable by ops."""
 
