@@ -11,7 +11,8 @@ import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
@@ -22,6 +23,7 @@ from band.platform.event import PlatformEvent
 
 from .execution import Execution, ExecutionContext, ExecutionHandler
 from .presence import RoomPresence
+from .teardown import RoomTeardown
 from .types import (
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
@@ -55,23 +57,6 @@ class ExecutionFactory(Protocol):
         *,
         hub_room_id: str | None = None,
     ) -> Execution: ...
-
-
-@dataclass
-class RoomTeardown:
-    """A room's execution awaiting a successful stop, plus the current attempt.
-
-    ``immediate`` is set once any caller asks for an immediate stop; it cuts a
-    graceful attempt's wait short and is never cleared, so a later graceful
-    request cannot extend an immediate one.
-    """
-
-    execution: Execution
-    attempt: asyncio.Task[bool] | None = None
-    immediate: asyncio.Event = field(default_factory=asyncio.Event)
-    # The stop's graceful result once it has returned; a retry after a failed
-    # cleanup reuses it instead of stopping the execution again.
-    stopped: bool | None = None
 
 
 @dataclass
@@ -186,9 +171,9 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
-        # A room whose execution was taken out of ``executions`` but whose
-        # stop and cleanup have not both succeeded. Destroy callers share its
-        # one in-flight attempt, a failed stop leaves it for a retry, and room
+        # A room's execution that is not (or not yet) live and whose stop and
+        # cleanup have not both succeeded. Destroy callers share its one
+        # in-flight attempt, a failed one leaves it for a retry, and room
         # creation waits on it, so old cleanup never meets a rejoined room.
         self._teardowns: dict[str, RoomTeardown] = {}
         # One owner per admitted room bringing its execution up: it finishes a
@@ -424,6 +409,13 @@ class AgentRuntime:
                 logger.warning("Unknown control mode %r; ignoring", mode)
 
     # --- Execution management ---
+    #
+    # An execution is owned from the moment it exists until its stop and room
+    # cleanup both succeed (RoomTeardown), so no failure or cancel can leak it.
+    #   join  (_create_execution): returns after the first attempt; a failed
+    #         one keeps retrying in the background until live or the room is left.
+    #   leave (_destroy_execution): returns after one attempt; a failed one stays
+    #         owned and is retried by the next leave or join.
 
     async def _create_execution(self, room_id: str) -> Execution | None:
         """Bring up the room's execution through its single creation owner.
@@ -458,12 +450,7 @@ class AgentRuntime:
 
     async def _attempt_creation(self, room_id: str) -> Execution | None:
         """One atomic try: finish any predecessor teardown, then build, start
-        and only then publish a candidate. None when the room is not live yet.
-
-        A candidate whose start fails (or is cancelled) is handed to a
-        teardown before anything else happens, so it cannot leak or be seen
-        as live.
-        """
+        and only then publish a candidate. None when the room is not live yet."""
         teardown = self._teardowns.get(room_id)
         if teardown is not None:
             await self._run_teardown(room_id, teardown, timeout=None)
@@ -476,16 +463,17 @@ class AgentRuntime:
                 "Building the execution for %s failed", room_id, exc_info=True
             )
             return None
+        # Owned before it starts, so a failed or cancelled start cannot leak it
+        # or leave it looking live.
+        self._own(room_id, execution)
         try:
             await execution.start()
-        except BaseException as exc:
-            self._teardowns[room_id] = RoomTeardown(execution)
-            if not isinstance(exc, Exception):
-                raise
+        except Exception:
             logger.warning(
                 "Starting the execution for %s failed", room_id, exc_info=True
             )
             return None
+        self._forget_teardown(room_id)
         self.executions[room_id] = execution
         logger.debug("Created execution for room %s", room_id)
         return execution
@@ -526,12 +514,13 @@ class AgentRuntime:
             timeout: Optional seconds to wait for graceful stop.
 
         Returns:
-            True if stopped gracefully, False if cancelled mid-processing.
+            True if stopped gracefully, False if cancelled mid-processing or
+            if the stop or cleanup failed (still owned, retried by the next call).
         """
         creation = self._pending_creations.pop(room_id, None)
         if creation is not None and creation.task is not None:
             # Awaited, so a candidate the cancelled attempt was starting is
-            # already recorded as a teardown below.
+            # already owned as a teardown below.
             creation.task.cancel()
             await asyncio.wait({creation.task})
         teardown = self._teardowns.get(room_id)
@@ -539,81 +528,37 @@ class AgentRuntime:
             execution = self.executions.pop(room_id, None)
             if execution is None:
                 return True
-            teardown = RoomTeardown(execution)
-            self._teardowns[room_id] = teardown
+            teardown = self._own(room_id, execution)
         return await self._run_teardown(room_id, teardown, timeout)
 
     async def _run_teardown(
         self, room_id: str, teardown: RoomTeardown, timeout: float | None
     ) -> bool:
-        """Join the room's in-flight teardown attempt, starting one if needed.
-
-        Shielded: a cancelled caller leaves the attempt running for the next
-        caller. An attempt whose stop or cleanup raised is logged and retried
-        by the next caller; the execution stays owned until both succeed.
-        """
-        if timeout is None:
-            teardown.immediate.set()
-        attempt = teardown.attempt
-        if attempt is None or (attempt.done() and attempt.exception() is not None):
-            attempt = asyncio.ensure_future(self._tear_down(room_id, teardown, timeout))
-            teardown.attempt = attempt
+        """Run one teardown attempt; a failure is logged and reported as False."""
         try:
-            return await asyncio.shield(attempt)
+            return await teardown.run(timeout)
         except Exception:
             logger.warning("Tearing down room %s failed", room_id, exc_info=True)
             return False
 
-    @staticmethod
-    async def _stop_execution(teardown: RoomTeardown, timeout: float | None) -> bool:
-        """Stop the execution, letting an immediate request preempt a graceful one.
+    def _own(self, room_id: str, execution: Execution) -> RoomTeardown:
+        """Register the execution's teardown; it stays until stop and cleanup succeed."""
+        teardown = RoomTeardown(
+            execution,
+            cleanup=partial(self._cleanup_room, room_id),
+            forget=partial(self._forget_teardown, room_id),
+        )
+        self._teardowns[room_id] = teardown
+        return teardown
 
-        Only one ``stop()`` call runs at a time. A graceful stop that an
-        immediate request interrupts is cancelled first and, if it had not
-        finished, followed by ``stop(timeout=None)``; either way the outcome is
-        non-graceful for every waiter.
-        """
-        execution = teardown.execution
-        if timeout is None or teardown.immediate.is_set():
-            return await execution.stop(timeout=None)
-        graceful_stop = asyncio.ensure_future(execution.stop(timeout=timeout))
-        preempted = asyncio.ensure_future(teardown.immediate.wait())
-        try:
-            await asyncio.wait(
-                {graceful_stop, preempted}, return_when=asyncio.FIRST_COMPLETED
-            )
-        finally:
-            preempted.cancel()
-        if graceful_stop.done():
-            return graceful_stop.result()
-        graceful_stop.cancel()
-        await asyncio.wait({graceful_stop})
-        if graceful_stop.cancelled():
-            await execution.stop(timeout=None)
-        else:
-            graceful_stop.result()
-        return False
+    def _forget_teardown(self, room_id: str) -> None:
+        del self._teardowns[room_id]
 
-    async def _tear_down(
-        self, room_id: str, teardown: RoomTeardown, timeout: float | None
-    ) -> bool:
-        """Stop the execution, then run room cleanup and forget the teardown.
-
-        A raising stop or cleanup propagates, keeping the teardown (and its
-        execution) owned for a retry; a retry after a failed cleanup runs only
-        the cleanup again.
-        """
-        if teardown.stopped is None:
-            teardown.stopped = await self._stop_execution(teardown, timeout)
-
+    async def _cleanup_room(self, room_id: str) -> None:
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
         # retries only the ack instead of replaying handler side effects.
         self._claim_registry.discard_completed(room_id)
         if self._on_session_cleanup:
             await self._on_session_cleanup(room_id)
-
-        if self._teardowns.get(room_id) is teardown:
-            del self._teardowns[room_id]
         logger.debug("Destroyed execution for room %s", room_id)
-        return teardown.stopped
