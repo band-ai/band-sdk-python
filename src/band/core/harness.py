@@ -1,8 +1,9 @@
 """Host-facing probe results shared by the coding-agent adapters.
 
-``preflight()`` answers whether a harness can be launched and answers its
-handshake, before any room starts. Each adapter reports that answer as a
-``PreflightResult``, so the public vocabulary lives only here.
+``preflight()`` and ``list_models()`` answer questions about a harness before
+any room starts: can it be launched and does it answer, and which models does
+it offer this account. Each adapter parses its own harness payload into these
+types, so the public vocabulary lives only here.
 """
 
 from __future__ import annotations
@@ -32,4 +33,23 @@ class PreflightResult(BaseModel):
         return cls(ok=False, reason=reason, remedy=remedy)
 
 
-__all__ = ["PreflightResult"]
+class HarnessModel(BaseModel):
+    """One model a harness offers, as reported by the harness itself.
+
+    ``id`` is the value the adapter's own ``model`` setting accepts.
+    ``efforts`` lists the reasoning-effort values the harness accepts for
+    it (empty when it has none), and ``default_effort`` the one it uses when
+    none is given, if the harness reports it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    label: str
+    provider: str | None = None
+    efforts: tuple[str, ...] = ()
+    default_effort: str | None = None
+    is_default: bool = False
+
+
+__all__ = ["HarnessModel", "PreflightResult"]
