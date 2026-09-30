@@ -4,6 +4,7 @@ Smoke tests - verify basic imports and setup work.
 
 from band import (
     AdapterFeatures,
+    AgentAlreadyRunningError,
     AgentRuntime,
     AgentTools,
     BandConfigError,
@@ -46,11 +47,12 @@ def test_emit_enum_values():
 
 
 def test_can_import_exception_hierarchy():
-    """The four-class exception hierarchy is exposed at the package root."""
+    """Public exception types are exposed at the package root."""
     assert BandError is not None
     assert issubclass(BandConfigError, BandError)
     assert issubclass(BandConnectionError, BandError)
     assert issubclass(BandToolError, BandError)
+    assert issubclass(AgentAlreadyRunningError, BandConfigError)
 
 
 def test_adapter_features_constructible():
