@@ -131,6 +131,7 @@ class FakeACPAgent:
         *,
         current: str,
         default_effort: str = "medium",
+        pushes_updates: bool = True,
     ) -> FakeACPAgent:
         """Advertise a model select whose effort select follows the chosen model.
 
@@ -139,7 +140,8 @@ class FakeACPAgent:
         with none; the current effort carries over when the new model offers
         it, else falls back to ``default_effort``; an unoffered effort is
         silently ignored; and every change is also pushed as a
-        ``config_option_update``.
+        ``config_option_update``. ``pushes_updates=False`` models a spec agent
+        whose set replies are the only record of a change.
         """
         active = {"model": current, "effort": default_effort}
 
@@ -172,12 +174,8 @@ class FakeACPAgent:
             elif value in efforts_by_model[active["model"]]:
                 active["effort"] = value
             options = catalog()
-            await fake.emit(
-                session_id,
-                ConfigOptionUpdate(
-                    session_update="config_option_update", config_options=options
-                ),
-            )
+            if pushes_updates:
+                await fake.push_config_options(session_id, options)
             return options
 
         self._config_options = catalog()
@@ -370,11 +368,15 @@ class FakeACPAgent:
         """Change an option agent-side and push ``config_option_update``, as
         Copilot's in-session ``/model`` does."""
         self._config_options = await self._select(session_id, option_id, value)
+        await self.push_config_options(session_id, self._config_options)
+
+    async def push_config_options(
+        self, session_id: str, options: Sequence[SessionConfigOption]
+    ) -> None:
         await self.emit(
             session_id,
             ConfigOptionUpdate(
-                session_update="config_option_update",
-                config_options=self._config_options,
+                session_update="config_option_update", config_options=list(options)
             ),
         )
 

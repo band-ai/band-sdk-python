@@ -20,7 +20,7 @@ from band.core.model_catalog import ModelCatalog, ModelChoice, ModelSelection
 from band.integrations.acp import session_config
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
-from band.integrations.acp.model_selection import ACPModelOptions
+from band.integrations.acp.model_selection import MODEL_CATEGORY, ACPModelOptions
 from band.integrations.acp.session_config import (
     CONFIG_FAILURE_PREFIX,
     RESOLVER_CONFIG_OPTION_ID,
@@ -540,25 +540,52 @@ class TestTypedModelSelection:
         assert agent.config_selections() == [("model", "large"), ("thinking", "high")]
 
     @pytest.mark.asyncio
-    async def test_a_switch_back_reaches_an_agent_that_only_replies_with_catalogs(
+    async def test_a_switch_is_checked_against_the_catalog_a_set_reply_returned(
         self,
     ) -> None:
-        # No config_option_update is pushed, so the set replies are the only
-        # record that the session moved off "small".
-        agent = FakeACPAgent(
-            config_options=[
-                select_option("model", "small", ["small", "large"], category="model")
-            ]
-        ).will_say("ok")
+        # No config_option_update is pushed, so only the model set's reply
+        # tells the client that "large" brings a "max" effort.
+        agent = (
+            FakeACPAgent()
+            .advertises_models(
+                {"small": (), "large": ("medium", "max")},
+                current="small",
+                pushes_updates=False,
+            )
+            .will_say("ok")
+        )
 
         async with acp_adapter(agent) as session:
             await session.send("Hello")
-            for model in ("large", "small"):
+            for selection in (
+                ModelSelection(model="large"),
+                ModelSelection(reasoning_effort="max"),
+            ):
+                await session.adapter.apply_model_selection(selection, room_id="room-1")
+
+        assert agent.current_value("reasoning_effort") == "max"
+
+    @pytest.mark.asyncio
+    async def test_a_runtime_switch_is_refused_beside_a_resolver(self) -> None:
+        async def resolve_config(request: ACPConfigRequest) -> None:
+            del request
+
+        agent = FakeACPAgent(
+            config_options=[
+                select_option(
+                    "model", "small", ["small", "large"], category=MODEL_CATEGORY
+                )
+            ]
+        ).will_say("ok")
+
+        async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
+            await session.send("Hello")
+            with pytest.raises(BandConfigError, match="resolve_session_config"):
                 await session.adapter.apply_model_selection(
-                    ModelSelection(model=model), room_id="room-1"
+                    ModelSelection(model="large"), room_id="room-1"
                 )
 
-        assert agent.config_selections() == [("model", "large"), ("model", "small")]
+        assert agent.config_selections() == []
 
     @pytest.mark.asyncio
     async def test_a_switch_back_after_a_timed_out_switch_reaches_the_agent(
@@ -569,7 +596,9 @@ class TestTypedModelSelection:
         monkeypatch.setattr(session_config, "SESSION_CONFIG_TIMEOUT_SECONDS", 0.05)
         agent = FakeACPAgent(
             config_options=[
-                select_option("model", "small", ["small", "large"], category="model")
+                select_option(
+                    "model", "small", ["small", "large"], category=MODEL_CATEGORY
+                )
             ]
         ).will_say("ok")
 

@@ -328,9 +328,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._turn_timeout_s = turn_timeout_s
 
         self._room_to_session: dict[str, str] = {}
-        # What each switched room's session ran after its last runtime switch.
-        # Kept for the adapter's lifetime, not its sessions', so the room's
-        # recreated or restored session starts where the switch left it.
+        # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
@@ -359,24 +357,42 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """Switch ``room_id``'s live ACP session, checked against its catalog.
 
         Raises ``BandConfigError`` (an ``ACPConfigError`` naming what the
-        session offers, when it rejects ``selection``). The switch stays with
-        the room: every later session for it starts on the model and effort
-        the switched session reported. Other rooms keep the configured one.
+        session offers, when it rejects ``selection``). The room keeps what
+        its session then runs, even after a partial failure, for the
+        adapter's lifetime: every later session for it starts there, until
+        one refuses it. Other rooms keep the configured selection. Refused
+        when ``resolve_session_config`` configures sessions instead.
         """
+        if self._resolve_session_config is not None:
+            raise BandConfigError(
+                "a runtime model switch cannot be combined with resolve_session_config"
+            )
         session = await self._live_session(room_id)
         if session is None:
             raise BandConfigError(f"room {room_id} has no live ACP session to switch")
         session_id, runtime = session
-        async with runtime.config_lock(session_id):
+        async with runtime.config_lock:
             # A cleanup may have ended the session while this switch queued.
             if await self._live_session(room_id) != session:
                 raise BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
-            await self._apply_model_selection(runtime, session_id, selection)
-            self._room_selections[room_id] = self.locate_model_options(
-                runtime.config_options(session_id)
-            ).current_selection()
+            try:
+                await self._apply_model_selection(runtime, session_id, selection)
+            finally:
+                still_live = await self._live_session(room_id) == session
+                if still_live:
+                    self._remember_room_selection(room_id, runtime, session_id)
+        if not still_live:
+            raise BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
+
+    def _remember_room_selection(
+        self, room_id: str, runtime: ACPRuntime, session_id: str
+    ) -> None:
+        running = self.locate_model_options(
+            runtime.config_options(session_id)
+        ).current_selection()
+        self._room_selections[room_id] = running
         logger.info(
-            "Switched ACP session %s for room %s to %s", session_id, room_id, selection
+            "ACP session %s for room %s now runs %s", session_id, room_id, running
         )
 
     def _room_selection(self, room_id: str) -> ModelSelection:
@@ -1107,7 +1123,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """Apply caller-selected values from the session's live ACP catalog."""
         selection = self._room_selection(room_id)
         if not selection.is_empty:
-            await self._apply_model_selection(runtime, session_id, selection)
+            await self._apply_room_selection(runtime, room_id, session_id, selection)
         elif self._resolve_session_config is not None:
             await self._apply_resolved_config(
                 resolver=self._resolve_session_config,
@@ -1115,6 +1131,26 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id=session_id,
                 runtime=runtime,
             )
+
+    async def _apply_room_selection(
+        self,
+        runtime: ACPRuntime,
+        room_id: str,
+        session_id: str,
+        selection: ModelSelection,
+    ) -> None:
+        try:
+            await self._apply_model_selection(runtime, session_id, selection)
+        except ACPConfigError:
+            # A remembered switch the agent no longer accepts must fail this
+            # turn only; later sessions go back to the configured selection.
+            if self._room_selections.pop(room_id, None) is not None:
+                logger.warning(
+                    "Room %s's switched model was refused; reverting to %s",
+                    room_id,
+                    self.model_selection,
+                )
+            raise
 
     async def _apply_model_selection(
         self, runtime: ACPRuntime, session_id: str, selection: ModelSelection

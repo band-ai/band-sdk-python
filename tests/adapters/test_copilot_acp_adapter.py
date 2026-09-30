@@ -307,32 +307,39 @@ class TestCopilotACPModelSelection:
     async def test_a_partly_applied_switch_leaves_the_room_on_what_the_agent_runs(
         self,
     ) -> None:
-        # The model lands before the effort is refused, so switching back
-        # must reach the agent rather than match the pre-switch catalog.
+        # The model lands before the effort is refused; the room's next
+        # session must start on it, not on the pre-switch model.
         agent = copilot()
 
         async with copilot_room(agent) as session:
             await session.send("Hello")
             with pytest.raises(BandConfigError):
                 await switch_room(session, model="gpt-5.4", reasoning_effort="max")
-            await switch_room(session, model="claude-sonnet-5")
+            await session.adapter.on_cleanup("room-1")
+            await session.send("Again")
 
-        assert agent.current_value("model") == "claude-sonnet-5"
+        assert agent.config_selections("fake-session-2") == [
+            ("model", "gpt-5.4"),
+            ("reasoning_effort", "medium"),
+        ]
 
     @pytest.mark.asyncio
     async def test_a_switch_follows_a_model_the_agent_chose_itself(self) -> None:
         agent = copilot()
 
         @agent.on_prompt
-        async def pick_gpt(fake: FakeACPAgent, session_id: str) -> None:
-            await fake.selects_on_its_own(session_id, "model", "gpt-5.4")
+        async def pick_haiku(fake: FakeACPAgent, session_id: str) -> None:
+            await fake.selects_on_its_own(session_id, "model", "claude-haiku-4.5")
             await fake.say(session_id, "Switched")
 
         async with copilot_room(agent) as session:
-            await session.send("Use gpt")
-            await switch_room(session, model="claude-sonnet-5")
+            await session.send("Use haiku")
+            with pytest.raises(BandConfigError) as rejected:
+                await switch_room(session, reasoning_effort="high")
 
-        assert agent.current_value("model") == "claude-sonnet-5"
+        assert str(rejected.value) == (
+            'model "claude-haiku-4.5" offers no reasoning effort'
+        )
 
     @pytest.mark.asyncio
     async def test_concurrent_switches_on_a_room_apply_in_call_order(self) -> None:
@@ -383,7 +390,7 @@ class TestCopilotACPModelSelection:
         self,
     ) -> None:
         # Haiku offers no effort, so the room's next session must not ask for
-        # the configured "high" (found live: it failed configuration).
+        # the configured "high".
         agent = copilot()
 
         async with copilot_room(
@@ -398,6 +405,29 @@ class TestCopilotACPModelSelection:
         assert agent.config_selections("fake-session-2") == [
             ("model", "claude-haiku-4.5")
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_remembered_switch_the_agent_refuses_fails_one_turn_only(
+        self,
+    ) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            await switch_room(session, model="gpt-5.4")
+            await session.adapter.on_cleanup("room-1")
+            agent.advertises_models(
+                {"claude-sonnet-5": COPILOT_EFFORTS["claude-sonnet-5"]},
+                current="claude-sonnet-5",
+            )
+            refused = await session.send("Again")
+            recovered = await session.send("And again")
+
+        assert refused.errors == [
+            CONFIG_FAILURE_PREFIX
+            + 'model "gpt-5.4" is not advertised; available: claude-sonnet-5'
+        ]
+        assert recovered.texts == ["Configured"]
 
     @pytest.mark.asyncio
     async def test_a_switch_queued_behind_a_room_cleanup_names_the_ended_session(

@@ -718,6 +718,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     def config_options(self, session_id: str) -> tuple[SessionConfigOption, ...]:
         return self._config_options.get(session_id, ())
 
+    def forget_config_options(self, session_id: str) -> None:
+        self._config_options.pop(session_id, None)
+
     def reset_session(self, session_id: str) -> None:
         self._session_chunks.pop(session_id, None)
         self._permission_handlers.pop(session_id, None)
@@ -846,7 +849,7 @@ class ACPRuntime:
         self._agent_mcp_transport: MCPTransportKind = "http"
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
-        self._config_locks: dict[str, asyncio.Lock] = {}
+        self._config_lock = asyncio.Lock()
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -1022,14 +1025,15 @@ class ACPRuntime:
             return ()
         return self._client.config_options(session_id)
 
-    def config_lock(self, session_id: str) -> asyncio.Lock:
-        """Held across a runtime switch on ``session_id``.
+    @property
+    def config_lock(self) -> asyncio.Lock:
+        """Held across a runtime switch.
 
         Each step is checked against the catalog the previous one returned, so
         an interleaved switch would validate against a model no longer current.
         Session setup needs no lock: its room is not yet published to switch.
         """
-        return self._config_locks.setdefault(session_id, asyncio.Lock())
+        return self._config_lock
 
     def _record_config_options(self, session_id: str, response: object) -> None:
         options = session_config_options(response)
@@ -1038,6 +1042,8 @@ class ACPRuntime:
 
     async def close_session(self, session_id: str) -> None:
         """Close a session when the agent advertised lifecycle support."""
+        if self._client is not None:
+            self._client.forget_config_options(session_id)
         if not self._agent_supports_session_close:
             return
         conn = await self.ensure_connection(can_respawn=False)

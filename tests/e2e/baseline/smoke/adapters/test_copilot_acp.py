@@ -132,6 +132,12 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
     band_results.assert_json_output()
 
 
+def skip_without_github_token(settings: BaselineSettings) -> None:
+    """Hosted-auth coverage is optional; the BYOK cells are the lane's bar."""
+    if not settings.backends.github_token:
+        pytest.skip("GITHUB_TOKEN unset — the Copilot-hosted smokes need one")
+
+
 def hermetic_copilot_config(
     settings: BaselineSettings,
     work_dir: Path,
@@ -184,8 +190,7 @@ def hermetic_copilot_config(
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize(
     "reasoning_effort",
-    # "high" differs from the hosted model's advertised default ("medium"),
-    # so the typed selection is really sent through session/set_config_option.
+    # A non-default effort the hosted model advertises (its default: "medium").
     [pytest.param(None, id="default"), pytest.param("high", id="typed-effort")],
 )
 async def test_copilot_hosted_auth_replies(
@@ -209,8 +214,7 @@ async def test_copilot_hosted_auth_replies(
         CopilotACPAdapter,
     )
 
-    if not baseline_settings.backends.github_token:
-        pytest.skip("GITHUB_TOKEN unset — the Copilot-hosted auth smoke needs one")
+    skip_without_github_token(baseline_settings)
 
     marker = unique_marker("hosted")
     identity = await resource_manager.provision_agent("copilot-hosted-auth")
@@ -243,7 +247,7 @@ async def test_copilot_hosted_auth_replies(
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
-@requires(Dep.COPILOT_CLI, Dep.ANTHROPIC)
+@requires(Dep.COPILOT_CLI)
 @pytest.mark.timeout(extra=180)  # Copilot CLI cold boot
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize(
@@ -254,6 +258,7 @@ async def test_copilot_hosted_auth_replies(
             False,
             {"model": "not-a-model"},
             "ACP session advertises no model option.",
+            marks=requires(Dep.ANTHROPIC),
             id="byok-model",
         ),
         # Hosted sessions advertise per-model efforts; the refusal proves the
@@ -282,8 +287,8 @@ async def test_copilot_turn_fails_loudly_on_an_unadvertised_selection(
         CopilotACPAdapter,
     )
 
-    if hosted and not baseline_settings.backends.github_token:
-        pytest.skip("GITHUB_TOKEN unset — the Copilot-hosted auth smoke needs one")
+    if hosted:
+        skip_without_github_token(baseline_settings)
 
     identity = await resource_manager.provision_agent("copilot-unadvertised")
     room_id = await resource_manager.provision_room(
