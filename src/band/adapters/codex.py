@@ -544,9 +544,9 @@ class CodexAdapterConfig(BaseSettings):
     @field_validator("skill_roots")
     @classmethod
     def _require_absolute_paths(cls, roots: list[str]) -> list[str]:
-        for root in roots:
-            if not Path(root).is_absolute():
-                raise ValueError(f"skill_roots entries must be absolute: {root!r}")
+        relative = [root for root in roots if not Path(root).is_absolute()]
+        if relative:
+            raise ValueError(f"skill_roots must be absolute paths: {relative}")
         return roots
 
     @classmethod
