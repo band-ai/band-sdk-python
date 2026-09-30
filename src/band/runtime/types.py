@@ -80,8 +80,6 @@ class AgentConfig:
     # (the recovery sweep has no liveness check) and stateful adapters
     # resume the same on-disk sessions, splitting one conversation.
     single_instance: bool = True
-    # Platform-side handling of a second connection for this agent id, on any
-    # host; see ConflictPolicy.
     conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE
 
 

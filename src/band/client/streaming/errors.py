@@ -28,8 +28,6 @@ class WebSocketUpgradeError(Exception):
 
     @property
     def is_connection_conflict(self) -> bool:
-        """The platform refused an ``on_conflict=reject`` connect because the
-        agent already has a live connection."""
         return self.code == "connection_conflict"
 
     @classmethod

@@ -29,14 +29,14 @@ class MessageType(StrEnum):
 
 
 class ConflictPolicy(StrEnum):
-    """What the platform does when an agent connects while it already has a
-    live connection. The values are the platform's ``on_conflict`` wire values.
+    """What the platform does with a second connection for an agent id; the
+    values are its ``on_conflict`` wire values.
 
-    ``SUPERSEDE`` (the platform default): last connection wins; the incumbent
-    is told to stay down. ``REJECT``: first connection wins; the new connect is
-    refused, so a duplicate start fails instead of displacing the running
-    agent. Enforced per agent id across every host, best-effort across
-    platform pods.
+    ``REJECT`` spans every host but only guards against accidental duplicates:
+    it is best-effort across platform pods, covers the initial connect only (a
+    reconnect must supersede the client's own stale socket), takes effect after
+    the adapter has started, and is ignored by platforms that predate it
+    (before 2026-05).
     """
 
     SUPERSEDE = "supersede"

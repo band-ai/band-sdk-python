@@ -285,8 +285,7 @@ removed.
 ### Transport health
 
 Band allows one consumer per agent key, so a second consumer supersedes the
-first (the platform default, `ConflictPolicy.SUPERSEDE`, which the relay keeps)
-— and a superseded socket is silent rather than erroring. `BandLink`
+first — and a superseded socket is silent rather than erroring. `BandLink`
 queues a terminal `WebSocketDisconnectedEvent` for exactly this, and
 `RoomPresence` forwards it through its `on_disconnected` hook (the previously
 missing twin of `on_reconnected`). The leader therefore relinquishes the lock

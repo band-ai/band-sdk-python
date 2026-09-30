@@ -41,13 +41,9 @@ class BandConfigError(BandError):
 
 
 class AgentAlreadyRunningError(BandConfigError):
-    """Another instance of this agent id already runs, so this start was refused.
-
-    Raised by both duplicate guards: the per-host lock
-    (``AgentConfig.single_instance``) and the platform's refusal of a second
-    connection (``AgentConfig.conflict_policy``). A supervisor should treat it
-    as "do not restart-loop", not as a crash.
-    """
+    """A second instance of this agent id was refused, by the host lock
+    (``AgentConfig.single_instance``) or the platform
+    (``AgentConfig.conflict_policy``)."""
 
 
 class BandConnectionError(BandError):

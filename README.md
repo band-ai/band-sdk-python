@@ -770,7 +770,7 @@ from band import (
 | ------------------------ | ----------------- |
 | `BandError`           | Base class for SDK-specific errors |
 | `BandConfigError`     | Invalid adapter configuration or feature options |
-| `AgentAlreadyRunningError` | A `BandConfigError` for a refused duplicate start; see [Refusing duplicate instances](docs/adapters/managed-host-adapters.md#refusing-duplicate-instances) |
+| `AgentAlreadyRunningError` | A `BandConfigError` for a refused duplicate start |
 | `BandConnectionError` | WebSocket or REST transport failures |
 | `BandToolError`       | Platform or custom-tool execution failures |
 
@@ -823,7 +823,7 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 
 - Verify `BAND_WS_URL` points to the correct environment. The default is Band Cloud; override only for self-hosted deployments.
 - Check network and firewall rules for WebSocket (`wss://`) traffic.
-- Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection; see [Refusing duplicate instances](docs/adapters/managed-host-adapters.md#refusing-duplicate-instances) to have a second start refused instead.
+- Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
 
 ### Adapter Dependency Conflicts
 
