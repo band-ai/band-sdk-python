@@ -1,0 +1,83 @@
+"""RoomTeardown - stops one execution and cleans its room up, until both succeed."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+
+from band.runtime.execution import Execution
+
+
+class RoomTeardown:
+    """Owns one execution from the moment it must be released.
+
+    Callers share one in-flight attempt, and a cancelled caller leaves it
+    running for the next. The next ``run`` after a failed stop or cleanup
+    starts a fresh attempt; a cleanup retry does not stop the execution again.
+    A stop that outlasts ``deadline_s`` is abandoned and counts as a failed
+    attempt.
+    """
+
+    def __init__(
+        self,
+        execution: Execution,
+        cleanup: Callable[[], Awaitable[None]],
+        forget: Callable[[], None],
+        deadline_s: float,
+    ) -> None:
+        self._execution = execution
+        self._cleanup = cleanup
+        self._forget = forget
+        self._deadline_s = deadline_s
+        self._attempt: asyncio.Task[bool] | None = None
+        self._graceful_stop: asyncio.Task[bool] | None = None
+        # Sticky once any caller asks for an immediate stop, so a later
+        # graceful request cannot extend it.
+        self._immediate = False
+        # The stop's graceful result; a cleanup retry reuses it.
+        self._stopped: bool | None = None
+
+    async def run(self, timeout: float | None) -> bool:
+        """Join the in-flight attempt, or start one. True if stopped gracefully."""
+        if timeout is None:
+            self._hurry()
+        attempt = self._attempt
+        if attempt is None or (attempt.done() and attempt.exception() is not None):
+            attempt = self._attempt = asyncio.create_task(self._finish(timeout))
+        return await asyncio.shield(attempt)
+
+    def _hurry(self) -> None:
+        self._immediate = True
+        if self._graceful_stop is not None:
+            self._graceful_stop.cancel()
+
+    async def _finish(self, timeout: float | None) -> bool:
+        stopped = self._stopped
+        if stopped is None:
+            async with asyncio.timeout(self._deadline_s):
+                stopped = self._stopped = await self._stop(timeout)
+        async with asyncio.timeout(self._deadline_s):
+            await self._cleanup()
+        self._forget()
+        return stopped
+
+    async def _stop(self, timeout: float | None) -> bool:
+        """Stop the execution; an immediate request preempts a graceful stop.
+
+        Only one ``stop()`` call runs at a time: a preempted graceful stop is
+        cancelled first, then followed by ``stop(timeout=None)``.
+        """
+        if timeout is None or self._immediate:
+            return await self._execution.stop(timeout=None)
+        graceful_stop = self._graceful_stop = asyncio.create_task(
+            self._execution.stop(timeout=timeout)
+        )
+        try:
+            await asyncio.wait({graceful_stop})
+        finally:
+            self._graceful_stop = None
+            graceful_stop.cancel()
+        if graceful_stop.cancelled():
+            await self._execution.stop(timeout=None)
+            return False
+        return graceful_stop.result()
