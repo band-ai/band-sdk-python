@@ -30,6 +30,7 @@ from band.integrations.acp.session_config import (
     ACPConfigUnreachableError,
     SessionConfigOption,
     apply_session_config_selections,
+    find_select,
 )
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
@@ -518,13 +519,8 @@ class ThinkingIdAdapter(ACPClientAdapter):
     def locate_model_options(
         self, options: Sequence[SessionConfigOption]
     ) -> ACPModelOptions:
-        selects = {
-            option.id: option
-            for option in options
-            if isinstance(option, SessionConfigOptionSelect)
-        }
         return ACPModelOptions(
-            model=selects.get("model"), effort=selects.get("thinking")
+            model=find_select(options, "model"), effort=find_select(options, "thinking")
         )
 
 

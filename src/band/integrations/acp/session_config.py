@@ -86,6 +86,20 @@ def select_values(option: SessionConfigOptionSelect) -> tuple[str, ...]:
     return tuple(entry.value for entry in flatten_select_options(option.options))
 
 
+def find_select(
+    options: Sequence[SessionConfigOption], option_id: str
+) -> SessionConfigOptionSelect | None:
+    """The select option with ``option_id`` in an ACP catalog, if any."""
+    return next(
+        (
+            option
+            for option in options
+            if isinstance(option, SessionConfigOptionSelect) and option.id == option_id
+        ),
+        None,
+    )
+
+
 def select_ids(options: Sequence[SessionConfigOption]) -> tuple[str, ...]:
     """The ids of the select options in an ACP catalog."""
     return tuple(
@@ -132,8 +146,8 @@ async def apply_session_config_selections(
                 message=f'ACP config value for option "{option_id}" must be a string.',
             )
 
-        option = next((entry for entry in catalog if entry.id == option_id), None)
-        if not isinstance(option, SessionConfigOptionSelect):
+        option = find_select(catalog, option_id)
+        if option is None:
             raise ACPConfigError(
                 session_id=session_id,
                 option_id=option_id,
@@ -225,8 +239,8 @@ def refreshed_catalog(
             selected_value=selected_value,
             message=f'ACP config option "{option_id}" returned a malformed catalog.',
         )
-    selected_option = next((entry for entry in catalog if entry.id == option_id), None)
-    if not isinstance(selected_option, SessionConfigOptionSelect):
+    selected_option = find_select(catalog, option_id)
+    if selected_option is None:
         raise ACPConfigError(
             session_id=session_id,
             option_id=option_id,

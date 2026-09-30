@@ -15,6 +15,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, ClassVar, TypeAlias
 from uuid import uuid4
 
@@ -1148,11 +1149,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         try:
             await self._apply_model_selection(runtime, session_id, selection)
         except ACPConfigUnreachableError:
-            logger.warning(
-                "Room %s's switched model %s got no answer; keeping it",
-                room_id,
-                selection,
-            )
             raise
         except ACPConfigError:
             # A remembered switch the agent no longer accepts must fail this
@@ -1170,7 +1166,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     ) -> None:
         await apply_model_selection(
             session_id=session_id,
-            config_options=runtime.config_options(session_id),
+            catalog=partial(runtime.config_options, session_id),
             selection=selection,
             locate=self.locate_model_options,
             set_option=_config_setter(runtime),

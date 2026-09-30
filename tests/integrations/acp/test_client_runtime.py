@@ -27,6 +27,7 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
     tcp_spawn_process,
 )
+from band.integrations.acp.session_config import select_ids
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
 
@@ -863,7 +864,7 @@ class TestACPRuntime:
             case "close_session":
                 await runtime.close_session("sess-1")
 
-        assert [option.id for option in advertised] == ["model"]
+        assert select_ids(advertised) == ("model",)
         assert runtime.config_options("sess-1") == ()
 
     @pytest.mark.asyncio

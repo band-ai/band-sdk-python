@@ -88,31 +88,29 @@ def locate_model_options(options: Sequence[SessionConfigOption]) -> ACPModelOpti
 async def apply_model_selection(
     *,
     session_id: str,
-    config_options: Sequence[SessionConfigOption],
+    catalog: Callable[[], Sequence[SessionConfigOption]],
     selection: ModelSelection,
     locate: Callable[[Sequence[SessionConfigOption]], ACPModelOptions],
     set_option: SessionConfigSetter,
-) -> tuple[SessionConfigOption, ...]:
-    """Select the model, then the effort from the catalog that model returns.
+) -> None:
+    """Select the model, then the effort, each against the session's catalog
+    as it stands then.
 
     Choosing a model can add, remove, or replace the effort select, so the
     effort is located and checked only after the model has been applied.
-    Returns the catalog after the last change.
     """
-    options = tuple(config_options)
     for setting in ModelSetting:
         value = selection.value_of(setting)
         if value is None:
             continue
-        options = await _apply_setting(
+        await _apply_setting(
             session_id=session_id,
-            config_options=options,
+            config_options=tuple(catalog()),
             setting=setting,
             value=value,
             locate=locate,
             set_option=set_option,
         )
-    return options
 
 
 async def _apply_setting(
@@ -123,7 +121,7 @@ async def _apply_setting(
     value: str,
     locate: Callable[[Sequence[SessionConfigOption]], ACPModelOptions],
     set_option: SessionConfigSetter,
-) -> tuple[SessionConfigOption, ...]:
+) -> None:
     located = locate(config_options)
     option = located.option_for(setting)
     option_id = option.id if option is not None else setting
@@ -149,7 +147,7 @@ async def _apply_setting(
                 f"{listing(select_ids(config_options))}."
             ),
         )
-    return await apply_session_config_selections(
+    await apply_session_config_selections(
         session_id=session_id,
         config_options=config_options,
         selections={option.id: value},

@@ -42,7 +42,7 @@ from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
-from band.integrations.acp.session_config import SessionConfigOption
+from band.integrations.acp.session_config import SessionConfigOption, find_select
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
@@ -514,15 +514,8 @@ class FakeACPAgent:
 
     def current_value(self, option_id: str) -> str | None:
         """The value the agent currently has selected for ``option_id``."""
-        return next(
-            (
-                option.current_value
-                for option in self._config_options
-                if option.id == option_id
-                and isinstance(option, SessionConfigOptionSelect)
-            ),
-            None,
-        )
+        option = find_select(self._config_options, option_id)
+        return option.current_value if option is not None else None
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""

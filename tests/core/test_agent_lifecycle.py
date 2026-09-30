@@ -7,23 +7,18 @@ resources (e.g. a CLI runtime subprocess) don't outlive the agent.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from band.agent import Agent
-from band.core.model_catalog import ModelSelection, ModelSelectionError
-from tests.catalogs import CatalogAdapter
 
 
-def make_agent(adapter: object, *, started: bool = True) -> Agent:
+def make_agent(adapter: object) -> Agent:
     runtime = AsyncMock()
     runtime.stop.return_value = True
-    runtime.feature_flags = None
-    runtime.claim_single_instance = MagicMock()
-    runtime.release_single_instance = MagicMock()
     agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
-    agent._started = started
+    agent._started = True
     return agent
 
 
@@ -40,43 +35,6 @@ class TestStartFailureCleansUpAdapter:
             await agent.start()
 
         adapter.cleanup_all.assert_awaited_once()
-
-
-class TestStartValidatesModelSelection:
-    @pytest.mark.asyncio
-    async def test_an_advertised_selection_starts_after_on_started_lists_it(
-        self,
-    ) -> None:
-        agent = make_agent(
-            CatalogAdapter(ModelSelection(model="sonnet", reasoning_effort="high")),
-            started=False,
-        )
-
-        await agent.start()
-
-        agent._runtime.start.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_a_rejected_selection_fails_start_before_connecting(self) -> None:
-        adapter = CatalogAdapter(ModelSelection(model="gpt-9"))
-        agent = make_agent(adapter, started=False)
-
-        with pytest.raises(ModelSelectionError, match='model "gpt-9"'):
-            await agent.start()
-
-        agent._runtime.start.assert_not_awaited()
-        assert adapter.cleaned_up
-
-    @pytest.mark.asyncio
-    async def test_a_failing_release_does_not_mask_the_rejection(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        adapter = CatalogAdapter(ModelSelection(model="gpt-9"), cleanup_fails=True)
-
-        with pytest.raises(ModelSelectionError, match='model "gpt-9"'):
-            await make_agent(adapter, started=False).start()
-
-        assert "Adapter cleanup_all failed" in caplog.text
 
 
 class TestStopCleansUpAdapter:

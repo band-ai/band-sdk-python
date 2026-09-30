@@ -37,9 +37,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # -- that vocabulary answers a different question ("is this tool observational,
 # not terminal work, for no-reply detection"), which only coincides with this one today.
 BAND_EVENT_TOOL_NAME = "band_send_event"
-# Room text for a refused typed selection. Literal: importing the SDK's
-# constant would need the acp extra at collection time.
-CONFIG_FAILURE_PREFIX = "ACP session configuration failed: "
 
 
 @with_adapters(Adapter.COPILOT_ACP, **TOOL_AGENT)
@@ -172,13 +169,11 @@ def hermetic_copilot_config(
         "cwd": str(work_dir),
         "custom_section": "Keep responses short and concise.",
         "env": (hosted_env if hosted else copilot_acp_env(settings, home)),
+        "model": model,
+        "reasoning_effort": reasoning_effort,
     }
     if hosted:
         kwargs["github_token"] = settings.backends.github_token
-    if model is not None:
-        kwargs["model"] = model
-    if reasoning_effort is not None:
-        kwargs["reasoning_effort"] = reasoning_effort
     if settings.backends.copilot_command.strip():
         kwargs["command"] = tuple(settings.backends.copilot_command.split())
     return CopilotACPAdapterConfig(**kwargs)
@@ -283,6 +278,9 @@ async def test_copilot_turn_fails_loudly_on_an_unadvertised_selection(
     visible error naming what it offers, rather than being ignored."""
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapter,
+    )
+    from band.integrations.acp.session_config import (  # noqa: PLC0415 -- same acp extra as above
+        CONFIG_FAILURE_PREFIX,
     )
 
     if hosted:

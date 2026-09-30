@@ -34,7 +34,11 @@ from band.integrations.acp.session_config import (
     CONFIG_FAILURE_PREFIX,
     ACPConfigRequest,
 )
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import (
+    EFFORT_OPTION_ID,
+    MODEL_OPTION_ID,
+    FakeACPAgent,
+)
 from tests.integrations.acp.acp_toolkit.harness import AcpSession, started_acp_adapter
 
 
@@ -223,8 +227,8 @@ class TestCopilotACPModelSelection:
 
         assert reply.texts == ["Configured"]
         assert agent.config_selections() == [
-            ("model", "gpt-5.4"),
-            ("reasoning_effort", "high"),
+            (MODEL_OPTION_ID, "gpt-5.4"),
+            (EFFORT_OPTION_ID, "high"),
         ]
 
     @pytest.mark.asyncio
@@ -242,7 +246,7 @@ class TestCopilotACPModelSelection:
 
         assert reply.texts == ["Configured"]
         assert agent.config_option_requests == [
-            ("persisted-session", "model", "gpt-5.4")
+            ("persisted-session", MODEL_OPTION_ID, "gpt-5.4")
         ]
 
     @pytest.mark.asyncio
@@ -258,13 +262,13 @@ class TestCopilotACPModelSelection:
             ),
             pytest.param(
                 {"model": "claude-haiku-4.5", "reasoning_effort": "high"},
-                [("model", "claude-haiku-4.5")],
+                [(MODEL_OPTION_ID, "claude-haiku-4.5")],
                 'model "claude-haiku-4.5" offers no reasoning effort',
                 id="model-without-efforts",
             ),
             pytest.param(
                 {"model": "gpt-5.4", "reasoning_effort": "max"},
-                [("model", "gpt-5.4")],
+                [(MODEL_OPTION_ID, "gpt-5.4")],
                 'reasoning effort "max" is not advertised for model "gpt-5.4"; '
                 "available: none, low, medium, high, xhigh",
                 id="effort-the-model-lacks",
@@ -301,7 +305,7 @@ class TestCopilotACPModelSelection:
         assert str(rejected.value) == (
             'model "claude-haiku-4.5" offers no reasoning effort'
         )
-        assert agent.config_selections() == [("model", "claude-haiku-4.5")]
+        assert agent.config_selections() == [(MODEL_OPTION_ID, "claude-haiku-4.5")]
 
     @pytest.mark.asyncio
     async def test_a_partly_applied_switch_does_not_carry_to_later_sessions(
@@ -318,9 +322,7 @@ class TestCopilotACPModelSelection:
             await session.adapter.on_cleanup("room-1")
             await session.send("Again")
 
-        assert agent.config_selections("fake-session-2") == [
-            ("reasoning_effort", "high")
-        ]
+        assert agent.config_selections("fake-session-2") == [(EFFORT_OPTION_ID, "high")]
 
     @pytest.mark.asyncio
     async def test_an_empty_switch_leaves_the_room_on_its_configured_selection(
@@ -331,13 +333,15 @@ class TestCopilotACPModelSelection:
         async with copilot_room(agent, model="gpt-5.4") as session:
             await session.send("Hello")
             await agent.selects_on_its_own(
-                agent.session_ids()[0], "model", "claude-haiku-4.5"
+                session.session_id("room-1"), MODEL_OPTION_ID, "claude-haiku-4.5"
             )
             await switch_room(session)
             await session.adapter.on_cleanup("room-1")
             await session.send("Again")
 
-        assert agent.config_selections("fake-session-2") == [("model", "gpt-5.4")]
+        assert agent.config_selections("fake-session-2") == [
+            (MODEL_OPTION_ID, "gpt-5.4")
+        ]
 
     @pytest.mark.asyncio
     async def test_a_switch_follows_a_model_the_agent_chose_itself(self) -> None:
@@ -345,7 +349,9 @@ class TestCopilotACPModelSelection:
 
         @agent.on_prompt
         async def pick_haiku(fake: FakeACPAgent, session_id: str) -> None:
-            await fake.selects_on_its_own(session_id, "model", "claude-haiku-4.5")
+            await fake.selects_on_its_own(
+                session_id, MODEL_OPTION_ID, "claude-haiku-4.5"
+            )
             await fake.say(session_id, "Switched")
 
         async with copilot_room(agent) as session:
@@ -373,8 +379,8 @@ class TestCopilotACPModelSelection:
             await asyncio.gather(first, second)
 
         assert agent.config_selections() == [
-            ("model", "gpt-5.4"),
-            ("reasoning_effort", "none"),
+            (MODEL_OPTION_ID, "gpt-5.4"),
+            (EFFORT_OPTION_ID, "none"),
         ]
 
     @pytest.mark.asyncio
@@ -402,8 +408,8 @@ class TestCopilotACPModelSelection:
             await session.send("Again", bootstrap=history is not None, history=history)
 
         assert agent.config_selections(next_session) == [
-            ("model", "gpt-5.4"),
-            ("reasoning_effort", "high"),
+            (MODEL_OPTION_ID, "gpt-5.4"),
+            (EFFORT_OPTION_ID, "high"),
         ]
 
     @pytest.mark.asyncio
@@ -424,7 +430,7 @@ class TestCopilotACPModelSelection:
 
         assert reply.errors == []
         assert agent.config_selections("fake-session-2") == [
-            ("model", "claude-haiku-4.5")
+            (MODEL_OPTION_ID, "claude-haiku-4.5")
         ]
 
     @pytest.mark.asyncio
@@ -468,7 +474,10 @@ class TestCopilotACPModelSelection:
             await session.send("And again")
 
         assert "did not respond" in timed_out.errors[0]
-        assert agent.config_selections("fake-session-3")[0] == ("model", "gpt-5.4")
+        assert agent.config_selections("fake-session-3")[0] == (
+            MODEL_OPTION_ID,
+            "gpt-5.4",
+        )
 
     @pytest.mark.asyncio
     async def test_a_switch_refused_before_any_change_leaves_the_room_unpinned(
