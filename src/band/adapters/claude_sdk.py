@@ -46,6 +46,7 @@ try:
         HookMatcher,
         PermissionResultAllow,
         PermissionResultDeny,
+        SdkPluginConfig,
         ToolPermissionContext,
     )
 
@@ -465,7 +466,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self.plugin_dirs: list[str] = list(plugin_dirs or [])
         self.cli_path = cli_path
         self.env: dict[str, str] = dict(env or {})
-        self.add_dirs: list[str] = list(add_dirs or [])
+        self.add_dirs: list[str | Path] = list(add_dirs or [])
         self.extra_args: dict[str, str | None] = dict(extra_args or {})
         if reserved := _reserved_extra_args(self.extra_args):
             raise ValueError(
@@ -593,6 +594,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # cast: the public param is list[str]; the SDK types it as a list of the
             # "user"/"project"/"local" literals. The CLI validates the values.
             setting_sources=cast("Any", self.setting_sources),
+            plugins=[
+                SdkPluginConfig(type="local", path=path) for path in self.plugin_dirs
+            ],
+            cli_path=self.cli_path,
+            env=self.env,
+            add_dirs=self.add_dirs,
+            extra_args=self.extra_args,
         )
 
         # Add extended thinking if configured
@@ -602,8 +610,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # Set working directory if configured
         if self.cwd:
             sdk_options.cwd = self.cwd
-
-        self._apply_cli_passthrough(sdk_options)
 
         # When approval_mode is set, add a PreToolUse hook that returns
         # "ask" for native tools so the SDK delegates to can_use_tool instead
@@ -657,21 +663,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
         return backend
-
-    def _apply_cli_passthrough(self, sdk_options: ClaudeAgentOptions) -> None:
-        """Map the host's CLI passthrough options; omitted ones stay SDK defaults."""
-        if self.plugin_dirs:
-            sdk_options.plugins = [
-                {"type": "local", "path": path} for path in self.plugin_dirs
-            ]
-        if self.cli_path:
-            sdk_options.cli_path = self.cli_path
-        if self.env:
-            sdk_options.env = dict(self.env)
-        if self.add_dirs:
-            sdk_options.add_dirs = list(self.add_dirs)
-        if self.extra_args:
-            sdk_options.extra_args = dict(self.extra_args)
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
