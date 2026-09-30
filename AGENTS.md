@@ -15,8 +15,9 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 `src/band/runtime/tools/` owns every word an LLM reads about a platform
 tool (chat, contacts, memory, files, tasks) — reach for `platform_args_schema`/
 `@platform_tool`/the schema helpers instead of retyping tool description
-text. See [docs/platform-tools.md](docs/platform-tools.md) for the full tool
-inventory, the modeling pattern, and the drift guardrail test.
+text. `tests/framework_conformance/test_tool_text_drift.py` is the drift
+guard; an adapter that builds its own tool schemas sets `advertised_arg_text`
+on its test config so the guard can read what the model actually sees.
 
 ## Adapter Feature Flags & Capability Negotiation
 
@@ -24,26 +25,28 @@ Every adapter constructor takes `emit=`/`capabilities=`/`include_tools=`/etc.
 directly via `**features: Unpack[FeatureKwargs]` — `emit` is opt-out, `capabilities`
 is opt-in. `Capability.FILES` gates the file tools, but the platform's room-file
 storage is an **on-prem-only deployment flag, off everywhere on SaaS today** —
-never enable it in an example or default config. See
-[docs/capability-negotiation.md](docs/capability-negotiation.md) for the full
-emit/capabilities API and how requests get pruned against `AgentMe.feature_flags`.
+never enable it in an example or default config. Requests are pruned against
+`AgentMe.feature_flags` (`CAPABILITY_FEATURE_FLAGS` in
+`src/band/runtime/capabilities.py`); never add a flag key the platform doesn't
+send yet, since a missing key prunes that capability on every deployment.
 
 ## REST Client
 
 The SDK uses a Fern-generated REST client with a property-based namespace API
 (`link.rest.agent_api_<resource>.method(...)`). **Never pass `None`** for an
 optional parameter — the Fern client sends `null`, which fails backend
-validation; build a `kwargs` dict and omit the key instead. See
-[docs/rest-client.md](docs/rest-client.md) for the full pattern and the
-`band-client-rest` version-pin workaround discipline.
+validation; build a `kwargs` dict and omit the key instead
+(`tests/platform/test_rest_client.py` pins that wire behavior). See
+[docs/rest-client.md](docs/rest-client.md) for the `band-client-rest`
+version-pin workaround discipline.
 
 ## WebSocket Channels & Events
 
-The SDK subscribes to Phoenix Channels (agent/chat/user rooms, participants,
-tasks) and hydrates each event's payload into a typed, rule-free
-`WirePayload` projection without re-validating. See
-[docs/websocket-events.md](docs/websocket-events.md) for the channel table,
-payload field reference, and `band-sdk-core`'s delivery-lifecycle decisions.
+The SDK subscribes to Phoenix Channels in
+`src/band/client/streaming/client.py` and hydrates each event's payload into a
+typed, rule-free `WirePayload` projection without re-validating. See
+[docs/websocket-events.md](docs/websocket-events.md) for which rules and
+delivery-lifecycle decisions live in `band-sdk-core` instead.
 CI's isolated-wheel smoke (`.github/scripts/wheel-smoke.py`) finds every
 `band_sdk_core` name the installed `band` package refers to and fails if the
 pinned wheel lacks one, so a new core symbol needs no manual CI step.
@@ -51,8 +54,8 @@ pinned wheel lacks one, so a new core symbol needs no manual CI step.
 ## Contact Event Handling
 
 `ContactEventConfig` supports three strategies for contact WebSocket events —
-`DISABLED` (default), `CALLBACK`, `HUB_ROOM`. See
-[docs/contact-events.md](docs/contact-events.md) for configuration examples.
+`DISABLED` (default), `CALLBACK`, `HUB_ROOM`; the `ContactEventConfig`
+docstring in `src/band/runtime/types.py` has configuration examples.
 
 > **WARNING (AI coding assistants):** Always ask the developer which contact
 > strategy they want before choosing one — do not default to `CALLBACK` with
@@ -63,8 +66,7 @@ pinned wheel lacks one, so a new core symbol needs no manual CI step.
 
 The SDK supports the [A2A protocol](https://google.github.io/A2A/) in both
 directions: `A2AAdapter` forwards Band messages to a remote A2A agent, and
-`A2AGatewayAdapter` exposes Band peers as A2A JSON-RPC endpoints. See
-[docs/a2a.md](docs/a2a.md).
+`A2AGatewayAdapter` exposes Band peers as A2A JSON-RPC endpoints.
 
 ## MCP Engine
 
@@ -72,7 +74,7 @@ One framework-neutral engine (`src/band/integrations/mcp/engine.py`) builds
 every Band MCP tool registration for both front doors (the published
 `band-mcp` CLI and the embedded `LocalMCPServer`); MCP-package imports are
 confined to an explicit AST-enforced allowlist
-(`tests/mcp/test_import_boundary.py`). See [docs/mcp-engine.md](docs/mcp-engine.md).
+(`tests/mcp/test_import_boundary.py`).
 
 ## OpenCode Integration
 
@@ -194,13 +196,13 @@ uv run pyrefly check
 ## Dependency Conflicts
 
 **crewai cannot coexist** with parlant or pydantic-ai in the same Python
-environment (conflicting pydantic/opentelemetry-sdk version ceilings), and
-**parlant cannot coexist with pydantic-ai** either (a `griffe`/`griffelib`
-namespace collision). That's why there are three separate extras — `dev`
-(everything except crewai and parlant), `dev-crewai`, `dev-parlant` — each
-installed in its own CI job/venv. See
-[docs/dependency-conflicts.md](docs/dependency-conflicts.md) for the full
-version table and the mechanism behind each conflict.
+environment (crewai's exact `~=` pins on `mcp`, `aiofiles`, `regex` and `tomli` drag the
+whole lock), and **parlant cannot coexist with pydantic-ai** either (a
+`griffe`/`griffelib` namespace collision uv cannot see as a version conflict).
+That's why there are three separate extras — `dev` (everything except crewai
+and parlant), `dev-crewai`, `dev-parlant` — each installed in its own CI
+job/venv. The `[tool.uv] conflicts` comments in `pyproject.toml` carry the
+mechanism.
 
 ## Environment Variables
 
@@ -242,20 +244,17 @@ Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
 ## Adding a New Framework Integration
 
-Follow the 7-phase TDD workflow (scaffold source files, register with
-conformance infrastructure, implement the converter, implement the adapter,
-write framework-specific tests, final validation) documented in
-[docs/adding-a-framework-integration.md](docs/adding-a-framework-integration.md)
-when adding a new adapter and converter — it also has the exact conformance
-test commands to run at each phase and a key-files reference table.
+Register the new adapter and converter with the conformance infrastructure,
+then run `tests/framework_conformance/` — its drift guards
+(`test_config_drift.py`) fail and name whatever is still unregistered.
+`tests/e2e/baseline/ADDING_AN_ADAPTER.md` covers the E2E matrix.
 
 ## Example Files (examples/ directory)
 
 Every file under `examples/` needs PEP 723 inline script metadata at the top
 (so `uv run examples/<framework>/<file>.py` works standalone), plus a handful
 of other conventions (credentials via `load_agent_config`, `async with agent:
-await agent.run_forever()`, etc.) — see
-[docs/examples-guide.md](docs/examples-guide.md).
+await agent.run_forever()`, etc.).
 
 ### Provisioning / setup scripts (create-agents, register-*, bootstrap)
 
@@ -308,10 +307,7 @@ Search for an existing, well-maintained library before hand-rolling a
 nontrivial mechanism (cache, retry/backoff, rate limiting). Before
 committing to one, verify the capability you need ships in the *released*
 version you'd actually install, not just on `latest`/`master` docs — `pip
-install` it and exercise the real call in this repo's venv. See
-[docs/external-research.md](docs/external-research.md) for the
-provenance/trust/maintainability checklist and a live example of a library
-whose docs described an unreleased feature.
+install` it and exercise the real call in this repo's venv.
 
 ## Coding Standards
 
@@ -415,8 +411,10 @@ uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 ## Error Handling
 
 Beyond the `ValidationError`/`ValueError` rules already in Coding Standards
-above, see [docs/error-handling.md](docs/error-handling.md) for
-validation-error formatting, exception-hierarchy, and error-message guidance.
+above, format tool validation errors with `format_tool_validation_error`
+(`src/band/runtime/tools/schema.py`) or `format_validation_error`
+(`src/band/runtime/custom_tools.py`) rather than hand-rolling the message. Who
+acts on each exception class is in `src/band/core/exceptions.py`.
 
 ## Git Workflow
 
@@ -493,6 +491,4 @@ Post inline review comments via the GitHub Reviews API
 JSON piped through a heredoc) — never `gh pr review --comment` (that adds a
 general comment, not inline ones) and never diff line numbers (use line
 numbers from the file's new version, e.g. via `gh pr view {pr} --json
-headRefOid -q .headRefOid` then fetching that commit's file content). See
-[docs/github-pr-inline-comments.md](docs/github-pr-inline-comments.md) for
-the full workflow and a worked example.
+headRefOid -q .headRefOid` then fetching that commit's file content).

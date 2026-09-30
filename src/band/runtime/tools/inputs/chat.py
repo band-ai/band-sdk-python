@@ -2,7 +2,6 @@
 
 Single source of truth for schemas: each class's docstring is the tool
 description, and each ``Field(description=...)`` is an argument description.
-See ``docs/platform-tools.md``.
 """
 
 from __future__ import annotations

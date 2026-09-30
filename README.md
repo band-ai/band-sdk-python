@@ -450,10 +450,10 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
 | LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [docs](docs/adapters/langgraph.md) | [examples](examples/langgraph/)     |
 | Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
-| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
+| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | | [examples](examples/anthropic/)     |
 | Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
 | Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
-| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | [docs](docs/adapters/managed-host-adapters.md) | [examples](examples/copilot_sdk/) |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
 | Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
@@ -462,7 +462,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
 | Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/managed-host-adapters.md) | [examples](examples/opencode/)       |
+| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/opencode.md) | [examples](examples/opencode/)       |
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 
@@ -831,10 +831,10 @@ Three extras are resolved separately, because crewai carries the narrowest trans
 
 | Pair | crewai's pin | Other side |
 | ---- | ------------ | ---------- |
-| `crewai` + `parlant` | `opentelemetry-sdk~=1.42.0` | parlant requires `>=1.37` |
 | `crewai` + `pydantic-ai` | `pydantic>=2.11.9,<2.13` | pydantic-ai-slim 2.x requires `pydantic>=2.12` |
+| `crewai` + every other extra | exact `~=` minors of `mcp`, `aiofiles`, `regex` and `tomli` | one shared lock would be pulled down to those versions |
 
-Today's versions happen to overlap, but crewai's ceilings move with every release. So the lockfile declares these as `[tool.uv] conflicts` and `uv lock` resolves each in a separate fork — no upgrade on one side waits for crewai's ceiling to move. Consequence: install one per environment, because a single `uv sync` can only pick one fork.
+Today's versions happen to overlap on `pydantic`, but crewai's ceilings move with every release. So the lockfile declares these as `[tool.uv] conflicts` and `uv lock` resolves each in a separate fork — no upgrade on one side waits for crewai's ceiling to move. Consequence: install one per environment, because a single `uv sync` can only pick one fork.
 
 `parlant` + `pydantic-ai` are separately resolved too, for an unrelated reason: it's not a version pin, it's a namespace collision. `parlant` depends on the `griffe` distribution; `pydantic-ai-slim` depends on `griffelib` — two different PyPI distributions that both install files into the same `griffe` import path. Installing both in one environment corrupts that path (whichever wheel's files land last wins per file, nondeterministic by install order). Also declared via `[tool.uv] conflicts`, so install `band-sdk[parlant]` and `band-sdk[pydantic-ai]` in separate environments, never together.
 
