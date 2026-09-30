@@ -37,10 +37,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # -- that vocabulary answers a different question ("is this tool observational,
 # not terminal work, for no-reply detection"), which only coincides with this one today.
 BAND_EVENT_TOOL_NAME = "band_send_event"
-# What a BYOK turn posts for a typed model: the session advertises no model select.
-BYOK_TYPED_MODEL_FAILURE = (
-    "ACP session configuration failed: ACP session advertises no model option."
-)
+# Room text for a refused typed selection. Literal: importing the SDK's
+# constant would need the acp extra at collection time.
+CONFIG_FAILURE_PREFIX = "ACP session configuration failed: "
 
 
 @with_adapters(Adapter.COPILOT_ACP, **TOOL_AGENT)
@@ -247,28 +246,53 @@ async def test_copilot_hosted_auth_replies(
 @requires(Dep.COPILOT_CLI, Dep.ANTHROPIC)
 @pytest.mark.timeout(extra=180)  # Copilot CLI cold boot
 @pytest.mark.asyncio(loop_scope="session")
-async def test_copilot_byok_turn_fails_loudly_on_a_typed_model(
+@pytest.mark.parametrize(
+    ("hosted", "selection", "failure"),
+    [
+        # Under BYOK the provider env picks the model; no model select exists.
+        pytest.param(
+            False,
+            {"model": "not-a-model"},
+            "ACP session advertises no model option.",
+            id="byok-model",
+        ),
+        # Hosted sessions advertise per-model efforts; the refusal proves the
+        # selection was checked against Copilot's live catalog.
+        pytest.param(
+            True,
+            {"reasoning_effort": "not-an-effort"},
+            'reasoning effort "not-an-effort" is not advertised for model',
+            id="hosted-effort",
+        ),
+    ],
+)
+async def test_copilot_turn_fails_loudly_on_an_unadvertised_selection(
     baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
     tmp_path: Any,
+    hosted: bool,
+    selection: dict[str, str],
+    failure: str,
 ) -> None:
-    """Under BYOK Copilot advertises no model select (the provider env picks the
-    model), so a typed ``model`` must fail the turn with a visible error rather
-    than be silently ignored, as the old ``--model`` flag was."""
+    """A typed selection the session does not advertise fails the turn with a
+    visible error naming what it offers, rather than being ignored."""
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapter,
     )
 
-    identity = await resource_manager.provision_agent("copilot-byok-typed-model")
+    if hosted and not baseline_settings.backends.github_token:
+        pytest.skip("GITHUB_TOKEN unset — the Copilot-hosted auth smoke needs one")
+
+    identity = await resource_manager.provision_agent("copilot-unadvertised")
     room_id = await resource_manager.provision_room(
-        title="e2e-copilot-byok-typed-model", participants=[identity.id]
+        title="e2e-copilot-unadvertised", participants=[identity.id]
     )
 
     adapter = CopilotACPAdapter(
         hermetic_copilot_config(
-            baseline_settings, tmp_path / "byok", model=unique_marker("model")
+            baseline_settings, tmp_path / "copilot", hosted=hosted, **selection
         )
     )
     async with (
@@ -284,7 +308,7 @@ async def test_copilot_byok_turn_fails_loudly_on_a_typed_model(
         await capture.wait_for_processed(mid, identity.id)
         errors = await capture.errors(sender_id=identity.id)
 
-    errors.assert_contains_any([BYOK_TYPED_MODEL_FAILURE])
+    errors.assert_contains_any([CONFIG_FAILURE_PREFIX + failure])
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends

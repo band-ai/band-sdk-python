@@ -174,9 +174,8 @@ class Backends(BaseSettings):
     omp_command: str = ""  # OMP_COMMAND
     omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
 
-    # Copilot-hosted auth for the non-BYOK smoke
-    # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix
-    # cells never read it. The smoke skips when unset.
+    # Copilot-hosted auth for the non-BYOK smokes in test_copilot_acp.py; the
+    # BYOK matrix cells never read it. Those smokes skip when unset.
     github_token: str = ""  # GITHUB_TOKEN
     # Pins that same smoke's model instead of leaving it to Copilot's `auto`
     # picker, which can land on an expensive reasoning-tier model (observed:

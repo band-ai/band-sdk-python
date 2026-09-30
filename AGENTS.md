@@ -223,7 +223,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
-- `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline reader is the Copilot-hosted auth smoke (`test_copilot_hosted_auth_replies`, default and typed-effort cells, skips when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline readers are the Copilot-hosted smokes (`test_copilot_hosted_auth_replies` and the `hosted-effort` cell of `test_copilot_turn_fails_loudly_on_an_unadvertised_selection`, which skip when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which older Haiku models do not support)
