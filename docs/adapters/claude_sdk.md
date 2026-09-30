@@ -30,3 +30,7 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
 - **`turn_timeout_s` counts manual approval waits.** On expiry the turn is
   interrupted and a `timeout` failure is posted to the room, so keep it above
   `approval_wait_timeout_s`. `None` (the default) leaves turns unbounded.
+- **`workspace_for_room` isolates rooms; `cwd` shares one folder.** The two are
+  mutually exclusive. The callback returns an absolute path per room id
+  (created if missing); two live rooms resolving to the same path are refused,
+  and a room's claim is released when it leaves or its session fails to start.

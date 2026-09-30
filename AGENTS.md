@@ -474,6 +474,13 @@ PR titles MUST use the same conventional commits format as commit messages
 - `fix: Handle validation errors in execute_tool_call`
 - `docs: Update README with new adapter examples`
 
+### Pull Request Descriptions
+
+A description is **what** the PR changes and **why**. Drop the template's
+Testing and Checklist sections: CI and the Pre-Commit Checklist already own
+them. Add a checklist only for something a reviewer would not otherwise
+notice (a behavior change to review, a merge-order dependency).
+
 ### Pre-Commit Checklist
 
 See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.

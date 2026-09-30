@@ -282,7 +282,12 @@ class SimpleAdapter(ABC, Generic[H]):
             logger.warning("Failed to send usage event: %s", e)
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Override for session cleanup."""
+        """Override for session cleanup.
+
+        If this raises, the runtime keeps the room's teardown pending and calls
+        it again on the next attempt (a later leave, stop, or rejoin), so an
+        override must be safe to retry after a partial failure.
+        """
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         """Override to abort per-room work still running after ``on_message``/
