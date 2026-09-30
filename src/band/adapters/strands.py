@@ -52,15 +52,16 @@ from band.core.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    declared_effects,
     execute_custom_tool,
     get_custom_tool_name,
-    is_marked_terminal,
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     ToolCallOutcome,
     ToolDefinition,
+    TurnEffect,
     band_tool_errored,
     decode_image_block,
     get_band_tool_category,
@@ -192,8 +193,8 @@ def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
 
 def _build_custom_tools(
     additional_tools: list[Callable[..., Any] | CustomToolDef] | None,
-) -> tuple[list[AgentTool | Callable[..., Any]], frozenset[str]]:
-    """Adapt portable custom tools and collect their terminal-action names."""
+) -> tuple[list[AgentTool | Callable[..., Any]], dict[str, TurnEffect]]:
+    """Adapt portable custom tools and collect the turn effects they declared."""
     raw_tools = additional_tools or []
     converted: list[AgentTool | Callable[..., Any]] = [
         CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
@@ -206,12 +207,8 @@ def _build_custom_tools(
     if shadowed:
         raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
 
-    terminal_names = frozenset(
-        name
-        for raw, name in zip(raw_tools, names, strict=True)
-        if is_marked_terminal(raw[1] if isinstance(raw, tuple) else raw)
-    )
-    return converted, terminal_names
+    handlers = (raw[1] if isinstance(raw, tuple) else raw for raw in raw_tools)
+    return converted, declared_effects(zip(names, handlers, strict=True))
 
 
 class StrandsToolBridge(AgentTool):
@@ -332,11 +329,11 @@ class BandTurnHooks(HookProvider):
         tools: AgentToolsProtocol,
         *,
         emit_execution: bool,
-        custom_terminal_names: frozenset[str],
+        custom_effects: dict[str, TurnEffect],
     ) -> None:
         self._tools = tools
         self._emit_execution = emit_execution
-        self._custom_terminal_names = custom_terminal_names
+        self._custom_effects = custom_effects
         self.terminal_fired = False
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
@@ -365,9 +362,7 @@ class BandTurnHooks(HookProvider):
             name, output
         )
         if is_terminal_success(
-            name,
-            succeeded=succeeded,
-            custom_terminal=name in self._custom_terminal_names,
+            name, succeeded=succeeded, custom_effects=self._custom_effects
         ):
             self.terminal_fired = True
         if not self._emit_execution:
@@ -425,9 +420,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         self.custom_section = custom_section
         self._system_prompt: str | None = None
         self._message_history: dict[str, StrandsMessages] = {}
-        self._custom_tools, self._custom_terminal_names = _build_custom_tools(
-            additional_tools
-        )
+        self._custom_tools, self._custom_effects = _build_custom_tools(additional_tools)
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render the prompt after the platform supplies agent metadata."""
@@ -573,7 +566,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         hooks = BandTurnHooks(
             tools,
             emit_execution=Emit.TOOL_CALLS in self.features.emit,
-            custom_terminal_names=self._custom_terminal_names,
+            custom_effects=self._custom_effects,
         )
         await self._run_turn(
             message=user_message,

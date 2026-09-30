@@ -57,7 +57,11 @@ __all__, __getattr__ = lazy_exports(
     __name__,
     fake_tools=["FakeAgentTools", "events_of_type", "reported_failures"],
     features=["feature_kwargs"],
-    phoenix_server=["FakePhoenixServer", "JoinOutcome", "fake_phoenix_server"],
+    phoenix_server=[
+        "FakePhoenixServer",
+        "JoinOutcome",
+        "fake_phoenix_server",
+    ],
     platform=["platform_connection_stub"],
     strands=[
         "ErrorTurn",
