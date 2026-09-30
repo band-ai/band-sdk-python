@@ -711,6 +711,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_letta.py::test_concurrent_starts_reuse_one_org_user_scope",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_letta.py::test_reply_arrives_via_mcp_send_tool",
       "adapter": "letta",
       "lanes": [
