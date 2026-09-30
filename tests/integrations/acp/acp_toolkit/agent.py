@@ -126,25 +126,37 @@ class FakeACPAgent:
         return self._reply_gate
 
     def advertises_models(
-        self, efforts_by_model: Mapping[str, Sequence[str]], *, current: str
+        self,
+        efforts_by_model: Mapping[str, Sequence[str]],
+        *,
+        current: str,
+        default_effort: str = "medium",
     ) -> FakeACPAgent:
         """Advertise a model select whose effort select follows the chosen model.
 
-        Mirrors Copilot CLI: selecting a model replaces the effort select with
-        that model's levels (current = its first), or drops it for a model
-        with none.
+        Mirrors Copilot CLI 1.0.89 (probed live): selecting a model replaces
+        the effort select with that model's levels, or drops it for a model
+        with none; the current effort carries over when the new model offers
+        it, else falls back to ``default_effort``; an unoffered effort is
+        silently ignored; and every change is also pushed as a
+        ``config_option_update``.
         """
-        active = {"model": current}
+        active = {"model": current, "effort": default_effort}
 
-        def catalog(model: str, effort: str | None = None) -> list[SessionConfigOption]:
+        def catalog() -> list[SessionConfigOption]:
             options: list[SessionConfigOption] = [
-                select_option("model", model, efforts_by_model, category=MODEL_CATEGORY)
+                select_option(
+                    "model", active["model"], efforts_by_model, category=MODEL_CATEGORY
+                )
             ]
-            if efforts := efforts_by_model[model]:
+            efforts = efforts_by_model[active["model"]]
+            if efforts:
+                if active["effort"] not in efforts:
+                    active["effort"] = default_effort
                 options.append(
                     select_option(
                         "reasoning_effort",
-                        effort or efforts[0],
+                        active["effort"],
                         efforts,
                         category=THOUGHT_LEVEL_CATEGORY,
                     )
@@ -155,13 +167,20 @@ class FakeACPAgent:
         async def select(
             fake: FakeACPAgent, session_id: str, option_id: str, value: str
         ) -> list[SessionConfigOption]:
-            del fake, session_id
             if option_id == "model":
                 active["model"] = value
-                return catalog(value)
-            return catalog(active["model"], effort=value)
+            elif value in efforts_by_model[active["model"]]:
+                active["effort"] = value
+            options = catalog()
+            await fake.emit(
+                session_id,
+                ConfigOptionUpdate(
+                    session_update="config_option_update", config_options=options
+                ),
+            )
+            return options
 
-        self._config_options = catalog(current)
+        self._config_options = catalog()
         return self
 
     def will_say(self, text: str) -> FakeACPAgent:

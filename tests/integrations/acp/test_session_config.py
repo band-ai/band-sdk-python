@@ -538,6 +538,27 @@ class TestTypedModelSelection:
         assert agent.config_selections() == [("model", "large"), ("thinking", "high")]
 
     @pytest.mark.asyncio
+    async def test_a_switch_back_reaches_an_agent_that_only_replies_with_catalogs(
+        self,
+    ) -> None:
+        # No config_option_update is pushed, so the set replies are the only
+        # record that the session moved off "small".
+        agent = FakeACPAgent(
+            config_options=[
+                select_option("model", "small", ["small", "large"], category="model")
+            ]
+        ).will_say("ok")
+
+        async with acp_adapter(agent) as session:
+            await session.send("Hello")
+            for model in ("large", "small"):
+                await session.adapter.apply_model_selection(
+                    ModelSelection(model=model), room_id="room-1"
+                )
+
+        assert agent.config_selections() == [("model", "large"), ("model", "small")]
+
+    @pytest.mark.asyncio
     async def test_a_model_is_refused_when_the_agent_advertises_no_model_option(
         self,
     ) -> None:
