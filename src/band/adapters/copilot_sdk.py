@@ -43,6 +43,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     room_inactive_answer,
 )
 from band.runtime.custom_tools import (
+    custom_tool_effects,
     custom_tools_to_schemas,
     execute_custom_tool,
     find_custom_tool,
@@ -54,8 +55,8 @@ from band.runtime.tools import (
     get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
-    is_room_posting_tool,
     redact_tool_call_args,
+    settles_turn_reply,
 )
 
 try:
@@ -291,6 +292,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         self._shared_client = client
         self._client_factory = client_factory
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        self._custom_effects = custom_tool_effects(self._custom_tools)
         self._session_manager: CopilotSessionManager | None = None
         # Refreshed every on_message; tool handlers resolve through this so
         # they never stay bound to a stale tools object from an earlier turn.
@@ -798,7 +800,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             text_result = (
                 result if isinstance(result, str) else json.dumps(result, default=str)
             )
-        if is_room_posting_tool(tool_name) and turn is not None:
+        if (
+            settles_turn_reply(tool_name, custom_effects=self._custom_effects)
+            and turn is not None
+        ):
             self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)
