@@ -293,6 +293,11 @@ async def _send_event(call: Invocation, **kwargs: Any) -> Any:
     return succeeded("Event sent")
 
 
+@band_tool(BandTool.NO_REPLY)
+async def _no_reply(call: Invocation, *, reason: str | None = None) -> Any:
+    return await call.tools.no_reply(reason)
+
+
 @band_tool(BandTool.ADD_PARTICIPANT)
 async def _add_participant(
     call: Invocation, *, identifier: str = "", role: str = "member"

@@ -538,20 +538,10 @@ def _build_copilot_acp(
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
-    built_features = feature_kwargs(features)
-    if "emit" in built_features:
-        # memory_features()/contacts_features() request Emit.TOOL_CALLS so tool
-        # calls surface as tool_call events for the rest of the matrix, but this
-        # adapter narrates every tool call unconditionally and declares no
-        # SUPPORTED_EMIT (see ACPClientAdapter) -- clamp to what it actually
-        # supports so the shared fixture's intent survives without tripping the
-        # construction-time unsupported-emit check.
-        built_features["emit"] &= CopilotACPAdapter.SUPPORTED_EMIT
-
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 
@@ -605,14 +595,10 @@ def _build_omp_acp(
     if s.backends.omp_command.strip():
         config_kwargs["command"] = tuple(s.backends.omp_command.split())
 
-    built_features = feature_kwargs(features)
-    if "emit" in built_features:
-        built_features["emit"] &= OmpACPAdapter.SUPPORTED_EMIT
-
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 
@@ -648,13 +634,10 @@ def _build_cursor_acp(
     }
     if s.backends.cursor_command.strip():
         config_kwargs["command"] = tuple(s.backends.cursor_command.split())
-    built_features = feature_kwargs(features)
-    if "emit" in built_features:
-        built_features["emit"] &= CursorACPAdapter.SUPPORTED_EMIT
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        **built_features,
+        **feature_kwargs(features),
     )
 
 

@@ -1,9 +1,11 @@
 """Self-registration demo: `band-kit provision`, end to end.
 
 Demonstrates the self-registration flow with no pre-provisioned Band
-agent: registers a fresh agent on the host with only a user key, boots it
-into a real Docker Sandbox, sends it a message, checks the echo reply, then
-tears every provisioned resource back down.
+agent: registers a fresh agent on the host with only a user key, creates a
+real Docker Sandbox for it, attaches to actually launch the agent (the
+kit's `sandbox.entrypoint` only runs once something attaches — `sbx create`
+alone leaves it idle), sends it a message, checks the echo reply, then tears
+every provisioned resource back down.
 
 Like ``examples/sandbox/staging-smoke/probe.py``, this is not a regular
 customer-facing example: it drives a real ``sbx`` sandbox and needs a
@@ -29,6 +31,9 @@ process is killed outright (SIGKILL, host crash) that finally block never
 runs, leaving an orphaned sandbox/secret/agent behind under the random name
 printed in the "Run name" log line -- recover with:
     uv run examples/sandbox/self-registration/demo.py --cleanup <that-name>
+
+The recovery agent lookup uses the Enterprise Human API. If it fails, the
+sandbox and secret are still removed; remove any orphaned agent in the Band UI.
 """
 
 from __future__ import annotations
@@ -47,6 +52,8 @@ from pathlib import Path
 # location (examples/sandbox/self-registration/), not a generic walk-up.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from pydantic import ValidationError
+
 from band import LogSettings, LogStream
 from band.docker.provision import read_agent_id
 from tests.docker.test_kit_proxy_managed_live import (
@@ -55,6 +62,7 @@ from tests.docker.test_kit_proxy_managed_live import (
 )
 from tests.docker.toolkit.sbx_cli import (
     allow_network_for_hosts,
+    attached_run,
     remove_custom_secret_command,
     sandbox_name,
 )
@@ -177,7 +185,7 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> None:
 async def cleanup_by_name(name: str) -> None:
     """Standalone recovery for a run whose finally block never got to run
     (e.g. the process was killed). Removes the sandbox and its scoped secret,
-    and any agent registered under this run's display name.
+    and any agent registered under this run's display name if lookup succeeds.
 
     Cannot recover the room: unlike the agent, it carries no name this demo
     set, so there is nothing to search by. It's a harmless orphan (no plan
@@ -189,18 +197,26 @@ async def cleanup_by_name(name: str) -> None:
         user_client=client, settings=settings, run_id=name
     )
 
-    agents = await client.human_api_agents.list_my_agents(page=1, page_size=100)
-    matches = [a for a in (agents.data or []) if name in (a.name or "")]
-    for agent in matches:
-        logger.info("Deleting orphaned agent %s (%s)", agent.id, agent.name)
-        await resource_manager.reap_agent(agent.id)
-    if not matches:
-        logger.info("No registered agent found matching %r", name)
+    try:
+        agents = await client.human_api_agents.list_my_agents(page=1, page_size=100)
+    except ValidationError:
+        logger.exception(
+            "Invalid agent listing; continuing sandbox cleanup. Remove any orphaned agent manually"
+        )
+    except Exception:
+        logger.exception(
+            "Could not list agents; continuing sandbox cleanup. Remove any orphaned agent manually"
+        )
+    else:
+        matches = [a for a in (agents.data or []) if name in (a.name or "")]
+        for agent in matches:
+            logger.info("Deleting orphaned agent %s (%s)", agent.id, agent.name)
+            await resource_manager.reap_agent(agent.id)
+        if not matches:
+            logger.info("No registered agent found matching %r", name)
 
     _teardown_sbx(name)
-    logger.info(
-        "Cleanup complete for %s: sandbox, secret, and any matching agent removed", name
-    )
+    logger.info("Sandbox and secret cleanup complete for %s", name)
 
 
 async def run(kit: str) -> None:
@@ -225,7 +241,9 @@ async def run(kit: str) -> None:
             hosts = _deployment_hosts(settings.endpoints)
 
             with allow_network_for_hosts(hosts, kit=kit):
-                logger.info("Step 1/4: band-kit provision --create (registers + boots)")
+                logger.info(
+                    "Step 1/5: band-kit provision --create (registers + creates the sandbox)"
+                )
                 agent_id = _band_kit_provision(
                     name=name,
                     workspace=workspace,
@@ -234,33 +252,40 @@ async def run(kit: str) -> None:
                     create=True,
                 )
                 assert read_agent_id(workspace) == agent_id
-                logger.info("Registered and booted agent: %s", agent_id)
-
-                logger.info("Step 2/4: creating room and adding the agent")
-                room_id = await resource_manager.provision_room(participants=[agent_id])
+                logger.info("Registered agent: %s", agent_id)
 
                 logger.info(
-                    "Step 3/4: sending a room message and awaiting the echo reply"
+                    "Step 2/5: attaching to launch the agent "
+                    "(sandbox.entrypoint only runs once something attaches)"
                 )
-                replies = await _ping_and_await_echo(
-                    resource_manager,
-                    settings=settings,
-                    room_id=room_id,
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                )
-                replies.assert_contains_any(["echo:"])
-                logger.info("Got a reply containing 'echo:'")
-
-                logger.info("Step 4/4: re-running provision to prove idempotency")
-                rerun_id = _band_kit_provision(
-                    name=name, workspace=workspace, create=False
-                )
-                if rerun_id != agent_id:
-                    raise RuntimeError(
-                        f"expected the idempotent no-op to return {agent_id!r}, got {rerun_id!r}"
+                with attached_run(name):
+                    logger.info("Step 3/5: creating room and adding the agent")
+                    room_id = await resource_manager.provision_room(
+                        participants=[agent_id]
                     )
-                logger.info("Confirmed idempotent: no duplicate agent registered")
+
+                    logger.info(
+                        "Step 4/5: sending a room message and awaiting the echo reply"
+                    )
+                    replies = await _ping_and_await_echo(
+                        resource_manager,
+                        settings=settings,
+                        room_id=room_id,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                    )
+                    replies.assert_contains_any(["echo:"])
+                    logger.info("Got a reply containing 'echo:'")
+
+                    logger.info("Step 5/5: re-running provision to prove idempotency")
+                    rerun_id = _band_kit_provision(
+                        name=name, workspace=workspace, create=False
+                    )
+                    if rerun_id != agent_id:
+                        raise RuntimeError(
+                            f"expected the idempotent no-op to return {agent_id!r}, got {rerun_id!r}"
+                        )
+                    logger.info("Confirmed idempotent: no duplicate agent registered")
 
         logger.info("Success: agent %s self-registered and round-tripped.", agent_id)
     finally:
