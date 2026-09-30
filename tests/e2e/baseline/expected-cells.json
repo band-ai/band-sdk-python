@@ -648,7 +648,43 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_copilot_hosted_auth_replies",
+      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_copilot_hosted_auth_replies[default]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_copilot_hosted_auth_replies[typed-effort]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_copilot_switches_model_and_effort_in_a_live_room",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_copilot_turn_fails_loudly_on_an_unadvertised_selection[byok-model]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_copilot_turn_fails_loudly_on_an_unadvertised_selection[hosted-effort]",
       "adapter": "suite",
       "lanes": [
         "backends"
