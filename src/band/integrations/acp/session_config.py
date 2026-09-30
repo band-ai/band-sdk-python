@@ -15,6 +15,7 @@ from acp.schema import (
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
 )
+from pydantic import ValidationError
 
 from band.core.exceptions import BandConfigError
 from band.core.validation import listing
@@ -63,8 +64,8 @@ class ACPConfigError(BandConfigError, RuntimeError):
 
 
 class ACPConfigUnreachableError(ACPConfigError):
-    """The agent never answered a config request (a timeout or a lost
-    connection), so nothing says it refused the value."""
+    """No reply ever came to a config request (a timeout or a lost
+    connection), so nothing says the agent refused the value."""
 
 
 def flatten_select_options(
@@ -83,6 +84,13 @@ def flatten_select_options(
 def select_values(option: SessionConfigOptionSelect) -> tuple[str, ...]:
     """The values an ACP select option advertises, groups flattened."""
     return tuple(entry.value for entry in flatten_select_options(option.options))
+
+
+def select_ids(options: Sequence[SessionConfigOption]) -> tuple[str, ...]:
+    """The ids of the select options in an ACP catalog."""
+    return tuple(
+        option.id for option in options if isinstance(option, SessionConfigOptionSelect)
+    )
 
 
 def session_config_options(response: object) -> tuple[SessionConfigOption, ...] | None:
@@ -126,18 +134,13 @@ async def apply_session_config_selections(
 
         option = next((entry for entry in catalog if entry.id == option_id), None)
         if not isinstance(option, SessionConfigOptionSelect):
-            select_ids = tuple(
-                entry.id
-                for entry in catalog
-                if isinstance(entry, SessionConfigOptionSelect)
-            )
             raise ACPConfigError(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,
                 message=(
                     f'ACP session offers no config option "{option_id}"; '
-                    f"available: {listing(select_ids)}."
+                    f"available: {listing(select_ids(catalog))}."
                 ),
             )
 
@@ -174,10 +177,10 @@ async def apply_session_config_selections(
                 ),
             ) from error
         except Exception as error:
-            # A JSON-RPC error is the agent's answer; anything else never got one.
+            # A JSON-RPC error or a malformed reply is still the agent's answer.
             error_type = (
                 ACPConfigError
-                if isinstance(error, RequestError)
+                if isinstance(error, (RequestError, ValidationError))
                 else ACPConfigUnreachableError
             )
             raise error_type(

@@ -15,12 +15,14 @@ from band.core.model_catalog import (
     ModelSetting,
     check_model_selection,
 )
+from band.core.validation import listing
 from band.integrations.acp.session_config import (
     ACPConfigError,
     SessionConfigOption,
     SessionConfigSetter,
     apply_session_config_selections,
     flatten_select_options,
+    select_ids,
     select_values,
 )
 
@@ -142,7 +144,10 @@ async def _apply_setting(
             session_id=session_id,
             option_id=option_id,
             selected_value=value,
-            message=f"ACP session advertises no {setting} option.",
+            message=(
+                f"ACP session advertises no {setting} option; available: "
+                f"{listing(select_ids(config_options))}."
+            ),
         )
     return await apply_session_config_selections(
         session_id=session_id,

@@ -205,9 +205,7 @@ async def test_copilot_hosted_auth_replies(
 
     The matrix cells run Anthropic BYOK to spare the monthly Copilot-hosted
     quota, but the hosted path is the one production users run — one cheap
-    turn per cell keeps it proven. Skips (not fails) without a token: hosted
-    auth is optional extra coverage, the BYOK cells are the lane's bar. Only
-    hosted sessions advertise model/effort selects, so the typed-effort cell
+    turn per cell keeps it proven. Only hosted sessions advertise model/effort selects, so the typed-effort cell
     proves a typed selection is accepted against Copilot's live catalog.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
@@ -257,7 +255,7 @@ async def test_copilot_hosted_auth_replies(
         pytest.param(
             False,
             {"model": "not-a-model"},
-            "ACP session advertises no model option.",
+            "ACP session advertises no model option; available:",
             marks=requires(Dep.ANTHROPIC),
             id="byok-model",
         ),

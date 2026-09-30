@@ -151,6 +151,12 @@ class TestApplySessionConfigSelections:
         ("failure", "raised"),
         [
             pytest.param(RequestError.invalid_params(), ACPConfigError, id="refused"),
+            # The acp client validates each reply; a null one fails that.
+            pytest.param(
+                lambda *_: SetSessionConfigOptionResponse.model_validate({}),
+                ACPConfigError,
+                id="malformed-reply",
+            ),
             pytest.param(
                 RuntimeError("Connection closed"),
                 ACPConfigUnreachableError,
@@ -159,7 +165,7 @@ class TestApplySessionConfigSelections:
         ],
     )
     async def test_a_failed_set_says_whether_the_agent_answered(
-        self, failure: Exception, raised: type[ACPConfigError]
+        self, failure: object, raised: type[ACPConfigError]
     ) -> None:
         with pytest.raises(ACPConfigError) as rejected:
             await apply_session_config_selections(
@@ -655,6 +661,6 @@ class TestTypedModelSelection:
             reply = await session.send("Hello")
 
         assert reply.errors == [
-            f"{CONFIG_FAILURE_PREFIX}ACP session advertises no model option."
+            f"{CONFIG_FAILURE_PREFIX}ACP session advertises no model option; available: (none)."
         ]
         assert agent.prompt_texts() == []

@@ -173,8 +173,7 @@ class TestCopilotACPAdapterTcpTransport:
         assert any("ignored over TCP" in r.message for r in caplog.records)
 
 
-# Copilot CLI 1.0.89's efforts per model (probed live): selecting a model
-# replaces the effort select, or drops it for a model without efforts.
+# Copilot CLI 1.0.89's efforts per model (probed live).
 COPILOT_EFFORTS = {
     "claude-sonnet-5": ("low", "medium", "high", "xhigh", "max"),
     "gpt-5.4": ("none", "low", "medium", "high", "xhigh"),
@@ -305,14 +304,14 @@ class TestCopilotACPModelSelection:
         assert agent.config_selections() == [("model", "claude-haiku-4.5")]
 
     @pytest.mark.asyncio
-    async def test_a_partly_applied_switch_leaves_the_room_on_what_the_agent_runs(
+    async def test_a_partly_applied_switch_does_not_carry_to_later_sessions(
         self,
     ) -> None:
-        # The model lands before the effort is refused; the room's next
-        # session must start on it, not on the pre-switch model.
+        # The model lands before the effort is refused; the switch raised, so
+        # the room's next session starts where it would have without it.
         agent = copilot()
 
-        async with copilot_room(agent) as session:
+        async with copilot_room(agent, reasoning_effort="high") as session:
             await session.send("Hello")
             with pytest.raises(BandConfigError):
                 await switch_room(session, model="gpt-5.4", reasoning_effort="max")
@@ -320,9 +319,25 @@ class TestCopilotACPModelSelection:
             await session.send("Again")
 
         assert agent.config_selections("fake-session-2") == [
-            ("model", "gpt-5.4"),
-            ("reasoning_effort", "medium"),
+            ("reasoning_effort", "high")
         ]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_switch_leaves_the_room_on_its_configured_selection(
+        self,
+    ) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent, model="gpt-5.4") as session:
+            await session.send("Hello")
+            await agent.selects_on_its_own(
+                agent.session_ids()[0], "model", "claude-haiku-4.5"
+            )
+            await switch_room(session)
+            await session.adapter.on_cleanup("room-1")
+            await session.send("Again")
+
+        assert agent.config_selections("fake-session-2") == [("model", "gpt-5.4")]
 
     @pytest.mark.asyncio
     async def test_a_switch_follows_a_model_the_agent_chose_itself(self) -> None:
@@ -344,6 +359,8 @@ class TestCopilotACPModelSelection:
 
     @pytest.mark.asyncio
     async def test_concurrent_switches_on_a_room_apply_in_call_order(self) -> None:
+        # Only gpt-5.4 offers "none", so the second switch is accepted only
+        # when checked against the catalog the first one left.
         agent = copilot()
 
         async with copilot_room(agent) as session:
@@ -351,11 +368,14 @@ class TestCopilotACPModelSelection:
             gate = agent.holds_config_replies()
             first = asyncio.create_task(switch_room(session, model="gpt-5.4"))
             await gate.received.wait()
-            second = asyncio.create_task(switch_room(session, model="claude-sonnet-5"))
+            second = asyncio.create_task(switch_room(session, reasoning_effort="none"))
             gate.release.set()
             await asyncio.gather(first, second)
 
-        assert agent.current_value("model") == "claude-sonnet-5"
+        assert agent.config_selections() == [
+            ("model", "gpt-5.4"),
+            ("reasoning_effort", "none"),
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

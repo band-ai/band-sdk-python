@@ -841,7 +841,8 @@ class TestACPRuntime:
         mock_conn.prompt.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_a_stopped_runtime_keeps_no_session_catalog(self) -> None:
+    @pytest.mark.parametrize("ended_by", ["stop", "close_session"])
+    async def test_an_ended_session_keeps_no_catalog(self, ended_by: str) -> None:
         # Session ids belong to the agent process; a respawn must not reuse
         # what the stopped process advertised.
         spawn = FakeSpawn()
@@ -856,7 +857,11 @@ class TestACPRuntime:
         await runtime.create_session_response(cwd="/tmp", mcp_servers=[])
         advertised = runtime.config_options("sess-1")
 
-        await runtime.stop()
+        match ended_by:
+            case "stop":
+                await runtime.stop()
+            case "close_session":
+                await runtime.close_session("sess-1")
 
         assert [option.id for option in advertised] == ["model"]
         assert runtime.config_options("sess-1") == ()

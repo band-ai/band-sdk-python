@@ -49,6 +49,10 @@ ConfigOptionHandler = Callable[
     ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
 ]
 
+# The option ids Copilot CLI publishes its model and effort selects under.
+MODEL_OPTION_ID = "model"
+EFFORT_OPTION_ID = "reasoning_effort"
+
 
 @dataclass
 class ReplyGate:
@@ -148,7 +152,10 @@ class FakeACPAgent:
         def catalog() -> list[SessionConfigOption]:
             options: list[SessionConfigOption] = [
                 select_option(
-                    "model", active["model"], efforts_by_model, category=MODEL_CATEGORY
+                    MODEL_OPTION_ID,
+                    active["model"],
+                    efforts_by_model,
+                    category=MODEL_CATEGORY,
                 )
             ]
             efforts = efforts_by_model[active["model"]]
@@ -157,7 +164,7 @@ class FakeACPAgent:
                     active["effort"] = default_effort
                 options.append(
                     select_option(
-                        "reasoning_effort",
+                        EFFORT_OPTION_ID,
                         active["effort"],
                         efforts,
                         category=THOUGHT_LEVEL_CATEGORY,
@@ -169,7 +176,7 @@ class FakeACPAgent:
         async def select(
             fake: FakeACPAgent, session_id: str, option_id: str, value: str
         ) -> list[SessionConfigOption]:
-            if option_id == "model":
+            if option_id == MODEL_OPTION_ID:
                 active["model"] = value
             elif value in efforts_by_model[active["model"]]:
                 active["effort"] = value
