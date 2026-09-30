@@ -378,9 +378,11 @@ def task_board_delegation_instruction(
         "exactly ONE band_send_message that mentions both "
         f"{lookup_name} (id {lookup_id}) and {weather_name} (id {weather_id}), "
         "stating the exact task number or id you just created for each of them "
-        "by name, and asking each to claim their task, gather their value, and "
-        "record it on the task board. Do not look anything up yourself, and do "
-        "not call any other tool."
+        "by name, and asking each to claim their task, call the matching tool, "
+        "and copy the tool's exact return value verbatim into the completed "
+        "task's comment via band_update_task (not a summary or description "
+        "without the value). Do not look anything up yourself, and do not call "
+        "any other tool."
     )
 
 

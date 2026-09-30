@@ -1,8 +1,8 @@
 """Drift checks: the kit spec ships exactly the contract that was reviewed.
 
-Identity, headless launch shape, network allowlist, and credential injection
-(Band only; no baked secrets). Pure file/contract checks — no Docker daemon and
-no sbx CLI needed, so these
+Identity, attached-entrypoint launch shape, network allowlist, and credential
+injection (Band only; no baked secrets). Pure file/contract checks — no Docker
+daemon and no sbx CLI needed, so these
 run in the ordinary unit suite. `sbx kit validate` itself is a manual step
 (recorded in the kit README) because the sandbox CLI only exists on
 Docker-Sandbox-capable machines.
@@ -47,21 +47,17 @@ def test_spec_is_a_sandbox_kit_with_stable_identity() -> None:
     # The kit name doubles as the `sbx create` agent positional — renaming it
     # breaks every documented launch command.
     assert spec["name"] == "band-python-kit"
-    assert spec["sandbox"]["aiFilename"] == "AGENTS.md"
+    assert spec["agentInstructions"]["filename"] == "AGENTS.md"
 
 
-def test_agent_launches_via_startup_command_not_entrypoint() -> None:
+def test_agent_launches_via_entrypoint_not_interactive_command() -> None:
     spec = load_spec()
-    # Launch is headless via commands.startup; an entrypoint block would put
-    # the agent on the attach path instead (root, PTY, needs a session).
-    assert "entrypoint" not in spec["sandbox"]
+    # `sandbox.command` is the interactive `sbx run` attach path (a PTY
+    # session); this kit's agent runs as the attached foreground process
+    # itself via `sandbox.entrypoint`, so `command` must stay unused.
+    assert "command" not in spec["sandbox"]
 
-    startup = spec["commands"]["startup"]
-    assert len(startup) == 1
-    entry = startup[0]
-    assert entry["background"] is True
-    assert entry["user"] == "0"
-    command = entry["command"]
+    command = spec["sandbox"]["entrypoint"]
     # Root phase (CA refresh + privilege drop) must wrap the launcher.
     assert command[0] == "/usr/local/bin/band-entrypoint.sh"
     assert command[-2:] == ["-m", "band.docker.launcher"]
@@ -69,12 +65,12 @@ def test_agent_launches_via_startup_command_not_entrypoint() -> None:
 
 def test_launcher_module_referenced_by_kit_is_importable() -> None:
     spec = load_spec()
-    module_name = spec["commands"]["startup"][0]["command"][-1]
+    module_name = spec["sandbox"]["entrypoint"][-1]
     importlib.import_module(module_name)
 
 
 def test_allowlist_matches_immutable_baseline() -> None:
-    allow = set(load_spec()["caps"]["network"]["allow"])
+    allow = set(load_spec()["permissions"]["network"]["allow"])
     # Exact equality: any widening of the egress surface fails this test,
     # including an optional provider or source-control host.
     assert allow == DEFAULT_ALLOWLIST_HOSTS

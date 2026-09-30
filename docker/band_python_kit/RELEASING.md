@@ -132,16 +132,28 @@ packages — republish those with the override below.
 
 ## Supported `sbx` version
 
-Targets **`sbx` v0.35.0** — the version whose kit-spec v2 schema the credential
-injection uses (`credentials[].apiKey.inject[]`). `sbx kit validate` passes clean
-on the repo `spec.yaml` under 0.35.0; run the full push → pull → OCI-consume
-roundtrip below at the next release cut. The kit surface of `sbx` is
-experimental and has moved between releases, so on **every** CLI upgrade,
-revalidate:
+Targets **`sbx` v0.43.0** — the current latest stable release, and the first
+version whose validator actually enforces the kit-spec v2 schema rather than
+silently accepting v1-era field names.
+`sbx kit validate` passes clean on the repo `spec.yaml` under 0.43.0; run the
+full push → pull → OCI-consume roundtrip below at the next release cut. The
+kit surface of `sbx` is experimental and has moved between releases (v0.35.0
+→ v0.42.1 stopped accepting the v1-era field names entirely, and v0.43.0
+separately started auto-stopping an idle, unattached sandbox — see "How the
+launch works" in the kit README), so on **every** CLI upgrade, revalidate:
 
 - `sbx kit validate` on the repo `spec.yaml`,
 - a `kit push` → `kit pull` roundtrip,
-- an OCI-ref consume (`sbx create --kit <oci-ref> band-python-kit <ws>`).
+- an OCI-ref consume (`sbx create --kit <oci-ref> band-python-kit <ws>`),
+  followed by `sbx run --name <ws-name>` — `sbx create` alone no longer starts
+  the agent (see the kit README).
+
+**Compatibility policy:** support the single latest stable `sbx` release. When
+Docker ships a new one, revalidate the checklist above before bumping the
+pinned version in this doc and in `.github/workflows/kit-publish.yml`'s header
+comment; a validation failure blocks the bump, not the next band-sdk release
+(the published kit keeps targeting its last-validated `sbx` version until the
+revalidation passes).
 
 The CI kit push is currently assembled with **ORAS** rather than `sbx kit push`,
 because `sbx`'s availability on ubuntu runners is unconfirmed. The ORAS manifest

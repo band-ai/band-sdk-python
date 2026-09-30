@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "band-client-rest==0.0.40",
+    "band-client-rest==0.0.41",
     "band-sdk-core==2.7.0",
     "phoenix-channels-python-client>=0.2.4",
     "python-dotenv>=1.2.2",
@@ -173,8 +173,8 @@ strands = [
 ]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai and parlant.
-# crewai is declared conflicting with both parlant and pydantic-ai (pydantic +
-# opentelemetry ceilings); parlant is declared conflicting with pydantic-ai
+# crewai is declared conflicting with both parlant and pydantic-ai (its pydantic
+# ceiling and exact `~=` pins); parlant is declared conflicting with pydantic-ai
 # because their `griffe`/`griffelib` transitive deps are two different PyPI
 # distributions that install into the same `griffe` import path — installing
 # both corrupts that path (which file wins is install-order dependent). See
@@ -406,10 +406,11 @@ required-environments = [
 ]
 
 # crewai is resolved apart from BOTH parlant and pydantic-ai. crewai pins a narrow
-# pydantic range (<2.13) and an exact opentelemetry-sdk minor (~=1.42.0), while
-# pydantic-ai-slim 2.x requires pydantic>=2.12 and parlant requires
-# opentelemetry-sdk>=1.37. Declaring the extras as conflicting lets uv resolve each
-# side in its own fork instead of forcing one shared pin that satisfies everyone.
+# pydantic range (<2.13) and exact minors of mcp, aiofiles, regex and tomli (`~=`),
+# while pydantic-ai-slim 2.x requires pydantic>=2.12. Without the declaration uv
+# still resolves, but collapses the forks and holds the whole lock at crewai's exact
+# versions. Declaring the extras as conflicting lets uv resolve each side in its own
+# fork instead.
 #
 # parlant is separately resolved apart from pydantic-ai for an unrelated reason:
 # parlant depends on the `griffe` distribution and pydantic-ai-slim depends on

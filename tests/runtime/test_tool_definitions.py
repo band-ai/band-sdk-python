@@ -224,6 +224,7 @@ class TestToolModelsRegistry:
         expected = {
             "band_send_message",
             "band_send_event",
+            "band_no_reply",
             "band_add_participant",
             "band_remove_participant",
             "band_lookup_peers",

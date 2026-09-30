@@ -420,6 +420,9 @@ class FakeAgentTools:
                 if not observed.done():
                     observed.set_result(None)
 
+    async def no_reply(self, reason: str | None = None) -> dict[str, str]:
+        return {"status": "no_reply"}
+
     async def send_event(
         self,
         content: str,

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Self
 
 from band.core.delivery import deliver_reply
 from band.core.protocols import AgentToolsProtocol, send_event_safe
+from band.core.types import Emit
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -14,28 +16,33 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
-from band.runtime.tools import is_room_posting_tool
+from band.runtime.tools import TurnEffect, settles_turn_reply
 
 logger = logging.getLogger(__name__)
 
 
-def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
-    """True when the turn posted to the room via a Band messaging tool.
+def turn_replied_in_room(
+    chunks: list[CollectedChunk],
+    *,
+    custom_effects: Mapping[str, TurnEffect] | None = None,
+) -> bool:
+    """True when the turn already settled its reply.
 
-    Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
+    A room post, band_no_reply, or a custom tool that declared either
+    (``custom_effects``) settles it. Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
     at execution time, ACP tool calls may run out-of-process (a remote band-mcp
     server the SDK never sees execute). The ACP session-update stream is the one
     record of the turn that covers both, so detection matches the collected
     tool-call chunks by their reported title (ACP has no structured tool-name
-    field). A room-posting call counts once it (or its result update) reports
+    field). A reply-settling call counts once it (or its result update) reports
     ``completed`` — a failed post must not suppress the text fallback, or the turn
     goes silent.
     """
-    posting_call_ids: set[str] = set()
+    settling_call_ids: set[str] = set()
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        if isinstance(chunk.tool, ACPToolCall) and is_room_posting_tool(
-            chunk.tool.name
+        if isinstance(chunk.tool, ACPToolCall) and settles_turn_reply(
+            chunk.tool.name, custom_effects=custom_effects
         ):
             if metadata.get("status") == ToolStatus.COMPLETED:
                 return True
@@ -44,10 +51,10 @@ def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
             # non-posting tool's — and falsely suppress the text fallback,
             # silencing the turn.
             if chunk.tool.tool_call_id:
-                posting_call_ids.add(chunk.tool.tool_call_id)
+                settling_call_ids.add(chunk.tool.tool_call_id)
         elif (
             isinstance(chunk.tool, ACPToolResult)
-            and chunk.tool.call.tool_call_id in posting_call_ids
+            and chunk.tool.call.tool_call_id in settling_call_ids
             and metadata.get("status") == ToolStatus.COMPLETED
         ):
             return True
@@ -72,6 +79,15 @@ class RoomTurnEmitter:
 
     On a clean close the held text is relayed (unless already posted in-room), and
     the session bookkeeping ``task`` event is posted last.
+
+    Which narration kinds reach the room is controlled by the emit set passed
+    at construction (``None``: all kinds — the historical default). Chunks are
+    always recorded regardless, so the tool-first delivery decision keeps
+    working even when narration is silenced. The closing bookkeeping ``task``
+    event is state, not narration, and is posted regardless of the emit set:
+    ``ACPClientHistoryConverter`` reads its metadata to rebuild the
+    room→session map, so gating it would silently disable ``session/load``
+    resume after a restart.
     """
 
     def __init__(
@@ -81,33 +97,49 @@ class RoomTurnEmitter:
         mentions: list[dict[str, str]],
         session_id: str,
         room_id: str,
+        emit: frozenset[Emit] | None = None,
+        custom_effects: Mapping[str, TurnEffect] | None = None,
     ) -> None:
         self._tools = tools
         self._mentions = mentions
         self._session_id = session_id
         self._room_id = room_id
+        self._custom_effects = custom_effects
+        # ``None``: post every kind (the historical behavior). Adapters pass
+        # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
+        # reaches the room sink.
+        self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._chunks: list[CollectedChunk] = []
         self._pending_text: list[str] = []
 
     async def emit(self, chunk: CollectedChunk) -> None:
+        # Record every chunk regardless of the emit set: the tool-first
+        # delivery decision (``turn_replied_in_room``) must see the whole
+        # turn, even when narration is silenced.
         self._chunks.append(chunk)
         match chunk.chunk_type:
             case ChunkType.TEXT:
                 if chunk.content:
                     self._pending_text.append(chunk.content)
             case ChunkType.THOUGHT:
+                if Emit.THOUGHTS not in self._emit:
+                    return
                 await self._tools.send_event(
                     content=chunk.content,
                     message_type="thought",
                     metadata=chunk.metadata,
                 )
             case ChunkType.TOOL_CALL | ChunkType.TOOL_RESULT:
+                if Emit.TOOL_CALLS not in self._emit:
+                    return
                 await self._tools.send_event(
                     content=self._tool_event_content(chunk),
                     message_type=chunk.chunk_type,
                     metadata=chunk.metadata,
                 )
             case ChunkType.PLAN:
+                if Emit.TASK_EVENTS not in self._emit:
+                    return
                 await self._tools.send_event(
                     content=chunk.content,
                     message_type="task",
@@ -138,7 +170,11 @@ class RoomTurnEmitter:
         execution frame to show it happened — this synthetic pair is the only
         record. An approved request grants silently; if the tool then executes,
         its own real ``tool_call``/``tool_result`` narrate it like any other tool.
+        The pair is part of tool-call narration, so it is suppressed when
+        ``Emit.TOOL_CALLS`` is not in the emitter's emit set.
         """
+        if Emit.TOOL_CALLS not in self._emit:
+            return
         metadata: dict[str, object] = {
             "permission_request": True,
             "tool_name": call.name,
@@ -170,12 +206,15 @@ class RoomTurnEmitter:
         # neither the held text nor the bookkeeping event.
         if exc_type is not None:
             return False
-        # Tool-first delivery (matches copilot_sdk / codex): if the turn posted via
-        # a Band messaging tool, relaying its plain text too would duplicate the
-        # reply (and leak the agent's narration of the call).
-        if not turn_replied_in_room(self._chunks):
+        # Tool-first delivery (matches copilot_sdk / codex): if the turn already
+        # settled its reply, relaying its plain text too would duplicate it (and
+        # leak the agent's narration of the call).
+        if not turn_replied_in_room(self._chunks, custom_effects=self._custom_effects):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
+        # Posted regardless of the emit set: this is resume state read back by
+        # ACPClientHistoryConverter, not narration (only PLAN chunks follow
+        # Emit.TASK_EVENTS).
         await send_event_safe(
             self._tools,
             content="ACP client session",
