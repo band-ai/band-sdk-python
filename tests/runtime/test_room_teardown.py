@@ -1,26 +1,35 @@
 """Room teardown stays owned until stop and cleanup both succeed.
 
-One teardown task per room, a rejoin waits for the predecessor, and a
-cancelled stop is finished by the next stop. None of this depends on idle
-resource release.
+Rooms come and go through the callbacks ``RoomPresence`` invokes on its
+runtime, and every outcome is read from what a caller can see: the runtime's
+live executions, ``runtime.stop()``'s result, the fake executions' stop counts
+and the session-cleanup callback. Retry waits run on looptime's virtual clock.
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.runtime import AgentRuntime
+from band.runtime.runtime import CREATION_RETRY_WAIT_S, AgentRuntime
 from band.runtime.types import SessionConfig
-from tests.conftest import make_room_added_event, make_room_removed_event
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 ROOM = "room-1"
+#: Virtual seconds, ample for any number of creation retries.
+RETRY_HORIZON_S = 10 * CREATION_RETRY_WAIT_S
+
+
+async def elapse(seconds: float) -> None:
+    """Let ``seconds`` of looptime's virtual clock pass."""
+    with suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=seconds)
 
 
 class Room:
@@ -40,14 +49,14 @@ class Room:
         self.ctx = ExecutionContext(
             room_id,
             self.link,
-            self._on_execute,
+            self.on_execute,
             config=SessionConfig(
                 idle_resync_seconds=30.0,
                 enable_working_state=False,
             ),
         )
 
-    async def _on_execute(self, _ctx: Any, _event: Any) -> None:
+    async def on_execute(self, _ctx: Any, _event: Any) -> None:
         self.turn_started.set()
         if self.turn_gate is not None:
             await self.turn_gate.wait()
@@ -81,9 +90,10 @@ async def test_a_stop_cancelled_while_the_loop_unwinds_is_not_swallowed(room) ->
     r = room()
     await r.ctx.start()
     stopping = asyncio.create_task(r.ctx.stop())
-    await asyncio.sleep(0)  # stop() runs until it waits on the cancelled loop
-    assert r.ctx._process_loop_task is not None
-    assert not r.ctx._process_loop_task.done()
+    await asyncio.wait({stopping}, timeout=0)
+    assert (r.ctx.is_running, stopping.done()) == (False, False), (
+        "stop() began and is still waiting on the cancelled loop"
+    )
 
     stopping.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -91,21 +101,6 @@ async def test_a_stop_cancelled_while_the_loop_unwinds_is_not_swallowed(room) ->
 
     await asyncio.wait_for(r.ctx.stop(), timeout=5.0)
     assert r.ctx.is_running is False
-
-
-def _runtime_over(r: Room, cleanups: list[str]) -> AgentRuntime:
-    """An AgentRuntime whose one room runs ``r``'s execution context."""
-
-    async def cleanup(room_id: str) -> None:
-        cleanups.append(room_id)
-
-    return AgentRuntime(
-        r.link,
-        "agent-1",
-        AsyncMock(),
-        execution_factory=lambda *_args, **_kwargs: r.ctx,
-        on_session_cleanup=cleanup,
-    )
 
 
 class GatedExecution:
@@ -180,95 +175,122 @@ class GenerationRuntime:
             on_session_cleanup=cleanup,
         )
 
+    async def join(self) -> None:
+        """The room is admitted: presence tells its runtime."""
+        await self.runtime.presence.on_room_joined(ROOM, {})
 
-async def test_overlapping_destroys_share_one_stop_and_one_cleanup() -> None:
-    g = GenerationRuntime()
-    await g.runtime._create_execution(ROOM)
-    [first] = g.generations
+    async def leave(self) -> None:
+        """The room is removed: presence tells its runtime."""
+        await self.runtime.presence.on_room_left(ROOM)
 
-    callers = [
-        asyncio.create_task(g.runtime._destroy_execution(ROOM)) for _ in range(2)
-    ]
+    async def joined_and_left(self) -> GatedExecution:
+        """Run one execution through a clean join and leave."""
+        await self.join()
+        [old] = self.generations
+        old.stop_gate.set()
+        await self.leave()
+        return old
+
+    async def until_live(self) -> None:
+        await wait_for_condition(
+            lambda: ROOM in self.runtime.executions, timeout=RETRY_HORIZON_S
+        )
+
+
+@pytest.fixture
+def harness() -> GenerationRuntime:
+    return GenerationRuntime()
+
+
+async def test_overlapping_stops_share_one_stop_and_one_cleanup(harness) -> None:
+    await harness.join()
+    [first] = harness.generations
+
+    callers = [asyncio.create_task(harness.runtime.stop()) for _ in range(2)]
     await first.stop_entered.wait()
     first.stop_gate.set()
     results = await asyncio.gather(*callers)
 
-    assert (first.stop_calls, g.cleanups, results) == (1, [(ROOM, None)], [True, True])
+    assert (first.stop_calls, harness.cleanups, results) == (
+        1,
+        [(ROOM, None)],
+        [True, True],
+    )
 
 
-async def test_a_rejoin_waits_for_the_previous_rooms_cleanup() -> None:
-    g = GenerationRuntime()
-    await g.runtime._create_execution(ROOM)
-    [old] = g.generations
-    leaving = asyncio.create_task(g.runtime._destroy_execution(ROOM))
+@pytest.mark.looptime
+async def test_a_rejoin_waits_for_the_previous_rooms_cleanup(harness) -> None:
+    await harness.join()
+    [old] = harness.generations
+    leaving = asyncio.create_task(harness.runtime.stop())
     await old.stop_entered.wait()
     leaving.cancel()
     with pytest.raises(asyncio.CancelledError):
         await leaving
 
-    rejoining = asyncio.create_task(g.runtime._create_execution(ROOM))
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert (rejoining.done(), len(g.generations)) == (False, 1)
+    rejoining = asyncio.create_task(harness.join())
+    done, _ = await asyncio.wait({rejoining}, timeout=CREATION_RETRY_WAIT_S)
+    assert (done, len(harness.generations)) == (set(), 1)
     old.stop_gate.set()
-    new = await asyncio.wait_for(rejoining, timeout=5.0)
+    await asyncio.wait_for(rejoining, timeout=5.0)
 
-    assert g.cleanups == [(ROOM, None)], "old cleanup never saw the new room"
-    assert (old.stop_calls, g.runtime.executions[ROOM]) == (1, new)
+    assert harness.cleanups == [(ROOM, None)], "old cleanup never saw the new room"
+    assert (old.stop_calls, harness.runtime.executions[ROOM]) == (
+        1,
+        harness.generations[1],
+    )
 
 
-async def test_a_failed_stop_keeps_the_room_until_a_retry_stops_it() -> None:
-    g = GenerationRuntime()
-    await g.runtime._create_execution(ROOM)
-    [old] = g.generations
+async def test_a_failed_stop_keeps_the_room_until_a_retry_stops_it(harness) -> None:
+    await harness.join()
+    [old] = harness.generations
     old.stop_gate.set()
     old.stop_errors.append(RuntimeError("process still running"))
 
-    first = await g.runtime._destroy_execution(ROOM)
+    first = await harness.runtime.stop()
 
-    assert (first, old.stop_calls, g.cleanups) == (False, 1, [])
-    assert g.runtime._teardowns[ROOM].execution is old
-    second = await g.runtime._destroy_execution(ROOM)
-    assert (second, old.stop_calls, g.cleanups) == (True, 2, [(ROOM, None)])
+    assert (first, old.stop_calls, harness.cleanups) == (False, 1, [])
+    second = await harness.runtime.stop()
+    assert (second, old.stop_calls, harness.cleanups) == (True, 2, [(ROOM, None)])
 
 
-async def test_a_rejoin_past_a_failing_stop_is_created_once_the_stop_succeeds() -> None:
-    g = GenerationRuntime()
-    g.runtime._teardown_retry_delay_s = 0.0
-    link = g.runtime.link
-    link.subscribe_room = AsyncMock()
-    link.unsubscribe_room = AsyncMock()
-    link.is_room_subscribed = MagicMock(return_value=True)
-    presence = g.runtime.presence
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    [old] = g.generations
+@pytest.mark.looptime
+async def test_a_rejoin_past_a_failing_stop_is_created_once_the_stop_succeeds(
+    harness,
+) -> None:
+    await harness.join()
+    [old] = harness.generations
     old.stop_gate.set()
     old.stop_errors.extend(RuntimeError("still running") for _ in range(3))
-    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+    await harness.leave()
 
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    await harness.join()
 
-    assert ROOM in presence.roster.tracked_room_ids()
-    assert (ROOM in g.runtime.executions, g.cleanups) == (False, [])
-    await asyncio.wait_for(_recovery(g), timeout=5.0)
-    assert (old.stop_calls, g.cleanups) == (4, [(ROOM, None)])
-    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
-
-
-def _admit_rooms(link: Any) -> None:
-    """Let RoomPresence's admission subscribe on a mock link."""
-    link.subscribe_room = AsyncMock()
-    link.unsubscribe_room = AsyncMock()
-    link.is_room_subscribed = MagicMock(return_value=True)
+    assert (ROOM in harness.runtime.executions, harness.cleanups) == (False, [])
+    await harness.until_live()
+    assert (old.stop_calls, harness.cleanups) == (4, [(ROOM, None)])
+    assert (len(harness.generations), harness.runtime.executions[ROOM]) == (
+        2,
+        harness.generations[1],
+    )
 
 
-async def test_a_room_removal_preempts_a_graceful_shutdown(room) -> None:
+async def test_a_room_removal_preempts_a_graceful_shutdown(room, monkeypatch) -> None:
     r = room()
     r.turn_gate = asyncio.Event()
     cleanups: list[str] = []
-    runtime = _runtime_over(r, cleanups)
-    _admit_rooms(r.link)
-    await runtime.presence._handle_room_added(make_room_added_event(room_id=ROOM))
+
+    async def cleanup(room_id: str) -> None:
+        cleanups.append(room_id)
+
+    runtime = AgentRuntime(
+        r.link,
+        "agent-1",
+        AsyncMock(),
+        execution_factory=lambda *_args, **_kwargs: r.ctx,
+        on_session_cleanup=cleanup,
+    )
+    await runtime.presence.on_room_joined(ROOM, {})
     await r.send("msg-1")
     stop_timeouts: list[float | None] = []
     running_stops = 0
@@ -285,156 +307,142 @@ async def test_a_room_removal_preempts_a_graceful_shutdown(room) -> None:
         finally:
             running_stops -= 1
 
-    r.ctx.stop = tracked_stop  # type: ignore[method-assign]
+    monkeypatch.setattr(r.ctx, "stop", tracked_stop)
     shutting_down = asyncio.create_task(runtime.stop(timeout=30.0))
     await wait_for_condition(lambda: stop_timeouts == [30.0], timeout=5.0)
 
-    await asyncio.wait_for(
-        runtime.presence._handle_room_removed(make_room_removed_event(room_id=ROOM)),
-        timeout=5.0,
-    )
+    await asyncio.wait_for(runtime.presence.on_room_left(ROOM), timeout=5.0)
 
     assert not r.turn_gate.is_set()
     assert (cleanups, most_concurrent_stops, stop_timeouts) == ([ROOM], 1, [30.0, None])
     assert await asyncio.wait_for(shutting_down, timeout=5.0) is False
 
 
+@pytest.mark.looptime
 @pytest.mark.parametrize("departure", ["room_removed", "runtime_stop"])
-async def test_leaving_cancels_a_pending_rejoin(departure: str) -> None:
-    g = GenerationRuntime()
-    g.runtime._teardown_retry_delay_s = 3600.0
-    _admit_rooms(g.runtime.link)
-    presence = g.runtime.presence
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    [old] = g.generations
+async def test_leaving_cancels_a_pending_rejoin(harness, departure: str) -> None:
+    await harness.join()
+    [old] = harness.generations
     old.stop_gate.set()
     old.stop_errors.extend(RuntimeError("still running") for _ in range(2))
-    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    pending = _recovery(g)
+    await harness.leave()
+    await harness.join()
 
     match departure:
         case "room_removed":
-            await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+            await harness.leave()
         case "runtime_stop":
-            await g.runtime.stop()
+            await harness.runtime.stop()
 
-    assert (pending.cancelled(), g.runtime._pending_creations) == (True, {})
-    assert (old.stop_calls, g.cleanups) == (3, [(ROOM, None)])
-    assert (len(g.generations), ROOM in g.runtime.executions) == (1, False)
+    await elapse(RETRY_HORIZON_S)
+    assert (old.stop_calls, harness.cleanups) == (3, [(ROOM, None)])
+    assert (len(harness.generations), ROOM in harness.runtime.executions) == (1, False)
 
 
-async def test_a_failed_cleanup_is_retried_before_the_room_is_recreated() -> None:
-    g = GenerationRuntime()
-    g.runtime._teardown_retry_delay_s = 0.0
-    _admit_rooms(g.runtime.link)
-    presence = g.runtime.presence
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    [old] = g.generations
+@pytest.mark.looptime
+async def test_a_failed_cleanup_is_retried_before_the_room_is_recreated(
+    harness,
+) -> None:
+    await harness.join()
+    [old] = harness.generations
     old.stop_gate.set()
-    g.cleanup_errors.extend(RuntimeError("process still closing") for _ in range(2))
-    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
-
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-
-    assert (ROOM in g.runtime.executions, len(g.generations)) == (False, 1)
-    await asyncio.wait_for(_recovery(g), timeout=5.0)
-    assert old.stop_calls == 1, "a cleanup retry must not stop the execution again"
-    assert g.cleanups == [(ROOM, None)] * 3, "no new execution before cleanup succeeds"
-    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
-
-
-def _recovery(g: GenerationRuntime) -> asyncio.Task[None]:
-    task = g.runtime._pending_creations[ROOM].task
-    assert task is not None
-    return task
-
-
-async def _leave_and_rejoin(g: GenerationRuntime) -> GatedExecution:
-    g.runtime._teardown_retry_delay_s = 0.0
-    _admit_rooms(g.runtime.link)
-    presence = g.runtime.presence
-    await presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    [old] = g.generations
-    old.stop_gate.set()
-    await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
-    return old
-
-
-async def test_a_failed_successor_build_is_retried_without_another_join() -> None:
-    g = GenerationRuntime()
-    await _leave_and_rejoin(g)
-    g.build_errors.append(RuntimeError("factory unavailable"))
-
-    await g.runtime.presence._handle_room_added(make_room_added_event(room_id=ROOM))
-    await wait_for_condition(lambda: ROOM in g.runtime.executions, timeout=5.0)
-
-    assert g.build_errors == [], "the failing build was attempted"
-    assert (len(g.generations), g.runtime.executions[ROOM]) == (2, g.generations[1])
-
-
-async def test_a_successor_that_fails_to_start_is_stopped_and_never_live() -> None:
-    g = GenerationRuntime()
-    await _leave_and_rejoin(g)
-    g.start_errors.append(RuntimeError("harness did not start"))
-
-    await g.runtime.presence._handle_room_added(make_room_added_event(room_id=ROOM))
-
-    failed = g.generations[1]
-    assert ROOM not in g.runtime.executions, "a failed start is never published"
-    failed.stop_gate.set()
-    await asyncio.wait_for(_recovery(g), timeout=5.0)
-    assert failed.stop_calls == 1, "the failed candidate is released"
-    assert (len(g.generations), g.runtime.executions[ROOM]) == (3, g.generations[2])
-    assert g.cleanups == [(ROOM, None), (ROOM, None)]
-
-
-@pytest.mark.parametrize("departure", ["room_removed", "runtime_stop"])
-async def test_leaving_while_a_successor_starts_releases_it(departure: str) -> None:
-    g = GenerationRuntime()
-    await _leave_and_rejoin(g)
-    g.hold_starts = True
-    presence = g.runtime.presence
-    joining = asyncio.create_task(
-        presence._handle_room_added(make_room_added_event(room_id=ROOM))
+    harness.cleanup_errors.extend(
+        RuntimeError("process still closing") for _ in range(2)
     )
-    await wait_for_condition(lambda: len(g.generations) == 2, timeout=5.0)
-    candidate = g.generations[1]
+    await harness.leave()
+
+    await harness.join()
+
+    assert (ROOM in harness.runtime.executions, len(harness.generations)) == (False, 1)
+    await harness.until_live()
+    assert old.stop_calls == 1, "a cleanup retry must not stop the execution again"
+    assert harness.cleanups == [(ROOM, None)] * 3, (
+        "no new execution before cleanup succeeds"
+    )
+    assert (len(harness.generations), harness.runtime.executions[ROOM]) == (
+        2,
+        harness.generations[1],
+    )
+
+
+@pytest.mark.looptime
+async def test_a_failed_successor_build_is_retried_without_another_join(
+    harness,
+) -> None:
+    await harness.joined_and_left()
+    harness.build_errors.append(RuntimeError("factory unavailable"))
+
+    await harness.join()
+    await harness.until_live()
+
+    assert harness.build_errors == [], "the failing build was attempted"
+    assert (len(harness.generations), harness.runtime.executions[ROOM]) == (
+        2,
+        harness.generations[1],
+    )
+
+
+@pytest.mark.looptime
+async def test_a_successor_that_fails_to_start_is_stopped_and_never_live(
+    harness,
+) -> None:
+    await harness.joined_and_left()
+    harness.start_errors.append(RuntimeError("harness did not start"))
+
+    await harness.join()
+
+    failed = harness.generations[1]
+    assert ROOM not in harness.runtime.executions, "a failed start is never published"
+    failed.stop_gate.set()
+    await harness.until_live()
+    assert failed.stop_calls == 1, "the failed candidate is released"
+    assert (len(harness.generations), harness.runtime.executions[ROOM]) == (
+        3,
+        harness.generations[2],
+    )
+    assert harness.cleanups == [(ROOM, None), (ROOM, None)]
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize("departure", ["room_removed", "runtime_stop"])
+async def test_leaving_while_a_successor_starts_releases_it(
+    harness, departure: str
+) -> None:
+    await harness.joined_and_left()
+    harness.hold_starts = True
+    joining = asyncio.create_task(harness.join())
+    await wait_for_condition(lambda: len(harness.generations) == 2, timeout=5.0)
+    candidate = harness.generations[1]
     await asyncio.wait_for(candidate.start_entered.wait(), timeout=5.0)
-    assert ROOM not in g.runtime.executions
+    assert ROOM not in harness.runtime.executions
     candidate.stop_gate.set()
 
     match departure:
         case "room_removed":
-            await presence._handle_room_removed(make_room_removed_event(room_id=ROOM))
+            await harness.leave()
         case "runtime_stop":
-            await g.runtime.stop()
+            await harness.runtime.stop()
     await asyncio.wait_for(joining, timeout=5.0)
 
+    await elapse(RETRY_HORIZON_S)
     assert (candidate.start_cancelled, candidate.stop_calls) == (True, 1)
-    assert g.cleanups == [(ROOM, None), (ROOM, None)], "old room, then candidate"
-    assert len(g.generations) == 2, "no successor after departure"
-    runtime = g.runtime
-    assert (runtime.executions, runtime._teardowns, runtime._pending_creations) == (
-        {},
-        {},
-        {},
-    )
+    assert harness.cleanups == [(ROOM, None), (ROOM, None)], "old room, then candidate"
+    assert len(harness.generations) == 2, "no successor after departure"
+    assert harness.runtime.executions == {}
 
 
-async def test_a_cancelled_runtime_stop_is_finished_by_the_next_stop() -> None:
-    g = GenerationRuntime()
-    await g.runtime._create_execution(ROOM)
-    [execution] = g.generations
-    stopping = asyncio.create_task(g.runtime.stop())
+async def test_a_cancelled_runtime_stop_is_finished_by_the_next_stop(harness) -> None:
+    await harness.join()
+    [execution] = harness.generations
+    stopping = asyncio.create_task(harness.runtime.stop())
     await execution.stop_entered.wait()
 
     stopping.cancel()
     with pytest.raises(asyncio.CancelledError):
         await stopping
 
-    assert ROOM in g.runtime._teardowns
     execution.stop_gate.set()
-    await asyncio.wait_for(g.runtime.stop(), timeout=5.0)
-    assert g.cleanups == [(ROOM, None)]
-    assert ROOM not in g.runtime._teardowns
+    assert await asyncio.wait_for(harness.runtime.stop(), timeout=5.0) is True
+    assert (execution.stop_calls, harness.cleanups) == (1, [(ROOM, None)])
+    await harness.runtime.stop()
+    assert (execution.stop_calls, harness.cleanups) == (1, [(ROOM, None)])

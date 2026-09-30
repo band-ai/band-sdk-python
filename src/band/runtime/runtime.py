@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
+from tenacity import AsyncRetrying, retry_if_result, wait_fixed
 
 from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
@@ -33,9 +34,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Delay between retries of a previous execution's failed stop before a
-# rejoined room's new execution is created.
-TEARDOWN_RETRY_DELAY_S = 1.0
+# Wait between attempts to bring a room's execution up, whether a previous
+# execution's stop is still failing or the new one failed to build or start.
+CREATION_RETRY_WAIT_S = 1.0
 
 
 class ExecutionFactory(Protocol):
@@ -83,6 +84,11 @@ class RoomCreation:
 
     first_attempt: asyncio.Future[Execution | None]
     task: asyncio.Task[None] | None = None
+
+    def settle(self, execution: Execution | None) -> None:
+        """Release the joiner with the first attempt's outcome, once."""
+        if not self.first_attempt.done():
+            self.first_attempt.set_result(execution)
 
 
 class AgentRuntime:
@@ -189,7 +195,6 @@ class AgentRuntime:
         # predecessor's teardown, builds and starts a candidate, and retries
         # after any failure until an execution is live or the room is left.
         self._pending_creations: dict[str, RoomCreation] = {}
-        self._teardown_retry_delay_s = TEARDOWN_RETRY_DELAY_S
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -438,15 +443,16 @@ class AgentRuntime:
 
     async def _bring_up(self, room_id: str, creation: RoomCreation) -> None:
         """Retry creation until an execution is live; cancelled by a leave."""
+        retrying = AsyncRetrying(
+            retry=retry_if_result(lambda execution: execution is None),
+            wait=wait_fixed(CREATION_RETRY_WAIT_S),
+            before_sleep=lambda _state: creation.settle(None),
+        )
+        execution = None
         try:
-            execution = await self._attempt_creation(room_id)
-            creation.first_attempt.set_result(execution)
-            while execution is None:
-                await asyncio.sleep(self._teardown_retry_delay_s)
-                execution = await self._attempt_creation(room_id)
+            execution = await retrying(self._attempt_creation, room_id)
         finally:
-            if not creation.first_attempt.done():
-                creation.first_attempt.set_result(None)
+            creation.settle(execution)
             if self._pending_creations.get(room_id) is creation:
                 del self._pending_creations[room_id]
 

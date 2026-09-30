@@ -558,6 +558,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "ruamel-yaml" },
+    { name = "tenacity" },
 ]
 
 [package.optional-dependencies]
@@ -678,7 +679,6 @@ dev = [
     { name = "slack-sdk" },
     { name = "starlette" },
     { name = "strands-agents", extra = ["openai"], marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
-    { name = "tenacity" },
     { name = "uvicorn" },
 ]
 dev-crewai = [
@@ -701,7 +701,6 @@ dev-crewai = [
     { name = "pytest-timeout" },
     { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" } },
     { name = "ruff" },
-    { name = "tenacity" },
 ]
 dev-parlant = [
     { name = "a2a-sdk" },
@@ -721,7 +720,6 @@ dev-parlant = [
     { name = "pytest-timeout" },
     { name = "rich", version = "15.0.0", source = { registry = "https://pypi.org/simple" } },
     { name = "ruff" },
-    { name = "tenacity" },
     { name = "werkzeug" },
 ]
 gemini = [
@@ -931,9 +929,7 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
     { name = "strands-agents", extras = ["openai"], marker = "extra == 'dev'", specifier = ">=1.40,<2" },
     { name = "strands-agents", extras = ["openai"], marker = "extra == 'strands'", specifier = ">=1.40,<2" },
-    { name = "tenacity", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "tenacity", marker = "extra == 'dev-crewai'", specifier = ">=8.0.0" },
-    { name = "tenacity", marker = "extra == 'dev-parlant'", specifier = ">=8.0.0" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'acp'", specifier = ">=0.29" },
