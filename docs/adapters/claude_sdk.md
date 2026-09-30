@@ -29,4 +29,4 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
     so with an `approval_mode` that approval policy decides instead.
 
   When the account or model can't run `"auto"`, the CLI starts the session in
-  `"default"`. The adapter logs a warning and `/status` shows the mode in force.
+  `"default"`, and the adapter logs a warning.

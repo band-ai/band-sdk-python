@@ -414,9 +414,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "set approval_mode=None"
             )
         self.permission_mode: PermissionMode = permission_mode
-        # What the CLI reports running, which differs when the requested mode
-        # is unavailable (e.g. "auto" starts the session in "default").
-        self._effective_permission_mode: str | None = None
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
@@ -964,8 +961,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                     replied_this_turn |= await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
-                case SystemMessage(subtype="init"):
-                    self._record_effective_permission_mode(sdk_message)
+                # The CLI announces a mode it switched to (e.g. "auto" it can't
+                # run falls back to "default") once, in a status message.
+                case SystemMessage(
+                    subtype="status", data={"permissionMode": str() as mode}
+                ) if mode != self.permission_mode:
+                    logger.warning(
+                        "Room %s: Claude CLI runs permission mode %s instead of "
+                        "the requested %s",
+                        room_id,
+                        mode,
+                        self.permission_mode,
+                    )
                 case ResultMessage():
                     await self._on_turn_complete(
                         sdk_message,
@@ -1756,18 +1763,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         selected.future.set_result(ApprovalReply(decision, sender["id"]))
 
-    def _record_effective_permission_mode(self, init: SystemMessage) -> None:
-        mode = init.data.get("permissionMode")
-        if mode is None or mode == self._effective_permission_mode:
-            return
-        self._effective_permission_mode = mode
-        if mode != self.permission_mode:
-            logger.warning(
-                "Claude CLI runs permission mode %s instead of the requested %s",
-                mode,
-                self.permission_mode,
-            )
-
     async def _handle_status_command(
         self,
         tools: AgentToolsProtocol,
@@ -1786,7 +1781,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             "**Claude SDK Status**",
             f"- model: `{self.model or 'auto'}`",
             f"- fallback_model: `{self.fallback_model or 'none'}`",
-            f"- permission_mode: `{self._effective_permission_mode or self.permission_mode}`",
+            f"- permission_mode: `{self.permission_mode}`",
             f"- approval_mode: `{self.approval_mode or 'disabled'}`",
             f"- pending_approvals: {pending_count}",
             f"- active_sessions: {session_count}",

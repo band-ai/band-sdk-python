@@ -26,32 +26,27 @@ async def test_dont_ask_denies_an_unlisted_native_tool_without_asking_the_room(
     assert room.failures == []
 
 
-async def test_auto_reaches_the_cli(claude_room: OpenRoom) -> None:
-    room = await claude_room(permission_mode="auto")
-    room.claude.script([room.model_reply("Hello.")])
+FALLBACK_WARNING = (
+    "band.adapters.claude_sdk",
+    logging.WARNING,
+    (
+        "Room room-1: Claude CLI runs permission mode default instead of the "
+        "requested auto"
+    ),
+)
 
-    await room.send("hi")
 
-    [session] = room.claude.sessions
-    assert session.options.permission_mode == "auto"
-
-
-async def test_an_unavailable_mode_is_reported_as_the_one_in_force(
+async def test_an_unavailable_mode_is_warned_about_once(
     claude_room: OpenRoom, caplog: pytest.LogCaptureFixture
 ) -> None:
-    room = await claude_room(permission_mode="auto", approval_mode="manual")
+    room = await claude_room(permission_mode="auto")
     room.claude.unavailable_modes.add("auto")
-    room.claude.script([room.model_reply("Hello.")])
+    room.claude.script([room.model_reply("Hello.")], [room.model_reply("Again.")])
 
-    with caplog.at_level(logging.WARNING, logger="band.adapters.claude_sdk"):
-        await room.send("hi")
-        await room.send("/status")
+    await room.send("hi")
+    await room.send("hi again")
 
-    assert (
-        "Claude CLI runs permission mode default instead of the requested auto"
-        in caplog.messages
-    )
-    assert "- permission_mode: `default`" in room.chat[-1]
+    assert caplog.record_tuples.count(FALLBACK_WARNING) == 1
 
 
 @pytest.mark.parametrize("approval_mode", ["manual", "auto_accept", "auto_decline"])
