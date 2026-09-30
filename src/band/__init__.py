@@ -48,6 +48,7 @@ from importlib.metadata import version as _get_version
 from .agent import Agent
 from .config.logs import LogSettings, configure_logging_from_env
 from .core.exceptions import (
+    AgentAlreadyRunningError,
     BandConfigError,
     BandConnectionError,
     BandError,
@@ -55,7 +56,7 @@ from .core.exceptions import (
 )
 
 # Core types (v0.3.0)
-from .core.types import AdapterFeatures, Capability, Emit, FeatureKwargs
+from .core.types import AdapterFeatures, Capability, ConflictPolicy, Emit, FeatureKwargs
 from .logging_config import (
     CHATTY_LOGGERS,
     STANDARD_FORMAT,
@@ -120,6 +121,7 @@ __all__ = [
     "AdapterFeatures",
     # Composition
     "Agent",
+    "AgentAlreadyRunningError",
     "AgentConfig",
     # Runtime - Core
     "AgentRuntime",
@@ -131,6 +133,7 @@ __all__ = [
     "BandLink",
     "BandToolError",
     "Capability",
+    "ConflictPolicy",
     "ConversationContext",
     "Emit",
     "Execution",

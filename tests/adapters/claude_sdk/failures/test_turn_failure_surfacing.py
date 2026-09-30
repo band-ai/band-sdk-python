@@ -236,3 +236,30 @@ async def test_tool_traffic_the_cli_carries_outside_assistant_calls_still_counts
     await room.send("answer inline")
 
     assert room.failures == []
+
+
+async def test_band_no_reply_ends_the_turn_quietly(claude_room: OpenRoom) -> None:
+    """Choosing not to answer is a finished turn: nothing is posted and no
+    missing-reply error reaches the room."""
+    room = await claude_room()
+    room.claude.script([room.model_call("band_no_reply", reason="nothing to add")])
+
+    await room.send("FYI, the build is green.")
+
+    assert (room.chat, room.failures) == ([], [])
+
+
+async def test_band_no_reply_does_not_excuse_a_later_silent_turn(
+    claude_room: OpenRoom,
+) -> None:
+    room = await claude_room()
+    room.claude.script(
+        [room.model_call("band_no_reply")],
+        [ModelDecision.text_reply("Plain text only.")],
+    )
+
+    await room.send("FYI")
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("Are you there?")
+
+    assert room.failures == [MISSING_REPLY_TEXT]
