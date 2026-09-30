@@ -356,6 +356,12 @@ class ExecutionContext:
         """Check if context is currently processing an event."""
         return self.state is ExecutionState.PROCESSING
 
+    @property
+    def is_stopped(self) -> bool:
+        """Check if the room is stopped (a stop control, or the platform
+        reporting a stopped execution)."""
+        return self._stopped
+
     def _set_state(self, new_state: ExecutionState) -> None:
         """
         Set the execution state and update the idle event accordingly.
@@ -696,6 +702,24 @@ class ExecutionContext:
         """
         self._stopped = False
         await self.request_resync()
+
+    def mark_stopped_by_platform(self) -> None:
+        """Adopt a room stop that the platform applied without this process
+        seeing the signal: an event post came back 403 because the room's
+        execution is stopped (a stop issued while this run was offline, or by
+        another connection).
+
+        Treats the room as stopped exactly as if a stop control had arrived --
+        abort the in-flight cycle and go quiet until a play signal -- so the
+        room's stale messages are not re-run against the platform's guard on
+        every restart.
+        """
+        logger.warning(
+            "ExecutionContext %s: the platform reports the room's execution as "
+            "stopped; treating the room as stopped until a play signal",
+            self.room_id,
+        )
+        self.stop_room()
 
     async def _clear_activity(self) -> None:
         """Invoke the optional activity-clear seam after an aborted cycle."""

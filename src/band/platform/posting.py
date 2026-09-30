@@ -16,8 +16,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from band_rest.errors import ForbiddenError
+
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.content import has_visible_content
+from band.core.exceptions import RoomExecutionStoppedError
 
 if TYPE_CHECKING:
     from band_rest.types import EventCreatedResponse, MessageSentResponse
@@ -50,6 +53,32 @@ def _truncate_event_content(content: str) -> str:
     head_len = budget // 2
     tail_len = budget - head_len
     return content[:head_len] + _EVENT_TRUNCATION_MARKER + content[-tail_len:]
+
+
+# The platform's guard against a room whose agent execution is stopped. The
+# error code is the generic "forbidden", so only the message text identifies
+# this rejection among the other 403s the events API returns.
+_EXECUTION_STOPPED_MESSAGE = "execution is stopped"
+
+
+def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
+    """Whether a 403 from the events API is the platform's guard against a
+    stopped room execution, not a generic permission rejection.
+
+    The body is the parsed Fern ``Error`` model when the response parsed, or
+    a raw dict/str when it did not; every shape that carries the message is
+    checked.
+    """
+    body = error.body
+    if isinstance(body, str):
+        message: object = body
+    elif isinstance(body, dict):
+        inner = body.get("error")
+        message = inner.get("message") if isinstance(inner, dict) else None
+    else:
+        inner = getattr(body, "error", None)
+        message = getattr(inner, "message", None)
+    return isinstance(message, str) and _EXECUTION_STOPPED_MESSAGE in message.lower()
 
 
 async def post_message(
@@ -89,6 +118,13 @@ async def post_event(
     truncated rather than refused: the platform's cap exists to bound
     broadcast fan-out, not to reject legitimate large payloads (an ACP
     tool_result mirroring a large file, for instance).
+
+    Raises:
+        RoomExecutionStoppedError: When the platform rejects the post because
+            this room's agent execution is stopped. The platform keeps
+            rejecting the room's posts until the execution is resumed (a play
+            signal), so callers must not retry; execution-aware callers
+            (``AgentTools``) adopt the stopped state instead.
     """
     if not has_visible_content(request.content):
         logger.warning(
@@ -109,11 +145,16 @@ async def post_event(
         )
         request = request.model_copy(update={"content": content})
 
-    response = await rest.agent_api_events.create_agent_chat_event(
-        chat_id=room_id,
-        event=request,
-        request_options=DEFAULT_REQUEST_OPTIONS,
-    )
+    try:
+        response = await rest.agent_api_events.create_agent_chat_event(
+            chat_id=room_id,
+            event=request,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+    except ForbiddenError as error:
+        if _is_execution_stopped_rejection(error):
+            raise RoomExecutionStoppedError(room_id) from error
+        raise
     if not response.data:
         raise RuntimeError("Failed to send event - no response data")
     return response.data
