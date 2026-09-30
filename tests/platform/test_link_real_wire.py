@@ -17,12 +17,7 @@ import pytest
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy
 from band.platform.link import BandLink
-from band.testing import (
-    FakePhoenixServer,
-    JoinOutcome,
-    UpgradeOutcome,
-    fake_phoenix_server,
-)
+from band.testing import FakePhoenixServer, JoinOutcome, fake_phoenix_server
 from tests.conftest import spy_on_reconciliation_drain
 
 
@@ -180,9 +175,7 @@ async def test_reject_policy_is_sent_on_the_first_connect_only() -> None:
 
 
 async def test_refused_duplicate_raises_agent_already_running() -> None:
-    async with fake_phoenix_server(
-        upgrade_outcomes=[UpgradeOutcome.CONFLICT]
-    ) as server:
+    async with fake_phoenix_server(refuse_upgrades=True) as server:
         link = make_link(server.url, conflict_policy=ConflictPolicy.REJECT)
 
         with pytest.raises(AgentAlreadyRunningError, match="agent-123"):

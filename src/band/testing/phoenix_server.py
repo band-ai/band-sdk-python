@@ -20,7 +20,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
-from typing import TypeVar
 from urllib.parse import parse_qsl, urlsplit
 
 from phoenix_channels_python_client.phx_messages import ChannelMessage, Event, PHXEvent
@@ -36,21 +35,12 @@ from websockets.http11 import Request, Response
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
-
 
 class JoinOutcome(StrEnum):
     """What the fake server replies to one ``phx_join`` attempt with."""
 
     OK = "ok"
     REJECTED = "rejected"
-
-
-class UpgradeOutcome(StrEnum):
-    """What the fake server answers one WebSocket upgrade request with."""
-
-    ACCEPT = "accept"
-    CONFLICT = "conflict"
 
 
 # The platform's refusal of `on_conflict=reject` when the agent already has a
@@ -84,17 +74,6 @@ class Upgrade:
         )
 
 
-def _next_outcome(outcomes: list[T], default: T) -> T:
-    """Consume one outcome off a declared sequence, holding on the last entry
-    once exhausted (an empty sequence always yields ``default``)."""
-    if not outcomes:
-        return default
-    outcome = outcomes[0]
-    if len(outcomes) > 1:
-        outcomes.pop(0)
-    return outcome
-
-
 class FakePhoenixServer:
     """A real loopback WebSocket server speaking Phoenix Channels V2.
 
@@ -105,12 +84,12 @@ class FakePhoenixServer:
         self,
         *,
         join_outcomes: dict[str, Sequence[JoinOutcome]],
-        upgrade_outcomes: Sequence[UpgradeOutcome],
+        refuse_upgrades: bool,
     ) -> None:
         self._join_outcomes = {
             topic: list(outcomes) for topic, outcomes in join_outcomes.items()
         }
-        self._upgrade_outcomes = list(upgrade_outcomes)
+        self._refuse_upgrades = refuse_upgrades
         self._protocol = PHXProtocolHandler(
             protocol_version=PhoenixChannelsProtocolVersion.V2
         )
@@ -129,21 +108,25 @@ class FakePhoenixServer:
         self._join_refs: dict[str, str | None] = {}
 
     def _next_join_outcome(self, topic: str) -> JoinOutcome:
-        """Unlisted topics always succeed."""
-        outcomes = self._join_outcomes.get(topic, [])
-        return _next_outcome(outcomes, JoinOutcome.OK)
+        """Consume one outcome off ``topic``'s declared sequence, holding on
+        the last entry once exhausted (unlisted topics always succeed)."""
+        outcomes = self._join_outcomes.get(topic)
+        if not outcomes:
+            return JoinOutcome.OK
+        outcome = outcomes[0]
+        if len(outcomes) > 1:
+            outcomes.pop(0)
+        return outcome
 
     def _process_request(
         self, connection: ServerConnection, request: Request
     ) -> Response | None:
-        """Decide the upgrade's fate before the handshake completes: a
-        response is an HTTP refusal, ``None`` lets the handshake proceed."""
+        """Answer a refused upgrade with an HTTP response before the handshake
+        completes; ``None`` lets it proceed."""
         self.upgrades.append(Upgrade.from_request(request))
-        match _next_outcome(self._upgrade_outcomes, UpgradeOutcome.ACCEPT):
-            case UpgradeOutcome.CONFLICT:
-                return connection.respond(HTTPStatus.CONFLICT, _CONFLICT_BODY)
-            case UpgradeOutcome.ACCEPT:
-                return None
+        if self._refuse_upgrades:
+            return connection.respond(HTTPStatus.CONFLICT, _CONFLICT_BODY)
+        return None
 
     def _forget_topic(self, topic: str) -> None:
         """Drop ``topic`` from joined-membership bookkeeping -- shared by a
@@ -251,22 +234,22 @@ class FakePhoenixServer:
 async def fake_phoenix_server(
     *,
     join_outcomes: dict[str, Sequence[JoinOutcome]] | None = None,
-    upgrade_outcomes: Sequence[UpgradeOutcome] = (),
+    refuse_upgrades: bool = False,
 ) -> AsyncIterator[FakePhoenixServer]:
     """A real loopback Phoenix Channels server for exercising BandLink's real
     WebSocketClient/PHXChannelsClient stack, no mocks below BandLink.
 
     ``join_outcomes`` declares the whole join scenario up front, as data: a
     topic maps to the sequence of outcomes its successive join attempts get.
-    ``upgrade_outcomes`` does the same for upgrade requests, in arrival order;
-    the last entry repeats because a refused client re-handshakes once to read
-    the HTTP error. Everything else about the scenario -- when the network
-    drops, what events arrive -- is inherently a sequence of events in time,
-    so it stays as explicit calls on the yielded server (``push``,
-    ``close_connection``, ``abort_connection``).
+    ``refuse_upgrades`` answers every upgrade with the platform's 409
+    ``connection_conflict`` -- the client re-handshakes once to read the HTTP
+    error, so a refused start sees two. Everything else about the scenario --
+    when the network drops, what events arrive -- is inherently a sequence of
+    events in time, so it stays as explicit calls on the yielded server
+    (``push``, ``close_connection``, ``abort_connection``).
     """
     server = FakePhoenixServer(
-        join_outcomes=join_outcomes or {}, upgrade_outcomes=upgrade_outcomes
+        join_outcomes=join_outcomes or {}, refuse_upgrades=refuse_upgrades
     )
     async with serve(
         server._handler,

@@ -41,7 +41,7 @@ from band.client.streaming import (
     WireEvent,
 )
 from band.credentials import PROXY_MANAGED_API_KEY
-from band.testing import UpgradeOutcome, fake_phoenix_server
+from band.testing import fake_phoenix_server
 from tests.websocket.conftest import SUCCEEDS, fast_session_policy
 
 # Shared valid payload used by multiple tests
@@ -744,9 +744,7 @@ async def test_refused_upgrade_is_read_with_the_same_credentials_as_the_attempt(
     `x-api-key` header like the real upgrade. Under proxy-managed custody the
     query holds only the sentinel, so a header-less probe is turned away
     unauthenticated and the platform's refusal is never seen."""
-    async with fake_phoenix_server(
-        upgrade_outcomes=[UpgradeOutcome.CONFLICT]
-    ) as server:
+    async with fake_phoenix_server(refuse_upgrades=True) as server:
         with pytest.raises(WebSocketUpgradeError):
             async with WebSocketClient(server.url, PROXY_MANAGED_API_KEY, "agent-xyz"):
                 pass

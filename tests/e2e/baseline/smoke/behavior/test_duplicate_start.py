@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from band import Agent, AgentAlreadyRunningError, AgentConfig, ConflictPolicy
+from band import AgentAlreadyRunningError, AgentConfig, ConflictPolicy
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     REPLY_PROMPT,
@@ -19,7 +19,11 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import (
+    AdapterCell,
+    ResourceManager,
+    running_agent_with_handle,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
@@ -32,27 +36,23 @@ async def test_second_start_is_refused_and_the_incumbent_keeps_replying(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """The duplicate is built with ``Agent.create`` rather than through the cell:
-    the cell's ``track_running`` guard exists to forbid exactly this overlap."""
+    """The duplicate runs through ``running_agent_with_handle`` rather than the
+    cell: the cell's ``track_running`` guard exists to forbid this overlap."""
     identity = await cell.provision(label=f"duplicate-{cell.adapter_id}")
     room_id = await resource_manager.provision_room(
         title=f"e2e-duplicate-{cell.adapter_id}", participants=[identity.id]
     )
 
     async with cell.run_as(identity):
-        duplicate = Agent.create(
-            adapter=cell.build(),
-            agent_id=identity.id,
-            api_key=identity.api_key,
-            ws_url=cell.settings.endpoints.ws_url,
-            rest_url=cell.settings.endpoints.rest_url,
-            config=AgentConfig(
-                single_instance=False, conflict_policy=ConflictPolicy.REJECT
-            ),
-        )
-
         with pytest.raises(AgentAlreadyRunningError, match=identity.id):
-            async with duplicate:
+            async with running_agent_with_handle(
+                identity,
+                cell.build(),
+                cell.settings,
+                config=AgentConfig(
+                    single_instance=False, conflict_policy=ConflictPolicy.REJECT
+                ),
+            ):
                 pass
 
         marker = unique_marker("incumbent")
