@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import AgentAlreadyRunningError
 from band.runtime.single_instance import SingleInstanceGuard, release_all_held
 
 
@@ -14,7 +14,7 @@ class TestSingleInstanceGuard:
         second = SingleInstanceGuard("agent-1", lock_dir=tmp_path)
         first.acquire()
         try:
-            with pytest.raises(BandConfigError, match="already running"):
+            with pytest.raises(AgentAlreadyRunningError, match="already running"):
                 second.acquire()
         finally:
             first.release()

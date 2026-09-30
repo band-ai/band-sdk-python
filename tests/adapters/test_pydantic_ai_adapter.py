@@ -81,6 +81,7 @@ from band.runtime.tools import (
     TASK_TOOL_NAMES,
     BandTool,
     ToolCategory,
+    TurnEffect,
     band_tool_errored,
     get_tool_description,
     platform_args_schema,
@@ -2461,7 +2462,7 @@ class TestPortableCustomToolDef:
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4", additional_tools=[(DeployInput, deploy)]
         )
-        assert adapter._custom_terminal_names == frozenset({"deploy"})
+        assert adapter._custom_effects == {"deploy": TurnEffect.ACT}
 
     def test_converted_tuple_flattens_in_pydantic_ai(self):
 
