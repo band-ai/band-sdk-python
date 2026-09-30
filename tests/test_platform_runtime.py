@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from band_rest.core.api_error import ApiError
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import AgentAlreadyRunningError
+from band.core.types import ConflictPolicy
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import AgentConfig, SessionConfig
@@ -151,7 +152,7 @@ class TestStart:
 
     @pytest.mark.asyncio
     async def test_creates_link(self, mock_link, mock_runtime):
-        """Should create BandLink on start."""
+        """Should create BandLink on start, forwarding the conflict policy."""
         with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
@@ -162,6 +163,7 @@ class TestStart:
                 runtime = PlatformRuntime(
                     agent_id="agent-123",
                     api_key="test-key",
+                    config=AgentConfig(conflict_policy=ConflictPolicy.REJECT),
                 )
 
                 on_execute = AsyncMock()
@@ -172,6 +174,7 @@ class TestStart:
                     api_key="test-key",
                     ws_url="wss://app.band.ai/api/v1/socket/websocket",
                     rest_url="https://app.band.ai",
+                    conflict_policy=ConflictPolicy.REJECT,
                 )
 
     @pytest.mark.asyncio
@@ -518,7 +521,7 @@ class TestSingleInstance:
         second = PlatformRuntime(agent_id="agent-123", api_key="k")
 
         await first.start(on_execute=AsyncMock())
-        with pytest.raises(BandConfigError, match="already running"):
+        with pytest.raises(AgentAlreadyRunningError, match="already running"):
             await second.start(on_execute=AsyncMock())
         await first.stop()
 

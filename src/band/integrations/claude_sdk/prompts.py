@@ -15,7 +15,7 @@ except ImportError:
     SystemPromptPreset = None  # type: ignore[assignment,misc]
 
 from band.core.types import AdapterFeatures, Capability
-from band.runtime.tools import CHAT_ID_FIELD_NAME
+from band.runtime.tools import CHAT_ID_FIELD_NAME, BandTool, get_tool_description
 
 
 def generate_claude_sdk_agent_prompt(
@@ -147,6 +147,8 @@ Plain text responses will NOT be delivered. Always call the tool.
 ```
 - `message_type`: "thought" (reasoning), "error" (problems), "task" (progress)
 - Use to share your thinking process or report errors
+
+**mcp__band__band_no_reply** - {get_tool_description(BandTool.NO_REPLY)}
 
 **mcp__band__band_create_chatroom** - Create a new chat room
 ```json

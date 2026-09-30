@@ -430,6 +430,15 @@ class AgentTools(AgentToolsProtocol):
             request=ChatMessageRequest(**message_kwargs),
         )
 
+    async def no_reply(self, reason: str | None = None) -> dict[str, str]:
+        """End the turn without posting to the room.
+
+        Purely local: nothing reaches the platform, and ``reason`` is only
+        logged. Adapters treat a successful call as the turn's reply.
+        """
+        logger.info("Room %s: no reply this turn (reason: %s)", self.room_id, reason)
+        return {"status": "no_reply"}
+
     async def send_event(
         self,
         content: str,
