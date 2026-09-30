@@ -14,11 +14,12 @@
 # (login-action@v4 / build-push-action@v7 multi-registry pattern — see
 # https://docs.docker.com/build/ci/github-actions/push-multi-registries/).
 #
-# The kit targets sbx v0.35.0 (kit-spec v2 credential injection); `sbx kit
-# validate` passes under it. The ORAS-assembled OCI v2 shape and the GHCR
-# pull -> `sbx create --kit` roundtrip still need re-validating under 0.35.0
-# (last run under v0.34.0) — see RELEASING.md. Revalidate on every sbx upgrade;
-# the kit surface is experimental.
+# The kit targets sbx v0.43.0 (the first version whose validator enforces
+# the kit-spec v2 field shape); `sbx kit validate` passes under it.
+# The ORAS-assembled OCI v2 shape and the GHCR pull -> `sbx create --kit`
+# roundtrip still need re-validating under 0.43.0 (last run under v0.34.0) —
+# see RELEASING.md. Revalidate on every sbx upgrade; the kit surface is
+# experimental.
 #
 # NOTE (action pinning): every action in the kit publish/rebuild workflows is
 # pinned to a full commit SHA per GitHub's hardening guidance for
@@ -116,7 +117,7 @@ jobs:
       # quarantine gate below still vets them).
       - name: Install uv (relock)
         if: ${{ inputs.relock }}
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Re-lock the self-version in the build context
         if: ${{ inputs.relock }}
@@ -252,7 +253,7 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2

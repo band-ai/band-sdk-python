@@ -15,9 +15,14 @@ from typing import TYPE_CHECKING
 from band_sdk_core import AgentTopicKind, SessionState
 
 from band.client.rest import AsyncRestClient
-from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
+from band.client.streaming import (
+    WebSocketClient,
+    WebSocketDisconnectReason,
+    WebSocketUpgradeError,
+)
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
-from band.core.types import PlatformConnection
+from band.core.exceptions import AgentAlreadyRunningError
+from band.core.types import ConflictPolicy, PlatformConnection
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -56,6 +61,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _duplicate_connection_error(agent_id: str) -> AgentAlreadyRunningError:
+    return AgentAlreadyRunningError(
+        f"Agent {agent_id} already has a live connection to the platform "
+        "(another process or host is running it). Stop that instance, or use "
+        "AgentConfig(conflict_policy=ConflictPolicy.SUPERSEDE) to take over."
+    )
+
+
 class BandLink:
     """
     Live link to Band platform.
@@ -85,11 +98,13 @@ class BandLink:
         api_key: str,
         ws_url: str = DEFAULT_WS_URL,
         rest_url: str = DEFAULT_REST_URL,
+        conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
     ):
         self.agent_id = agent_id
         self.api_key = api_key
         self.ws_url = ws_url
         self.rest_url = rest_url
+        self.conflict_policy = conflict_policy
 
         # REST client - exposed directly
         self.rest = AsyncRestClient(api_key=api_key, base_url=rest_url)
@@ -177,11 +192,12 @@ class BandLink:
                 self.agent_id,
                 on_reconnect=self._on_reconnected,
                 on_disconnect=self._on_disconnected,
+                conflict_policy=self.conflict_policy,
             )
             try:
                 await ws.__aenter__()
                 await self._join_agent_control_channel(ws)
-            except BaseException:
+            except BaseException as exc:
                 # BaseException, not Exception: a cancellation reaching one
                 # of these awaits (e.g. the caller's own task being
                 # cancelled) must still close the half-opened client, or it
@@ -194,6 +210,11 @@ class BandLink:
                     # even though self._ws was never assigned.
                     self._last_disconnect_reason = ws.last_disconnect_reason
                 await ws.__aexit__(None, None, None)
+                if (
+                    isinstance(exc, WebSocketUpgradeError)
+                    and exc.is_connection_conflict
+                ):
+                    raise _duplicate_connection_error(self.agent_id) from exc
                 raise
 
             self._ws = ws

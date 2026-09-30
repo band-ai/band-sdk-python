@@ -605,7 +605,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.SEND_MESSAGE,
                 json.dumps({"status": "success"}),
-                custom_terminal=False,
+                custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
 
@@ -653,7 +653,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.STORE_MEMORY,
                 json.dumps({"status": "success"}),
-                custom_terminal=False,
+                custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
 
@@ -699,7 +699,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.LIST_TASKS,
                 json.dumps({"status": "success", "data": []}),
-                custom_terminal=False,
+                custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
 
