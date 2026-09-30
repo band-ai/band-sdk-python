@@ -76,6 +76,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
+from band.runtime.history import fetch_earlier_messages
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     image_block_placeholder,
@@ -615,6 +616,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         )
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
+        # Threads of rooms whose app-server was released while idle; the next
+        # turn's fresh app-server resumes them with thread/resume.
+        self._released_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
@@ -926,6 +930,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     history=history,
                     tools=tools,
                     is_session_bootstrap=is_session_bootstrap,
+                    trigger_id=msg.id,
                 )
 
                 turn_input, has_pending_prompt_injection = self._build_turn_input(
@@ -944,6 +949,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 turn_started = await self._start_turn(turn_params)
                 if has_pending_prompt_injection:
                     self._prompt_injected_rooms.add(room_id)
+                self._needs_history_injection.discard(room_id)
+                self._raw_history_by_room.pop(room_id, None)
                 turn = (
                     turn_started.get("turn") if isinstance(turn_started, dict) else {}
                 )
@@ -1520,6 +1527,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:
+            self._released_threads.pop(room_id, None)
             thread_id = self._room_threads.pop(room_id, None)
             if thread_id:
                 self._token_usage.pop(thread_id, None)
@@ -1530,30 +1538,53 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
             self._room_task_titles.pop(room_id, None)
-            if self._client is None:
-                self._room_clients.pop(room_id, None)
-                self._release_room_workspace(room, room_id)
-                return
             try:
-                close_coro = self._client.close()
-                timeout = self.config.client_close_timeout_s
-                if timeout is not None:
-                    try:
-                        await asyncio.wait_for(close_coro, timeout=timeout)
-                    except TimeoutError:
-                        logger.warning(
-                            "Codex client.close() exceeded %ss timeout; "
-                            "dropping client reference",
-                            timeout,
-                        )
-                else:
-                    await close_coro
+                await self._close_active_client()
             finally:
-                self._client = None
-                self._initialized = False
-                self._selected_model = None
                 self._room_clients.pop(room_id, None)
                 self._release_room_workspace(room, room_id)
+
+    async def release_room_resources(self, room_id: str) -> None:
+        """Close an idle room's app-server, keeping its thread for resume.
+
+        Codex persists each thread on disk, so the next turn's fresh
+        app-server continues it via ``thread/resume`` with the same thread
+        id. The room's workspace claim and settings stay. A room with a turn
+        or approval in flight holds its lock and is left alone.
+        """
+        room = self._room_clients.get(room_id)
+        if room is None or room.client is None or room.rpc_lock.locked():
+            return
+        self._active_room.set(room_id)
+        async with self._rpc_lock:
+            thread_id = self._room_threads.pop(room_id, None)
+            if thread_id:
+                self._released_threads[room_id] = thread_id
+            await self._close_active_client()
+        logger.info("Released idle Codex app-server for room %s", room_id)
+
+    async def _close_active_client(self) -> None:
+        """Close the active room's client (bounded) and forget it."""
+        if self._client is None:
+            return
+        try:
+            close_coro = self._client.close()
+            timeout = self.config.client_close_timeout_s
+            if timeout is not None:
+                try:
+                    await asyncio.wait_for(close_coro, timeout=timeout)
+                except TimeoutError:
+                    logger.warning(
+                        "Codex client.close() exceeded %ss timeout; "
+                        "dropping client reference",
+                        timeout,
+                    )
+            else:
+                await close_coro
+        finally:
+            self._client = None
+            self._initialized = False
+            self._selected_model = None
 
     async def cleanup_all(self) -> None:
         """Close every room-owned Codex process during agent shutdown."""
@@ -1650,6 +1681,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         history: CodexSessionState,
         tools: AgentToolsProtocol,
         is_session_bootstrap: bool,
+        trigger_id: str | None = None,
     ) -> str:
         thread_id = self._room_threads.get(room_id)
         if thread_id:
@@ -1658,19 +1690,24 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
 
-        if is_session_bootstrap and history.has_thread():
+        released_id = self._released_threads.get(room_id)
+        resume_id = released_id or (
+            history.thread_id if is_session_bootstrap and history.has_thread() else None
+        )
+        if resume_id:
             try:
                 result = await self._client.request(
                     "thread/resume",
                     {
-                        "threadId": history.thread_id,
+                        "threadId": resume_id,
                         "personality": self.config.personality,
                     },
                 )
                 resumed = result.get("thread", {}) if isinstance(result, dict) else {}
-                thread_id = str(resumed.get("id") or history.thread_id or "")
+                thread_id = str(resumed.get("id") or resume_id)
                 if thread_id:
                     self._room_threads[room_id] = thread_id
+                    self._released_threads.pop(room_id, None)
                     self._raw_history_by_room.pop(room_id, None)
                     if Emit.TASK_EVENTS in self.features.emit:
                         await send_event_safe(
@@ -1695,13 +1732,25 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 logger.warning(
                     "thread/resume failed for room %s thread %s: %s",
                     room_id,
-                    history.thread_id,
+                    resume_id,
                     exc,
                 )
+                # Settled: the thread is gone, so a fresh one starts below. A
+                # released room is past bootstrap, so its transcript is
+                # fetched here for the history injection; if that fetch fails
+                # the turn fails and the id stays for the next turn to retry.
                 if self.config.inject_history_on_resume_failure:
+                    if released_id:
+                        self._raw_history_by_room[
+                            room_id
+                        ] = await fetch_earlier_messages(
+                            tools, room_id=room_id, trigger_id=trigger_id
+                        )
                     self._needs_history_injection.add(room_id)
-        else:
-            # Not a bootstrap resume — clean up any stashed history
+                self._released_threads.pop(room_id, None)
+        elif room_id not in self._needs_history_injection:
+            # Not a resume, and no fallback history is waiting to be injected
+            # into this fresh thread — clean up any stashed history.
             self._raw_history_by_room.pop(room_id, None)
 
         dynamic_tools = self._build_dynamic_tools(tools)
@@ -1836,8 +1885,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             injected_system_prompt = True
 
         if room_id in self._needs_history_injection:
-            self._needs_history_injection.discard(room_id)
-            raw_history = self._raw_history_by_room.pop(room_id, None)
+            # Read, not consumed: the history is kept until turn/start is
+            # accepted, so a rejected turn's retry still carries it.
+            raw_history = self._raw_history_by_room.get(room_id)
             if raw_history:
                 context = self._format_history_context(raw_history)
                 if context:
