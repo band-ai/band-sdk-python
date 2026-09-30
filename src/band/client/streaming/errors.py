@@ -6,6 +6,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+CONNECTION_CONFLICT_CODE = "connection_conflict"
+
 
 class WebSocketUpgradeError(Exception):
     """HTTP error returned while upgrading the WebSocket connection."""
@@ -28,7 +30,7 @@ class WebSocketUpgradeError(Exception):
 
     @property
     def is_connection_conflict(self) -> bool:
-        return self.code == "connection_conflict"
+        return self.code == CONNECTION_CONFLICT_CODE
 
     @classmethod
     def from_exception(cls, exc: Exception) -> WebSocketUpgradeError | None:

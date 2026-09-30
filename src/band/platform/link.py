@@ -65,7 +65,7 @@ def _duplicate_connection_error(agent_id: str) -> AgentAlreadyRunningError:
     return AgentAlreadyRunningError(
         f"Agent {agent_id} already has a live connection to the platform "
         "(another process or host is running it). Stop that instance, or use "
-        "conflict_policy=ConflictPolicy.SUPERSEDE to take over."
+        "AgentConfig(conflict_policy=ConflictPolicy.SUPERSEDE) to take over."
     )
 
 

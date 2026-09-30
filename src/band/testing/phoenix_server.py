@@ -33,6 +33,8 @@ from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
+from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +50,7 @@ class JoinOutcome(StrEnum):
 _CONFLICT_BODY = json.dumps(
     {
         "error": {
-            "code": "connection_conflict",
+            "code": CONNECTION_CONFLICT_CODE,
             "message": (
                 "An active connection already exists for this agent. "
                 "Set on_conflict=supersede or omit on_conflict to take over."

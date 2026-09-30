@@ -171,7 +171,7 @@ async def test_reject_policy_is_sent_on_the_first_connect_only() -> None:
         await server.abort_connection()
         await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
 
-        assert on_conflict_per_upgrade(server) == ["reject", None]
+        assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT, None]
 
 
 async def test_refused_duplicate_raises_agent_already_running() -> None:
@@ -183,4 +183,4 @@ async def test_refused_duplicate_raises_agent_already_running() -> None:
 
         # The refused attempt and the probe that reads its HTTP error both
         # asked for reject: a probe without it would supersede the incumbent.
-        assert on_conflict_per_upgrade(server) == ["reject", "reject"]
+        assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT, ConflictPolicy.REJECT]

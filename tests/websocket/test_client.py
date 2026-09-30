@@ -40,6 +40,7 @@ from band.client.streaming import (
     WebSocketUpgradeError,
     WireEvent,
 )
+from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.testing import fake_phoenix_server
 from tests.websocket.conftest import SUCCEEDS, fast_session_policy
@@ -241,7 +242,7 @@ def test_parses_distinct_upgrade_errors_from_http_json_response():
         (
             409,
             b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
-            "connection_conflict",
+            CONNECTION_CONFLICT_CODE,
             None,
         ),
         (
@@ -318,7 +319,7 @@ async def test_aenter_wraps_upgrade_error(monkeypatch):
         await client.__aenter__()
 
     assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "connection_conflict"
+    assert exc_info.value.code == CONNECTION_CONFLICT_CODE
     assert exc_info.value.request_id == "req-409"
     # WebSocketUpgradeError is a new object distinct from the raw exception
     # PHXChannelsClient raised -- explicit chaining keeps that link visible
