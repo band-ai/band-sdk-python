@@ -183,4 +183,7 @@ async def test_refused_duplicate_raises_agent_already_running() -> None:
 
         # The refused attempt and the probe that reads its HTTP error both
         # asked for reject: a probe without it would supersede the incumbent.
-        assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT, ConflictPolicy.REJECT]
+        assert on_conflict_per_upgrade(server) == [
+            ConflictPolicy.REJECT,
+            ConflictPolicy.REJECT,
+        ]
