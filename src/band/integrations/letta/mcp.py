@@ -63,7 +63,7 @@ class LettaMCPBridge:
     The bridge talks to the adapter through exactly two seams: the room-scoped
     ``get_tools`` resolver it hands the self-hosted server, and the resolved
     ``send_message_tool``/``send_event_tool`` names the adapter's prompt and
-    relay detection read back.  The Letta client is passed per call — the
+    silent-reporting set read back.  The Letta client is passed per call — the
     adapter owns its lifecycle.
     """
 
@@ -244,9 +244,9 @@ class LettaMCPBridge:
     def resolve_send_tools(self, tool_names: list[str]) -> None:
         """Derive the send/event tool names from the server's discovered tools.
 
-        Keeps the enforcement prompt, silent-reporting set, and auto-relay
-        detection aligned with whatever Band MCP surface is registered instead
-        of hardcoding one surface's names.
+        Keeps the enforcement prompt and silent-reporting set aligned with
+        whatever Band MCP surface is registered instead of hardcoding one
+        surface's names.
         """
         names = set(tool_names)
         self.send_message_tool = next(

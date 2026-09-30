@@ -51,8 +51,8 @@ from band.runtime.tools import (
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
     is_mcp_content_result,
-    is_room_posting_tool,
     matches_identifier,
+    settles_turn_reply,
 )
 from tests.conftest import make_participant_mock
 from tests.content import BLANK_CONTENT_CASES
@@ -2410,33 +2410,33 @@ class TestToolInputModels:
         assert model.task_id is None
 
 
-class TestIsRoomPostingTool:
-    """Which tool calls count as having replied in the room."""
+class TestSettlesTurnReply:
+    """Which tool calls count as having settled the turn's reply."""
 
     def test_sdk_injected_tool(self):
-        assert is_room_posting_tool("band_send_message") is True
+        assert settles_turn_reply("band_send_message") is True
 
     def test_standalone_band_mcp_tool(self):
-        assert is_room_posting_tool("create_agent_chat_message") is True
+        assert settles_turn_reply("create_agent_chat_message") is True
 
     def test_mcp_server_prefixed_names(self):
         """MCP clients may prefix the server name onto the tool name."""
-        assert is_room_posting_tool("band-band_send_message") is True
-        assert is_room_posting_tool("band-create_agent_chat_message") is True
+        assert settles_turn_reply("band-band_send_message") is True
+        assert settles_turn_reply("band-create_agent_chat_message") is True
 
-    def test_non_posting_tools(self):
-        assert is_room_posting_tool("band_send_event") is False
-        assert is_room_posting_tool("band_lookup_peers") is False
-        assert is_room_posting_tool("get_weather") is False
+    def test_non_settling_tools(self):
+        assert settles_turn_reply("band_send_event") is False
+        assert settles_turn_reply("band_lookup_peers") is False
+        assert settles_turn_reply("get_weather") is False
 
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
-        assert is_room_posting_tool("band_send_message_draft") is False
+        assert settles_turn_reply("band_send_message_draft") is False
 
     def test_non_band_server_prefix_does_not_resolve(self):
         """An unrelated MCP server's own tool must never be treated as a Band
-        room-posting tool just because it ends in ``-band_send_message``."""
-        assert is_room_posting_tool("other-band_send_message") is False
+        reply just because it ends in ``-band_send_message``."""
+        assert settles_turn_reply("other-band_send_message") is False
 
 
 class TestCanonicalizeMcpToolName:
