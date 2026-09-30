@@ -5,13 +5,15 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 import pytest
+from claude_agent_sdk import ClaudeAgentOptions
 
+from band.adapters.claude_sdk import ClaudeSDKAdapter
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
-async def _cli_options(room: ClaudeRoom):
+async def _cli_options(room: ClaudeRoom) -> ClaudeAgentOptions:
     """The options the room's CLI process was started with."""
     room.claude.script([room.model_reply("Hello.")])
     await room.send("hi")
@@ -25,3 +27,8 @@ async def test_headless_permission_modes_reach_the_cli(
 ) -> None:
     options = await _cli_options(await claude_room(permission_mode=mode))
     assert options.permission_mode == mode
+
+
+def test_dont_ask_refuses_manual_approval_it_would_silently_deny() -> None:
+    with pytest.raises(ValueError, match="dontAsk"):
+        ClaudeSDKAdapter(permission_mode="dontAsk", approval_mode="manual")

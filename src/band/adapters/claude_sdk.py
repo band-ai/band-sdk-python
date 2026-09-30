@@ -44,6 +44,7 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
         ToolPermissionContext,
@@ -305,10 +306,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await agent.run()
     """
 
-    PermissionMode = Literal[
-        "default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"
-    ]
-
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
@@ -359,7 +356,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 and denies any tool not pre-approved by allow rules;
                 ``"auto"`` lets a model classifier approve or deny each tool
                 call and depends on the Claude account and model. A mode the
-                CLI rejects fails the turn; there is no fallback.
+                CLI rejects fails the turn; there is no fallback. ``"dontAsk"``
+                with ``approval_mode="manual"`` raises ``ValueError``.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -406,7 +404,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
         self.effort = effort
-        self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
+        if permission_mode == "dontAsk" and approval_mode == "manual":
+            raise ValueError(
+                'permission_mode="dontAsk" denies every tool call the room would '
+                'be asked to approve; it cannot be combined with approval_mode="manual"'
+            )
+        self.permission_mode: PermissionMode = permission_mode
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd

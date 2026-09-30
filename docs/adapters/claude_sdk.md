@@ -21,3 +21,6 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
 - **`permission_mode` is forwarded to the CLI as given.** `"dontAsk"` and
   `"auto"` are accepted; if the CLI rejects a mode (for example `"auto"` on an
   account without it), the turn fails with no fallback to another mode.
+  `"dontAsk"` denies every tool call not pre-approved by allow rules, so it
+  raises `ValueError` with `approval_mode="manual"`, whose room prompts it
+  would never reach.
