@@ -770,7 +770,7 @@ from band import (
 | ------------------------ | ----------------- |
 | `BandError`           | Base class for SDK-specific errors |
 | `BandConfigError`     | Invalid adapter configuration or feature options |
-| `AgentAlreadyRunningError` | A `BandConfigError` for a refused duplicate start: another instance of this agent id already runs, on this host or (with `ConflictPolicy.REJECT`) anywhere; see [Refusing duplicate instances](docs/adapters/managed-host-adapters.md#refusing-duplicate-instances) |
+| `AgentAlreadyRunningError` | A `BandConfigError` for a refused duplicate start; see [Refusing duplicate instances](docs/adapters/managed-host-adapters.md#refusing-duplicate-instances) |
 | `BandConnectionError` | WebSocket or REST transport failures |
 | `BandToolError`       | Platform or custom-tool execution failures |
 

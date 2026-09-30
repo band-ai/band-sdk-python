@@ -32,17 +32,14 @@ async def test_second_start_is_refused_and_the_incumbent_keeps_replying(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """``REJECT`` refuses the newcomer and leaves the incumbent connected.
-
-    The duplicate is built with ``Agent.create`` rather than through the cell:
-    the cell's ``track_running`` guard exists to forbid exactly this overlap.
-    """
+    """The duplicate is built with ``Agent.create`` rather than through the cell:
+    the cell's ``track_running`` guard exists to forbid exactly this overlap."""
     identity = await cell.provision(label=f"duplicate-{cell.adapter_id}")
     room_id = await resource_manager.provision_room(
         title=f"e2e-duplicate-{cell.adapter_id}", participants=[identity.id]
     )
 
-    async with cell.run_as_with_handle(identity):
+    async with cell.run_as(identity):
         duplicate = Agent.create(
             adapter=cell.build(),
             agent_id=identity.id,
@@ -55,7 +52,8 @@ async def test_second_start_is_refused_and_the_incumbent_keeps_replying(
         )
 
         with pytest.raises(AgentAlreadyRunningError, match=identity.id):
-            await duplicate.start()
+            async with duplicate:
+                pass
 
         marker = unique_marker("incumbent")
         async with reply_capture(room_id) as capture:

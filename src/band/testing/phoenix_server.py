@@ -55,7 +55,7 @@ class UpgradeOutcome(StrEnum):
 
 # The platform's refusal of `on_conflict=reject` when the agent already has a
 # live connection (HTTP 409); request_id is null on a real upgrade.
-CONFLICT_BODY = json.dumps(
+_CONFLICT_BODY = json.dumps(
     {
         "error": {
             "code": "connection_conflict",
@@ -117,9 +117,8 @@ class FakePhoenixServer:
         self.url: str = ""
         self.joined_topics: set[str] = set()
         self.received: list[ChannelMessage] = []
-        # Every upgrade request in arrival order -- refused ones and the
-        # client's error probe included; connection_count only counts
-        # upgrades that were accepted.
+        # Includes refused upgrades and the client's error probe;
+        # connection_count counts accepted ones only.
         self.upgrades: list[Upgrade] = []
         self.connection_count = 0
         self._connection: ServerConnection | None = None
@@ -142,7 +141,7 @@ class FakePhoenixServer:
         self.upgrades.append(Upgrade.from_request(request))
         match _next_outcome(self._upgrade_outcomes, UpgradeOutcome.ACCEPT):
             case UpgradeOutcome.CONFLICT:
-                return connection.respond(HTTPStatus.CONFLICT, CONFLICT_BODY)
+                return connection.respond(HTTPStatus.CONFLICT, _CONFLICT_BODY)
             case UpgradeOutcome.ACCEPT:
                 return None
 
@@ -259,12 +258,11 @@ async def fake_phoenix_server(
 
     ``join_outcomes`` declares the whole join scenario up front, as data: a
     topic maps to the sequence of outcomes its successive join attempts get.
-    ``upgrade_outcomes`` does the same for the upgrade requests themselves, in
-    arrival order. The last entry repeats, because a client that hits a
-    refusal re-handshakes once to read the HTTP error, and that probe must
-    get the same answer. Everything else about the scenario -- when the
-    network drops, what events arrive -- is inherently a sequence of events in
-    time, so it stays as explicit calls on the yielded server (``push``,
+    ``upgrade_outcomes`` does the same for upgrade requests, in arrival order;
+    the last entry repeats because a refused client re-handshakes once to read
+    the HTTP error. Everything else about the scenario -- when the network
+    drops, what events arrive -- is inherently a sequence of events in time,
+    so it stays as explicit calls on the yielded server (``push``,
     ``close_connection``, ``abort_connection``).
     """
     server = FakePhoenixServer(

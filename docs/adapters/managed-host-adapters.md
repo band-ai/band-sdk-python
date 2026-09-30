@@ -15,13 +15,12 @@ See [OpenCode Integration](opencode.md#opencode-variants) for the `variant` fiel
 
 ## Refusing duplicate instances
 
-Two running copies of one agent id steal each other's room messages and split conversations. Two guards stop a second start. `AgentConfig.single_instance` (on by default) takes a lock in the host's temp dir, so it only sees processes that share one; service managers often give a process its own `TMPDIR` (launchd, systemd `PrivateTmp`), so it misses an interactive start beside a service start. `AgentConfig.conflict_policy` asks the platform, which sees every connection on every host: `SUPERSEDE` (the default) lets the newcomer take over and tells the running agent to stay down, which rolling deploys rely on, and `REJECT` refuses the newcomer instead:
+Two running copies of one agent id steal each other's room messages and split conversations. Two guards stop a second start. `AgentConfig.single_instance` (on by default) takes a lock in the host's temp dir, so it only sees processes that share one; service managers can give a process its own `TMPDIR` (systemd `PrivateTmp`), so it misses an interactive start beside a service start. `AgentConfig.conflict_policy` asks the platform, which sees every connection on every host: `SUPERSEDE` (the default) lets the newcomer take over and tells the running agent to stay down, as in a rolling deploy, and `REJECT` refuses the newcomer instead:
 
 ```python
 from band import AgentConfig, ConflictPolicy
 
 config = AgentConfig(conflict_policy=ConflictPolicy.REJECT)
-assert config.conflict_policy == "reject"
 ```
 
 Pass `config` to `Agent.create(..., config=config)`. Both guards raise `AgentAlreadyRunningError` (a `BandConfigError`) from `Agent.start()`, so a supervisor can exit without restarting instead of looping:

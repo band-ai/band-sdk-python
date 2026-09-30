@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 from band_sdk_core import SessionPolicy
 
@@ -83,7 +85,7 @@ class ScriptedProbe:
         self.probed_urls: list[tuple[str, float]] = []
 
     def __call__(
-        self, url: str, *, additional_headers: object, open_timeout: float
+        self, url: str, *, additional_headers: Mapping[str, str], open_timeout: float
     ) -> ScriptedProbeConnection:
         self.probed_urls.append((url, open_timeout))
         return ScriptedProbeConnection(self._script.next())
