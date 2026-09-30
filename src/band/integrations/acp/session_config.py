@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from acp.exceptions import RequestError
 from acp.schema import (
     SessionConfigOptionBoolean,
     SessionConfigOptionSelect,
@@ -59,6 +60,11 @@ class ACPConfigError(BandConfigError, RuntimeError):
         self.session_id = session_id
         self.option_id = option_id
         self.selected_value = selected_value
+
+
+class ACPConfigUnreachableError(ACPConfigError):
+    """The agent never answered a config request (a timeout or a lost
+    connection), so nothing says it refused the value."""
 
 
 def flatten_select_options(
@@ -158,7 +164,7 @@ async def apply_session_config_selections(
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except TimeoutError as error:
-            raise ACPConfigError(
+            raise ACPConfigUnreachableError(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,
@@ -168,7 +174,13 @@ async def apply_session_config_selections(
                 ),
             ) from error
         except Exception as error:
-            raise ACPConfigError(
+            # A JSON-RPC error is the agent's answer; anything else never got one.
+            error_type = (
+                ACPConfigError
+                if isinstance(error, RequestError)
+                else ACPConfigUnreachableError
+            )
+            raise error_type(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,

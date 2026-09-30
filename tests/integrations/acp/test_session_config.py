@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from acp.exceptions import RequestError
 from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectGroup,
@@ -26,6 +27,7 @@ from band.integrations.acp.session_config import (
     RESOLVER_CONFIG_OPTION_ID,
     ACPConfigError,
     ACPConfigRequest,
+    ACPConfigUnreachableError,
     SessionConfigOption,
     apply_session_config_selections,
 )
@@ -143,6 +145,31 @@ class TestApplySessionConfigSelections:
             'ACP session offers no config option "reasoning_effort"; available: model.'
         )
         set_option.assert_awaited_once_with("session-1", "model", "auto")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "raised"),
+        [
+            pytest.param(RequestError.invalid_params(), ACPConfigError, id="refused"),
+            pytest.param(
+                RuntimeError("Connection closed"),
+                ACPConfigUnreachableError,
+                id="unanswered",
+            ),
+        ],
+    )
+    async def test_a_failed_set_says_whether_the_agent_answered(
+        self, failure: Exception, raised: type[ACPConfigError]
+    ) -> None:
+        with pytest.raises(ACPConfigError) as rejected:
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[select_option("model", "small", ["small", "large"])],
+                selections={"model": "large"},
+                set_option=AsyncMock(side_effect=failure),
+            )
+
+        assert type(rejected.value) is raised
 
     @pytest.mark.asyncio
     async def test_an_option_on_an_empty_catalog_is_refused_naming_none(self) -> None:

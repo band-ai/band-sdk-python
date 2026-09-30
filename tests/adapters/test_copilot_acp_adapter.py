@@ -26,6 +26,7 @@ from band.adapters.copilot_acp import (
 )
 from band.core.exceptions import BandConfigError
 from band.core.model_catalog import ModelSelection
+from band.integrations.acp import session_config
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_profiles import NoopACPClientProfile
 from band.integrations.acp.client_types import ACPClientSessionState
@@ -428,6 +429,41 @@ class TestCopilotACPModelSelection:
             + 'model "gpt-5.4" is not advertised; available: claude-sonnet-5'
         ]
         assert recovered.texts == ["Configured"]
+
+    @pytest.mark.asyncio
+    async def test_a_remembered_switch_survives_a_set_the_agent_never_answered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(session_config, "SESSION_CONFIG_TIMEOUT_SECONDS", 0.05)
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            await switch_room(session, model="gpt-5.4")
+            await session.adapter.on_cleanup("room-1")
+            gate = agent.holds_config_replies()
+            timed_out = await session.send("Again")
+            gate.release.set()
+            await session.adapter.on_cleanup("room-1")
+            await session.send("And again")
+
+        assert "did not respond" in timed_out.errors[0]
+        assert agent.config_selections("fake-session-3")[0] == ("model", "gpt-5.4")
+
+    @pytest.mark.asyncio
+    async def test_a_switch_refused_before_any_change_leaves_the_room_unpinned(
+        self,
+    ) -> None:
+        agent = copilot()
+
+        async with copilot_room(agent) as session:
+            await session.send("Hello")
+            with pytest.raises(BandConfigError):
+                await switch_room(session, model="gpt-9")
+            await session.adapter.on_cleanup("room-1")
+            await session.send("Again")
+
+        assert agent.config_selections("fake-session-2") == []
 
     @pytest.mark.asyncio
     async def test_a_switch_queued_behind_a_room_cleanup_names_the_ended_session(
