@@ -96,6 +96,11 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # Raised by connect() instead of the generic refusal, e.g. a missing CLI.
+        self.connect_error: BaseException | None = None
+        # What the CLI answers the SDK's initialize request with, which
+        # get_server_info() returns (e.g. its "models").
+        self.server_info: dict[str, Any] = {}
         # A wedged CLI: interrupt requests are acknowledged but the turn
         # neither stops nor ends.
         self.ignore_interrupt = False
@@ -146,6 +151,8 @@ class FakeCLISession(Transport):
         self.alive = True
 
     async def connect(self) -> None:
+        if self.claude.connect_error is not None:
+            raise self.claude.connect_error
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
             raise CLIConnectionError("Claude CLI exited during startup")
 
@@ -186,14 +193,16 @@ class FakeCLISession(Transport):
 
     def _answer_sdk(self, message: dict[str, Any]) -> None:
         request = message["request"]
+        response: dict[str, Any] = {}
         if request["subtype"] == "initialize":
             self._hooks = request.get("hooks") or {}
+            response = self.claude.server_info
         self._emit(
             type="control_response",
             response={
                 "subtype": "success",
                 "request_id": message["request_id"],
-                "response": {},
+                "response": response,
             },
         )
         if request["subtype"] == "interrupt":
