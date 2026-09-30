@@ -13,7 +13,7 @@ from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE,
     APPROVAL_UNAUTHORIZED_MESSAGE,
 )
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom
 from tests.baseline.decisions import ModelDecision, ToolCall
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -21,7 +21,6 @@ OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 ADMIN = {"id": "admin-1", "name": "Admin"}
 DECLINED = "User declined tool use"
 LIST_FILES = ModelDecision.call("Bash", command="ls")
-WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
 
 
 def prompt(token: str, summary: str) -> str:
