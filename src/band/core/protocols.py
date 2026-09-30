@@ -158,6 +158,10 @@ class AgentToolsProtocol(Protocol):
         """Send an event (tool_call, tool_result, thought, error, task)."""
         ...
 
+    async def no_reply(self, reason: str | None = None) -> Any:
+        """End the turn without posting to the room (local only)."""
+        ...
+
     async def send_failure(self, failure: AgentFailure) -> Any:
         """Report a provider-originated failure as a structured `error` event.
 
