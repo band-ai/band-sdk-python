@@ -7,12 +7,9 @@ from typing import Any
 
 import pytest
 
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
-from tests.baseline.decisions import ModelDecision
+from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
-
-WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
 
 
 def policy_notice(decision: str) -> str:

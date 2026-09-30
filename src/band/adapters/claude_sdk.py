@@ -28,6 +28,7 @@ try:
         ClaudeAgentOptions,
         ClaudeSDKClient,
         ResultMessage,
+        SystemMessage,
         TextBlock,
         ThinkingBlock,
         ToolResultBlock,
@@ -44,6 +45,7 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
         ToolPermissionContext,
@@ -147,6 +149,13 @@ _PROVIDER = "claude_sdk"
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
+
+# dontAsk denies every prompt without calling can_use_tool, so no approval_mode
+# ever gets to decide.
+DONT_ASK_PERMISSION_MODE: PermissionMode = "dontAsk"
+# The mode the CLI starts in when the account or model can't run "auto".
+AUTO_PERMISSION_MODE: PermissionMode = "auto"
+AUTO_FALLBACK_PERMISSION_MODE: PermissionMode = "default"
 
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
@@ -305,8 +314,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await agent.run()
     """
 
-    PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
-
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
@@ -353,7 +360,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             effort: Response effort level. ``None`` uses the model default.
-            permission_mode: SDK permission mode
+            permission_mode: Claude Code permission mode, forwarded to the CLI
+                (https://code.claude.com/docs/en/permission-modes; how each
+                mode meets ``approval_mode`` is in docs/adapters/claude_sdk.md).
+                ``"dontAsk"`` with any ``approval_mode`` raises ``ValueError``.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -400,7 +410,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
         self.effort = effort
-        self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
+        if permission_mode == DONT_ASK_PERMISSION_MODE and approval_mode is not None:
+            raise ValueError(
+                f"permission_mode={DONT_ASK_PERMISSION_MODE!r} denies tool calls "
+                f"without consulting approval_mode={approval_mode!r}; "
+                "set approval_mode=None"
+            )
+        self.permission_mode: PermissionMode = permission_mode
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
@@ -947,6 +963,22 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 case UserMessage():
                     replied_this_turn |= await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
+                    )
+                # The CLI announces every mode change in a status message; only
+                # the "auto" fallback is unexpected, since plan-mode tools
+                # switch modes on purpose.
+                case SystemMessage(
+                    subtype="status", data={"permissionMode": str() as mode}
+                ) if (
+                    self.permission_mode == AUTO_PERMISSION_MODE
+                    and mode == AUTO_FALLBACK_PERMISSION_MODE
+                ):
+                    logger.warning(
+                        "Room %s: Claude CLI runs permission mode %s instead of "
+                        "the requested %s",
+                        room_id,
+                        mode,
+                        self.permission_mode,
                     )
                 case ResultMessage():
                     await self._on_turn_complete(

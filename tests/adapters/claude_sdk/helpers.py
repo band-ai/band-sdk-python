@@ -26,6 +26,8 @@ SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 # What a turn that ended without a reply going out must say; tests assert it
 # by substring rather than re-deriving it.
 MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
+# A native file write, the tool call every approval path is asked about.
+WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
 
 
 APPROVER = {"id": "u1", "name": "Bob", "handle": "@bob"}
