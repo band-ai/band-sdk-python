@@ -17,6 +17,8 @@ import pytest_asyncio
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
+from tests.adapters.claude_sdk import conftest as claude_conftest
+from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.test_codex_adapter import (
     FakeCodexClient,
     _turn_completed,
@@ -28,6 +30,10 @@ from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condit
 ROOM = "room-1"
 
 _RELEASE_AFTER_S = 0.05
+
+# The Claude toolkit's scripted CLI, so a real ClaudeSDKAdapter can be released.
+claude = claude_conftest.claude
+claude_room = claude_conftest.claude_room
 
 
 class Room:
@@ -401,3 +407,21 @@ async def test_stopping_mid_omp_release_still_stops_the_agent_process(room) -> N
 
         assert stop_completed
         assert "room-1" not in session.adapter._runtimes
+
+
+async def test_stopping_mid_claude_release_still_stops_the_session(
+    room, claude, claude_room
+) -> None:
+    chat = await claude_room()
+    claude.script([chat.model_reply("Noted.")])
+    await chat.send("Hello")
+    await chat.settled()
+    claude.closing = Hold()
+    r = await _started(room(adapter_release=chat.adapter.release_room_resources))
+    await r.send("msg-1")
+
+    await r.stop_while_parked(
+        entered=claude.closing.reached, gate=claude.closing.released
+    )
+
+    assert [session.alive for session in claude.sessions] == [False]
