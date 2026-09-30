@@ -13,7 +13,7 @@ from band.client.streaming import (
     RoomAddedPayload,
 )
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, AgentInput, Capability
+from band.core.types import AgentInput, Capability
 from band.platform.event import MessageEvent, ParticipantAddedEvent, RoomAddedEvent
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.capabilities import FeatureFlag
@@ -423,19 +423,23 @@ class TestSimpleAdapterIntegration:
 
     @pytest.mark.asyncio
     async def test_works_with_simple_adapter(self, mock_runtime):
-        """Should work with SimpleAdapter subclass."""
-        # Create a mock SimpleAdapter
-        adapter = MagicMock(spec=SimpleAdapter)
-        adapter.on_started = AsyncMock()
-        adapter.on_cleanup = AsyncMock()
-        adapter.on_event = AsyncMock()
-        adapter.features = AdapterFeatures()
-
+        """A SimpleAdapter subclass is started with the agent's identity."""
+        adapter = MinimalAdapter()
         agent = Agent(runtime=mock_runtime, adapter=adapter)
 
         await agent.start()
 
-        adapter.on_started.assert_awaited_once()
+        assert (adapter.agent_name, adapter.agent_description) == (
+            "TestBot",
+            "A test bot",
+        )
+
+
+class MinimalAdapter(SimpleAdapter):
+    """A SimpleAdapter that keeps every default hook."""
+
+    async def on_message(self, *args, **kwargs) -> None:
+        pass
 
 
 class FilesAdapter(SimpleAdapter):

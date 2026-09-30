@@ -12,13 +12,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.agent import Agent
+from band.core.model_catalog import ModelSelection, ModelSelectionError
+from tests.catalogs import CatalogAdapter
 
 
-def make_agent(adapter: object) -> Agent:
+def make_agent(adapter: object, *, started: bool = True) -> Agent:
     runtime = AsyncMock()
     runtime.stop.return_value = True
+    runtime.feature_flags = None
     agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
-    agent._started = True
+    agent._started = started
     return agent
 
 
@@ -35,6 +38,32 @@ class TestStartFailureCleansUpAdapter:
             await agent.start()
 
         adapter.cleanup_all.assert_awaited_once()
+
+
+class TestStartValidatesModelSelection:
+    @pytest.mark.asyncio
+    async def test_an_advertised_selection_starts_after_on_started_lists_it(
+        self,
+    ) -> None:
+        agent = make_agent(
+            CatalogAdapter(ModelSelection(model="sonnet", reasoning_effort="high")),
+            started=False,
+        )
+
+        await agent.start()
+
+        agent._runtime.start.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_selection_fails_start_before_connecting(self) -> None:
+        adapter = CatalogAdapter(ModelSelection(model="gpt-9"))
+        agent = make_agent(adapter, started=False)
+
+        with pytest.raises(ModelSelectionError, match='model "gpt-9"'):
+            await agent.start()
+
+        agent._runtime.start.assert_not_awaited()
+        assert adapter.cleaned_up
 
 
 class TestStopCleansUpAdapter:

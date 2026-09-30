@@ -13,6 +13,11 @@ from typing_extensions import Unpack
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
 from band.core.exceptions import BandConfigError
+from band.core.model_catalog import (
+    ModelCatalog,
+    ModelSelection,
+    check_model_selection,
+)
 from band.core.protocols import AgentToolsProtocol, HistoryConverter
 from band.core.types import (
     USAGE_EVENT_TYPE,
@@ -298,6 +303,70 @@ class SimpleAdapter(ABC, Generic[H]):
         runtime subprocess, a self-hosted server, an external registration —
         release here.
         """
+
+    @property
+    def model_selection(self) -> ModelSelection:
+        """The model and reasoning effort this adapter is configured to use.
+
+        Adapters with typed model settings override this to project them. The
+        default selects nothing, leaving the choice to the harness.
+        """
+        return ModelSelection()
+
+    async def list_models(self) -> ModelCatalog | None:
+        """The models this adapter's harness advertises, or ``None``.
+
+        Adapters whose harness reports a catalog override this; ``None`` means
+        it cannot, so the configured selection goes unchecked. It runs after
+        ``on_started``, so it may use a client started there. Harnesses whose
+        catalog belongs to a live session (ACP) keep ``None`` and check the
+        selection per session instead.
+        """
+        return None
+
+    async def apply_model_selection(
+        self, selection: ModelSelection, *, room_id: str
+    ) -> None:
+        """Switch ``room_id``'s live conversation to ``selection``.
+
+        Adapters whose harness can change model mid-conversation override
+        this. The default refuses, so a requested switch is never silently
+        ignored.
+        """
+        del selection, room_id
+        raise BandConfigError(
+            f"{type(self).__name__} does not support switching models at runtime"
+        )
+
+    async def startup(
+        self, agent_name: str, agent_description: str, *, features: AdapterFeatures
+    ) -> None:
+        """Start for an agent: negotiated ``features``, ``on_started``, then the
+        model-selection check.
+
+        The runtime calls this once per start; adapters override the hooks it
+        runs, not this. A rejected selection releases what ``on_started``
+        acquired before the ``ModelSelectionError`` propagates.
+        """
+        self.apply_effective_features(features)
+        await self.on_started(agent_name, agent_description)
+        try:
+            await self._validate_model_selection()
+        except BaseException:
+            await self._release_after_failed_start()
+            raise
+
+    async def _validate_model_selection(self) -> None:
+        selection = self.model_selection
+        if selection.is_empty:
+            return
+        check_model_selection(selection, await self.list_models())
+
+    async def _release_after_failed_start(self) -> None:
+        try:
+            await self.cleanup_all()
+        except Exception:
+            logger.exception("Adapter cleanup_all failed after a rejected start")
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""
