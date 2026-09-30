@@ -113,7 +113,9 @@ async def test_sdk_owned_flags_match_what_the_adapter_makes_the_sdk_emit(
     assert _emitted_flags(options) == SDK_OWNED_CLI_FLAGS
 
 
-@pytest.mark.parametrize("flag", ["mcp-config", "permission-mode", "allowedTools"])
+@pytest.mark.parametrize(
+    "flag", ["mcp-config", "effort", "settings", "dangerously-skip-permissions"]
+)
 def test_extra_args_cannot_replace_adapter_owned_flags(flag: str) -> None:
     with pytest.raises(ValueError, match="adapter-owned CLI flags"):
         ClaudeCLIOptions(extra_args={flag: "x"})

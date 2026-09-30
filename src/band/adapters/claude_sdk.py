@@ -169,8 +169,8 @@ SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
         "verbose",
     }
 )
-# Flags the adapter never sets that would still unhook the Band tools or
-# break its per-room sessions.
+# Flags the adapter never sets that would still unhook the Band tools, bypass
+# its permission gating or host-config isolation, or break per-room sessions.
 BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
     {
         "allowed-tools",
@@ -180,6 +180,11 @@ BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
         "strict-mcp-config",
         "system-prompt",
         "system-prompt-file",
+        "settings",
+        "agents",
+        "bare",
+        "dangerously-skip-permissions",
+        "allow-dangerously-skip-permissions",
         "continue",
         "fork-session",
         "session-id",

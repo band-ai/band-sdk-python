@@ -25,7 +25,10 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
   `cli=ClaudeCLIOptions(...)` sets the executable, plugin folders, extra
   directories, env and extra flags, but cannot replace the Band MCP server, the
   tool allowlist or `setting_sources`: an `extra_args` flag in
-  `RESERVED_CLI_FLAGS` raises `ValueError`, as does a dash-prefixed key. `env`
+  `RESERVED_CLI_FLAGS` raises `ValueError`, as does a dash-prefixed key. That
+  covers every flag the adapter sets (use its typed option instead) plus flags
+  such as `settings`, `agents`, `bare` and `dangerously-skip-permissions` that
+  would bypass Band's wiring, permission gating or host-config isolation. `env`
   reaches only the Claude CLI process; the host's `os.environ` is untouched.
 
 ```python
