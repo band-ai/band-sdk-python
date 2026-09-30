@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from typing_extensions import Unpack
 
@@ -36,7 +36,6 @@ from band.integrations.acp.client_adapter import (
     DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
     PermissionResolver,
-    resolve_turn_timeout,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
@@ -128,9 +127,7 @@ class CopilotACPAdapter(ACPClientAdapter):
             "custom_section": config.custom_section,
             "resolve_session_config": config.resolve_session_config,
             "resolve_permission": config.resolve_permission,
-            "turn_timeout_s": resolve_turn_timeout(
-                config.turn_timeout_s, cast("dict[str, Any]", features)
-            ),
+            "turn_timeout_s": config.turn_timeout_s,
         }
 
         if use_tcp:

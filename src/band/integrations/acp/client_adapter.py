@@ -151,21 +151,6 @@ SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
 
 
-def resolve_turn_timeout(configured: float, features: dict[str, Any]) -> float:
-    """Pick a config-based ACP adapter's turn timeout, consuming the legacy kwarg.
-
-    Hosts passed ``turn_timeout_s`` untyped through ``**features`` before the
-    adapter configs typed it; that path keeps working. The config value wins
-    whenever it was changed from the default, since that is the deliberate
-    typed setting. The kwarg is removed from ``features`` so it never reaches
-    ``ACPClientAdapter`` twice.
-    """
-    legacy = features.pop("turn_timeout_s", None)
-    if legacy is None or configured != DEFAULT_TURN_TIMEOUT_SECONDS:
-        return configured
-    return float(legacy)
-
-
 def new_message_marker() -> str:
     """A nonce'd boundary marker, minted once per replay prompt."""
     return f"{NEW_MESSAGE_MARKER_PREFIX} {uuid4().hex[:8]}]"

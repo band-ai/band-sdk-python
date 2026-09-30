@@ -24,7 +24,6 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     PermissionResolver,
     SpawnProcess,
-    resolve_turn_timeout,
 )
 from band.integrations.acp.client_runtime import (
     ACPCollectingClient,
@@ -129,9 +128,6 @@ class OmpACPAdapter(ACPClientAdapter):
             if workspace_for_room is not None:
                 raise ValueError("set either cwd or workspace_for_room, not both")
             workspace_for_room = create_room_workspace_resolver(config.cwd)
-        turn_timeout_s = resolve_turn_timeout(
-            config.turn_timeout_s, cast("dict[str, Any]", features)
-        )
         super().__init__(
             command=finalize_omp_command(
                 config.command, approval_mode=config.approval_mode
@@ -147,7 +143,7 @@ class OmpACPAdapter(ACPClientAdapter):
             client_capabilities=_OMP_FORM_CAPABILITIES,
             use_unstable_protocol=True,
             spawn_process=spawn_process,
-            turn_timeout_s=turn_timeout_s,
+            turn_timeout_s=config.turn_timeout_s,
             **features,
         )
 

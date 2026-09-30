@@ -24,7 +24,7 @@ These adapters take a typed `turn_timeout_s`. When a turn outlives it, the adapt
 | Copilot CLI (ACP) | `CopilotACPAdapterConfig(turn_timeout_s=...)` | `300.0` |
 | Cursor (ACP) | `CursorACPAdapterConfig(turn_timeout_s=...)` | `900.0` |
 
-Builds, test suites, and large refactors often need more than these defaults. For OMP and Copilot, `turn_timeout_s` passed as an adapter keyword still works; when the config value is also changed from its default, the config value wins.
+Builds, test suites, and large refactors often need more than these defaults.
 
 ```python
 from band.adapters.omp_acp import OmpACPAdapter, OmpACPAdapterConfig
