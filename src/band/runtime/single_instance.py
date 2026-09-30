@@ -15,11 +15,11 @@ no lock and is harmless.
 Scope, honestly stated: the lock file lives in the process's temp dir,
 so the guard only catches duplicates that share it. Processes with
 divergent ``TMPDIR`` (e.g. systemd ``PrivateTmp``), separate containers,
-or different hosts do not contend — deployments that shard one agent id
-across such boundaries need platform-level dedup, not this guard. It
-also guards only the long-lived Agent runtime; one-shot invocations
-(``band.runtime.oneshot``) rely on server-arbitrated message claiming
-instead of host locks.
+or different hosts do not contend — for those, set
+``AgentConfig.conflict_policy`` to ``ConflictPolicy.REJECT`` and the
+platform refuses the second connection instead. It also guards only the
+long-lived Agent runtime; one-shot invocations (``band.runtime.oneshot``)
+rely on server-arbitrated message claiming instead of host locks.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import AgentAlreadyRunningError, BandConfigError
 
 try:
     import fcntl
@@ -52,8 +52,8 @@ _LOCK_SPAN_BYTES = 1
 _held: dict[str, SingleInstanceGuard] = {}
 
 
-def _contention_error(agent_id: str, lock_path: Path) -> BandConfigError:
-    return BandConfigError(
+def _contention_error(agent_id: str, lock_path: Path) -> AgentAlreadyRunningError:
+    return AgentAlreadyRunningError(
         f"Agent {agent_id} is already running on this host "
         f"(lock: {lock_path}). Two instances of one agent steal "
         "each other's room messages and split conversations — stop "
@@ -113,7 +113,7 @@ def release_all_held() -> list[str]:
 class SingleInstanceGuard:
     """Holds the host-wide run lock for one agent id.
 
-    ``acquire()`` raises :class:`BandConfigError` when another process
+    ``acquire()`` raises :class:`AgentAlreadyRunningError` when another process
     (or another guard in this process) already holds the agent's lock.
     ``release()`` is idempotent and safe to call from ``finally`` blocks.
     """

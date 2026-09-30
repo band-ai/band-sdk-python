@@ -14,7 +14,6 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock
-from urllib.parse import parse_qs, urlsplit
 
 import band_sdk_core
 import pytest
@@ -41,7 +40,9 @@ from band.client.streaming import (
     WebSocketUpgradeError,
     WireEvent,
 )
+from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.credentials import PROXY_MANAGED_API_KEY
+from band.testing import fake_phoenix_server
 from tests.websocket.conftest import SUCCEEDS, fast_session_policy
 
 # Shared valid payload used by multiple tests
@@ -83,6 +84,18 @@ def _upgrade_exception(
             body=body,
         )
     )
+
+
+def _connection_conflict_error_body(*, request_id: str = "req-409") -> bytes:
+    return json.dumps(
+        {
+            "error": {
+                "code": CONNECTION_CONFLICT_CODE,
+                "message": "already connected",
+                "request_id": request_id,
+            }
+        }
+    ).encode()
 
 
 # --- Invalid payload tests: verify graceful handling (log + skip) ---
@@ -240,8 +253,8 @@ def test_parses_distinct_upgrade_errors_from_http_json_response():
     cases = [
         (
             409,
-            b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
-            "connection_conflict",
+            _connection_conflict_error_body(),
+            CONNECTION_CONFLICT_CODE,
             None,
         ),
         (
@@ -298,7 +311,7 @@ def test_ignores_generic_auth_upgrade_error_without_json_contract():
 async def test_aenter_wraps_upgrade_error(monkeypatch):
     upgrade_exc = _upgrade_exception(
         409,
-        b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+        _connection_conflict_error_body(),
     )
 
     class FailingPHXClient:
@@ -318,7 +331,7 @@ async def test_aenter_wraps_upgrade_error(monkeypatch):
         await client.__aenter__()
 
     assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "connection_conflict"
+    assert exc_info.value.code == CONNECTION_CONFLICT_CODE
     assert exc_info.value.request_id == "req-409"
     # WebSocketUpgradeError is a new object distinct from the raw exception
     # PHXChannelsClient raised -- explicit chaining keeps that link visible
@@ -614,7 +627,7 @@ async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
 
     probe_delay_s = 0.1
 
-    async def slow_probe(websocket_url):
+    async def slow_probe(websocket_url, headers):
         await asyncio.sleep(probe_delay_s)
 
     monkeypatch.setattr(
@@ -718,36 +731,7 @@ async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
         await client.__aenter__()
 
 
-# --- Upgrade wire-shape test: real SDK connect against an in-process peer ---
-
-
-@asynccontextmanager
-async def upgrade_peer():
-    """In-process WebSocket peer that captures the first upgrade request.
-
-    Accepts the connection and records the query params and handshake headers —
-    it speaks no Phoenix and imitates no proxy. Its sole job is to observe the
-    real wire shape the SDK and its dependency produce on connect. Entered inside
-    the test so the server shares the test's event loop. Yields
-    ``(ws_url, upgrade)``, where ``upgrade`` is a future resolved with
-    ``(query_params, headers)``.
-    """
-    upgrade: asyncio.Future[tuple[dict[str, list[str]], Headers]] = (
-        asyncio.get_running_loop().create_future()
-    )
-
-    async def handler(conn: ServerConnection) -> None:
-        if not upgrade.done():
-            query = parse_qs(urlsplit(conn.request.path).query)
-            upgrade.set_result((query, conn.request.headers))
-        await conn.wait_closed()
-
-    # Bind and connect on 127.0.0.1 explicitly: "localhost" on a dual-stack host
-    # binds both ::1 and 127.0.0.1 on independently-chosen ephemeral ports, so
-    # picking one socket's port then resolving "localhost" can hit the other.
-    async with serve(handler, "127.0.0.1", 0) as server:
-        port = next(iter(server.sockets)).getsockname()[1]
-        yield f"ws://127.0.0.1:{port}/socket/websocket", upgrade
+# --- Upgrade wire-shape test: real SDK connect against the fake platform ---
 
 
 async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
@@ -756,15 +740,30 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
     agent_id). The header is what the sandbox proxy substitutes and the platform
     authenticates off (with precedence); the query is retained for back-compat."""
     async with (
-        upgrade_peer() as (ws_url, upgrade),
-        WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"),
+        fake_phoenix_server() as server,
+        WebSocketClient(server.url, PROXY_MANAGED_API_KEY, "agent-xyz"),
     ):
-        params, headers = await asyncio.wait_for(upgrade, timeout=5)
+        pass
 
-    assert params["api_key"] == [PROXY_MANAGED_API_KEY]
-    assert params["agent_id"] == ["agent-xyz"]
-    assert params.get("vsn")  # protocol version retained alongside the sentinel
-    assert headers["x-api-key"] == PROXY_MANAGED_API_KEY
+    [upgrade] = server.upgrades
+    assert upgrade.query["api_key"] == PROXY_MANAGED_API_KEY
+    assert upgrade.query["agent_id"] == "agent-xyz"
+    assert upgrade.query.get("vsn")  # protocol version retained alongside the sentinel
+    assert upgrade.headers["x-api-key"] == PROXY_MANAGED_API_KEY
+
+
+async def test_refused_upgrade_is_read_with_the_same_credentials_as_the_attempt():
+    """The probe that reads a refusal's HTTP error authenticates through the
+    `x-api-key` header like the real upgrade. Under proxy-managed custody the
+    query holds only the sentinel, so a header-less probe is turned away
+    unauthenticated and the platform's refusal is never seen."""
+    async with fake_phoenix_server(refuse_upgrades=True) as server:
+        with pytest.raises(WebSocketUpgradeError):
+            async with WebSocketClient(server.url, PROXY_MANAGED_API_KEY, "agent-xyz"):
+                pass
+
+    _attempt, probe = server.upgrades
+    assert probe.headers.get("x-api-key") == PROXY_MANAGED_API_KEY
 
 
 # --- Valid payload tests ---

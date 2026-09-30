@@ -26,6 +26,7 @@ from typing_extensions import Unpack
 from band.core.harness import HarnessModel
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
+    DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
     PermissionResolver,
     SpawnProcess,
@@ -123,6 +124,7 @@ class OmpACPAdapterConfig:
     mcp_servers: list[dict[str, Any]] | None = None
     resolve_session_config: SessionConfigResolver | None = None
     resolve_permission: PermissionResolver | None = None
+    turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
 
 
 class OmpACPAdapter(ACPClientAdapter):
@@ -157,6 +159,7 @@ class OmpACPAdapter(ACPClientAdapter):
             client_capabilities=_OMP_FORM_CAPABILITIES,
             use_unstable_protocol=True,
             spawn_process=spawn_process,
+            turn_timeout_s=config.turn_timeout_s,
             **features,
         )
 

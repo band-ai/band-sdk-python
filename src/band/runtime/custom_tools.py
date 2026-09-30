@@ -9,28 +9,64 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
+
+from band.runtime.tools.types import TurnEffect
 
 logger = logging.getLogger(__name__)
 
 # Type alias for custom tool definition: (InputModel, callable)
 CustomToolDef = tuple[type[BaseModel], Callable[..., Any]]
 
+_Handler = TypeVar("_Handler", bound=Callable[..., Any])
 
-def is_marked_terminal(tool: Any) -> bool:
-    """Whether a custom tool opts in as a *terminal* action.
 
-    A custom tool declares itself terminal by setting ``band_terminal = True`` on
-    its **handler function** — both adapters read the flag off the handler (crewai
-    from the ``(input_model, handler)`` tuple; pydantic-ai from the registered
-    function). Terminal custom tools let an empty final model response be treated as
-    benign (the tool completed the turn); undeclared custom tools do not (fail-loud
-    — see ``runtime.tools.is_terminal_success``).
+def declares_turn_effect(effect: TurnEffect) -> Callable[[_Handler], _Handler]:
+    """Declare what a custom tool's successful call does to the turn's reply.
+
+    ``ACT``: it did real work, so an empty final answer afterwards is benign.
+    ``REPLY``: it delivers the answer itself, so no fallback text is relayed.
+    ``DECLINE``: silence is the answer, so no fallback text is relayed either.
+    An undeclared custom tool fails loud (see ``runtime.tools.turn_effect``).
     """
-    return bool(getattr(tool, "band_terminal", False))
+
+    def declare(handler: _Handler) -> _Handler:
+        handler.band_effect = effect  # type: ignore[attr-defined]
+        return handler
+
+    return declare
+
+
+def declared_effect(tool: Any) -> TurnEffect | None:
+    """The turn effect a custom tool declares, or ``None`` when it declares none.
+
+    Read off the **handler function** (``declares_turn_effect``). The older
+    ``band_terminal = True`` marker is the shorthand for ``TurnEffect.ACT``.
+    """
+    if (effect := getattr(tool, "band_effect", None)) is not None:
+        return effect
+    return TurnEffect.ACT if getattr(tool, "band_terminal", False) else None
+
+
+def declared_effects(
+    named_handlers: Iterable[tuple[str, Any]],
+) -> dict[str, TurnEffect]:
+    """The declared turn effect per tool name; undeclared tools are omitted."""
+    return {
+        name: effect
+        for name, handler in named_handlers
+        if (effect := declared_effect(handler)) is not None
+    }
+
+
+def custom_tool_effects(tools: Iterable[CustomToolDef]) -> dict[str, TurnEffect]:
+    """The declared turn effect per ``CustomToolDef`` name."""
+    return declared_effects(
+        (get_custom_tool_name(input_model), handler) for input_model, handler in tools
+    )
 
 
 def get_custom_tool_name(input_model: type[BaseModel]) -> str:
