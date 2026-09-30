@@ -62,6 +62,7 @@ from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
+    CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
     build_agent_failure,
@@ -1480,7 +1481,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if turn_id:
                 try:
                     await self._client.request(
-                        "turn/interrupt",
+                        CodexRequestMethod.TURN_INTERRUPT,
                         {"threadId": thread_id, "turnId": turn_id},
                     )
                 except Exception:
@@ -1628,7 +1629,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if not roots:
             return
         try:
-            await client.request("skills/extraRoots/set", {"extraRoots": roots})
+            await client.request(
+                CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET, {"extraRoots": roots}
+            )
         except CodexJsonRpcError as exc:
             raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
 
@@ -1652,7 +1655,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         try:
-            result = await self._client.request("model/list", {})
+            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; using default Codex model",
@@ -1683,7 +1686,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if is_session_bootstrap and history.has_thread():
             try:
                 result = await self._client.request(
-                    "thread/resume",
+                    CodexRequestMethod.THREAD_RESUME,
                     {
                         "threadId": history.thread_id,
                         "personality": self.config.personality,
@@ -1736,7 +1739,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await self._client.request("thread/start", start_params)
+        started = await self._client.request(
+            CodexRequestMethod.THREAD_START, start_params
+        )
         thread = started.get("thread") if isinstance(started, dict) else {}
         thread_id = str((thread or {}).get("id") or "")
         if not thread_id:
@@ -3186,7 +3191,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if model_arg.lower() in _MODEL_LIST_WORDS:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
-                result = await self._client.request("model/list", {})
+                result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
                 models = self._visible_model_ids(result)
                 if models:
                     preview = ", ".join(models[:10])
@@ -3558,7 +3563,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        return await self._client.request("turn/start", params)
+        return await self._client.request(CodexRequestMethod.TURN_START, params)
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None
@@ -3936,7 +3941,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             raise RuntimeError("Codex client not initialized")
         model_id = self._selected_model or await self._select_model()
         try:
-            result = await self._client.request("model/list", {})
+            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; supported reasoning efforts are unknown",

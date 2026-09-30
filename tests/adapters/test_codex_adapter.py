@@ -39,6 +39,7 @@ from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import (
     _MAX_ERROR_DETAIL_CHARS,
     CodexItemType,
+    CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
     build_agent_failure,
@@ -185,7 +186,10 @@ class FakeCodexClient:
                 return self._model_list_result
             return {"data": [{"id": "gpt-5.5", "hidden": False}]}
 
-        if method == "skills/extraRoots/set" and self._skill_roots_error is not None:
+        if (
+            method == CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET
+            and self._skill_roots_error is not None
+        ):
             raise self._skill_roots_error
 
         if method == "thread/resume":
@@ -6777,14 +6781,16 @@ class TestSkillRoots:
             config=CodexAdapterConfig(skill_roots=[SKILL_ROOT]),
         )
         assert turn.client.requests[0] == (
-            "skills/extraRoots/set",
+            CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET,
             {"extraRoots": [SKILL_ROOT]},
         )
 
     @pytest.mark.asyncio
     async def test_no_roots_sends_nothing(self) -> None:
         turn = await run_codex_turn(events=[_turn_completed()])
-        assert "skills/extraRoots/set" not in dict(turn.client.requests)
+        assert CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET not in dict(
+            turn.client.requests
+        )
 
     @pytest.mark.asyncio
     async def test_rejected_roots_fail_the_room_start(self) -> None:
@@ -6796,7 +6802,7 @@ class TestSkillRoots:
                 client=client, config=CodexAdapterConfig(skill_roots=[SKILL_ROOT])
             )
         assert client.requests == [
-            ("skills/extraRoots/set", {"extraRoots": [SKILL_ROOT]})
+            (CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET, {"extraRoots": [SKILL_ROOT]})
         ]
 
     def test_relative_roots_are_refused(self) -> None:
