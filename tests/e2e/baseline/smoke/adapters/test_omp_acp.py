@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from band.core.types import MessageType
+from band.integrations.acp.types import ChunkType
 from band.integrations.omp import (
     OMP_APPROVAL_FORM_TOOL_NAME,
     finalize_omp_command,
+    omp_command_in_workspace,
 )
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.requires import Dep, requires
@@ -43,6 +45,7 @@ BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=1)
 
 @lane(Lane.BACKENDS)
 @requires(Dep.OMP)
+@pytest.mark.timeout(extra=BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_omp_raw_acp_prompt_completes(
     baseline_settings: BaselineSettings,
@@ -51,17 +54,17 @@ async def test_omp_raw_acp_prompt_completes(
     from band.integrations.acp.client_runtime import ACPRuntime  # noqa: PLC0415
 
     with tempfile.TemporaryDirectory(prefix="band-e2e-omp-raw-") as sandbox:
-        command = list(omp_command(baseline_settings))
-        acp_index = command.index("acp")
-        command.insert(acp_index + 1, f"--cwd={sandbox}")
+        command = finalize_omp_command(
+            omp_command(baseline_settings), model=omp_model(baseline_settings)
+        )
         runtime = ACPRuntime(
-            command=finalize_omp_command(command, model=omp_model(baseline_settings)),
+            command=omp_command_in_workspace(command, sandbox),
             env=omp_acp_env(baseline_settings, omp_agent_home_dir(sandbox)),
             use_unstable_protocol=True,
         )
         stage = "initialize"
         try:
-            async with asyncio.timeout(baseline_settings.e2e_timeout):
+            async with asyncio.timeout(BUDGET.deadline_s):
                 await runtime.start()
                 stage = "new_session"
                 session_id = await runtime.create_session(cwd=sandbox, mcp_servers=[])
@@ -75,9 +78,9 @@ async def test_omp_raw_acp_prompt_completes(
         finally:
             await runtime.stop()
 
-    assert any(chunk.content.strip() for chunk in chunks), (
-        "OMP raw ACP prompt completed without a text response"
-    )
+    assert any(
+        chunk.chunk_type == ChunkType.TEXT and chunk.content.strip() for chunk in chunks
+    ), "OMP raw ACP prompt completed without a text response"
 
 
 @with_adapters(Adapter.OMP_ACP, **TOOL_AGENT)

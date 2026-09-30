@@ -18,6 +18,7 @@ from band.integrations.omp import (
     is_omp_approve_deny_form,
     normalize_omp_mcp_device_call,
     normalize_omp_mcp_tool_name,
+    omp_command_in_workspace,
     omp_elicitation_call_id,
     omp_model_provider,
     omp_provider_env,
@@ -42,6 +43,18 @@ def test_final_command_selects_the_model_before_safety_override() -> None:
         OMP_APPROVAL_MODE_FLAG,
         OMP_APPROVAL_MODE_ALWAYS_ASK,
     ]
+
+
+def test_workspace_cwd_needs_the_acp_subcommand_it_belongs_to() -> None:
+    assert omp_command_in_workspace(("bunx", "omp", "acp", "-v"), "/w") == [
+        "bunx",
+        "omp",
+        "acp",
+        "--cwd=/w",
+        "-v",
+    ]
+    with pytest.raises(ValueError, match="'acp' subcommand"):
+        omp_command_in_workspace(("omp-acp-wrapper",), "/w")
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,7 @@ from band.integrations.omp import (
     approve_deny_form_field,
     finalize_omp_command,
     normalize_omp_mcp_device_call,
+    omp_command_in_workspace,
     omp_elicitation_call_id,
 )
 from band.runtime.custom_tools import CustomToolDef
@@ -165,12 +166,7 @@ class OmpACPAdapter(ACPClientAdapter):
         # tool's `pwd`/`ls` inside the session reports this directory, not
         # the subprocess's actual launch dir. See _spawn_cwd for why that
         # path is avoided instead.
-        acp_index = self._command.index("acp")
-        return [
-            *self._command[: acp_index + 1],
-            f"--cwd={workspace}",
-            *self._command[acp_index + 1 :],
-        ]
+        return omp_command_in_workspace(self._command, workspace)
 
     def _spawn_cwd(self, workspace: str | None) -> str | None:
         del workspace

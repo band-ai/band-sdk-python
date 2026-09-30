@@ -4,6 +4,10 @@ set -uo pipefail
 
 SELECTED_LANE="${SELECTED_LANE:-all}"
 SELECTED_OS="${SELECTED_OS:-all}"
+gate_args=(--selected-lane "$SELECTED_LANE" --selected-os "$SELECTED_OS")
+if [ -n "${TEST_SELECTOR:-}" ]; then
+  gate_args+=(--selected-tests-only)
+fi
 
 shopt -s nullglob
 files=(artifacts/scorecard-*.json)
@@ -16,7 +20,7 @@ fi
 uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
   --out artifacts/scorecard.json --markdown artifacts/scorecard.md \
   --summary artifacts/gate-summary.md \
-  --selected-lane "$SELECTED_LANE" --selected-os "$SELECTED_OS"
+  "${gate_args[@]}"
 code=$?
 if [ "$code" -eq 0 ]; then
   echo "passed=true" >> "$GITHUB_OUTPUT"

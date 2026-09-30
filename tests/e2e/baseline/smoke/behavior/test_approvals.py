@@ -56,6 +56,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     marker_command,
     question_request,
     repeat_request,
+    written_lines,
 )
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
@@ -169,17 +170,16 @@ class ApprovalRoom:
         expected_notices = list(notices)
         unexpected_requests: list[str] = []
         known_followups = 0
-        cursor_reply = closing_reply if self.adapter_id is Adapter.CURSOR_ACP else None
         async with asyncio.timeout(self.budget.deadline_s):
             while True:
                 await self._wait_for_reply_or_request(
-                    since, expected_notices, cursor_reply
+                    since, expected_notices, closing_reply
                 )
                 pending = self._unhandled_requests(self.capture.messages.since(since))
                 if not pending and self.dialect.settled(
                     self.capture.messages.since(since),
                     *expected_notices,
-                    closing_reply=cursor_reply,
+                    closing_reply=closing_reply,
                 ):
                     if self.adapter_id is Adapter.CURSOR_ACP:
                         break
@@ -202,7 +202,7 @@ class ApprovalRoom:
                     ]
                     pending = self._unhandled_requests(durable)
                     if not pending and self.dialect.settled(
-                        durable, *expected_notices, closing_reply=None
+                        durable, *expected_notices, closing_reply=closing_reply
                     ):
                         break
                     if not pending:
@@ -210,9 +210,7 @@ class ApprovalRoom:
                         continue
                 for request in pending:
                     readback = (
-                        request.groupdict().get("permission") == "bash"
-                        and request.groupdict().get("patterns")
-                        in allowed_followup_commands
+                        self.dialect.shell_command(request) in allowed_followup_commands
                         and known_followups == 0
                     )
                     if readback:
@@ -288,7 +286,7 @@ class ApprovalRoom:
         ]
 
     async def _wait_for_reply_or_request(
-        self, since: int, notices: list[Notice], closing_reply: str | None
+        self, since: int, notices: list[Notice], closing_reply: str
     ) -> None:
         await self.capture.wait_until(
             lambda _msgs: (
@@ -409,9 +407,7 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
             assert not any(approved in said for said in room.said_since(late))
 
         if outcome is Outcome.APPROVE:
-            assert [line.rstrip() for line in target.read_text().splitlines()] == [
-                marker
-            ]
+            assert written_lines(target) == [marker]
         else:
             assert not target.exists(), f"{outcome} still ran the gated command"
 
@@ -449,7 +445,7 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
         landed = {t: m for t, m in markers.items() if t.exists()}
         assert len(landed) == 1, f"expected exactly one command to run, got {landed}"
         [(target, marker)] = landed.items()
-        assert [line.rstrip() for line in target.read_text().splitlines()] == [marker]
+        assert written_lines(target) == [marker]
 
 
 @per_adapter(*REFUSING)
@@ -498,7 +494,7 @@ async def test_only_an_authorized_member_decides_an_ask(
             closing_reply=done,
             allowed_followup_commands=readback_commands(target),
         )
-        assert target.read_text().strip() == marker
+        assert written_lines(target) == [marker]
 
 
 @per_adapter(*REMEMBERING)
@@ -527,10 +523,7 @@ async def test_a_session_approval_covers_a_repeat_of_the_same_command(
 
         asked = room.dialect.find_requests(room.capture.messages.since(start))
         assert [match["token"] for match in asked] == [request["token"]]
-        assert [line.rstrip() for line in target.read_text().splitlines()] == [
-            marker,
-            marker,
-        ]
+        assert written_lines(target) == [marker, marker]
 
 
 @per_adapter(*ASKING)

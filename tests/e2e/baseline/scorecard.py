@@ -336,8 +336,14 @@ def gate_manifest(
     supported_os: dict[str, tuple[str, ...]],
     selected_lane: str,
     selected_os: str,
+    *,
+    selected_tests_only: bool = False,
 ) -> GateResult:
-    """Require each declared cell's first result in every selected lane and OS."""
+    """Require each declared cell's first result in every selected lane and OS.
+
+    ``selected_tests_only`` gates a ``-k`` scoped run: pytest never collects the
+    deselected cells, so only the cells a fragment reports are checked.
+    """
     lanes = set(supported_os) if selected_lane == "all" else {selected_lane}
     if not lanes <= supported_os.keys():
         raise ValueError(f"unknown selected lane: {selected_lane}")
@@ -358,7 +364,10 @@ def gate_manifest(
     for lane, os in sorted(pairs):
         actual = {(row.test, row.adapter): row for row in fragments.get((lane, os), [])}
         expected = {
-            (cell.test, cell.adapter): cell for cell in cells if lane in cell.lanes
+            (cell.test, cell.adapter): cell
+            for cell in cells
+            if lane in cell.lanes
+            and (not selected_tests_only or (cell.test, cell.adapter) in actual)
         }
         for key, cell in expected.items():
             row = actual.get(key)
@@ -519,7 +528,12 @@ def _merge_cmd(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Non
     write_json(rows, args.out)
     try:
         result = gate_manifest(
-            fragments, cells, oses, args.selected_lane, args.selected_os
+            fragments,
+            cells,
+            oses,
+            args.selected_lane,
+            args.selected_os,
+            selected_tests_only=args.selected_tests_only,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -556,6 +570,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     merge_cmd.add_argument("--selected-lane", default="all")
     merge_cmd.add_argument("--selected-os", default="all")
+    merge_cmd.add_argument(
+        "--selected-tests-only",
+        action="store_true",
+        help="gate only the cells a pytest -k scoped run reported",
+    )
     merge_cmd.add_argument(
         "--manifest",
         default=str(Path(__file__).with_name("expected-cells.json")),

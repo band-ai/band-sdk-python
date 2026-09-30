@@ -40,6 +40,7 @@ from tests.e2e.baseline.scorecard import (
     GateResult,
     ScorecardCollector,
     ScorecardRow,
+    Status,
     digest_body,
     env_gated_skip,
     expected_cells,
@@ -326,6 +327,25 @@ def test_gate_fails_a_skip_cell_whose_lane_was_expected_to_run() -> None:
     assert result.missing == (
         ScorecardRow("t", _ADAPTER_A, "skip", "missing key", lane=lane, os="ubuntu"),
     )
+
+
+@pytest.mark.parametrize(("status", "ok"), [("pass", True), ("fail", False)])
+def test_a_selector_run_gates_only_the_cells_it_reported(
+    status: Status, ok: bool
+) -> None:
+    lane = str(_LANE_A.id)
+    selected = ExpectedCell("t_selected", _ADAPTER_A, (lane,), "pass")
+    deselected = ExpectedCell("t_deselected", _ADAPTER_A, (lane,), "pass")
+    result = gate_manifest(
+        {(lane, "ubuntu"): [ScorecardRow(selected.test, selected.adapter, status)]},
+        [selected, deselected],
+        {lane: ("ubuntu",)},
+        lane,
+        "ubuntu",
+        selected_tests_only=True,
+    )
+    assert result.ok is ok
+    assert result.missing == ()
 
 
 def test_manifest_gate_requires_bespoke_results_on_each_os() -> None:

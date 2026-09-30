@@ -11,6 +11,7 @@ enum, so a reworded prompt fails the smoke instead of silently drifting from it.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import re
 import string
 from collections.abc import Callable
@@ -53,7 +54,6 @@ from band.adapters.codex import (
     CodexSandboxMode,
 )
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
 from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
@@ -76,6 +76,7 @@ from band.integrations.acp.cursor import (
     ROOM_COMMAND,
     CursorCommandWord,
 )
+from band.integrations.codex.types import CodexApprovalMethod
 from band.runtime.formatters import strip_leading_mentions
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
@@ -89,6 +90,8 @@ SHELL_PROMPT = "Keep responses short. Use your shell tool when asked."
 # no push channel for non-text events to key a barrier off, so this bounded
 # poll is the least-bad option.
 _EVENT_POLL_INTERVAL_S = 0.5
+# Formatting a model may wrap its closing word in.
+_MARKER_DECORATION = "`*_.!'\""
 
 
 class Outcome(StrEnum):
@@ -113,6 +116,23 @@ def command_request(marker: str, target: Path, *, done: str) -> str:
         "Do not run a second shell command to check the result. "
         f"After the tool attempt is resolved, finish with exactly `{done}`."
     )
+
+
+def written_lines(target: Path) -> list[str]:
+    """The lines a shell redirect wrote to ``target``, whichever host shell wrote them.
+
+    Windows PowerShell 5.1 redirects as UTF-16 with a BOM; cmd, bash and pwsh
+    write UTF-8, and cmd keeps the space before its redirect.
+    """
+    data = target.read_bytes()
+    encoding = "utf-16" if data.startswith(codecs.BOM_UTF16_LE) else "utf-8-sig"
+    return [line.rstrip() for line in data.decode(encoding).splitlines()]
+
+
+def closes_with(content: str, marker: str) -> bool:
+    """Whether a message ends with ``marker`` as its final word."""
+    words = strip_leading_mentions(content).split()
+    return bool(words) and words[-1].strip(_MARKER_DECORATION) == marker
 
 
 def appending_command(marker: str, target: Path) -> str:
@@ -246,7 +266,8 @@ class ApprovalDialect:
 
     ``build(settings, setup)`` roots the agent in ``setup.workdir``;
     ``reply``/``notice`` take the outcome and the matched approval request, and
-    ``late_notice`` is what a reply to an ask that already expired gets. The
+    ``late_notice`` is what a reply to an ask that already expired gets, and
+    ``shell_command`` reads the command a request gates, where it renders one. The
     optional parts name what only some agents can do: ``refusal`` (restricting
     who decides), ``session_approval`` and ``question``.
     """
@@ -256,6 +277,7 @@ class ApprovalDialect:
     reply: Callable[[Outcome, re.Match[str]], str]
     notice: Callable[[Outcome, re.Match[str]], Notice]
     late_notice: Callable[[re.Match[str]], Notice]
+    shell_command: Callable[[re.Match[str]], str | None]
     refusal: Notice | None = None
     session_approval: SessionApproval | None = None
     question: QuestionRelay | None = None
@@ -286,9 +308,10 @@ class ApprovalDialect:
         self,
         since_request: list[MessageCreatedPayload | ChatMessage],
         *notices: Notice,
-        closing_reply: str | None,
+        closing_reply: str,
     ) -> bool:
-        """Whether every notice is shown and the requested final reply followed it."""
+        """Whether every notice is shown and a message closing with the requested
+        final word followed it."""
         contents = [m.content or "" for m in since_request]
         if not all(notice.streamed_in(contents) for notice in notices):
             return False
@@ -302,11 +325,7 @@ class ApprovalDialect:
             default=-1,
         )
         return any(
-            (
-                strip_leading_mentions(content).strip() == closing_reply
-                if closing_reply is not None
-                else bool(content.strip()) and NO_TEXT_REPLY_MESSAGE not in content
-            )
+            closes_with(content, closing_reply)
             and self.request.search(content) is None
             and not any(notice.text in content for notice in notices)
             for content in contents[last_control + 1 :]
@@ -322,6 +341,22 @@ def _claude_sdk(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[
         approval_wait_timeout_s=setup.wait_timeout_s,
         approval_authorized_senders=setup.approvers,
     )
+
+
+def _summary_command(summary: str) -> Callable[[re.Match[str]], str | None]:
+    """Read the gated command out of a request's ``summary`` field, given the
+    adapter's own summary rendered with ``{command}`` placeholders."""
+    pattern = template_pattern(summary)
+
+    def command(request: re.Match[str]) -> str | None:
+        match = pattern.fullmatch(request["summary"])
+        return match["command"] if match else None
+
+    return command
+
+
+def _opencode_shell_command(request: re.Match[str]) -> str | None:
+    return request["patterns"] if request["permission"] == "bash" else None
 
 
 def _claude_sdk_reply(outcome: Outcome, request: re.Match[str]) -> str:
@@ -508,6 +543,9 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
                 token=request["token"], available="none"
             )
         ),
+        shell_command=_summary_command(
+            ClaudeSDKAdapter._approval_summary("{tool}", {"command": "{command}"})
+        ),
         refusal=Notice(APPROVAL_UNAUTHORIZED_MESSAGE),
     ),
     Adapter.CODEX: ApprovalDialect(
@@ -516,6 +554,11 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         reply=_codex_reply,
         notice=_codex_notice,
         late_notice=lambda _request: Notice(NO_APPROVALS_TO_RESOLVE_MESSAGE),
+        shell_command=_summary_command(
+            CodexAdapter._approval_summary(
+                CodexApprovalMethod.COMMAND_EXECUTION, {"command": "{command}"}
+            )
+        ),
         session_approval=SessionApproval(
             reply=lambda request: f"/{CodexCommand.APPROVE_SESSION} {request['token']}",
             notice=_codex_session_notice,
@@ -530,6 +573,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         late_notice=lambda request: Notice(
             DECISION_NOT_PENDING_TEMPLATE.format(token=request["token"])
         ),
+        shell_command=lambda request: request["tool"],
         refusal=Notice(DECISION_UNAUTHORIZED_MESSAGE),
         session_approval=SessionApproval(
             reply=lambda request: _cursor_select(request, lasting=True),
@@ -544,6 +588,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         late_notice=lambda request: Notice(
             APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id=request["token"])
         ),
+        shell_command=_opencode_shell_command,
         session_approval=SessionApproval(
             reply=lambda request: f"{PermissionReplyWord.ALWAYS} {request['token']}",
             notice=_opencode_handled("always"),

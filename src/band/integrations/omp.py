@@ -15,10 +15,11 @@ OMP_YOLO_FLAG = "--yolo"
 OMP_AUTO_APPROVE_FLAG = "--auto-approve"
 OMP_APPROVAL_MODE_WRITE = "write"
 OMP_APPROVAL_MODE_YOLO = "yolo"
+OMP_ACP_SUBCOMMAND = "acp"
 
 DEFAULT_OMP_ACP_COMMAND: tuple[str, ...] = (
     "omp",
-    "acp",
+    OMP_ACP_SUBCOMMAND,
     OMP_APPROVAL_MODE_FLAG,
     OMP_APPROVAL_MODE_ALWAYS_ASK,
 )
@@ -142,6 +143,17 @@ def finalize_omp_command(
         finalized.append(f"--model={model}")
     finalized.extend((OMP_APPROVAL_MODE_FLAG, approval_mode))
     return finalized
+
+
+def omp_command_in_workspace(command: Sequence[str], workspace: str) -> list[str]:
+    """Insert OMP's ``--cwd`` right after the ``acp`` subcommand that owns it."""
+    if OMP_ACP_SUBCOMMAND not in command:
+        raise ValueError(
+            f"OMP command must include the {OMP_ACP_SUBCOMMAND!r} subcommand, "
+            f"got {list(command)!r}"
+        )
+    split = list(command).index(OMP_ACP_SUBCOMMAND) + 1
+    return [*command[:split], f"--cwd={workspace}", *command[split:]]
 
 
 def omp_elicitation_call_id(session_id: str) -> str:
