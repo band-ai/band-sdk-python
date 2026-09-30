@@ -25,7 +25,6 @@ from band.integrations.omp import (
     DEFAULT_OMP_MODEL,
     omp_model_provider,
     omp_provider_api_key_env,
-    omp_provider_env,
 )
 
 configure_logging(level=logging.INFO, root_level=logging.INFO)
@@ -75,7 +74,7 @@ async def main() -> None:
     config = OmpACPAdapterConfig(
         cwd=settings.acp_agent_cwd,
         model=settings.omp_model,
-        env=omp_provider_env(model=settings.omp_model, api_key=api_key),
+        api_key=api_key,
         inject_band_tools=True,
     )
     adapter = OmpACPAdapter(config)

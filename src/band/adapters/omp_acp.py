@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from acp.schema import (
@@ -47,6 +47,7 @@ from band.integrations.omp import (
     normalize_omp_mcp_device_call,
     omp_command_in_workspace,
     omp_elicitation_call_id,
+    omp_provider_env,
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
@@ -94,6 +95,9 @@ class OmpACPCollectingClient(ACPCollectingClient):
 class OmpACPAdapterConfig:
     """Runtime configuration for OMP over ACP (stdio only).
 
+    ``model`` selects OMP's model. With ``api_key``, the same ``model`` also picks
+    the provider key env var the key is passed in, merged over ``env``.
+
     ``cwd`` is a compatibility alias for a workspace root; prefer
     ``workspace_for_room`` for new code.
     """
@@ -102,6 +106,7 @@ class OmpACPAdapterConfig:
     approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
     model: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     cwd: str | None = None
     workspace_for_room: WorkspaceResolver | None = None
     env: dict[str, str] | None = None
@@ -111,6 +116,22 @@ class OmpACPAdapterConfig:
     resolve_session_config: SessionConfigResolver | None = None
     resolve_permission: PermissionResolver | None = None
     turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
+
+    def __post_init__(self) -> None:
+        if self.api_key is not None and self.model is None:
+            raise ValueError(
+                "OmpACPAdapterConfig.api_key needs model: the provider-qualified "
+                "model picks which provider key env var carries the key"
+            )
+
+    def child_env(self) -> dict[str, str] | None:
+        """``env`` with the selected model's provider key, when ``api_key`` is set."""
+        if self.api_key is None or self.model is None:
+            return self.env
+        return {
+            **(self.env or {}),
+            **omp_provider_env(model=self.model, api_key=self.api_key),
+        }
 
 
 class OmpACPAdapter(ACPClientAdapter):
@@ -136,7 +157,7 @@ class OmpACPAdapter(ACPClientAdapter):
                 model=config.model,
                 approval_mode=config.approval_mode,
             ),
-            env=config.env,
+            env=config.child_env(),
             workspace_for_room=workspace_for_room,
             mcp_servers=config.mcp_servers,
             additional_tools=additional_tools,
@@ -195,8 +216,8 @@ class OmpACPAdapter(ACPClientAdapter):
             **kwargs: object,
         ) -> object:
             requested_schema = elicitation_requested_schema(mode, kwargs)
-            field = approve_deny_form_field(requested_schema)
-            if field is None:
+            form_field = approve_deny_form_field(requested_schema)
+            if form_field is None:
                 logger.debug(
                     "Declining unsupported OMP elicitation form for session %s",
                     session_id,
@@ -237,7 +258,7 @@ class OmpACPAdapter(ACPClientAdapter):
             if option_id == OMP_APPROVE_OPTION_ID:
                 return AcceptElicitationResponse(
                     action="accept",
-                    content={field: OMP_FORM_APPROVE},
+                    content={form_field: OMP_FORM_APPROVE},
                 )
             await self._narrate_cancelled_permission(
                 call=synthetic_call,

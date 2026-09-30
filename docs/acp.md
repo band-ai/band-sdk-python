@@ -41,7 +41,9 @@ failure fails that room turn visibly instead of falling back.
 
 - **OMP:** `approval_mode="yolo"` bypasses OMP's native approval and gives the agent full
   access to its host. It does not change Band tool registration or platform permissions.
-  The model is selected with OMP's `--model` flag, not an `OMP_MODEL` child env variable.
+  `OmpACPAdapterConfig.model` is passed as OMP's `--model` flag; OMP does not read an
+  `OMP_MODEL` env variable. Set `api_key` with it and the adapter passes the key in the env
+  variable that model's provider needs.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
