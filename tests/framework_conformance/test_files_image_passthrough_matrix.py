@@ -49,7 +49,7 @@ except ImportError:
     _PYDANTIC_AI_AVAILABLE = False
 
 # crewai and pydantic-ai aren't both installed in every lane's venv (a
-# three-way conflict group with parlant -- see docs/dependency-conflicts.md):
+# three-way conflict group with parlant -- see `conflicts` in pyproject.toml):
 # dev-crewai lacks pydantic-ai, dev-parlant lacks both. These framework_ids
 # need a per-lane skip the other probes (all in every lane's `dev` baseline)
 # don't.

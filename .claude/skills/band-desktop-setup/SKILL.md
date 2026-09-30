@@ -5,8 +5,8 @@ description: "Set up, upgrade, or troubleshoot Claude Desktop as a Band agent. U
 
 # Band Desktop setup
 
-The canonical setup, operating, verification, upgrade, and troubleshooting
-guide is [docs/adapters/claude_desktop.md](../../../docs/adapters/claude_desktop.md).
+The canonical setup, operating, and verification guide is
+[docs/adapters/claude_desktop.md](../../../docs/adapters/claude_desktop.md).
 Read it before taking action. Do not duplicate its commands, configuration,
 or troubleshooting guidance here; keep this skill to the interactive setup
 workflow.
@@ -39,5 +39,5 @@ workflow.
    agent key, a required Desktop restart, or an unavailable second participant).
 
 For behaviour after setup, direct the user to the guide rather than restating
-it: joining, watching, room visibility, tuning, and troubleshooting all live
-there.
+it: joining, watching, room visibility, and verification live there, and it
+points to the room view's log and the tuning settings.
