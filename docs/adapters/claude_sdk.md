@@ -18,9 +18,11 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
   skills, subagents and settings under `~/.claude` and `./.claude` are not
   loaded and the agent's capabilities are defined by the adapter. Pass
   `["user", "project"]` to opt back in.
-- **`permission_mode` is forwarded to the CLI as given.** `"dontAsk"` and
-  `"auto"` are accepted; if the CLI rejects a mode (for example `"auto"` on an
-  account without it), the turn fails with no fallback to another mode.
+- **`permission_mode` is forwarded to the CLI as given.** It takes the
+  [Claude Code permission modes](https://code.claude.com/docs/en/permission-modes)
+  by config value, including `"dontAsk"` and `"auto"`; if the CLI rejects a
+  mode (for example `"auto"` on an account without it), the turn fails with no
+  fallback to another mode.
   `"dontAsk"` denies every tool call not pre-approved by allow rules, so it
   raises `ValueError` with `approval_mode="manual"`, whose room prompts it
   would never reach.

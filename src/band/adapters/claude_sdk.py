@@ -358,6 +358,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 call and depends on the Claude account and model. A mode the
                 CLI rejects fails the turn; there is no fallback. ``"dontAsk"``
                 with ``approval_mode="manual"`` raises ``ValueError``.
+                Modes: https://code.claude.com/docs/en/permission-modes
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
