@@ -147,35 +147,46 @@ CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
 
-# CLI flags the adapter itself sets to wire Band's MCP server, tool
-# allowlist, prompt, model, permissions, and session stream. ``extra_args``
-# may not carry them, or a passthrough could silently unhook the Band tools.
-RESERVED_CLI_FLAGS: frozenset[str] = frozenset(
+# Flags the SDK emits from the options the adapter builds (pinned against the
+# SDK's real command by test_host_options.py).
+SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
     {
-        "mcp-config",
-        "strict-mcp-config",
+        "add-dir",
         "allowedTools",
+        "append-system-prompt",
+        "effort",
+        "fallback-model",
+        "input-format",
+        "max-thinking-tokens",
+        "mcp-config",
+        "model",
+        "output-format",
+        "permission-mode",
+        "permission-prompt-tool",
+        "plugin-dir",
+        "resume",
+        "setting-sources",
+        "verbose",
+    }
+)
+# Flags the adapter never sets that would still unhook the Band tools or
+# break its per-room sessions.
+BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
+    {
         "allowed-tools",
         "disallowedTools",
         "disallowed-tools",
         "tools",
-        "permission-mode",
-        "permission-prompt-tool",
-        "setting-sources",
+        "strict-mcp-config",
         "system-prompt",
         "system-prompt-file",
-        "append-system-prompt",
-        "model",
-        "fallback-model",
-        "input-format",
-        "output-format",
-        "resume",
         "continue",
         "fork-session",
         "session-id",
         "print",
     }
 )
+RESERVED_CLI_FLAGS: frozenset[str] = SDK_OWNED_CLI_FLAGS | BAND_UNSAFE_CLI_FLAGS
 
 
 class ClaudeCLIOptions(BaseModel):
