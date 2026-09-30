@@ -33,6 +33,7 @@ from band.client.streaming.errors import (
 )
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
+from band.core.types import ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
 logger = logging.getLogger(__name__)
@@ -380,10 +381,12 @@ class WebSocketClient:
         on_reconnect: Callable[[], Awaitable[None]] | None = None,
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
         session_policy: SessionPolicy | None = None,
+        conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
     ):
         self.ws_url = ws_url
         self.api_key = api_key
         self.agent_id = agent_id
+        self._conflict_policy = conflict_policy
         self.client: PHXChannelsClient | None = None
         self._on_reconnect = on_reconnect
         self._on_disconnect = on_disconnect
@@ -458,8 +461,18 @@ class WebSocketClient:
             additional_headers={"x-api-key": self.api_key},
         )
         if self.agent_id:
-            client.channel_socket_url += f"&agent_id={self.agent_id}"
+            client.channel_socket_url += (
+                f"&agent_id={self.agent_id}{self._initial_connect_query}"
+            )
         return client
+
+    @property
+    def _initial_connect_query(self) -> str:
+        """Conflict policy for the initial connect only. Supersede is the
+        platform default, so it stays off the wire."""
+        if self._conflict_policy is ConflictPolicy.SUPERSEDE:
+            return ""
+        return f"&on_conflict={self._conflict_policy}"
 
     async def _classify_connect_failure(
         self, exc: Exception
@@ -570,6 +583,11 @@ class WebSocketClient:
                 connected.stale_reason,
             )
         client = self._require_client()
+        # A reconnect may meet this client's own socket, still tracked by the
+        # platform, so it must supersede it rather than be refused by it.
+        client.channel_socket_url = client.channel_socket_url.removesuffix(
+            self._initial_connect_query
+        )
         client.auto_reconnect = True
         self._watchdog.start(client)
 

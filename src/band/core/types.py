@@ -28,6 +28,21 @@ class MessageType(StrEnum):
     USAGE = "usage"
 
 
+class ConflictPolicy(StrEnum):
+    """What the platform does when an agent connects while it already has a
+    live connection. The values are the platform's ``on_conflict`` wire values.
+
+    ``SUPERSEDE`` (the platform default): last connection wins; the incumbent
+    is told to stay down. ``REJECT``: first connection wins; the new connect is
+    refused, so a duplicate start fails instead of displacing the running
+    agent. Enforced per agent id across every host, best-effort across
+    platform pods.
+    """
+
+    SUPERSEDE = "supersede"
+    REJECT = "reject"
+
+
 class ToolEventKey(StrEnum):
     """Canonical JSON keys for execution events written into room history."""
 

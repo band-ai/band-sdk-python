@@ -25,6 +25,12 @@ class WebSocketUpgradeError(Exception):
         self.retry_after = retry_after
         super().__init__(self.message)
 
+    @property
+    def is_connection_conflict(self) -> bool:
+        """The platform refused an ``on_conflict=reject`` connect because the
+        agent already has a live connection."""
+        return self.code == "connection_conflict"
+
     @classmethod
     def from_exception(cls, exc: Exception) -> WebSocketUpgradeError | None:
         """Parse a websockets handshake exception when it exposes the HTTP response."""

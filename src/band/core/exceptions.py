@@ -40,6 +40,16 @@ class BandConfigError(BandError):
         return cls(message)
 
 
+class AgentAlreadyRunningError(BandConfigError):
+    """Another instance of this agent id already runs, so this start was refused.
+
+    Raised by both duplicate guards: the per-host lock
+    (``AgentConfig.single_instance``) and the platform's refusal of a second
+    connection (``AgentConfig.conflict_policy``). A supervisor should treat it
+    as "do not restart-loop", not as a crash.
+    """
+
+
 class BandConnectionError(BandError):
     """Transport failures (WebSocket, REST). Actionable by ops."""
 
