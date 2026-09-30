@@ -1,8 +1,16 @@
 """Shared cross-field validation rules used by tool input models and their
 ``AgentTools``-level backstops (some adapters hand-register tools as plain
-functions and never construct/validate the input model)."""
+functions and never construct/validate the input model), and the shared
+wording of rejection messages."""
 
 from __future__ import annotations
+
+from collections.abc import Iterable
+
+
+def listing(values: Iterable[str]) -> str:
+    """The accepted values as a rejection message shows them."""
+    return ", ".join(values) or "(none)"
 
 
 def _join_with_or(names: list[str]) -> str:
