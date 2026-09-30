@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -6728,7 +6730,23 @@ class TestReadRoomFileImagePassthrough:
         assert turn.content_items[0]["type"] == "inputText"
 
 
-SKILL_ROOT = "/opt/band/skills"
+def host_absolute_path(*parts: str) -> str:
+    """Absolute on the running OS: a bare ``/`` root has no drive on Windows."""
+    return str(Path(Path.cwd().anchor).joinpath(*parts))
+
+
+SKILL_ROOT = host_absolute_path("opt", "band", "skills")
+
+
+def accepts_skill_root(root: str) -> bool:
+    try:
+        CodexAdapterConfig(skill_roots=[root])
+    except ValidationError as exc:
+        assert "must be absolute" in str(exc)
+        return False
+    return True
+
+
 REGISTER_SKILL_ROOT = (
     CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET,
     {"extraRoots": [SKILL_ROOT]},
@@ -6810,9 +6828,22 @@ class TestSkillRoots:
             )
         assert client.requests == [REGISTER_SKILL_ROOT]
 
-    def test_relative_roots_are_refused(self) -> None:
-        with pytest.raises(ValidationError, match="must be absolute"):
-            CodexAdapterConfig(skill_roots=["relative/skills"])
+    @pytest.mark.parametrize(
+        ("root", "accepted_on"),
+        [
+            pytest.param("relative/skills", set(), id="relative"),
+            pytest.param("/opt/band/skills", {"posix"}, id="rooted-without-drive"),
+            pytest.param(r"C:\band\skills", {"nt"}, id="drive"),
+            pytest.param("C:/band/skills", {"nt"}, id="drive-forward-slashes"),
+            pytest.param(r"C:band\skills", set(), id="drive-relative"),
+            pytest.param(r"\\server\share\skills", {"nt"}, id="unc"),
+            pytest.param(SKILL_ROOT, {"posix", "nt"}, id="host-absolute"),
+        ],
+    )
+    def test_roots_must_be_absolute_on_the_host_os(
+        self, root: str, accepted_on: set[str]
+    ) -> None:
+        assert accepts_skill_root(root) is (os.name in accepted_on)
 
     def test_a_root_that_does_not_exist_yet_is_accepted(self, tmp_path) -> None:
         missing = str(tmp_path / "created-later")
