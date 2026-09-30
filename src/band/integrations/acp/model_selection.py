@@ -43,6 +43,13 @@ class ACPModelOptions:
             case ModelSetting.REASONING_EFFORT:
                 return self.effort
 
+    def current_selection(self) -> ModelSelection:
+        """What the session currently runs; no effort when it offers none."""
+        return ModelSelection(
+            model=self.model.current_value if self.model else None,
+            reasoning_effort=self.effort.current_value if self.effort else None,
+        )
+
     def model_catalog(self) -> ModelCatalog | None:
         """The advertised models; efforts are known only for the current one."""
         if self.model is None:

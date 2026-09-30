@@ -379,6 +379,27 @@ class TestCopilotACPModelSelection:
         ]
 
     @pytest.mark.asyncio
+    async def test_a_switch_to_a_model_without_efforts_drops_the_configured_effort(
+        self,
+    ) -> None:
+        # Haiku offers no effort, so the room's next session must not ask for
+        # the configured "high" (found live: it failed configuration).
+        agent = copilot()
+
+        async with copilot_room(
+            agent, model="gpt-5.4", reasoning_effort="high"
+        ) as session:
+            await session.send("Hello")
+            await switch_room(session, model="claude-haiku-4.5")
+            await session.adapter.on_cleanup("room-1")
+            reply = await session.send("Again")
+
+        assert reply.errors == []
+        assert agent.config_selections("fake-session-2") == [
+            ("model", "claude-haiku-4.5")
+        ]
+
+    @pytest.mark.asyncio
     async def test_a_switch_queued_behind_a_room_cleanup_names_the_ended_session(
         self,
     ) -> None:
@@ -395,7 +416,7 @@ class TestCopilotACPModelSelection:
             results = await asyncio.gather(first, queued, return_exceptions=True)
 
         assert isinstance(results[1], BandConfigError)
-        assert "no live ACP session" in str(results[1])
+        assert str(results[1]) == "room room-1's ACP session ended mid-switch"
 
     @pytest.mark.asyncio
     async def test_switching_a_room_without_a_live_session_is_refused(self) -> None:
