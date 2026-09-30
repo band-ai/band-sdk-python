@@ -12,6 +12,8 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from band.core.types import ConflictPolicy
+
 # --- Constants for synthetic messages (injected by SDK, not from platform) ---
 #
 # These constants define the sender identity for SDK-generated messages that are
@@ -78,6 +80,10 @@ class AgentConfig:
     # (the recovery sweep has no liveness check) and stateful adapters
     # resume the same on-disk sessions, splitting one conversation.
     single_instance: bool = True
+    # Platform-side duplicate guard for the initial WebSocket connect (cross-host,
+    # cross-TMPDIR); complements ``single_instance`` on this host. See
+    # ``ConflictPolicy`` for semantics and limits.
+    conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE
 
 
 # Platform-side TTL (seconds) for the boolean working-state indicator. The

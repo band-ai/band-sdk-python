@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from acp.exceptions import RequestError
 from acp.schema import (
     SessionConfigOptionBoolean,
     SessionConfigOptionSelect,
@@ -14,6 +15,10 @@ from acp.schema import (
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
 )
+from pydantic import ValidationError
+
+from band.core.exceptions import BandConfigError
+from band.core.validation import listing
 
 SessionConfigOption: TypeAlias = SessionConfigOptionSelect | SessionConfigOptionBoolean
 SessionConfigSelections: TypeAlias = Mapping[str, str | None]
@@ -26,6 +31,8 @@ SessionConfigResolver: TypeAlias = Callable[
 
 SESSION_CONFIG_TIMEOUT_SECONDS = 10.0
 RESOLVER_CONFIG_OPTION_ID = "resolver"
+# How the room reads a failure to apply a session configuration.
+CONFIG_FAILURE_PREFIX = "ACP session configuration failed: "
 
 
 @dataclass(frozen=True)
@@ -37,7 +44,8 @@ class ACPConfigRequest:
     config_options: tuple[SessionConfigOption, ...]
 
 
-class ACPConfigError(RuntimeError):
+# Also a RuntimeError, so existing ``except RuntimeError`` handlers catch it.
+class ACPConfigError(BandConfigError, RuntimeError):
     """A requested ACP session configuration could not be applied."""
 
     def __init__(
@@ -54,6 +62,11 @@ class ACPConfigError(RuntimeError):
         self.selected_value = selected_value
 
 
+class ACPConfigUnreachableError(ACPConfigError):
+    """No reply ever came to a config request (a timeout or a lost
+    connection), so nothing says the agent refused the value."""
+
+
 def flatten_select_options(
     options: Sequence[SessionConfigSelectOption | SessionConfigSelectGroup],
 ) -> tuple[SessionConfigSelectOption, ...]:
@@ -65,6 +78,32 @@ def flatten_select_options(
         else:
             flattened.append(entry)
     return tuple(flattened)
+
+
+def select_values(option: SessionConfigOptionSelect) -> tuple[str, ...]:
+    """The values an ACP select option advertises, groups flattened."""
+    return tuple(entry.value for entry in flatten_select_options(option.options))
+
+
+def selects(
+    options: Sequence[SessionConfigOption],
+) -> Iterator[SessionConfigOptionSelect]:
+    """The select options in an ACP catalog."""
+    return (
+        option for option in options if isinstance(option, SessionConfigOptionSelect)
+    )
+
+
+def find_select(
+    options: Sequence[SessionConfigOption], option_id: str
+) -> SessionConfigOptionSelect | None:
+    """The select option with ``option_id`` in an ACP catalog, if any."""
+    return next((option for option in selects(options) if option.id == option_id), None)
+
+
+def select_ids(options: Sequence[SessionConfigOption]) -> tuple[str, ...]:
+    """The ids of the select options in an ACP catalog."""
+    return tuple(option.id for option in selects(options))
 
 
 def session_config_options(response: object) -> tuple[SessionConfigOption, ...] | None:
@@ -106,21 +145,21 @@ async def apply_session_config_selections(
                 message=f'ACP config value for option "{option_id}" must be a string.',
             )
 
-        option = next((entry for entry in catalog if entry.id == option_id), None)
-        if not isinstance(option, SessionConfigOptionSelect):
+        option = find_select(catalog, option_id)
+        if option is None:
             raise ACPConfigError(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,
-                message=f'ACP config option "{option_id}" is not available.',
+                message=(
+                    f'ACP session offers no config option "{option_id}"; '
+                    f"available: {listing(select_ids(catalog))}."
+                ),
             )
 
-        if selected_value == option.current_value:
-            continue
-
-        available_values = {
-            entry.value for entry in flatten_select_options(option.options)
-        }
+        # Sent even when the catalog already shows it: a set whose reply was
+        # lost leaves that catalog stale, and only the agent's reply is proof.
+        available_values = select_values(option)
         if selected_value not in available_values:
             raise ACPConfigError(
                 session_id=session_id,
@@ -128,7 +167,8 @@ async def apply_session_config_selections(
                 selected_value=selected_value,
                 message=(
                     f'ACP config value "{selected_value}" is not advertised '
-                    f'for option "{option_id}".'
+                    f'for option "{option_id}"; available: '
+                    f"{listing(available_values)}."
                 ),
             )
 
@@ -140,7 +180,7 @@ async def apply_session_config_selections(
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except TimeoutError as error:
-            raise ACPConfigError(
+            raise ACPConfigUnreachableError(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,
@@ -150,7 +190,13 @@ async def apply_session_config_selections(
                 ),
             ) from error
         except Exception as error:
-            raise ACPConfigError(
+            # A JSON-RPC error or a malformed reply is still the agent's answer.
+            error_type = (
+                ACPConfigError
+                if isinstance(error, (RequestError, ValidationError))
+                else ACPConfigUnreachableError
+            )
+            raise error_type(
                 session_id=session_id,
                 option_id=option_id,
                 selected_value=selected_value,
@@ -192,8 +238,8 @@ def refreshed_catalog(
             selected_value=selected_value,
             message=f'ACP config option "{option_id}" returned a malformed catalog.',
         )
-    selected_option = next((entry for entry in catalog if entry.id == option_id), None)
-    if not isinstance(selected_option, SessionConfigOptionSelect):
+    selected_option = find_select(catalog, option_id)
+    if selected_option is None:
         raise ACPConfigError(
             session_id=session_id,
             option_id=option_id,

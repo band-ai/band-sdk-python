@@ -28,6 +28,21 @@ class MessageType(StrEnum):
     USAGE = "usage"
 
 
+class ConflictPolicy(StrEnum):
+    """What the platform does with a second connection for an agent id; the
+    values are its ``on_conflict`` wire values.
+
+    ``REJECT`` spans every host but only guards against accidental duplicates:
+    it is best-effort across platform pods, covers the initial connect only (a
+    reconnect must supersede the client's own stale socket), takes effect after
+    the adapter has started, and is ignored by platforms that predate it
+    (before 2026-05).
+    """
+
+    SUPERSEDE = "supersede"
+    REJECT = "reject"
+
+
 class ToolEventKey(StrEnum):
     """Canonical JSON keys for execution events written into room history."""
 
