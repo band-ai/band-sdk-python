@@ -1,258 +1,29 @@
 # Claude Agent SDK Adapter
 
-The [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents/claude-code-sdk-overview), also known as the Claude Code SDK, runs Claude Code as a programmable agent. The Band Claude SDK adapter is for building a Band collaborator that runs with Claude Code's built-in tools and capabilities, such as terminal use, filesystem access, skills, MCP tools, and extended thinking.
-
-Use this adapter when the agent should take part in Band conversations while working in a codebase: inspect files, edit files, run commands, and ask for approvals. Use the [Anthropic adapter](anthropic.md) instead for lightweight Claude chat/tool agents that call the Anthropic API directly. Use the [Codex adapter](codex.md) for an OpenAI-powered coding agent with Codex transport, sandbox, task lifecycle, and telemetry controls. Use the [LangGraph adapter](langgraph.md) when you already have a LangChain/LangGraph workflow.
-
-## Install
-
-```bash
-uv add "band-sdk[claude_sdk]"
-```
-
-## Prerequisites
-
-The adapter starts Claude Code as a subprocess. Install and authenticate Claude Code before running your Band agent:
-
-```bash
-npm install -g @anthropic-ai/claude-code
-claude auth login
-```
-
-Requires Node.js 20+.
-
-You need two credentials or auth contexts:
-
-- A Band platform API key for `Agent.create(api_key=...)`.
-- Claude Code authentication for the subprocess. Use `claude auth login`, or set `ANTHROPIC_API_KEY` if that is how your Claude Code environment is configured.
-
-Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
-
-## Quick Start
-
-```python
-import asyncio
-import os
-
-from band import Agent
-from band.adapters import ClaudeSDKAdapter
-
-adapter = ClaudeSDKAdapter(
-    cwd=os.getcwd(),
-    approval_mode="manual",
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id="your-agent-uuid",
-    api_key="your-band-api-key",
-    ws_url="wss://app.band.ai/api/v1/socket/websocket",
-    rest_url="https://app.band.ai",
-)
-
-asyncio.run(agent.run())
-```
-
-## Where Parameters Go
-
-The quick start uses two setup calls:
-
-- `ClaudeSDKAdapter(...)` configures Claude Code: working directory, model settings, permission mode, chat-based approvals, custom tools, feature flags, and Claude Code runtime behavior. The [Configuration Reference](#configuration-reference) below covers these parameters.
-- `Agent.create(...)` connects that configured adapter to Band. Use it for the Band agent identity, Band API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
-
-Claude Code authentication is handled by the `claude` binary or `ANTHROPIC_API_KEY`. `Agent.create(api_key=...)` is only the Band platform key.
-
-Common `Agent.create(...)` parameters:
-
-| Parameter | Use it for |
-|-----------|------------|
-| `adapter` | The configured `ClaudeSDKAdapter` instance. |
-| `agent_id` | The Band agent UUID to run as. |
-| `api_key` | The Band platform API key. |
-| `ws_url` | Band WebSocket URL. Omit it to use the hosted default. |
-| `rest_url` | Band REST API URL. Omit it to use the hosted default. |
-| `config` | Advanced Band runtime options. Most agents do not need it. |
-| `session_config` | Advanced session lifecycle behavior. |
-| `contact_config` | How incoming contact requests and contact updates are handled. |
-| `on_participant_added` / `on_participant_removed` | Optional callbacks for room membership changes. |
-| `preprocessor` | Optional event filter or transformer before messages reach the adapter. |
-
-## How It Works
-
-Each Band room gets its own Claude Code session. On the first message in a room, the adapter gives Claude Code the conversation context and a system prompt with Band collaboration instructions. Then it gives Claude Code an in-process MCP server that exposes Band collaboration tools, optional memory/contact tools, and your custom tools.
-
-Claude Code responses are routed back to the Band room. Through Band tools, it can send messages, look up peers, add participants, and create new chats. If Claude Code asks for permission to edit files or run commands, you can let Claude Code handle that through `permission_mode`, or you can opt into Band chat-based approvals with `approval_mode`.
-
-## Safety Basics
-
-This adapter can edit files and run commands in `cwd`. For production or shared rooms:
-
-- Set `cwd` to a dedicated workspace, not your home directory.
-- Prefer `approval_mode="manual"` for rooms with untrusted participants.
-- Be deliberate with `permission_mode="bypassPermissions"` and `approval_mode="auto_accept"`; both are high-trust settings.
-- Use Docker, a worktree, or another isolation boundary when the agent will modify code.
-
-## Configuration Reference
-
-This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these directly to `ClaudeSDKAdapter(...)`, not to `Agent.create(...)`.
-
-### Model and Runtime
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `model` | `str \| None` | `None` | Claude model. Accepts full IDs or aliases such as `"sonnet"`, `"opus"`, `"haiku"`, and `"inherit"`. When `None`, no `--model` flag is sent and the `claude` binary chooses. |
-| `fallback_model` | `str \| None` | `None` | Fallback model for Claude Code if the primary model is unavailable. Aliases are accepted. |
-| `max_thinking_tokens` | `int \| None` | `None` | Maximum tokens for Claude extended thinking. |
-| `effort` | `EffortLevel \| None` | `None` | Response effort level. The accepted values are `claude_agent_sdk`'s `EffortLevel`. When `None`, the model default applies. |
-| `permission_mode` | `"default" \| "acceptEdits" \| "plan" \| "bypassPermissions" \| "dontAsk" \| "auto"` | `"acceptEdits"` | Claude Code's own permission mode for file and command operations. See [Permission modes](#permission-modes). |
-| `cwd` | `str \| None` | `None` | Working directory for Claude Code sessions. Must exist if provided. |
-
-### Permission modes
-
-| Mode | Behavior |
-|------|----------|
-| `"default"` | Prompts for each sensitive tool call. Headless agents need `approval_mode` to answer the prompts. |
-| `"acceptEdits"` | Accepts file edits without prompting; prompts for the rest. |
-| `"plan"` | Planning only; no edits or commands. |
-| `"bypassPermissions"` | Skips every permission check. |
-| `"dontAsk"` | Never prompts; denies any tool call not pre-approved by allow rules. Suits unattended agents. |
-| `"auto"` | A model classifier approves or denies each tool call. Availability depends on the Claude account and model. |
-
-The mode is forwarded to the CLI as given. If the CLI rejects it (for example `"auto"` on an account without it), the turn fails; there is no fallback to another mode.
-
-### CLI Passthrough
-
-These map onto `ClaudeAgentOptions` for hosts that manage the Claude CLI themselves. Omitted, each leaves the SDK default. None of them can replace the adapter's Band MCP server, tool allowlist, or `setting_sources`.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `plugin_dirs` | `list[str] \| None` | `None` | Local Claude Code plugin folders; each becomes `{"type": "local", "path": ...}`. Loads a host-managed skills folder without changing `cwd` or `setting_sources`. |
-| `cli_path` | `str \| None` | `None` | The `claude` executable to launch, e.g. the user's installed CLI with their own version, login, and settings. `None` uses the CLI bundled with `claude-agent-sdk`. |
-| `env` | `dict[str, str] \| None` | `None` | Extra environment for the Claude CLI process only, e.g. per-agent secrets. The host's `os.environ` is not modified. |
-| `add_dirs` | `list[str] \| None` | `None` | Extra directories Claude may access (`--add-dir`). |
-| `extra_args` | `dict[str, str \| None] \| None` | `None` | Additional CLI flags; `None` values are bare flags. Flags the adapter sets itself (`mcp-config`, `allowedTools`, `permission-mode`, `setting-sources`, `system-prompt`, `model`, `resume`, ...) are refused with `ValueError`. |
-
-```python
-from band.adapters.claude_sdk import ClaudeSDKAdapter
-
-adapter = ClaudeSDKAdapter(
-    permission_mode="dontAsk",
-    plugin_dirs=["/srv/agents/reviewer/plugin"],
-    env={"GITHUB_TOKEN": "per-agent-token"},
-)
-assert adapter.plugin_dirs == ["/srv/agents/reviewer/plugin"]
-```
-
-Hosts that loaded skills through a private `cwd` holding `.claude/skills` with `setting_sources=["project"]`, or wrote harness secrets into `os.environ` before start, can move to `plugin_dirs` and `env`.
-
-### Prompts and Tools
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `custom_section` | `str \| None` | `None` | Custom instructions appended to the generated Band system prompt. |
-| `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. They are converted to MCP tools internally. |
-| `emit` | `Emit \| Iterable[Emit] \| None` | everything supported | Telemetry events the adapter sends back to Band. Opt-out: omitted, defaults to everything `SUPPORTED_EMIT` declares; pass `emit=()` for silence, or narrow with `\|`. |
-| `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
-| `history_converter` | `ClaudeSDKHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
-
-### Approval Handling
-
-`permission_mode` is Claude Code's native permission setting. `approval_mode` is Band's chat-based approval layer. Leave `approval_mode=None` to use Claude Code's native behavior only. Set `approval_mode="manual"` to route permission requests into the Band room.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `approval_mode` | `None \| "manual" \| "auto_accept" \| "auto_decline"` | `None` | Chat-based approval behavior. `"manual"` asks the room to approve or decline. |
-| `approval_text_notifications` | `bool` | `True` | Send room messages for automatic approval or decline decisions. |
-| `approval_wait_timeout_s` | `float` | `300.0` | Seconds to wait for a manual approval. |
-| `approval_timeout_decision` | `"accept" \| "decline"` | `"decline"` | Decision when manual approval times out. |
-| `max_pending_approvals_per_room` | `int` | `50` | Maximum pending approvals per room (at least 1). The oldest unanswered one is evicted (declined) when full. |
-| `approval_authorized_senders` | `set[str] \| None` | `None` | Sender IDs allowed to `/approve` and `/decline`. `None` means any room participant; an empty set means nobody. |
-
-When `approval_mode="manual"`, Claude pauses and the adapter posts a message like:
-
-> Approval requested (execute `npm test`). Token: `a-1`.
-> Reply `/approve a-1` or `/decline a-1`.
-> Use `/approvals` to list pending approvals.
-
-If exactly one approval is pending, the token can be omitted: `/approve` or `/decline`.
-
-| Command | Description |
-|---------|-------------|
-| `/approve <token>` | Approve a pending permission request. |
-| `/decline <token>` | Decline a pending permission request. |
-| `/approvals` | List pending approvals with token and age. |
-| `/status` | Show model, permission mode, approval mode, pending approvals, and session details. |
-
-## Feature flags: Capabilities and Emit
-
-`emit=`/`capabilities=` are passed directly to the adapter constructor, never wrapped in an `AdapterFeatures(...)` object:
-
-- `capabilities` exposes optional Band tool categories to the model. **Opt-in** — omitted, it defaults to empty.
-- `emit` controls telemetry events the adapter sends back to Band. **Opt-out** — omitted, it defaults to everything this adapter supports (every row marked "Yes" below).
-
-Requesting a value this adapter doesn't support raises `BandConfigError` immediately at construction.
-
-| Feature | Supported | What it does |
-|---------|-----------|--------------|
-| `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude Code. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
-| `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
-| `Capability.TASKS` | Yes | Exposes the room task-board tools (list/create/get/update tasks, task history, get/set the room goal). |
-| `Emit.TOOL_CALLS` | Yes | Sends `tool_call` and `tool_result` events for tool use. |
-| `Emit.THOUGHTS` | Yes | Sends `thought` events for completed Claude extended-thinking blocks. These are not streaming deltas. |
-| `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
-| `Emit.TASK_EVENTS` | No | Not supported as a configurable emit option by this adapter. |
-
-Example:
-
-```python
-import os
-
-from band.core.types import Capability, Emit
-from band.adapters import ClaudeSDKAdapter
-
-adapter = ClaudeSDKAdapter(
-    cwd=os.getcwd(),
-    capabilities=Capability.CONTACTS | Capability.MEMORY,
-    emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
-)
-```
-
-## Custom Tools
-
-Use `additional_tools` when you want Claude Code to call functions from your own application. Each custom tool is converted to an MCP tool and made available alongside the Band collaboration tools.
-
-```python
-from pydantic import BaseModel, Field
-
-from band.adapters import ClaudeSDKAdapter
-
-
-class LookupInput(BaseModel):
-    """Look up a user by email."""
-
-    email: str = Field(description="User email address")
-
-
-def lookup_user(args: LookupInput) -> str:
-    return f"Found user: {args.email}"
-
-
-adapter = ClaudeSDKAdapter(
-    additional_tools=[(LookupInput, lookup_user)],
-)
-```
-
-The MCP tool name comes from the Pydantic model class, not the callable name. `LookupInput` becomes `lookup`: the SDK strips a trailing `Input` suffix and lowercases the rest. Choose model class names that produce unique tool names, and avoid names that collide with built-in Band tools.
-
-## Examples
-
-See [examples/claude_sdk/](../../examples/claude_sdk/) for runnable scripts.
-
-| File | Start here when you want to... |
-|------|--------------------------------|
-| `01_basic_agent.py` | Run a minimal Claude Code backed Band agent. |
-| `02_extended_thinking.py` | Enable extended thinking and emit thought events. |
-| `03_tom_agent.py` | Run one side of the Tom/Jerry multi-agent demo. |
-| `04_jerry_agent.py` | Run the other side of the Tom/Jerry demo. |
-
-For Docker-based deployments, see [examples/claude_sdk_docker/](../../examples/claude_sdk_docker/).
+`ClaudeSDKAdapter` runs Claude Code as a subprocess, one session per Band room.
+Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
+
+- **Two credentials.** `Agent.create(api_key=...)` is the Band key only. Claude
+  Code authenticates itself (`claude auth login` or `ANTHROPIC_API_KEY`); the
+  adapter never hands it a key.
+- **Assistant text is never posted.** The adapter only debug-logs it. A reply
+  reaches the room through the `band_send_message` tool, and a turn that ends
+  with no successful reply or action tool call is reported to the room as an
+  error.
+- **`approval_mode` gates everything except Band's own tools.** With it set,
+  every tool call that is not `mcp__band__*` or `ToolSearch` goes through the
+  adapter's approval callback (`"manual"` asks the room). Band's tools are never
+  gated, in any mode.
+- **Host Claude Code config is ignored.** `setting_sources` defaults to `[]`, so
+  skills, subagents and settings under `~/.claude` and `./.claude` are not
+  loaded and the agent's capabilities are defined by the adapter. Pass
+  `["user", "project"]` to opt back in.
+- **`permission_mode` is forwarded to the CLI as given.** `"dontAsk"` and
+  `"auto"` are accepted; if the CLI rejects a mode (for example `"auto"` on an
+  account without it), the turn fails with no fallback to another mode.
+- **CLI passthrough never overrides the adapter's own wiring.** `plugin_dirs`,
+  `cli_path`, `env`, `add_dirs` and `extra_args` map onto `ClaudeAgentOptions`,
+  but cannot replace the Band MCP server, the tool allowlist or
+  `setting_sources`: `extra_args` naming a flag the adapter sets itself
+  (`mcp-config`, `allowedTools`, `permission-mode`, ...) raises `ValueError`.
+  `env` reaches only the Claude CLI process; the host's `os.environ` is untouched.

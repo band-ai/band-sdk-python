@@ -27,6 +27,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.types import Emit
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
     default_enforcement,
@@ -40,6 +41,13 @@ from tests.adapters.lettakit import (
     make_tool_call_message,
     make_tool_return_message,
 )
+
+# The tools whose call settles the turn's reply, so no assistant text is relayed.
+REPLY_SETTLING_TOOLS = [
+    BandTool.SEND_MESSAGE,
+    BandTool.SEND_ROOM_FILE,
+    BandTool.NO_REPLY,
+]
 
 # ──────────────────────────────────────────────────────────────────────
 # Initialization
@@ -190,16 +198,17 @@ class TestLettaAdapterOnMessagePerRoom:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
-    async def test_skip_auto_relay_when_send_message_used(
-        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    @pytest.mark.parametrize("reply_tool", REPLY_SETTLING_TOOLS)
+    async def test_skip_auto_relay_when_a_reply_tool_settled_the_turn(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock], reply_tool: str
     ) -> None:
         adapter, mock_client = adapter_with_client
 
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
-            make_tool_call_message("band_send_message"),
-            make_tool_return_message("band_send_message"),
+            make_tool_call_message(reply_tool),
+            make_tool_return_message(reply_tool),
             make_assistant_message("Done!"),
         )
 
@@ -217,7 +226,7 @@ class TestLettaAdapterOnMessagePerRoom:
             room_id="room-1",
         )
 
-        # No auto-relay — agent used send_message via MCP
+        # No auto-relay — the agent settled its reply via an MCP tool
         assert len(tools.messages_sent) == 0
 
     @pytest.mark.asyncio
@@ -1419,7 +1428,10 @@ class TestAutoRelayDisabled:
         assert "band_send_message" in failures[0]["message"]
 
     @pytest.mark.asyncio
-    async def test_disabled_relay_quiet_when_send_tool_used(self) -> None:
+    @pytest.mark.parametrize("reply_tool", REPLY_SETTLING_TOOLS)
+    async def test_disabled_relay_quiet_when_a_reply_tool_settled_the_turn(
+        self, reply_tool: str
+    ) -> None:
         adapter = LettaAdapter(config=LettaAdapterConfig(auto_relay=False))
         mock_client = AsyncMock()
         adapter._client = mock_client
@@ -1428,7 +1440,7 @@ class TestAutoRelayDisabled:
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
-            make_tool_call_message("band_send_message"),
+            make_tool_call_message(reply_tool),
             make_assistant_message("Done!"),
         )
 

@@ -4,42 +4,6 @@
 `opencode serve`: room messages become prompts, and the server's SSE stream is
 relayed back as room messages, tool narration, and error events.
 
-For the managed-host construction surface, see
-[Managed Host Adapter Configuration](managed-host-adapters.md).
-
-## OpenCode variants
-
-OpenCode accepts an opaque, provider- and model-specific `variant` name on each
-prompt. A variant can select reasoning effort when the chosen model exposes an
-effort variant, but it can also be a custom provider setting. Check the running
-OpenCode server's model catalog before selecting one; do not assume that a value
-such as `"high"` is supported everywhere.
-
-```python
-from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-
-adapter = OpencodeAdapter(
-    config=OpencodeAdapterConfig(
-        provider_id="openai",
-        model_id="gpt-5",
-        variant="high",
-        custom_section="Keep updates concise.",
-    )
-)
-```
-
-Set `provider_id` and `model_id` together. The adapter omits a model override
-unless both are present. OpenCode server credentials, server authentication, and
-the variants available for a model are owned by the running OpenCode server, not
-by `OpencodeAdapterConfig`. See the [OpenCode examples](../../examples/opencode/README.md)
-for server setup and model discovery.
-
-| Purpose | Path |
-|---|---|
-| Adapter package | `src/band/adapters/opencode/{adapter,approvals,config}.py` |
-| Typed SSE events | `src/band/integrations/opencode/events.py` |
-| HTTP/SSE client | `src/band/integrations/opencode/client.py` |
-
 Four invariants are easy to break and expensive to rediscover:
 
 - **Band tools are never gated.** A `permission.asked` naming one of the
@@ -61,3 +25,8 @@ Four invariants are easy to break and expensive to rediscover:
 
 `turn_timeout_s` bounds *compute*: time parked on a manual approval is excluded,
 since the ask carries its own `approval_wait_timeout_s` expiry.
+
+`variant` is an opaque, provider- and model-specific name the running server
+owns: it may select reasoning effort or be a custom provider setting, so read
+the server's model catalog rather than assuming `"high"` exists. The model
+override is sent only when `provider_id` and `model_id` are both set.

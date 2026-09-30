@@ -26,6 +26,11 @@ from band.runtime.tools.agent import (
     matches_identifier,
     strip_handle_prefix,
 )
+from band.runtime.tools.effects import (
+    is_terminal_success,
+    settles_turn_reply,
+    turn_effect,
+)
 from band.runtime.tools.human import HumanTools
 from band.runtime.tools.inputs import (
     AddContactInput,
@@ -63,6 +68,7 @@ from band.runtime.tools.inputs import (
     ListTasksInput,
     ListUserMemoriesInput,
     LookupPeersInput,
+    NoReplyInput,
     ReadRoomFileInput,
     RegisterMyAgentInput,
     RejectContactRequestInput,
@@ -99,10 +105,10 @@ from band.runtime.tools.registry import (
     FILE_TOOL_NAMES,
     HUMAN_SURFACE_CONTACT_TOOL_NAMES,
     HUMAN_SURFACE_MEMORY_TOOL_NAMES,
+    LEGACY_SEND_MESSAGE_TOOL,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
-    ROOM_POSTING_TOOL_NAMES,
     TASK_TOOL_NAMES,
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -116,8 +122,6 @@ from band.runtime.tools.registry import (
     image_block_placeholder,
     is_image_passthrough_result,
     is_mcp_content_result,
-    is_room_posting_tool,
-    is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
     missing_reply_error,
@@ -137,7 +141,13 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
-from band.runtime.tools.types import BandTool, Surface, ToolCategory, ToolDefinition
+from band.runtime.tools.types import (
+    BandTool,
+    Surface,
+    ToolCategory,
+    ToolDefinition,
+    TurnEffect,
+)
 
 __all__ = [
     "AGENT_ROOM_BOUND_TOOL_NAMES",
@@ -158,6 +168,7 @@ __all__ = [
     "FILE_UNAVAILABLE_MESSAGE",
     "HUMAN_SURFACE_CONTACT_TOOL_NAMES",
     "HUMAN_SURFACE_MEMORY_TOOL_NAMES",
+    "LEGACY_SEND_MESSAGE_TOOL",
     "MAX_CHAT_PAGES",
     "MAX_INLINE_IMAGE_BYTES",
     "MAX_INLINE_TEXT_BYTES",
@@ -166,7 +177,6 @@ __all__ = [
     "MEMORY_TOOL_NAMES",
     "PREVIEWABLE_IMAGE_CONTENT_TYPES",
     "READ_ONLY_TOOL_NAMES",
-    "ROOM_POSTING_TOOL_NAMES",
     "TASK_TOOL_NAMES",
     "TOOL_DEFINITIONS",
     "TOOL_MODELS",
@@ -209,6 +219,7 @@ __all__ = [
     "ListTasksInput",
     "ListUserMemoriesInput",
     "LookupPeersInput",
+    "NoReplyInput",
     "ParticipantAddResult",
     "ParticipantRemoveResult",
     "ReadRoomFileInput",
@@ -234,6 +245,7 @@ __all__ = [
     "ToolCategory",
     "ToolDefinition",
     "ToolFunc",
+    "TurnEffect",
     "UpdateMyProfileInput",
     "UpdateTaskInput",
     "_resolve_mcp_tool_name",
@@ -253,7 +265,6 @@ __all__ = [
     "image_block_placeholder",
     "is_image_passthrough_result",
     "is_mcp_content_result",
-    "is_room_posting_tool",
     "is_terminal_success",
     "iter_chat_pages",
     "iter_tool_definitions",
@@ -266,6 +277,8 @@ __all__ = [
     "resolve_capabilities",
     "resolve_tool_model",
     "serialize_tool_result",
+    "settles_turn_reply",
     "strip_handle_prefix",
+    "turn_effect",
     "validate_tool_arguments",
 ]
