@@ -153,6 +153,9 @@ ApprovalDecision = Literal["accept", "decline"]
 # dontAsk denies every prompt without calling can_use_tool, so no approval_mode
 # ever gets to decide.
 DONT_ASK_PERMISSION_MODE: PermissionMode = "dontAsk"
+# The mode the CLI starts in when the account or model can't run "auto".
+AUTO_PERMISSION_MODE: PermissionMode = "auto"
+AUTO_FALLBACK_PERMISSION_MODE: PermissionMode = "default"
 
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
@@ -961,11 +964,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                     replied_this_turn |= await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
-                # The CLI announces a mode it switched to (e.g. "auto" it can't
-                # run falls back to "default") once, in a status message.
+                # The CLI announces every mode change in a status message; only
+                # the "auto" fallback is unexpected, since plan-mode tools
+                # switch modes on purpose.
                 case SystemMessage(
                     subtype="status", data={"permissionMode": str() as mode}
-                ) if mode != self.permission_mode:
+                ) if (
+                    self.permission_mode == AUTO_PERMISSION_MODE
+                    and mode == AUTO_FALLBACK_PERMISSION_MODE
+                ):
                     logger.warning(
                         "Room %s: Claude CLI runs permission mode %s instead of "
                         "the requested %s",
