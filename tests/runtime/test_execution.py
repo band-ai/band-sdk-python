@@ -7,9 +7,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from band_sdk_core import ClaimRegistry, RetryTracker
+from band_sdk_core import AgentFailure, ClaimRegistry, RetryTracker
 
 from band.client.streaming import MessageMetadata
+from band.core.protocols import TurnResultAlreadyReported
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
     BacklogProcessResult,
@@ -18,7 +19,13 @@ from band.runtime.execution import (
     ExecutionState,
     _error_label,
 )
-from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
+from band.runtime.tools import AgentTools
+from band.runtime.types import (
+    USER_SENDER_TYPE,
+    ConversationContext,
+    PlatformMessage,
+    SessionConfig,
+)
 
 # Import test helpers from conftest
 from tests.conftest import (
@@ -1849,15 +1856,22 @@ class TestTurnFailureNotification:
         mock_link.rest.agent_api_messages = mock_rest_client.agent_api_messages
         return mock_rest_client.agent_api_messages.create_agent_chat_message
 
-    @staticmethod
-    def _context(mock_link, **config) -> ExecutionContext:
-        async def failing_handler(ctx, event):
-            raise RuntimeError("upstream rejected api_key=sk-live-secret")
+    @pytest.fixture
+    def error_events(self, mock_link, mock_rest_client) -> AsyncMock:
+        """The real-signature event-create mock ``send_failure`` posts through."""
+        mock_link.rest.agent_api_events = mock_rest_client.agent_api_events
+        return mock_rest_client.agent_api_events.create_agent_chat_event
 
+    @staticmethod
+    async def _failing_handler(ctx, event) -> None:
+        raise RuntimeError("upstream rejected api_key=sk-live-secret")
+
+    @classmethod
+    def _context(cls, mock_link, handler=None, **config) -> ExecutionContext:
         return ExecutionContext(
             "room-123",
             mock_link,
-            failing_handler,
+            handler or cls._failing_handler,
             config=SessionConfig(enable_context_hydration=False, **config),
         )
 
@@ -1868,7 +1882,7 @@ class TestTurnFailureNotification:
             room_id="room-123",
             content="Test",
             sender_id="user-1",
-            sender_type="User",
+            sender_type=USER_SENDER_TYPE,
             sender_name="User One",
             message_type="text",
             metadata={},
@@ -1887,14 +1901,11 @@ class TestTurnFailureNotification:
         mock_link.mark_failed.assert_awaited_once()
         create.assert_awaited_once()
         request = create.call_args.kwargs["message"]
-        assert request.mentions[0].id == "user-1"
-        assert request.mentions[0].name == "User One"
+        assert [mention.id for mention in request.mentions] == ["user-1"]
         assert "RuntimeError" in request.content
         assert "sk-live-secret" not in request.content
 
     async def test_websocket_final_failure_notifies_sender(self, mock_link, create):
-        """Same guarantee on the live path; the mention falls back to the
-        sender id when the payload has no display name."""
         event = make_message_event(
             room_id="room-123", msg_id="msg-ws", sender_id="user-1"
         )
@@ -1904,8 +1915,7 @@ class TestTurnFailureNotification:
         mock_link.mark_failed.assert_awaited_once()
         create.assert_awaited_once()
         request = create.call_args.kwargs["message"]
-        assert request.mentions[0].id == "user-1"
-        assert request.mentions[0].name == "user-1"
+        assert [mention.id for mention in request.mentions] == ["user-1"]
 
     async def test_notice_waits_for_the_final_attempt(self, mock_link, create):
         """A failure the message will be retried from is not final; only the
@@ -1954,20 +1964,56 @@ class TestTurnFailureNotification:
         mock_link.mark_failed.assert_awaited_once()
         create.assert_not_awaited()
 
-    async def test_failure_before_attempt_is_recorded_gets_no_notice(
-        self, mock_link, create
+    @pytest.mark.parametrize("path", ["websocket", "backlog"])
+    async def test_hydration_failure_notifies_on_either_path(
+        self, mock_link, create, path
     ):
-        """A failure before the retry tracker counted the attempt (here,
-        hydration) can't be judged final, so it is only recorded."""
+        """A history outage is charged to the retry budget before hydration on
+        both delivery paths, so it is reported the same whichever carried it."""
         ctx = self._context(mock_link)
         ctx._ensure_fresh_context = AsyncMock(side_effect=RuntimeError("history down"))
-        event = make_message_event(
-            room_id="room-123", msg_id="msg-hydration", sender_id="user-1"
+
+        if path == "websocket":
+            await ctx._process_event(
+                make_message_event(
+                    room_id="room-123", msg_id="msg-hydration", sender_id="user-1"
+                )
+            )
+        else:
+            await ctx._process_backlog_message(self._backlog_message("msg-hydration"))
+
+        mock_link.mark_failed.assert_awaited_once()
+        create.assert_awaited_once()
+
+    async def test_failure_the_adapter_reported_is_not_repeated(
+        self, mock_link, create, error_events
+    ):
+        """An adapter that posts its own error event and re-raises gets no
+        second, runtime notice; the next turn's unreported failure still does."""
+
+        async def reporting_handler(ctx, event):
+            if event.payload.id == "msg-reported":
+                tools = AgentTools.from_context(ctx)
+                await tools.send_failure(AgentFailure("codex", "boom"))
+            raise RuntimeError("provider down")
+
+        ctx = self._context(mock_link, reporting_handler)
+
+        await ctx._process_backlog_message(self._backlog_message("msg-reported"))
+        error_events.assert_awaited_once()
+        create.assert_not_awaited()
+
+        await ctx._process_backlog_message(self._backlog_message("msg-unreported"))
+        create.assert_awaited_once()
+
+    async def test_turn_result_already_reported_gets_no_notice(self, mock_link, create):
+        async def handler(ctx, event):
+            raise TurnResultAlreadyReported("reported by a nested handler")
+
+        await self._context(mock_link, handler)._process_backlog_message(
+            self._backlog_message("msg-already-reported")
         )
 
-        assert await ctx._process_event(event) is True
-
-        ctx._ensure_fresh_context.assert_awaited_once()
         mock_link.mark_failed.assert_awaited_once()
         create.assert_not_awaited()
 

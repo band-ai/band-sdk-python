@@ -41,6 +41,7 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
+from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
@@ -345,6 +346,11 @@ class ExecutionContext:
         # signal can never leak onto a later cycle.
         self._cycle_armed: bool = False
         self._pending_interrupt: ControlMode | None = None
+
+        # Set when the adapter posted this turn's failure itself (via
+        # ``AgentTools.send_failure``), so the runtime notice doesn't repeat it.
+        # Cleared in the per-message ``finally``.
+        self._turn_failure_reported: bool = False
 
         # Durable stop (play to resume). Trigger suppression is
         # platform-authoritative (dispatch gated server-side, persists across
@@ -1574,6 +1580,7 @@ class ExecutionContext:
             # can't leak onto the next backlog message.
             self._cycle_armed = False
             self._pending_interrupt = None
+            self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
 
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
@@ -1986,6 +1993,10 @@ class ExecutionContext:
 
         return await self._process_event_body(event, msg_id, payload)
 
+    def note_turn_failure_reported(self) -> None:
+        """Record that the adapter already told the room this turn failed."""
+        self._turn_failure_reported = True
+
     async def _handle_turn_failure(
         self,
         msg_id: str,
@@ -2008,19 +2019,24 @@ class ExecutionContext:
 
         sender_id = message.sender_id
         is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
+        already_reported = self._turn_failure_reported or isinstance(
+            error, TurnResultAlreadyReported
+        )
         if not (
             self.config.report_turn_failures_to_room
             and is_final
+            and not already_reported
             and sender_id
             and message.sender_type == USER_SENDER_TYPE
         ):
             logger.debug(
                 "ExecutionContext %s: No turn-failure notice for message %s "
-                "(enabled=%s, final=%s, sender_type=%s)",
+                "(enabled=%s, final=%s, already_reported=%s, sender_type=%s)",
                 self.room_id,
                 msg_id,
                 self.config.report_turn_failures_to_room,
                 is_final,
+                already_reported,
                 message.sender_type,
             )
             return
@@ -2033,18 +2049,16 @@ class ExecutionContext:
                     content=_TURN_FAILURE_NOTICE.format(
                         error_type=type(error).__name__
                     ),
-                    mentions=[
-                        ChatMessageRequestMentionsItem(
-                            id=sender_id, name=message.sender_name or sender_id
-                        )
-                    ],
+                    mentions=[ChatMessageRequestMentionsItem(id=sender_id)],
                 ),
             )
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: Failed to post turn-failure notice for message %s",
+        except Exception as post_error:  # noqa: BLE001 -- best-effort notice; the turn is already marked failed and logged
+            logger.warning(
+                "ExecutionContext %s: Failed to post turn-failure notice for "
+                "message %s: %s",
                 self.room_id,
                 msg_id,
+                _error_label(post_error),
             )
 
     async def _process_event_body(
@@ -2070,10 +2084,22 @@ class ExecutionContext:
 
         attempts: int | None = None
         try:
-            # Hydrate before claiming real WebSocket messages when payload
-            # metadata did not prove they were already processed. Hydrated
-            # context may contain the durable delivery status for replayed events.
             if isinstance(event, MessageEvent) and msg_id and payload:
+                # Charged before hydration, as on the backlog path, so a
+                # hydration failure counts toward the retry budget.
+                attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
+                if exceeded:
+                    logger.warning(
+                        "Message %s exceeded max retries (%s attempts)",
+                        msg_id,
+                        attempts,
+                    )
+                    return True
+
+                # Hydrate before claiming real WebSocket messages when payload
+                # metadata did not prove they were already processed. Hydrated
+                # context may contain the durable delivery status for replayed
+                # events.
                 if not self._context_hydrated:
                     await self._ensure_fresh_context()
                 if self._message_processed_for_agent(msg_id, payload.metadata):
@@ -2082,17 +2108,8 @@ class ExecutionContext:
                         msg_id,
                         self.room_id,
                     )
+                    self._retry_tracker.discard_attempt(msg_id)
                     self.claims.remember_completed(self.room_id, msg_id)
-                    return True
-
-                # Track attempts
-                attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
-                if exceeded:
-                    logger.warning(
-                        "Message %s exceeded max retries (%s attempts)",
-                        msg_id,
-                        attempts,
-                    )
                     return True
 
                 # Open the claim->cycle window: from here until _run_cycle
@@ -2176,4 +2193,5 @@ class ExecutionContext:
             # leak onto the next message.
             self._cycle_armed = False
             self._pending_interrupt = None
+            self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
