@@ -11,6 +11,9 @@ fake exists to prove.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import sys
 
 import pytest
 
@@ -152,6 +155,50 @@ async def test_agent_rooms_rejoin_failure_marks_topic_unjoined() -> None:
             is False
         )
         assert "agent_rooms:agent-123" not in server.joined_topics
+
+
+async def _started_run(link: BandLink, **kwargs: bool) -> asyncio.Task[None]:
+    task = asyncio.create_task(link.run_forever(**kwargs))
+    await asyncio.sleep(0.05)
+    return task
+
+
+async def test_run_forever_leaves_host_signal_handlers_alone() -> None:
+    def host_handler(signum: int, frame: object) -> None: ...
+
+    previous = signal.signal(signal.SIGTERM, host_handler)
+    try:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            await link.connect()
+            running = await _started_run(link)
+
+            assert signal.getsignal(signal.SIGTERM) is host_handler
+
+            await link.disconnect()
+            await asyncio.wait_for(running, timeout=5.0)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the Phoenix client installs loop signal handlers only on POSIX; on "
+        "Windows os.kill(SIGINT) terminates the whole test process"
+    ),
+)
+async def test_script_mode_still_stops_on_sigint() -> None:
+    async with fake_phoenix_server() as server:
+        link = make_link(server.url)
+        await link.connect()
+        running = await _started_run(link, install_signal_handlers=True)
+
+        os.kill(os.getpid(), signal.SIGINT)
+        await asyncio.wait_for(running, timeout=5.0)
+
+        assert link.last_disconnect_reason is None
+        await link.disconnect()
 
 
 async def test_default_policy_sends_no_conflict_param() -> None:

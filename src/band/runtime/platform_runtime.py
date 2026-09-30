@@ -274,10 +274,12 @@ class PlatformRuntime:
         logger.info("Platform runtime stopped")
         return graceful
 
-    async def run_forever(self) -> None:
-        """Run until interrupted."""
+    async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
+        """Run until the link ends (see ``BandLink.run_forever``)."""
         if self._link:
-            await self._link.run_forever()
+            await self._link.run_forever(
+                install_signal_handlers=install_signal_handlers
+            )
 
     async def _fetch_agent_metadata(self) -> None:
         """Fetch agent metadata from platform."""
