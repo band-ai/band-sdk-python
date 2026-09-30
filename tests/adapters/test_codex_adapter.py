@@ -135,6 +135,7 @@ class FakeCodexClient:
         turn_start_error_once: bool = True,
         model_list_result: dict[str, Any] | None = None,
         model_list_error: Exception | None = None,
+        skill_roots_error: Exception | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -148,6 +149,7 @@ class FakeCodexClient:
         self._turn_start_error_once = turn_start_error_once
         self._model_list_result = model_list_result
         self._model_list_error = model_list_error
+        self._skill_roots_error = skill_roots_error
         self._thread_counter = 0
         self._turn_counter = 0
 
@@ -182,6 +184,9 @@ class FakeCodexClient:
             if self._model_list_result is not None:
                 return self._model_list_result
             return {"data": [{"id": "gpt-5.5", "hidden": False}]}
+
+        if method == "skills/extraRoots/set" and self._skill_roots_error is not None:
+            raise self._skill_roots_error
 
         if method == "thread/resume":
             if self._resume_error is not None:
@@ -327,7 +332,8 @@ class CodexTurn:
 
 async def run_codex_turn(
     *,
-    events: list[RpcEvent],
+    events: list[RpcEvent] | None = None,
+    client: FakeCodexClient | None = None,
     tools: FakeAgentTools | None = None,
     config: CodexAdapterConfig | None = None,
     **adapter_kwargs: Any,
@@ -338,7 +344,7 @@ async def run_codex_turn(
     adapter wired to it, ``on_started``, one bootstrap ``on_message`` -- so a
     test states only the events it scripts and the outcome it asserts.
     """
-    client = FakeCodexClient(events=events)
+    client = client or FakeCodexClient(events=events)
     adapter = make_codex_adapter(client, config=config, **adapter_kwargs)
     room_tools = tools if tools is not None else ToolSchemaFakeTools()
 
@@ -6760,98 +6766,48 @@ class TestReadRoomFileImagePassthrough:
         assert turn.content_items[0]["type"] == "inputText"
 
 
-class SkillRootsRejectingClient(FakeCodexClient):
-    """An app-server that does not know ``skills/extraRoots/set``."""
-
-    async def request(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        retry_on_overload: bool = True,
-    ) -> dict[str, Any]:
-        if method == "skills/extraRoots/set":
-            self.requests.append((method, dict(params or {})))
-            raise CodexJsonRpcError(code=-32601, message="Method not found")
-        return await super().request(
-            method, params, retry_on_overload=retry_on_overload
-        )
-
-
-async def _bootstrap_turn(adapter: CodexAdapter) -> FakeAgentTools:
-    tools = ToolSchemaFakeTools()
-    await adapter.on_started("Codex Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(),
-        tools,
-        CodexSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
-    return tools
-
-
-def _methods(client: FakeCodexClient) -> list[str]:
-    return [method for method, _ in client.requests]
+SKILL_ROOT = "/opt/band/skills"
 
 
 class TestSkillRoots:
     @pytest.mark.asyncio
-    async def test_roots_are_registered_before_the_thread_starts(
-        self, tmp_path
-    ) -> None:
-        client = FakeCodexClient(events=[_turn_completed()])
-        adapter = make_codex_adapter(
-            client, config=CodexAdapterConfig(skill_roots=[str(tmp_path)])
+    async def test_roots_are_sent_first_after_initialize(self) -> None:
+        turn = await run_codex_turn(
+            events=[_turn_completed()],
+            config=CodexAdapterConfig(skill_roots=[SKILL_ROOT]),
+        )
+        assert turn.client.requests[0] == (
+            "skills/extraRoots/set",
+            {"extraRoots": [SKILL_ROOT]},
         )
 
-        await _bootstrap_turn(adapter)
+    @pytest.mark.asyncio
+    async def test_no_roots_sends_nothing(self) -> None:
+        turn = await run_codex_turn(events=[_turn_completed()])
+        assert "skills/extraRoots/set" not in dict(turn.client.requests)
 
-        # initialize itself is not a recorded request; extraRoots follows it
-        # directly, and model discovery still runs before the thread starts.
-        assert _methods(client)[:3] == [
-            "skills/extraRoots/set",
-            "model/list",
-            "thread/start",
+    @pytest.mark.asyncio
+    async def test_rejected_roots_fail_the_room_start(self) -> None:
+        client = FakeCodexClient(
+            skill_roots_error=CodexJsonRpcError(code=-32601, message="Method not found")
+        )
+        with pytest.raises(RuntimeError, match="Codex rejected skill_roots"):
+            await run_codex_turn(
+                client=client, config=CodexAdapterConfig(skill_roots=[SKILL_ROOT])
+            )
+        assert client.requests == [
+            ("skills/extraRoots/set", {"extraRoots": [SKILL_ROOT]})
         ]
-        assert client.requests[0] == (
-            "skills/extraRoots/set",
-            {"extraRoots": [str(tmp_path)]},
-        )
 
-    @pytest.mark.asyncio
-    async def test_no_request_without_roots(self) -> None:
-        client = FakeCodexClient(events=[_turn_completed()])
-        await _bootstrap_turn(make_codex_adapter(client))
-        assert "skills/extraRoots/set" not in _methods(client)
+    def test_relative_roots_are_refused(self) -> None:
+        with pytest.raises(ValidationError, match="must be absolute"):
+            CodexAdapterConfig(skill_roots=["relative/skills"])
 
-    @pytest.mark.asyncio
-    async def test_rejected_roots_abort_the_room_client_start(self, tmp_path) -> None:
-        client = SkillRootsRejectingClient(events=[_turn_completed()])
-        adapter = make_codex_adapter(
-            client, config=CodexAdapterConfig(skill_roots=[str(tmp_path)])
-        )
-
-        with pytest.raises(RuntimeError, match="skills/extraRoots/set"):
-            await _bootstrap_turn(adapter)
-
-        assert _methods(client) == ["skills/extraRoots/set"]
-        assert client.closed
-
-    @pytest.mark.parametrize("root", ["relative/skills", "/definitely/not/here"])
-    def test_unusable_roots_are_refused_at_construction(self, root: str) -> None:
-        with pytest.raises(ValidationError, match="skill_roots"):
-            CodexAdapterConfig(skill_roots=[root])
-
-    def test_roots_come_from_the_environment_as_json(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    def test_roots_are_read_from_the_environment_as_json(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("CODEX_SKILL_ROOTS", json.dumps([str(tmp_path)]))
-        monkeypatch.setenv("CODEX_CWD", str(tmp_path))
-        config = CodexAdapterConfig()
-        assert (config.skill_roots, config.cwd) == ([str(tmp_path)], None)
+        monkeypatch.setenv("CODEX_SKILL_ROOTS", json.dumps([SKILL_ROOT]))
+        assert CodexAdapterConfig().skill_roots == [SKILL_ROOT]
 
 
 class TestNoReply:

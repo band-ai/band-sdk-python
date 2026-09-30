@@ -479,9 +479,8 @@ class CodexAdapterConfig(BaseSettings):
     )
     enable_self_config_tools: bool = False
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
-    # Extra skills folders, sent to every room's app-server as
-    # ``skills/extraRoots/set`` right after ``initialize`` (Codex has no CLI
-    # flag or config key for them). CODEX_SKILL_ROOTS takes a JSON list.
+    # Codex has no config key for extra skill folders; each room's app-server
+    # gets them via skills/extraRoots/set. CODEX_SKILL_ROOTS is a JSON list.
     skill_roots: list[str] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
@@ -544,14 +543,10 @@ class CodexAdapterConfig(BaseSettings):
 
     @field_validator("skill_roots")
     @classmethod
-    def _require_absolute_skill_dirs(cls, roots: list[str]) -> list[str]:
-        """Codex types each root as an AbsolutePathBuf; refuse anything it would reject."""
+    def _require_absolute_paths(cls, roots: list[str]) -> list[str]:
         for root in roots:
-            path = Path(root)
-            if not path.is_absolute():
+            if not Path(root).is_absolute():
                 raise ValueError(f"skill_roots entries must be absolute: {root!r}")
-            if not path.is_dir():
-                raise ValueError(f"skill_roots entry is not a directory: {root!r}")
         return roots
 
     @classmethod
@@ -1604,7 +1599,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 client_version=self.config.client_version,
                 experimental_api=self.config.experimental_api,
             )
-            await self._set_skill_roots(client)
+            await self._register_skill_roots(client)
             self._selected_model = await self._select_model()
             self._initialized = True
         except Exception:
@@ -1628,21 +1623,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     self._release_room_workspace(state, room_id)
             raise
 
-    async def _set_skill_roots(self, client: CodexClientProtocol) -> None:
-        """Register ``skill_roots`` on a freshly initialized app-server.
-
-        Codex has no flag or config key for extra skill folders; this request
-        is the only way in. A rejection fails the room client's start.
-        """
+    async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
         if not roots:
             return
         try:
-            await client.request("skills/extraRoots/set", {"extraRoots": list(roots)})
+            await client.request("skills/extraRoots/set", {"extraRoots": roots})
         except CodexJsonRpcError as exc:
-            raise RuntimeError(
-                f"Codex rejected skills/extraRoots/set for skill_roots {roots}: {exc}"
-            ) from exc
+            raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
 
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
         state = self._active_client_state()
