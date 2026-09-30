@@ -452,19 +452,20 @@ class WebSocketClient:
             on_reconnect=self._handle_reconnect,
             on_disconnect=self._on_disconnect,
             on_heartbeat_ack=self._watchdog.reset_deadline,
-            # Also send the key as an x-api-key handshake header. Under
-            # proxy-managed sandbox custody the host-side proxy replaces the
-            # sentinel in this header (it can't touch the URL query), and the
-            # platform authenticates off the header (precedence over the
-            # query) — so the WS upgrade works with the real key never in the
-            # VM. Harmless elsewhere: same value the query already carries.
-            additional_headers={"x-api-key": self.api_key},
+            additional_headers=self._handshake_headers,
         )
         if self.agent_id:
             client.channel_socket_url += (
                 f"&agent_id={self.agent_id}{self._initial_connect_query}"
             )
         return client
+
+    @property
+    def _handshake_headers(self) -> dict[str, str]:
+        """``x-api-key`` on every upgrade, the error probe included: under
+        proxy-managed custody the proxy swaps the sentinel in this header but
+        cannot touch the URL query, and the platform authenticates off it."""
+        return {"x-api-key": self.api_key}
 
     @property
     def _initial_connect_query(self) -> str:
@@ -493,7 +494,7 @@ class WebSocketClient:
         )
         if not cache_is_valid:
             cached = await probe_upgrade_error(
-                self._require_client().channel_socket_url
+                self._require_client().channel_socket_url, self._handshake_headers
             )
             self._cached_connect_failure = cached
             self._probed_failure_message = message
