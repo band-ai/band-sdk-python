@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from acp.exceptions import RequestError
 from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectGroup,
@@ -14,33 +16,29 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
+from band.core.exceptions import BandConfigError
+from band.core.model_catalog import ModelCatalog, ModelChoice, ModelSelection
+from band.integrations.acp import session_config
+from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.model_selection import MODEL_CATEGORY, ACPModelOptions
 from band.integrations.acp.session_config import (
+    CONFIG_FAILURE_PREFIX,
     RESOLVER_CONFIG_OPTION_ID,
     ACPConfigError,
     ACPConfigRequest,
+    ACPConfigUnreachableError,
     SessionConfigOption,
     apply_session_config_selections,
+    find_select,
 )
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, Reply, acp_adapter
-
-
-def select_option(
-    option_id: str,
-    current_value: str,
-    values: list[str],
-) -> SessionConfigOptionSelect:
-    """A concise ACP select catalog entry for one test."""
-    return SessionConfigOptionSelect(
-        id=option_id,
-        name=option_id.replace("_", " ").title(),
-        type="select",
-        current_value=current_value,
-        options=[
-            SessionConfigSelectOption(value=value, name=value.title())
-            for value in values
-        ],
-    )
+from tests.integrations.acp.acp_toolkit import (
+    FakeACPAgent,
+    Reply,
+    acp_adapter,
+    select_option,
+    started_acp_adapter,
+)
 
 
 def malformed_catalog_response() -> SimpleNamespace:
@@ -136,7 +134,7 @@ class TestApplySessionConfigSelections:
             )
         )
 
-        with pytest.raises(ACPConfigError, match='"reasoning_effort" is not available'):
+        with pytest.raises(ACPConfigError) as rejected:
             await apply_session_config_selections(
                 session_id="session-1",
                 config_options=[model, effort],
@@ -144,7 +142,55 @@ class TestApplySessionConfigSelections:
                 set_option=set_option,
             )
 
+        assert str(rejected.value) == (
+            'ACP session offers no config option "reasoning_effort"; available: model.'
+        )
         set_option.assert_awaited_once_with("session-1", "model", "auto")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "raised"),
+        [
+            pytest.param(RequestError.invalid_params(), ACPConfigError, id="refused"),
+            # The acp client validates each reply; a null one fails that.
+            pytest.param(
+                lambda *_: SetSessionConfigOptionResponse.model_validate({}),
+                ACPConfigError,
+                id="malformed-reply",
+            ),
+            pytest.param(
+                RuntimeError("Connection closed"),
+                ACPConfigUnreachableError,
+                id="unanswered",
+            ),
+        ],
+    )
+    async def test_a_failed_set_says_whether_the_agent_answered(
+        self, failure: object, raised: type[ACPConfigError]
+    ) -> None:
+        with pytest.raises(ACPConfigError) as rejected:
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[select_option("model", "small", ["small", "large"])],
+                selections={"model": "large"},
+                set_option=AsyncMock(side_effect=failure),
+            )
+
+        assert type(rejected.value) is raised
+
+    @pytest.mark.asyncio
+    async def test_an_option_on_an_empty_catalog_is_refused_naming_none(self) -> None:
+        with pytest.raises(ACPConfigError) as rejected:
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[],
+                selections={"model": "auto"},
+                set_option=AsyncMock(),
+            )
+
+        assert str(rejected.value) == (
+            'ACP session offers no config option "model"; available: (none).'
+        )
 
     @pytest.mark.asyncio
     async def test_rejects_a_malformed_refreshed_catalog(self) -> None:
@@ -239,6 +285,13 @@ class TestACPConfigurationHarness:
                 "selected_value": "unsupported",
             },
         )
+        assert reply.errors == [
+            (
+                f"{CONFIG_FAILURE_PREFIX}ACP config value "
+                '"unsupported" is not advertised for option "reasoning_effort"; '
+                "available: medium, high."
+            )
+        ]
         assert agent.prompt_texts() == []
         assert agent.closed_sessions == ["fake-session-1"]
 
@@ -457,3 +510,153 @@ class TestACPConfigurationHarness:
             },
         )
         assert agent.closed_sessions == ["persisted-session"]
+
+
+class ThinkingIdAdapter(ACPClientAdapter):
+    """An ACP adapter for an agent that publishes uncategorized ``model`` and
+    ``thinking`` selects, the way OMP does."""
+
+    def locate_model_options(
+        self, options: Sequence[SessionConfigOption]
+    ) -> ACPModelOptions:
+        return ACPModelOptions(
+            model=find_select(options, "model"), effort=find_select(options, "thinking")
+        )
+
+
+class TestTypedModelSelection:
+    def test_the_catalog_knows_efforts_only_for_the_current_model(self) -> None:
+        # ACP advertises efforts for the active model alone: the others are
+        # unknown (None), which a host must not show as "offers none" (()).
+        located = ACPModelOptions(
+            model=select_option("model", "large", ["small", "large"]),
+            effort=select_option("thinking", "low", ["low", "high"]),
+        )
+
+        assert located.model_catalog() == ModelCatalog(
+            models=(
+                ModelChoice(id="small", label="Small", efforts=None),
+                ModelChoice(
+                    id="large",
+                    label="Large",
+                    efforts=("low", "high"),
+                    default_effort="low",
+                ),
+            ),
+            current_model="large",
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_adapter_can_locate_selects_that_carry_no_category(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(
+            config_options=[
+                select_option("model", "small", ["small", "large"]),
+                select_option("thinking", "low", ["low", "high"]),
+            ]
+        ).will_say("Configured")
+        adapter = ThinkingIdAdapter(
+            command="fake-agent",
+            inject_band_tools=False,
+            model_selection=ModelSelection(model="large", reasoning_effort="high"),
+        )
+
+        async with started_acp_adapter(adapter, agent) as session:
+            reply = await session.send("Hello")
+
+        assert reply.texts == ["Configured"]
+        assert agent.config_selections() == [("model", "large"), ("thinking", "high")]
+
+    @pytest.mark.asyncio
+    async def test_a_switch_is_checked_against_the_catalog_a_set_reply_returned(
+        self,
+    ) -> None:
+        # No config_option_update is pushed, so only the model set's reply
+        # tells the client that "large" brings a "max" effort.
+        agent = (
+            FakeACPAgent()
+            .advertises_models(
+                {"small": (), "large": ("medium", "max")},
+                current="small",
+                pushes_updates=False,
+            )
+            .will_say("ok")
+        )
+
+        async with acp_adapter(agent) as session:
+            await session.send("Hello")
+            for selection in (
+                ModelSelection(model="large"),
+                ModelSelection(reasoning_effort="max"),
+            ):
+                await session.adapter.apply_model_selection(selection, room_id="room-1")
+
+        assert agent.current_value("reasoning_effort") == "max"
+
+    @pytest.mark.asyncio
+    async def test_a_runtime_switch_is_refused_beside_a_resolver(self) -> None:
+        async def resolve_config(request: ACPConfigRequest) -> None:
+            del request
+
+        agent = FakeACPAgent(
+            config_options=[
+                select_option(
+                    "model", "small", ["small", "large"], category=MODEL_CATEGORY
+                )
+            ]
+        ).will_say("ok")
+
+        async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
+            await session.send("Hello")
+            with pytest.raises(BandConfigError, match="resolve_session_config"):
+                await session.adapter.apply_model_selection(
+                    ModelSelection(model="large"), room_id="room-1"
+                )
+
+        assert agent.config_selections() == []
+
+    @pytest.mark.asyncio
+    async def test_a_switch_back_after_a_timed_out_switch_reaches_the_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The agent applies "large" but its reply misses the deadline, so the
+        # client never sees the session leave "small".
+        monkeypatch.setattr(session_config, "SESSION_CONFIG_TIMEOUT_SECONDS", 0.05)
+        agent = FakeACPAgent(
+            config_options=[
+                select_option(
+                    "model", "small", ["small", "large"], category=MODEL_CATEGORY
+                )
+            ]
+        ).will_say("ok")
+
+        async with acp_adapter(agent) as session:
+            await session.send("Hello")
+            gate = agent.holds_config_replies()
+            with pytest.raises(BandConfigError, match="did not respond"):
+                await session.adapter.apply_model_selection(
+                    ModelSelection(model="large"), room_id="room-1"
+                )
+            gate.release.set()
+            await session.adapter.apply_model_selection(
+                ModelSelection(model="small"), room_id="room-1"
+            )
+
+        assert agent.current_value("model") == "small"
+
+    @pytest.mark.asyncio
+    async def test_a_model_is_refused_when_the_agent_advertises_no_model_option(
+        self,
+    ) -> None:
+        agent = FakeACPAgent().will_say("unreachable")
+
+        async with acp_adapter(
+            agent, model_selection=ModelSelection(model="large")
+        ) as session:
+            reply = await session.send("Hello")
+
+        assert reply.errors == [
+            f"{CONFIG_FAILURE_PREFIX}ACP session advertises no model option; available: (none)."
+        ]
+        assert agent.prompt_texts() == []

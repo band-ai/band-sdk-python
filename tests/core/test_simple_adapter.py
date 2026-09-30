@@ -5,6 +5,8 @@ from typing import Any
 
 import pytest
 
+from band.core.exceptions import BandConfigError
+from band.core.model_catalog import ModelSelection
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -252,6 +254,31 @@ class TestOnStarted:
 
         assert adapter.agent_name == ""
         assert adapter.agent_description == ""
+
+
+class SelectingAdapter(RecordingAdapter):
+    """Configured with a model, but its harness lists no catalog."""
+
+    @property
+    def model_selection(self) -> ModelSelection:
+        return ModelSelection(model="any-model", reasoning_effort="any-effort")
+
+
+class TestStartupModelCheck:
+    async def test_a_harness_without_a_catalog_starts_on_any_selection(self) -> None:
+        adapter = SelectingAdapter()
+
+        await adapter.startup("Agent", "desc", features=adapter.features)
+
+        assert adapter.agent_name == "Agent"
+
+
+class TestApplyModelSelection:
+    async def test_an_adapter_that_cannot_switch_models_refuses(self) -> None:
+        with pytest.raises(BandConfigError, match="does not support switching"):
+            await RecordingAdapter().apply_model_selection(
+                ModelSelection(model="sonnet"), room_id="room-1"
+            )
 
 
 class TestOnCleanup:

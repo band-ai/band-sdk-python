@@ -10,7 +10,9 @@ the generic matrix cannot isolate get proven here:
    tools over the advertised URL — a live MCP round-trip), and
 2. that a reply actually travels through the MCP ``band_send_message`` tool —
    with auto-relay disabled, so a dead tool path cannot hide behind the
-   adapter relaying plain assistant text.
+   adapter relaying plain assistant text, and
+3. concurrent starts and a later successor for one Band identity converge on
+   the same Letta user and retain its state.
 
 Run with:
     E2E_TESTS_ENABLED=true BAND_E2E_LANE=letta uv run pytest \\
@@ -18,6 +20,8 @@ Run with:
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -95,3 +99,41 @@ async def test_reply_arrives_via_mcp_send_tool(
     replies.assert_present(
         what="a reply sent through the MCP band_send_message tool (relay disabled)"
     )
+
+
+@per_adapter(Adapter.LETTA)
+@pytest.mark.timeout(extra=120)  # three Letta-side MCP registrations
+@pytest.mark.asyncio(loop_scope="session")
+async def test_concurrent_starts_reuse_one_org_user_scope(cell: AdapterCell) -> None:
+    """Concurrent starts and a successor reuse one Letta identity and state."""
+    identity = await cell.provision()
+    adapters = [cell.build(), cell.build()]
+    started_adapters = list(adapters)
+    agent_id: str | None = None
+    try:
+        await asyncio.gather(
+            *(
+                adapter.on_started(identity.name, identity.description)
+                for adapter in adapters
+            )
+        )
+
+        user_ids = {adapter._client.default_headers["user_id"] for adapter in adapters}
+        assert len(user_ids) == 1
+
+        agent_id = await adapters[0]._create_agent()
+        await asyncio.gather(*(adapter.cleanup_all() for adapter in started_adapters))
+        started_adapters.clear()
+
+        successor = cell.build()
+        await successor.on_started(identity.name, identity.description)
+        started_adapters.append(successor)
+        user_ids.add(successor._client.default_headers["user_id"])
+        assert len(user_ids) == 1
+
+        resumed = await successor._client.agents.retrieve(agent_id)
+        assert resumed.id == agent_id
+    finally:
+        if agent_id is not None:
+            await adapters[0]._client.agents.delete(agent_id)
+        await asyncio.gather(*(adapter.cleanup_all() for adapter in started_adapters))
