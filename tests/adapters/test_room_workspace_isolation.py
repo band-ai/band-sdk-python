@@ -38,74 +38,74 @@ def test_default_workspace_is_created_per_room(
     assert Path(second).is_dir()
 
 
-def test_custom_workspace_is_created_on_first_resolution(tmp_path: Path) -> None:
+@pytest.fixture
+def created_directories(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Record workspace directories instead of creating them: the host-OS rows
+    name drive roots and network shares outside any test sandbox."""
+    created: list[Path] = []
+    monkeypatch.setattr(Path, "mkdir", lambda self, **_kwargs: created.append(self))
+    monkeypatch.setattr(os.path, "realpath", lambda path: path)
+    return created
+
+
+def accepts_workspace(workspace: str) -> bool:
+    try:
+        resolve_room_workspace("room-a", lambda _room_id: workspace)
+    except ValueError as exc:
+        assert "must return an absolute path" in str(exc)
+        return False
+    return True
+
+
+@pytest.mark.parametrize("spell", [str, Path.as_posix], ids=["native", "posix"])
+def test_custom_workspace_is_created_on_first_resolution(
+    tmp_path: Path, spell: Callable[[Path], str]
+) -> None:
     workspace = tmp_path / "nested" / "room-a"
 
-    resolved = resolve_room_workspace("room-a", lambda _room_id: str(workspace))
-
-    assert resolved == str(workspace)
-    assert workspace.is_dir()
-
-
-def test_relative_custom_workspace_is_rejected(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    with pytest.raises(ValueError, match="must return an absolute path"):
-        resolve_room_workspace("room-a", lambda _room_id: "workspace")
-
-    assert not (tmp_path / "workspace").exists()
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
-@pytest.mark.parametrize("workspace", [r"\workspace", "/workspace"])
-@pytest.mark.asyncio
-async def test_adapters_reject_windows_rooted_relative_workspaces(
-    workspace: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def reject_directory_creation(self: Path, **_kwargs: object) -> None:
-        pytest.fail(f"created directory for rooted-relative workspace: {self}")
-
-    codex = CodexAdapter(
-        CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
-    )
-    acp = ACPClientAdapter(
-        command="codex", workspace_for_room=lambda _room_id: workspace
-    )
-
-    with monkeypatch.context() as patch:
-        patch.setattr(Path, "mkdir", reject_directory_creation)
-        with pytest.raises(ValueError, match="must return an absolute path"):
-            codex._room_client("room-a")
-        with pytest.raises(ValueError, match="must return an absolute path"):
-            await acp._runtime_for("room-a")
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
-@pytest.mark.parametrize("forward_slashes", [False, True])
-def test_windows_drive_absolute_workspace_is_accepted(
-    tmp_path: Path, forward_slashes: bool
-) -> None:
-    workspace = tmp_path / "room-a"
-    path = workspace.as_posix() if forward_slashes else str(workspace)
-
-    resolved = resolve_room_workspace("room-a", lambda _room_id: path)
+    resolved = resolve_room_workspace("room-a", lambda _room_id: spell(workspace))
 
     assert Path(resolved) == workspace
     assert workspace.is_dir()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
-def test_windows_unc_workspace_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    workspace = r"\\server\share\workspace"
+@pytest.mark.parametrize(
+    ("workspace", "accepted_on"),
+    [
+        pytest.param("workspace", set(), id="relative"),
+        pytest.param("/workspace", {"posix"}, id="rooted-without-drive"),
+        pytest.param(r"\workspace", set(), id="backslash-rooted"),
+        pytest.param(r"C:\workspace", {"nt"}, id="drive"),
+        pytest.param("C:/workspace", {"nt"}, id="drive-forward-slashes"),
+        pytest.param(r"C:workspace", set(), id="drive-relative"),
+        pytest.param(r"\\server\share\workspace", {"nt"}, id="unc"),
+    ],
+)
+def test_custom_workspace_must_be_absolute_on_the_host_os(
+    workspace: str, accepted_on: set[str], created_directories: list[Path]
+) -> None:
+    accepted = os.name in accepted_on
 
-    with monkeypatch.context() as patch:
-        patch.setattr(os.path, "realpath", lambda path: path)
-        patch.setattr(Path, "mkdir", lambda *_args, **_kwargs: None)
-        resolved = resolve_room_workspace("room-a", lambda _room_id: workspace)
+    assert accepts_workspace(workspace) is accepted
+    assert created_directories == ([Path(workspace)] if accepted else [])
 
-    assert resolved == workspace
+
+@pytest.mark.asyncio
+async def test_adapters_refuse_a_relative_workspace(
+    created_directories: list[Path],
+) -> None:
+    codex = CodexAdapter(
+        CodexAdapterConfig(workspace_for_room=lambda _room_id: "workspace")
+    )
+    acp = ACPClientAdapter(
+        command="codex", workspace_for_room=lambda _room_id: "workspace"
+    )
+
+    with pytest.raises(ValueError, match="must return an absolute path"):
+        codex._room_client("room-a")
+    with pytest.raises(ValueError, match="must return an absolute path"):
+        await acp._runtime_for("room-a")
+    assert created_directories == []
 
 
 @pytest.mark.asyncio
