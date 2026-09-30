@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -50,14 +50,15 @@ from band.integrations.crewai.reporting import (
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
+    custom_tool_effects,
     execute_custom_tool,
     get_custom_tool_name,
-    is_marked_terminal,
 )
 from band.runtime.tools import (
     CAPABILITY_TOOL_NAMES,
     EVENT_TOOL_NAMES,
     BandTool,
+    TurnEffect,
     append_available_mention_handles,
     get_band_tool_category,
     get_tool_description,
@@ -77,7 +78,7 @@ def _execute_tool(
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-    custom_terminal: bool = False,
+    custom_effects: Mapping[str, TurnEffect] | None = None,
 ) -> str:
     """Execute a tool with common error handling and reporting.
 
@@ -120,13 +121,17 @@ def _execute_tool(
             context.reply_tracker,
             tool_name,
             result,
-            custom_terminal=custom_terminal,
+            custom_effects=custom_effects,
         )
     return result
 
 
 def _mark_productive_work(
-    tracker: ReplyTracker, tool_name: str, result: str, *, custom_terminal: bool
+    tracker: ReplyTracker,
+    tool_name: str,
+    result: str,
+    *,
+    custom_effects: Mapping[str, TurnEffect] | None,
 ) -> None:
     """Record that the turn did real work, so an empty final answer stays benign.
 
@@ -144,7 +149,7 @@ def _mark_productive_work(
             return
     except (json.JSONDecodeError, AttributeError, TypeError):
         return
-    if is_terminal_success(tool_name, succeeded=True, custom_terminal=custom_terminal):
+    if is_terminal_success(tool_name, succeeded=True, custom_effects=custom_effects):
         tracker.tool_executed = True
     if tool_name == BandTool.SEND_MESSAGE:
         tracker.replied = True
@@ -203,11 +208,11 @@ def _custom_tool(
         BaseTool,
     )
 
-    input_model, handler = definition
+    input_model, _ = definition
     tool_name = get_custom_tool_name(input_model)
-    # Only a custom tool that opts in (band_terminal=True) lets an empty final
-    # answer be treated as benign; undeclared customs fail loud.
-    terminal = is_marked_terminal(handler)
+    # Only a custom tool that declared an effect lets an empty final answer be
+    # treated as benign; undeclared customs fail loud.
+    effects = custom_tool_effects([definition])
 
     class CustomCrewAITool(BaseTool):
         name: str = tool_name
@@ -228,7 +233,7 @@ def _custom_tool(
                 get_context=get_context,
                 reporter=reporter,
                 fallback_loop=fallback_loop,
-                custom_terminal=terminal,
+                custom_effects=effects,
             )
 
     return CustomCrewAITool()

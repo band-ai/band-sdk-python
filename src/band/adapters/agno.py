@@ -30,12 +30,12 @@ from band.core.types import (
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    BandTool,
     decode_image_block,
     get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
+    settles_turn_reply,
 )
 
 try:
@@ -357,12 +357,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._persist_turn(room_id, response)
 
         if not any(
-            _tool_name(execution) == BandTool.SEND_MESSAGE
+            settles_turn_reply(_tool_name(execution))
             for execution in _tool_executions(response)
         ):
             logger.debug(
-                "Room %s msg %s: agent did not call band_send_message; "
-                "nothing delivered",
+                "Room %s msg %s: agent did not settle its reply; nothing delivered",
                 room_id,
                 msg.id,
             )

@@ -24,12 +24,15 @@ backend via `ACPClientAdapter`.
 | `rich_streaming.py` | Rich streaming of tool calls / plans / text |
 | `cursor.py` | Cursor CLI backend with dynamic ACP configuration and room decisions |
 | `bridge_architecture.py` | Fully env-driven bridge configuration |
-| `copilot.py` | GitHub Copilot CLI (`copilot --acp`), stdio or TCP |
+| `copilot.py` | GitHub Copilot CLI (`copilot --acp`) over stdio |
 
 ## `copilot_docker/` — Copilot-in-a-container deployments
 
-Copilot runs in a container; the Band SDK connects over **TCP**, and Band tools are
-served by a `band-mcp` (SSE) server. See each subfolder's README.
+Copilot runs in a container behind `socat`, the Band SDK connects over **TCP**, and Band
+tools are served by a `band-mcp` (SSE) server. `ACPClientAdapter` no longer accepts
+`host`/`port` (a remote process cannot be proven to serve a single room), so the
+`client.py` in both folders fails at construction. To run Copilot isolated from the host,
+use `copilot_sandbox/` below.
 
 | Folder | Topology |
 |--------|----------|

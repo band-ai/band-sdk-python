@@ -62,7 +62,7 @@ jobs:
         uses: ./band-sdk-python/.github/actions/git-https-auth
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: "band-sdk-python/**/pyproject.toml"
@@ -111,7 +111,7 @@ jobs:
           token: ${{ secrets.CORE_SDK_READ_KEY }}
 
       - name: Install just and cargo-llvm-cov
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
         with:
           tool: just,cargo-llvm-cov
 
