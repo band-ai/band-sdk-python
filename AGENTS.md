@@ -376,16 +376,13 @@ install` it and exercise the real call in this repo's venv.
   If writing the assertion requires re-deriving *how* the code decided
   something, the test is checking the wrong thing — assert the decision
   itself.
-- **Tests run on both Ubuntu and Windows CI — test across OSes, don't skip one.**
-  Build host paths from the running OS (`tmp_path`, or
-  `Path(Path.cwd().anchor).joinpath(...)`), never a hard-coded `"/opt/..."`,
-  which has no drive on Windows. When behavior genuinely differs per OS, put
-  every case in one parametrize table that runs everywhere, each row naming the
-  `os.name` values expected to accept it, and assert `outcome is (os.name in
-  accepted_on)` (see `test_roots_must_be_absolute_on_the_host_os` in
-  `tests/adapters/test_codex_adapter.py`). Reserve `skipif(os.name ...)` for a
-  boundary that truly cannot run on that OS (a POSIX-only syscall, a
-  Linux-only binary), never for a path or separator assumption.
+- **Tests run on Ubuntu and Windows CI — test across OSes, don't skip one.**
+  Build host paths with `tmp_path` or `tests.paths.host_absolute_path`, never a
+  hard-coded `"/opt/..."` (no drive, so relative on Windows); check absoluteness
+  with `band.workspaces.is_host_absolute`. Where behavior differs per OS, write
+  one parametrize table that runs everywhere, each row naming the `os.name`
+  values that accept it. `skipif(os.name ...)` is only for a boundary that
+  cannot run on that OS, never for a path or separator assumption.
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a

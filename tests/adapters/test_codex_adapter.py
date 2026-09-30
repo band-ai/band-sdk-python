@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -52,6 +50,7 @@ from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.adapters.codexturns import RecordedRequests, await_released_turn
+from tests.paths import host_absolute_path
 
 
 def make_platform_message(
@@ -346,8 +345,7 @@ class CodexTurn:
 
 async def run_codex_turn(
     *,
-    events: list[RpcEvent] | None = None,
-    client: FakeCodexClient | None = None,
+    events: list[RpcEvent],
     tools: FakeAgentTools | None = None,
     config: CodexAdapterConfig | None = None,
     **adapter_kwargs: Any,
@@ -358,24 +356,34 @@ async def run_codex_turn(
     adapter wired to it, ``on_started``, one bootstrap ``on_message`` -- so a
     test states only the events it scripts and the outcome it asserts.
     """
-    client = client or FakeCodexClient(events=events)
+    client = FakeCodexClient(events=events)
     adapter = make_codex_adapter(client, config=config, **adapter_kwargs)
     room_tools = tools if tools is not None else ToolSchemaFakeTools()
 
     await adapter.on_started("Codex Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(),
-        room_tools,
-        CodexSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
+    await send_bootstrap(adapter, tools=room_tools)
     return CodexTurn(adapter=adapter, client=client, tools=room_tools)
 
 
 ROOM_ID = "room-1"
+
+
+async def send_bootstrap(
+    adapter: CodexAdapter,
+    *,
+    room_id: str = ROOM_ID,
+    tools: FakeAgentTools | None = None,
+) -> None:
+    """Deliver a room's session-bootstrap message to ``adapter``."""
+    await adapter.on_message(
+        make_platform_message(room_id=room_id),
+        tools if tools is not None else ToolSchemaFakeTools(),
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id=room_id,
+    )
 
 
 class CodexRoom:
@@ -6730,39 +6738,11 @@ class TestReadRoomFileImagePassthrough:
         assert turn.content_items[0]["type"] == "inputText"
 
 
-def host_absolute_path(*parts: str) -> str:
-    """Absolute on the running OS: a bare ``/`` root has no drive on Windows."""
-    return str(Path(Path.cwd().anchor).joinpath(*parts))
-
-
 SKILL_ROOT = host_absolute_path("opt", "band", "skills")
-
-
-def accepts_skill_root(root: str) -> bool:
-    try:
-        CodexAdapterConfig(skill_roots=[root])
-    except ValidationError as exc:
-        assert "must be absolute" in str(exc)
-        return False
-    return True
-
-
 REGISTER_SKILL_ROOT = (
     CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET,
     {"extraRoots": [SKILL_ROOT]},
 )
-
-
-async def send_bootstrap(adapter: CodexAdapter, room_id: str = ROOM_ID) -> None:
-    await adapter.on_message(
-        make_platform_message(room_id=room_id),
-        ToolSchemaFakeTools(),
-        CodexSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id=room_id,
-    )
 
 
 class TestSkillRoots:
@@ -6792,7 +6772,7 @@ class TestSkillRoots:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         for room_id in clients:
-            await send_bootstrap(adapter, room_id)
+            await send_bootstrap(adapter, room_id=room_id)
 
         assert all(
             client.requests[0] == REGISTER_SKILL_ROOT for client in clients.values()
@@ -6822,32 +6802,18 @@ class TestSkillRoots:
         client = FakeCodexClient(
             skill_roots_error=CodexJsonRpcError(code=-32601, message="Method not found")
         )
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(skill_roots=[SKILL_ROOT])
+        )
+        await adapter.on_started("Codex Agent", "A coding agent")
+
         with pytest.raises(RuntimeError, match="Codex rejected skill_roots"):
-            await run_codex_turn(
-                client=client, config=CodexAdapterConfig(skill_roots=[SKILL_ROOT])
-            )
+            await send_bootstrap(adapter)
         assert client.requests == [REGISTER_SKILL_ROOT]
 
-    @pytest.mark.parametrize(
-        ("root", "accepted_on"),
-        [
-            pytest.param("relative/skills", set(), id="relative"),
-            pytest.param("/opt/band/skills", {"posix"}, id="rooted-without-drive"),
-            pytest.param(r"C:\band\skills", {"nt"}, id="drive"),
-            pytest.param("C:/band/skills", {"nt"}, id="drive-forward-slashes"),
-            pytest.param(r"C:band\skills", set(), id="drive-relative"),
-            pytest.param(r"\\server\share\skills", {"nt"}, id="unc"),
-            pytest.param(SKILL_ROOT, {"posix", "nt"}, id="host-absolute"),
-        ],
-    )
-    def test_roots_must_be_absolute_on_the_host_os(
-        self, root: str, accepted_on: set[str]
-    ) -> None:
-        assert accepts_skill_root(root) is (os.name in accepted_on)
-
-    def test_a_root_that_does_not_exist_yet_is_accepted(self, tmp_path) -> None:
-        missing = str(tmp_path / "created-later")
-        assert CodexAdapterConfig(skill_roots=[missing]).skill_roots == [missing]
+    def test_relative_roots_are_refused(self) -> None:
+        with pytest.raises(ValidationError, match="must be absolute"):
+            CodexAdapterConfig(skill_roots=["relative/skills"])
 
     def test_roots_are_read_from_the_environment_as_json(
         self, monkeypatch: pytest.MonkeyPatch

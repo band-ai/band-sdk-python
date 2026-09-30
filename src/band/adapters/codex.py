@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
@@ -88,6 +87,7 @@ from band.runtime.tools import (
 from band.workspaces import (
     WorkspaceResolver,
     claim_room_workspace,
+    is_host_absolute,
     release_room_workspace,
     resolve_room_workspace,
 )
@@ -544,7 +544,7 @@ class CodexAdapterConfig(BaseSettings):
     @field_validator("skill_roots")
     @classmethod
     def _require_absolute_paths(cls, roots: list[str]) -> list[str]:
-        if relative := [root for root in roots if not Path(root).is_absolute()]:
+        if relative := [root for root in roots if not is_host_absolute(root)]:
             raise ValueError(f"skill_roots must be absolute paths: {relative}")
         return roots
 
