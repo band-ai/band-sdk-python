@@ -32,7 +32,8 @@ from band.integrations.acp.session_config import (
     SessionConfigResolver,
     flatten_select_options,
 )
-from band.runtime.tools.registry import is_room_posting_tool
+from band.runtime.tools.effects import turn_effect
+from band.runtime.tools.types import TurnEffect
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
@@ -310,8 +311,10 @@ async def _decide_permissions_until_reply(
         if not requests:
             await _wait_for_turn_close(room, checkpoint)
             return denied
-        if deny_first_tool is not None and not is_room_posting_tool(
-            requests[0]["tool"].partition(":")[0]
+        requested_tool = requests[0]["tool"].partition(":")[0]
+        if (
+            deny_first_tool is not None
+            and turn_effect(requested_tool) is not TurnEffect.REPLY
         ):
             pytest.fail(
                 "Cursor requested another permission after the denied action: "
