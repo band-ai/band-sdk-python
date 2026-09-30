@@ -31,8 +31,13 @@ from typing import Any
 
 from typing_extensions import Unpack
 
+from band.core.model_catalog import ModelSelection
 from band.core.types import FeatureKwargs
-from band.integrations.acp.client_adapter import ACPClientAdapter, PermissionResolver
+from band.integrations.acp.client_adapter import (
+    DEFAULT_TURN_TIMEOUT_SECONDS,
+    ACPClientAdapter,
+    PermissionResolver,
+)
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.workspaces import WorkspaceResolver, workspace_resolver_for
@@ -65,6 +70,13 @@ class CopilotACPAdapterConfig:
     mcp_servers: list[dict[str, Any]] | None = None
     resolve_session_config: SessionConfigResolver | None = None
     resolve_permission: PermissionResolver | None = None
+    turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
+    # Selected from each session's advertised catalog; a value it does not
+    # offer fails the turn. Only GitHub-hosted sessions advertise these; under
+    # BYOK the provider env (COPILOT_MODEL) picks the model. Exclusive with
+    # resolve_session_config.
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class CopilotACPAdapter(ACPClientAdapter):
@@ -121,7 +133,11 @@ class CopilotACPAdapter(ACPClientAdapter):
             "inject_band_tools": config.inject_band_tools,
             "custom_section": config.custom_section,
             "resolve_session_config": config.resolve_session_config,
+            "model_selection": ModelSelection(
+                model=config.model, reasoning_effort=config.reasoning_effort
+            ),
             "resolve_permission": config.resolve_permission,
+            "turn_timeout_s": config.turn_timeout_s,
         }
 
         if use_tcp:

@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.client.connection import ClientSideConnection
 from acp.exceptions import RequestError
-from acp.schema import ClientCapabilities, DeclineElicitationResponse
+from acp.schema import (
+    ClientCapabilities,
+    DeclineElicitationResponse,
+    NewSessionResponse,
+)
 
 from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
@@ -23,7 +27,9 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
     tcp_spawn_process,
 )
+from band.integrations.acp.session_config import select_ids
 from band.integrations.acp.types import ChunkType, CollectedChunk
+from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
 
 
 class TestSelectAllowOptionId:
@@ -834,6 +840,32 @@ class TestACPRuntime:
         assert chunks == []
         mock_conn.new_session.assert_awaited_once_with(cwd="/tmp", mcp_servers=[])
         mock_conn.prompt.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ended_by", ["stop", "close_session"])
+    async def test_an_ended_session_keeps_no_catalog(self, ended_by: str) -> None:
+        # Session ids belong to the agent process; a respawn must not reuse
+        # what the stopped process advertised.
+        spawn = FakeSpawn()
+        spawn.conn.new_session = AsyncMock(
+            return_value=NewSessionResponse(
+                session_id="sess-1",
+                config_options=[select_option("model", "small", ["small", "large"])],
+            )
+        )
+        runtime = ACPRuntime(command=["codex"], spawn_process=spawn)
+        await runtime.start()
+        await runtime.create_session_response(cwd="/tmp", mcp_servers=[])
+        advertised = runtime.config_options("sess-1")
+
+        match ended_by:
+            case "stop":
+                await runtime.stop()
+            case "close_session":
+                await runtime.close_session("sess-1")
+
+        assert select_ids(advertised) == ("model",)
+        assert runtime.config_options("sess-1") == ()
 
     @pytest.mark.asyncio
     async def test_close_session_uses_the_active_connection_when_supported(
