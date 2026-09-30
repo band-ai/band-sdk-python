@@ -152,6 +152,7 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 # turn, so it cannot contain the marker the header names.
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
+DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
 
 
 def new_message_marker() -> str:
@@ -248,7 +249,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         spawn_process: SpawnProcess | None = None,
         client_capabilities: ClientCapabilities | None = None,
         use_unstable_protocol: bool = False,
-        turn_timeout_s: float = 300.0,
+        turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
