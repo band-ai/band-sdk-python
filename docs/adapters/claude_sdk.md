@@ -21,9 +21,21 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
 - **`permission_mode` is forwarded to the CLI as given.** `"dontAsk"` and
   `"auto"` are accepted; if the CLI rejects a mode (for example `"auto"` on an
   account without it), the turn fails with no fallback to another mode.
-- **CLI passthrough never overrides the adapter's own wiring.** `plugin_dirs`,
-  `cli_path`, `env`, `add_dirs` and `extra_args` map onto `ClaudeAgentOptions`,
-  but cannot replace the Band MCP server, the tool allowlist or
-  `setting_sources`: `extra_args` naming a flag the adapter sets itself
-  (`mcp-config`, `allowedTools`, `permission-mode`, ...) raises `ValueError`.
-  `env` reaches only the Claude CLI process; the host's `os.environ` is untouched.
+- **CLI launch options never override the adapter's own wiring.**
+  `cli=ClaudeCLIOptions(...)` sets the executable, plugin folders, extra
+  directories, env and extra flags, but cannot replace the Band MCP server, the
+  tool allowlist or `setting_sources`: an `extra_args` flag in
+  `RESERVED_CLI_FLAGS` raises `ValueError`, as does a dash-prefixed key. `env`
+  reaches only the Claude CLI process; the host's `os.environ` is untouched.
+
+```python
+import pytest
+
+from band.adapters.claude_sdk import ClaudeCLIOptions, ClaudeSDKAdapter
+
+adapter = ClaudeSDKAdapter(cli=ClaudeCLIOptions(extra_args={"debug-to-stderr": None}))
+assert adapter.cli.extra_args == {"debug-to-stderr": None}
+
+with pytest.raises(ValueError, match="adapter-owned CLI flags"):
+    ClaudeCLIOptions(extra_args={"mcp-config": "{}"})
+```

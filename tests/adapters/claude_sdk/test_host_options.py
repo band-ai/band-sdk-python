@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeCLIOptions
 from tests.adapters.claude_sdk.helpers import SEND_MESSAGE_MCP_NAME, ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -48,13 +48,14 @@ async def test_headless_permission_modes_reach_the_cli(
 async def test_passthrough_options_reach_the_cli(
     claude_room: OpenRoom, tmp_path: Path, cli_path: str
 ) -> None:
-    room = await claude_room(
-        plugin_dirs=[str(tmp_path / "plugin")],
+    cli = ClaudeCLIOptions(
         cli_path=cli_path,
+        plugin_dirs=(str(tmp_path / "plugin"),),
+        add_dirs=(str(tmp_path / "shared"),),
         env={"ANTHROPIC_API_KEY": "per-agent-key"},
-        add_dirs=[str(tmp_path / "shared")],
         extra_args={"debug-to-stderr": None},
     )
+    room = await claude_room(cli=cli)
 
     options = await _cli_options(room)
 
@@ -68,7 +69,7 @@ async def test_passthrough_options_reach_the_cli(
 async def test_plugins_leave_band_wiring_in_place(
     claude_room: OpenRoom, tmp_path: Path
 ) -> None:
-    room = await claude_room(plugin_dirs=[str(tmp_path)])
+    room = await claude_room(cli=ClaudeCLIOptions(plugin_dirs=(str(tmp_path),)))
 
     options = await _cli_options(room)
 
@@ -77,7 +78,12 @@ async def test_plugins_leave_band_wiring_in_place(
     assert options.setting_sources == []
 
 
-@pytest.mark.parametrize("flag", ["mcp-config", "--permission-mode", "allowedTools"])
+@pytest.mark.parametrize("flag", ["mcp-config", "permission-mode", "allowedTools"])
 def test_extra_args_cannot_replace_adapter_owned_flags(flag: str) -> None:
     with pytest.raises(ValueError, match="adapter-owned CLI flags"):
-        ClaudeSDKAdapter(extra_args={flag: "x"})
+        ClaudeCLIOptions(extra_args={flag: "x"})
+
+
+def test_extra_args_keys_are_bare_flag_names() -> None:
+    with pytest.raises(ValueError, match="bare flag names"):
+        ClaudeCLIOptions(extra_args={"--debug-to-stderr": None})

@@ -43,6 +43,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
+    ApprovalMode,
     Capability,
     Emit,
     FeatureKwargs,
@@ -109,7 +110,6 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 TransportKind = Literal["stdio", "ws"]
-ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
