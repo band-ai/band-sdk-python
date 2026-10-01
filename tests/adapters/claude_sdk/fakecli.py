@@ -22,6 +22,7 @@ from typing import Any
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 
+from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from tests.baseline.decisions import ModelDecision, ToolCall
 
 MODEL = "claude-fake"
@@ -97,8 +98,8 @@ class FakeClaude:
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
         # Modes the account or model can't run; the CLI falls back to
-        # "default" instead of failing.
-        self.unavailable_modes: set[str] = set()
+        # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
+        self.unavailable_modes: set[ClaudePermissionMode] = set()
         # A wedged CLI: interrupt requests are acknowledged but the turn
         # neither stops nor ends.
         self.ignore_interrupt = False
@@ -227,7 +228,7 @@ class FakeCLISession(Transport):
             self._emit(type="system", subtype="init", session_id=self.session_id)
             if self.permission_mode in self.claude.unavailable_modes:
                 # The real CLI announces the fallback once, in a status message.
-                self.permission_mode = "default"
+                self.permission_mode = AUTO_FALLBACK_PERMISSION_MODE
                 self._emit(
                     type="system",
                     subtype="status",
@@ -363,16 +364,19 @@ class FakeCLISession(Transport):
 
     def _auto_approved(self, tool_name: str) -> bool:
         match self.permission_mode:
-            case "bypassPermissions":
+            case ClaudePermissionMode.BYPASS_PERMISSIONS:
                 return True
-            case "acceptEdits" if tool_name in EDIT_TOOLS:
+            case ClaudePermissionMode.ACCEPT_EDITS if tool_name in EDIT_TOOLS:
                 return True
         return any(
             _allow_rule_matches(rule, tool_name) for rule in self.options.allowed_tools
         )
 
     async def _can_use_tool(self, tool_use_id: str, call: ToolCall) -> dict[str, Any]:
-        if self.options.can_use_tool is None or self.permission_mode == "dontAsk":
+        if (
+            self.options.can_use_tool is None
+            or self.permission_mode == ClaudePermissionMode.DONT_ASK
+        ):
             return {"behavior": "deny", "message": "Permission denied"}
         response = await self._ask_sdk(
             subtype="can_use_tool",

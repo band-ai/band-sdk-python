@@ -263,12 +263,26 @@ _TIMEOUT_DRAIN_SECONDS = 10.0
 
 ApprovalDecision = Literal["accept", "decline"]
 
-# dontAsk denies every prompt without calling can_use_tool, so no approval
-# policy ever gets to decide.
-DONT_ASK_PERMISSION_MODE: PermissionMode = "dontAsk"
-# The mode the CLI starts in when the account or model can't run "auto".
-AUTO_PERMISSION_MODE: PermissionMode = "auto"
-AUTO_FALLBACK_PERMISSION_MODE: PermissionMode = "default"
+
+class ClaudePermissionMode(StrEnum):
+    """Claude Code's permission modes, exactly ``claude_agent_sdk``'s
+    ``PermissionMode`` values (pinned by test_permission_modes.py).
+
+    See https://code.claude.com/docs/en/permission-modes.
+    """
+
+    DEFAULT = "default"
+    ACCEPT_EDITS = "acceptEdits"
+    PLAN = "plan"
+    BYPASS_PERMISSIONS = "bypassPermissions"
+    # Denies every prompt without calling can_use_tool, so no approval policy
+    # ever gets to decide.
+    DONT_ASK = "dontAsk"
+    AUTO = "auto"
+
+
+# The mode the CLI starts in when the account or model can't run AUTO.
+AUTO_FALLBACK_PERMISSION_MODE = ClaudePermissionMode.DEFAULT
 
 
 class ClaudeApprovalOptions(BaseModel):
@@ -303,9 +317,8 @@ class ClaudeApprovalOptions(BaseModel):
 class ClaudeSDKAdapterConfig(BaseModel):
     """Runtime configuration for Claude Code sessions.
 
-    ``permission_mode``, ``effort`` and ``setting_sources`` are typed as
-    ``claude_agent_sdk``'s own literals, so the installed SDK decides which
-    values are valid.
+    ``effort`` and ``setting_sources`` are typed as ``claude_agent_sdk``'s own
+    literals, so the installed SDK decides which values are valid.
 
     Attributes:
         model: Full model ID or family alias (``"sonnet"``, ``"opus"``,
@@ -315,8 +328,8 @@ class ClaudeSDKAdapterConfig(BaseModel):
         max_thinking_tokens: Extended-thinking budget; ``None`` disables it.
         effort: Response effort level; ``None`` uses the model default.
         permission_mode: Claude Code permission mode, forwarded to the CLI
-            (https://code.claude.com/docs/en/permission-modes). ``"dontAsk"``
-            cannot be combined with ``approvals``.
+            (see :class:`ClaudePermissionMode`). ``DONT_ASK`` cannot be
+            combined with ``approvals``.
         cwd: Existing working directory for Claude Code sessions.
         setting_sources: Host settings the CLI loads (skills, subagents,
             settings under ``~/.claude`` and ``./.claude``). Empty by default
@@ -340,7 +353,7 @@ class ClaudeSDKAdapterConfig(BaseModel):
     custom_section: str | None = None
     max_thinking_tokens: PositiveInt | None = None
     effort: EffortLevel | None = None
-    permission_mode: PermissionMode = "acceptEdits"
+    permission_mode: ClaudePermissionMode = ClaudePermissionMode.ACCEPT_EDITS
     cwd: DirectoryPath | None = None
     setting_sources: tuple[SettingSource, ...] = ()
     turn_timeout_s: PositiveFloat | None = None
@@ -352,9 +365,9 @@ class ClaudeSDKAdapterConfig(BaseModel):
     def _check_approvals_can_decide(self) -> Self:
         if self.approvals is None:
             return self
-        if self.permission_mode == DONT_ASK_PERMISSION_MODE:
+        if self.permission_mode == ClaudePermissionMode.DONT_ASK:
             raise ValueError(
-                f"permission_mode={DONT_ASK_PERMISSION_MODE!r} denies tool calls "
+                f"permission_mode={ClaudePermissionMode.DONT_ASK.value!r} denies tool calls "
                 "without consulting approvals; set approvals=None"
             )
         if (
@@ -458,7 +471,7 @@ async def _pre_tool_use_continue_hook(
     the CLI falls back to its own ``permission_mode``-driven default instead
     of ever consulting ``can_use_tool`` -- silently skipping chat-based manual
     approval for native tools (Bash/Write/Edit) under the adapter's default
-    ``permission_mode="acceptEdits"``.
+    ``ClaudePermissionMode.ACCEPT_EDITS``.
     """
     return {
         "hookSpecificOutput": {
@@ -655,7 +668,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
             allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
-            permission_mode=self.config.permission_mode,
+            # Same values as the SDK's PermissionMode (test_permission_modes.py).
+            permission_mode=cast("PermissionMode", self.config.permission_mode),
             effort=self.config.effort,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
@@ -1146,12 +1160,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 # The CLI announces every mode change in a status message; only
-                # the "auto" fallback is unexpected, since plan-mode tools
+                # the AUTO fallback is unexpected, since plan-mode tools
                 # switch modes on purpose.
                 case SystemMessage(
                     subtype="status", data={"permissionMode": str() as mode}
                 ) if (
-                    self.config.permission_mode == AUTO_PERMISSION_MODE
+                    self.config.permission_mode == ClaudePermissionMode.AUTO
                     and mode == AUTO_FALLBACK_PERMISSION_MODE
                 ):
                     logger.warning(

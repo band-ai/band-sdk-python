@@ -26,22 +26,22 @@ CLI launch options and chat approvals are nested groups:
   skills, subagents and settings under `~/.claude` and `./.claude` are not
   loaded and the agent's capabilities are defined by the adapter. Pass
   `("user", "project")` to opt back in.
-- **`permission_mode`, `effort` and `setting_sources` take the SDK's own
-  values.** They are typed as `claude_agent_sdk`'s `PermissionMode`,
-  `EffortLevel` and `SettingSource` literals, so the installed SDK decides what
-  is valid: a new mode works without an adapter change, and a typo is refused
-  up front. `permission_mode` takes the
-  [Claude Code permission modes](https://code.claude.com/docs/en/permission-modes)
-  and is forwarded to the CLI as given. `approvals` sends every native tool call
-  to a prompt, which changes two modes:
-  - `"dontAsk"` denies every prompt without asking the adapter, so it raises
+- **`permission_mode` is a `ClaudePermissionMode`.** The enum names the
+  [Claude Code permission modes](https://code.claude.com/docs/en/permission-modes),
+  and a test pins it to `claude_agent_sdk`'s `PermissionMode`, so it cannot
+  drift from the SDK. The mode is forwarded to the CLI as given; a config
+  loaded from text may spell it as its string value. `effort` and
+  `setting_sources` are typed as the SDK's own `EffortLevel` and
+  `SettingSource` literals. `approvals` sends every native tool call to a
+  prompt, which changes two modes:
+  - `DONT_ASK` denies every prompt without asking the adapter, so it raises
     `ValueError` with any `approvals`.
-  - `"auto"` has its classifier answer prompts only when `approvals` is `None`.
+  - `AUTO` has its classifier answer prompts only when `approvals` is `None`.
     Prompts forced by the adapter's approval hook skip the classifier, so with
     `approvals` set, that approval policy decides instead.
 
-  When the account or model can't run `"auto"`, the CLI starts the session in
-  `"default"`, and the adapter logs a warning.
+  When the account or model can't run `AUTO`, the CLI starts the session in
+  `AUTO_FALLBACK_PERMISSION_MODE` (`DEFAULT`), and the adapter logs a warning.
 - **`turn_timeout_s` bounds a turn.** On expiry the turn is interrupted and a
   `timeout` failure is posted to the room; `None` (default) leaves turns
   unbounded. A manual approval wait counts toward it, so
@@ -57,21 +57,19 @@ CLI launch options and chat approvals are nested groups:
   reaches only the Claude CLI process; the host's `os.environ` is untouched.
 
 ```python
-from typing import get_args
-
 import pytest
-from claude_agent_sdk.types import PermissionMode
 
 from band.adapters.claude_sdk import (
     ClaudeApprovalOptions,
     ClaudeCLIOptions,
+    ClaudePermissionMode,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
 
 config = ClaudeSDKAdapterConfig(
     model="opus",
-    permission_mode="acceptEdits",
+    permission_mode=ClaudePermissionMode.ACCEPT_EDITS,
     turn_timeout_s=1800,
     cli=ClaudeCLIOptions(extra_args={"debug-to-stderr": None}),
     approvals=ClaudeApprovalOptions(mode="manual", wait_timeout_s=300),
@@ -79,9 +77,7 @@ config = ClaudeSDKAdapterConfig(
 adapter = ClaudeSDKAdapter(config)
 assert adapter.config.approvals.mode == "manual"
 
-# Every mode the installed SDK knows is accepted; anything else is refused.
-for mode in get_args(PermissionMode):
-    ClaudeSDKAdapterConfig(permission_mode=mode)
+# A misspelt mode or setting is refused when the config is built.
 with pytest.raises(ValueError, match="permission_mode"):
     ClaudeSDKAdapterConfig(permission_mode="dontask")
 

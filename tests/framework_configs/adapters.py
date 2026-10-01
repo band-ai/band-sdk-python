@@ -19,6 +19,7 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK,
 )
 from band.adapters.claude_sdk import (
+    ClaudePermissionMode,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
@@ -522,7 +523,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
         custom_section="Be helpful.",
         max_thinking_tokens=10000,
         effort="high",
-        permission_mode="bypassPermissions",
+        permission_mode=ClaudePermissionMode.BYPASS_PERMISSIONS,
     )
     return AdapterConfig(
         framework_id="claude_sdk",
