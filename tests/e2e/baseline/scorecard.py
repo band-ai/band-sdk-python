@@ -1,4 +1,4 @@
-"""The adapter×test scorecard: pass / fail / skip / N-A (+ reason) in one artifact.
+"""First-attempt baseline scorecards and the expected lane/OS cell manifest.
 
 Excluded adapters produce no test node (``specs()`` omits them), so a matrix cell an
 adapter opts out of would otherwise vanish from the results with its reason buried in a
@@ -11,9 +11,8 @@ code comment. This module makes the full grid observable:
   collected cell from its test report — exact ``nodeid`` keys, no junit-name scraping.
 * :func:`merge` unions the per-lane scorecards CI emits (each lane runs only its own
   cells; the rest are ``skip``) into one grid.
-* :func:`gate` turns a merged grid into a pass/fail verdict for CI: any ``fail`` cell,
-  or any ``skip`` cell whose expected lane (its ``@lane`` pin, or else its adapter's
-  home lane) was expected to run this invocation, reddens it.
+* :func:`gate_manifest` requires each checked-in cell in its assigned lane on
+  every supported selected OS, including bespoke smokes.
 
 The pieces are pure functions so they unit-test without a live platform; the conftest is
 a thin hook delegate, and ``python -m tests.e2e.baseline.scorecard merge`` is the
@@ -25,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
@@ -35,7 +35,11 @@ import pytest
 
 from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
 from tests.e2e.baseline.lane_selection import expected_lane as _resolve_expected_lane
-from tests.e2e.baseline.toolkit.ci_lanes import adapter_home_lanes, known_lane_ids
+from tests.e2e.baseline.toolkit.ci_lanes import (
+    adapter_home_lanes,
+    ci_lanes,
+    known_lane_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,7 @@ logger = logging.getLogger(__name__)
 # unrelated params in their nodeid (e.g. ``test_send_event[thought]``), which must not
 # be mistaken for adapters when reading outcomes off a report.
 _ADAPTER_IDS: frozenset[str] = frozenset(str(adapter) for adapter in Adapter)
+SUITE_ADAPTER = "suite"
 
 # ``na`` = deliberately excluded (with a reason); ``skip`` = collected but not run in this
 # lane (lane scoping / E2E disabled). Ranked so a real outcome beats ``skip`` when the
@@ -50,13 +55,7 @@ _ADAPTER_IDS: frozenset[str] = frozenset(str(adapter) for adapter in Adapter)
 Status = Literal["pass", "fail", "skip", "na"]
 _RANK: dict[Status, int] = {"skip": 0, "na": 1, "pass": 2, "fail": 3}
 
-# Tags a ``skipif`` whose condition is a deployment flag that is permanently off in
-# some environment (e.g. an on-prem-only capability, never on for SaaS CI) rather than
-# transiently unavailable. Without this, ``outcome_row`` reports the same ``skip``
-# status a lane-scoping or flaky skip would, and ``gate`` -- which cannot tell those
-# apart -- would call it "missing" forever: the cell can never pass in that
-# environment, so the release gate would stay red for a condition that is not a
-# regression. See ``env_gated_skip``.
+# Distinguishes unsupported deployment capabilities from a required cell that skipped.
 ENV_GATED_MARKER = "env_gated_skip"
 
 _F = TypeVar("_F", bound=Callable[..., object])
@@ -79,22 +78,14 @@ def env_gated_skip(condition: bool, reason: str) -> Callable[[_F], _F]:
 
 @dataclass(frozen=True)
 class ScorecardRow:
-    """One adapter×test cell: its outcome, and the reason when it is ``N/A``/``skip``.
+    """One test's outcome; lane and OS identify a gate problem when present."""
 
-    ``expected_lane`` is the override-aware lane this cell was scheduled against
-    (``lane_selection.expected_lane`` — a test's ``@lane`` pin if it has one, else its
-    adapter's home lane); populated for a ``skip`` row collected from a live session, so
-    :func:`gate` can tell a legitimately out-of-scope cell from a silently missing one
-    without re-deriving it from ``adapter`` alone (which is blind to a ``@lane`` pin).
-    ``None`` for a row loaded from data that predates this field, or for an ``na``/``pass``/
-    ``fail`` row, where the gate never consults it.
-    """
-
-    test: str  # nodeid without the ``[adapter]`` param — the test function
+    test: str
     adapter: str
     status: Status
     reason: str | None = None
-    expected_lane: str | None = None
+    lane: str | None = None
+    os: str | None = None
 
 
 def _test_id(nodeid: str) -> str:
@@ -113,6 +104,11 @@ def _cell_key(nodeid: str) -> tuple[str, str] | None:
     if adapter not in _ADAPTER_IDS:
         return None
     return test, adapter
+
+
+def _row_key(nodeid: str) -> tuple[str, str]:
+    """Use the full nodeid for bespoke and non-adapter parametrized tests."""
+    return _cell_key(nodeid) or (nodeid, SUITE_ADAPTER)
 
 
 def na_rows(items: Iterable[pytest.Item]) -> dict[tuple[str, str], ScorecardRow]:
@@ -148,35 +144,29 @@ def _skip_reason(report: pytest.TestReport) -> str | None:
 def outcome_row(
     report: pytest.TestReport,
 ) -> tuple[tuple[str, str], ScorecardRow] | None:
-    """A pass / fail / skip row for one matrix cell, keyed by ``(test, adapter)``.
+    """Map a report to its matrix or bespoke row.
 
-    Only matrix cells count: a cell's ``[…]`` param is a registered adapter id, so a
-    parametrized test carrying anything else (``test_send_event[thought]``) and the
-    unparametrized tests (provisioning, user-ops, the registry guards) return ``None``.
-    The verdict comes from the setup and call phases: a skip (lane scoping, E2E disabled,
-    or an in-body ``pytest.skip``) is ``skip``, unless it carries ``ENV_GATED_MARKER``
-    (see ``env_gated_skip``), in which case it is ``na``; a setup *error* (a failed
-    fixture) or a call failure is ``fail``; a passing call is ``pass``. Teardown reports
-    and passing setups carry no verdict and are ignored — so the accumulator's
-    last-write-wins keeps the call outcome, not a trailing teardown.
+    Skips tagged by ``env_gated_skip`` are N/A. Any setup, call, or teardown
+    failure is a failure; passing setup and teardown reports add no outcome.
     """
-    if report.when not in ("setup", "call"):
+    if report.when not in ("setup", "call", "teardown"):
         return None
-    key = _cell_key(report.nodeid)
-    if key is None:
-        return None  # unparametrized, or a non-adapter parametrization
+    key = _row_key(report.nodeid)
     test, adapter = key
-    if report.skipped:
+    if getattr(report, "outcome", None) == "rerun":
+        status = "fail"
+        reason = "first attempt required a rerun"
+    elif report.skipped:
         reason = _skip_reason(report)
         status: Status = "na" if ENV_GATED_MARKER in report.keywords else "skip"
     elif report.failed:
         status = "fail"
         reason = None
-    elif report.when == "call":
+    elif report.when == "call" and report.passed:
         status = "pass"
         reason = None
     else:
-        return None  # a passing setup carries no verdict — wait for the call phase
+        return None  # passing setup/teardown carries no verdict
     return key, ScorecardRow(test, adapter, status, reason)
 
 
@@ -196,30 +186,16 @@ class ScorecardCollector:
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         row = outcome_row(report)
-        if row is not None:
-            # Last write wins — a flaky rerun's final report is the cell's real outcome.
+        if row is not None and (
+            row[0] not in self._outcomes or self._outcomes[row[0]].status != "fail"
+        ):
+            # A later report can never rescue a failed first attempt.
             self._outcomes[row[0]] = row[1]
 
     def scorecard(self, items: Iterable[pytest.Item]) -> list[ScorecardRow]:
-        """This run's rows: the collected cells' outcomes plus the ``N/A`` exclusions.
-
-        The two sets are disjoint (an excluded adapter has no node, so no outcome), but
-        ``N/A`` is applied last so a marker reason is authoritative if they ever overlap.
-        A ``skip`` row is annotated with its override-aware ``expected_lane`` (see
-        ``ScorecardRow``) here, while a live item is still available to resolve it —
-        by the time :func:`gate` runs on a merged, JSON-loaded grid, only the
-        serialized rows remain.
-        """
+        """Collected outcomes plus explicit N/A rows for excluded adapters."""
         items = list(items)
         rows = dict(self._outcomes)
-        lane_of = adapter_home_lanes()
-        for item in items:
-            key = _cell_key(item.nodeid)
-            row = rows.get(key) if key is not None else None
-            if row is not None and row.status == "skip":
-                rows[key] = replace(
-                    row, expected_lane=_resolve_expected_lane(item, lane_of)
-                )
         rows.update(na_rows(items))
         return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
 
@@ -245,85 +221,197 @@ def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:
     return sorted(best.values(), key=lambda row: (row.test, row.adapter))
 
 
-def overlay(
-    base: list[ScorecardRow], override: list[ScorecardRow]
-) -> list[ScorecardRow]:
-    """Layer a retry attempt's rows over the original run's, unconditionally.
+@dataclass(frozen=True)
+class ExpectedCell:
+    """A required first-attempt result in each listed lane on its supported OSes."""
 
-    Unlike :func:`merge` (which unions *sibling lanes* and must let a real outcome
-    outrank a benign ``skip``), this is for two *sequential* attempts of the *same*
-    lane: ``--last-failed`` restricts the retry to only the nodeids that failed the
-    first time, so its process's :class:`ScorecardCollector` never sees — and would
-    otherwise silently drop — every cell that passed on the first attempt. Rank-based
-    merging would also get a genuine fix backwards (a first-attempt ``fail`` outranks
-    a retry's ``pass``). Here the retry's row for a cell always wins when present;
-    the original row survives untouched for every cell the retry didn't touch.
-    """
-    rows = {(row.test, row.adapter): row for row in base}
-    rows.update({(row.test, row.adapter): row for row in override})
-    return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
+    test: str
+    adapter: str
+    lanes: tuple[str, ...]
+    status: Literal["pass", "na"]
+    reason: str | None = None
+
+
+def expected_cells(items: Iterable[pytest.Item]) -> list[ExpectedCell]:
+    """Freeze the collected suite's required cells independently of a live run."""
+    items = list(items)
+    all_lanes = tuple(sorted(known_lane_ids()))
+    lane_of = adapter_home_lanes()
+    cells: dict[tuple[str, str], ExpectedCell] = {}
+    for item in items:
+        test, adapter = _row_key(item.nodeid)
+        target = _resolve_expected_lane(item, lane_of)
+        env_gated = item.get_closest_marker(ENV_GATED_MARKER)
+        status: Literal["pass", "na"] = "na" if env_gated else "pass"
+        lanes = all_lanes if env_gated or target is None else (target,)
+        skipif = item.get_closest_marker("skipif") if env_gated else None
+        reason = skipif.kwargs.get("reason") if skipif is not None else None
+        cells[(test, adapter)] = ExpectedCell(test, adapter, lanes, status, reason)
+    for (test, adapter), row in na_rows(items).items():
+        cells[(test, adapter)] = ExpectedCell(
+            test, adapter, all_lanes, "na", row.reason
+        )
+    return sorted(cells.values(), key=lambda cell: (cell.test, cell.adapter))
+
+
+def supported_oses() -> dict[str, tuple[str, ...]]:
+    return {
+        str(lane.id): ("ubuntu",) if lane.linux_only else ("ubuntu", "windows")
+        for lane in ci_lanes()
+    }
+
+
+class ManifestCollector:
+    """Capture pytest's collection after all lane and wiring guards have run."""
+
+    def __init__(self) -> None:
+        self.cells: list[ExpectedCell] = []
+
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        self.cells = expected_cells(session.items)
+
+
+def _write_manifest(path: str | Path, *, merge_existing: bool = False) -> None:
+    collector = ManifestCollector()
+    code = pytest.main(
+        [
+            "tests/e2e/baseline/",
+            "--collect-only",
+            "-q",
+            "--no-cov",
+            "-p",
+            "no:rerunfailures",
+        ],
+        plugins=[collector],
+    )
+    if code != pytest.ExitCode.OK:
+        sys.exit(int(code))
+    cells = {(cell.test, cell.adapter): cell for cell in collector.cells}
+    if merge_existing and Path(path).exists():
+        _oses, prior = _load_manifest(path)
+        cells = {(cell.test, cell.adapter): cell for cell in prior} | cells
+    Path(path).write_text(
+        json.dumps(
+            {
+                "supported_os": supported_oses(),
+                "cells": [
+                    asdict(cell)
+                    for cell in sorted(
+                        cells.values(), key=lambda cell: (cell.test, cell.adapter)
+                    )
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def _load_manifest(
+    path: str | Path,
+) -> tuple[dict[str, tuple[str, ...]], list[ExpectedCell]]:
+    data = json.loads(Path(path).read_text())
+    oses = {lane: tuple(values) for lane, values in data["supported_os"].items()}
+    if oses != supported_oses():
+        raise ValueError(
+            "expected-cell manifest OS support has drifted from the lane registry"
+        )
+    cells = [ExpectedCell(**cell) for cell in data["cells"]]
+    return oses, cells
 
 
 @dataclass(frozen=True)
 class GateResult:
-    """CI's pass/fail verdict on a merged scorecard.
-
-    ``failing`` is every ``fail`` cell. ``missing`` is a ``skip`` cell whose expected
-    lane (see ``ScorecardRow.expected_lane``) was expected to run this invocation but
-    reported nothing for it, e.g. a lane job that crashed before writing its
-    scorecard fragment. A ``skip`` cell whose expected lane wasn't expected this run
-    (an out-of-scope lane on a scoped dispatch) is neither — it is simply not
-    evaluated.
-    """
+    """CI verdict with each problem tied to its lane and OS."""
 
     ok: bool
     failing: tuple[ScorecardRow, ...]
     missing: tuple[ScorecardRow, ...]
+    unexpected: tuple[ScorecardRow, ...] = ()
 
 
-def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult:
-    """Decide whether a merged scorecard is green, given which lanes ran this time.
+def gate_manifest(
+    fragments: dict[tuple[str, str], list[ScorecardRow]],
+    cells: list[ExpectedCell],
+    supported_os: dict[str, tuple[str, ...]],
+    selected_lane: str,
+    selected_os: str,
+    *,
+    selected_tests_only: bool = False,
+) -> GateResult:
+    """Require each declared cell's first result in every selected lane and OS.
 
-    ``expected_lanes`` is the set of lane ids this invocation selected (the full
-    registry for a nightly/full-matrix run, or just the chosen lane for a scoped
-    dispatch) — never inferred from the rows themselves, so an intentionally
-    out-of-scope lane's cells can never be mistaken for a silent failure.
-
-    A row's own ``expected_lane`` (see ``ScorecardRow``) is used when present,
-    falling back to the adapter's home lane only for a row collected before that
-    field existed.
+    ``selected_tests_only`` gates a ``-k`` scoped run: pytest never collects the
+    deselected cells, so only the cells a fragment reports are checked.
     """
-    home_lane = adapter_home_lanes()
-    failing = tuple(r for r in rows if r.status == "fail")
-    missing = tuple(
-        r
-        for r in rows
-        if r.status == "skip"
-        and (r.expected_lane or home_lane.get(r.adapter)) in expected_lanes
+    lanes = set(supported_os) if selected_lane == "all" else {selected_lane}
+    if not lanes <= supported_os.keys():
+        raise ValueError(f"unknown selected lane: {selected_lane}")
+    if selected_os not in {"all", "ubuntu", "windows"}:
+        raise ValueError(f"unknown selected OS: {selected_os}")
+    pairs = {
+        (lane, os)
+        for lane in lanes
+        for os in supported_os[lane]
+        if selected_os == "all" or selected_os == os
+    }
+    if not pairs:
+        raise ValueError(f"no supported lane/OS pair for {selected_lane}/{selected_os}")
+
+    failing: list[ScorecardRow] = []
+    missing: list[ScorecardRow] = []
+    unexpected: list[ScorecardRow] = []
+    for lane, os in sorted(pairs):
+        actual = {(row.test, row.adapter): row for row in fragments.get((lane, os), [])}
+        expected = {
+            (cell.test, cell.adapter): cell
+            for cell in cells
+            if lane in cell.lanes
+            and (not selected_tests_only or (cell.test, cell.adapter) in actual)
+        }
+        for key, cell in expected.items():
+            row = actual.get(key)
+            if (
+                row is None
+                or row.status != cell.status
+                or (
+                    cell.status == "na"
+                    and cell.reason is not None
+                    and row.reason != cell.reason
+                )
+            ):
+                problem = replace(
+                    row
+                    if row is not None
+                    else ScorecardRow(cell.test, cell.adapter, "skip", "no result"),
+                    lane=lane,
+                    os=os,
+                )
+                (
+                    failing if row is not None and row.status == "fail" else missing
+                ).append(problem)
+        for key, row in actual.items():
+            if key not in expected and row.status != "skip":
+                (failing if row.status == "fail" else unexpected).append(
+                    replace(row, lane=lane, os=os)
+                )
+    for lane, os in sorted(fragments.keys() - pairs):
+        unexpected.append(
+            ScorecardRow(
+                "scorecard fragment",
+                SUITE_ADAPTER,
+                "fail",
+                "outside selected matrix",
+                lane=lane,
+                os=os,
+            )
+        )
+    return GateResult(
+        ok=not (failing or missing or unexpected),
+        failing=tuple(failing),
+        missing=tuple(missing),
+        unexpected=tuple(unexpected),
     )
-    return GateResult(ok=not failing and not missing, failing=failing, missing=missing)
-
-
-# Fraction of attempted cells that must fail before a lane's whole-suite retry
-# (run-baseline-e2e.sh) is skipped as unlikely to help. This many failures in one
-# pass reads as a systemic outage (a degraded provider) rather than one-off
-# flakiness, and retrying a systemic outage only spends the same wall clock again
-# -- observed live 2026-08-23: a provider slowdown made the core lane's retry
-# multiply an already-doomed run instead of catching a transient.
-MASS_FAILURE_THRESHOLD = 0.25
-
-
-def failed_fraction(rows: list[ScorecardRow]) -> float:
-    """Fraction of *attempted* rows (``pass``/``fail``; ``skip``/``na`` excluded)
-    that failed.
-
-    Used to tell one-off flakiness from a systemic outage — see
-    ``MASS_FAILURE_THRESHOLD``. ``0.0`` when nothing was attempted.
-    """
-    attempted = [r for r in rows if r.status in ("pass", "fail")]
-    if not attempted:
-        return 0.0
-    return sum(1 for r in attempted if r.status == "fail") / len(attempted)
 
 
 def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
@@ -336,8 +424,9 @@ def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
     )
     if not result.ok:
         culprits = sorted(
+            f"`{r.lane or '?'}`/`{r.os or '?'}`/"
             f"`{r.test.rsplit('::', 1)[-1]}`/`{r.adapter}`"
-            for r in (*result.failing, *result.missing)
+            for r in (*result.failing, *result.missing, *result.unexpected)
         )
         line += "\n\nFailing cells: " + ", ".join(culprits)
     return line + "\n"
@@ -345,7 +434,8 @@ def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
 
 def _cell_lines(rows: tuple[ScorecardRow, ...]) -> list[str]:
     return [
-        f"- `{r.test.rsplit('::', 1)[-1]}` / `{r.adapter}`"
+        f"- `{r.lane or '?'}` / `{r.os or '?'}` / "
+        f"`{r.test.rsplit('::', 1)[-1]}` / `{r.adapter}`"
         for r in sorted(rows, key=lambda r: (r.test, r.adapter))
     ]
 
@@ -361,10 +451,8 @@ def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
     email renders plain GFM — tables, bold, bullets — the same as the web UI, just
     with no `<style>`/inline-CSS support, so a table is the highest-fidelity "glance"
     layout available without a custom HTML email. Also deliberately carries no
-    PASS/FAIL header: a matrix-leg crash the cell-level grid can't see (no OS
-    dimension on `ScorecardRow`) can override `result.ok`'s verdict, so a caller with
-    that broader context should render its own header rather than trust one built
-    from cell data alone.
+    PASS/FAIL header: a matrix-leg crash can override `result.ok`'s verdict, so a
+    caller with that broader context should render its own header.
     """
     counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
     lines = [
@@ -376,6 +464,12 @@ def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
         lines += ["", "**Failing**", *_cell_lines(result.failing)]
     if result.missing:
         lines += ["", "**Missing** (lane ran, no result)", *_cell_lines(result.missing)]
+    if result.unexpected:
+        lines += [
+            "",
+            "**Unexpected** (not in manifest)",
+            *_cell_lines(result.unexpected),
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -420,17 +514,29 @@ def to_markdown(rows: list[ScorecardRow]) -> str:
 
 
 def _merge_cmd(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    known_lanes = known_lane_ids()
-    expected_lanes = frozenset(args.expected_lanes.split(","))
-    if unknown := expected_lanes - known_lanes:
-        parser.error(
-            f"--expected-lanes names unknown lane id(s) {sorted(unknown)}; "
-            f"known lanes: {sorted(known_lanes)}"
-        )
-
-    rows = merge(_load(path) for path in args.inputs)
+    oses, cells = _load_manifest(args.manifest)
+    fragments: dict[tuple[str, str], list[ScorecardRow]] = {}
+    for path in args.inputs:
+        match = re.fullmatch(r"scorecard-(.+)-(ubuntu|windows)\.json", Path(path).name)
+        if match is None:
+            parser.error(f"unrecognized lane scorecard name: {path}")
+        pair = (match[1], match[2])
+        if pair in fragments:
+            parser.error(f"duplicate lane scorecard: {pair}")
+        fragments[pair] = _load(path)
+    rows = merge(fragments.values())
     write_json(rows, args.out)
-    result = gate(rows, expected_lanes)
+    try:
+        result = gate_manifest(
+            fragments,
+            cells,
+            oses,
+            args.selected_lane,
+            args.selected_os,
+            selected_tests_only=args.selected_tests_only,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.markdown:
         Path(args.markdown).write_text(
             gate_summary(result, rows) + "\n" + to_markdown(rows)
@@ -448,29 +554,8 @@ def _merge_cmd(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Non
         sys.exit(1)
 
 
-def _overlay_cmd(args: argparse.Namespace) -> None:
-    rows = overlay(_load(args.base), _load(args.override))
-    write_json(rows, args.out)
-    logger.info("scorecard: overlaid %d cell(s) -> %s", len(rows), args.out)
-
-
-def _mass_failure_cmd(args: argparse.Namespace) -> None:
-    rows = _load(args.scorecard)
-    fraction = failed_fraction(rows)
-    logger.info(
-        "scorecard: %.0f%% of attempted cells failed (mass-failure threshold %.0f%%)",
-        fraction * 100,
-        MASS_FAILURE_THRESHOLD * 100,
-    )
-    if fraction < MASS_FAILURE_THRESHOLD:
-        sys.exit(1)
-
-
 def main(argv: list[str] | None = None) -> None:
-    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact and gate on
-    it, ``overlay`` a same-lane retry attempt onto its original run, or
-    ``mass-failure`` check whether an attempt's failure rate crossed
-    ``MASS_FAILURE_THRESHOLD`` (exit 0 if so)."""
+    """Write the expected manifest, or merge and gate first-attempt scorecards."""
     parser = argparse.ArgumentParser(prog="scorecard")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -483,40 +568,35 @@ def main(argv: list[str] | None = None) -> None:
         help="also write the email-safe digest (counts + only the problem cells, no "
         "grid — see digest_body) to this path",
     )
+    merge_cmd.add_argument("--selected-lane", default="all")
+    merge_cmd.add_argument("--selected-os", default="all")
     merge_cmd.add_argument(
-        "--expected-lanes",
-        required=True,
-        help="comma-separated lane ids this invocation selected (every registry lane "
-        "for a full nightly run, or just the dispatched lane) — used to gate on "
-        "missing cells",
+        "--selected-tests-only",
+        action="store_true",
+        help="gate only the cells a pytest -k scoped run reported",
     )
-
-    overlay_cmd = sub.add_parser(
-        "overlay",
-        help="layer a same-lane retry attempt's rows over its original attempt "
-        "(see overlay() — not a rank-based merge across lanes)",
+    merge_cmd.add_argument(
+        "--manifest",
+        default=str(Path(__file__).with_name("expected-cells.json")),
     )
-    overlay_cmd.add_argument("base", help="the original attempt's scorecard JSON")
-    overlay_cmd.add_argument("override", help="the retry attempt's scorecard JSON")
-    overlay_cmd.add_argument(
-        "--out", required=True, help="combined scorecard JSON path"
+    manifest_cmd = sub.add_parser(
+        "manifest", help="regenerate the expected-cell manifest"
     )
-
-    mass_failure_cmd = sub.add_parser(
-        "mass-failure",
-        help="exit 0 if a scorecard's failure rate crosses MASS_FAILURE_THRESHOLD, "
-        "exit 1 otherwise -- used to skip a whole-lane retry that would only repeat "
-        "a systemic outage rather than catch a one-off",
+    manifest_cmd.add_argument(
+        "--out",
+        default=str(Path(__file__).with_name("expected-cells.json")),
     )
-    mass_failure_cmd.add_argument("scorecard", help="the attempt's scorecard JSON")
+    manifest_cmd.add_argument(
+        "--merge-existing",
+        action="store_true",
+        help="union cells collected under a second optional-dependency extra",
+    )
 
     args = parser.parse_args(argv)
     if args.cmd == "merge":
         _merge_cmd(args, parser)
-    elif args.cmd == "overlay":
-        _overlay_cmd(args)
     else:
-        _mass_failure_cmd(args)
+        _write_manifest(args.out, merge_existing=args.merge_existing)
 
 
 if __name__ == "__main__":

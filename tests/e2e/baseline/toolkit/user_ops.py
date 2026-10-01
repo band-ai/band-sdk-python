@@ -8,6 +8,8 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 import httpx
@@ -16,11 +18,14 @@ from band_rest import (
     ChatMessage,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
+    CreateContactRequestRequestContactRequest,
     CreateMyChatRoomRequestChat,
     ListMyPeersRequestType,
     ParticipantRequest,
     Peer,
+    UserDetails,
 )
+from band_rest.core.api_error import ApiError
 
 from band.core.types import MessageType
 
@@ -85,6 +90,98 @@ class UserOps:
         """
         response = await self._client.human_api_profile.get_my_profile()
         return response.data.id
+
+    async def profile(self) -> UserDetails:
+        response = await self._client.human_api_profile.get_my_profile()
+        return response.data
+
+    async def has_contact(self, user_id: str) -> bool:
+        """Check the entire paginated roster for an existing relationship."""
+        page = 1
+        while True:
+            contacts = await self._client.human_api_contacts.list_my_contacts(
+                page=page, page_size=100
+            )
+            if any(contact.contact_id == user_id for contact in contacts.data):
+                return True
+            if page >= contacts.metadata.total_pages:
+                return False
+            page += 1
+
+    @asynccontextmanager
+    async def contact_with(self, other: UserOps) -> AsyncIterator[str]:
+        """Establish a shared CI identity contact without revoking another job's access."""
+        other_profile = await other.profile()
+        if not await self.has_contact(other_profile.id):
+            await self._establish_contact(other, other_profile)
+        assert await self.has_contact(other_profile.id), (
+            "contact setup did not establish the owner's relationship"
+        )
+        assert await other.has_contact(await self.whoami()), (
+            "contact setup did not establish the second user's relationship"
+        )
+        yield other_profile.id
+
+    async def _received_request_from(self, requester_id: str) -> str | None:
+        """Find an incoming pending request across the entire request roster."""
+        page = 1
+        while True:
+            received = (
+                await self._client.human_api_contacts.list_received_contact_requests(
+                    page=page, page_size=100
+                )
+            )
+            request_id = next(
+                (
+                    request.id
+                    for request in received.data
+                    if request.requester_id == requester_id
+                ),
+                None,
+            )
+            if request_id is not None or page >= received.metadata.total_pages:
+                return request_id
+            page += 1
+
+    async def _approve_contact_request(self, request_id: str, other_id: str) -> None:
+        try:
+            await self._client.human_api_contacts.approve_contact_request(request_id)
+        except ApiError as error:
+            if error.status_code != 409 or not await self.has_contact(other_id):
+                raise
+
+    async def _accept_pending_contact(self, other: UserOps, other_id: str) -> bool:
+        owner_id = await self.whoami()
+        if request_id := await other._received_request_from(owner_id):
+            await other._approve_contact_request(request_id, owner_id)
+            return True
+        if request_id := await self._received_request_from(other_id):
+            await self._approve_contact_request(request_id, other_id)
+            return True
+        return False
+
+    async def _establish_contact(
+        self, other: UserOps, other_profile: UserDetails
+    ) -> None:
+        if await self._accept_pending_contact(other, other_profile.id):
+            return
+
+        try:
+            request = await self._client.human_api_contacts.create_contact_request(
+                contact_request=CreateContactRequestRequestContactRequest(
+                    recipient_handle=other_profile.handle
+                )
+            )
+        except ApiError as error:
+            if error.status_code != 409:
+                raise
+            if await self.has_contact(other_profile.id):
+                return
+            if await self._accept_pending_contact(other, other_profile.id):
+                return
+            raise
+        if not await self.has_contact(other_profile.id):
+            await other._approve_contact_request(request.data.id, await self.whoami())
 
     async def lookup_peers(
         self,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Literal, cast
+from typing import Literal, Self, cast
 
 from acp.schema import (
     AcceptElicitationResponse,
@@ -14,9 +14,10 @@ from acp.schema import (
     ElicitationFormCapabilities,
     PermissionOption,
 )
-from pydantic import JsonValue, field_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 from typing_extensions import Unpack
 
+from band.core.model_catalog import ModelSelection
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -44,7 +45,9 @@ from band.integrations.omp import (
     approve_deny_form_field,
     finalize_omp_command,
     normalize_omp_mcp_device_call,
+    omp_command_in_workspace,
     omp_elicitation_call_id,
+    omp_provider_env,
     validate_omp_command,
 )
 from band.runtime.custom_tools import CustomToolDef
@@ -92,19 +95,26 @@ class OmpACPCollectingClient(ACPCollectingClient):
 class OmpACPAdapterConfig(ACPClientAdapterConfig):
     """Settings for OMP over ACP (stdio only).
 
-    Inherits every :class:`ACPClientAdapterConfig` setting.
+    Inherits every :class:`ACPClientAdapterConfig` setting except ``model``.
 
     Attributes:
         approval_mode: OMP's native approval mode, appended to ``command``.
             ``"yolo"`` gives the agent full access to its host.
         command: The ``omp acp`` launch command; approval flags other than
             ``approval_mode`` are rejected.
+        model: OMP's provider-qualified model (e.g. ``openai/gpt-5.4-mini``),
+            passed as OMP's ``--model`` launch flag rather than selected from
+            the session's catalog.
+        api_key: Passed in the env var of ``model``'s provider; needs ``model``.
+            An explicit ``env`` entry for that var wins.
         use_unstable_protocol: Always on: OMP asks for tool approval through
             unstable elicitation forms.
     """
 
     approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
+    model: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     use_unstable_protocol: Literal[True] = True
 
     @field_validator("command")
@@ -112,6 +122,15 @@ class OmpACPAdapterConfig(ACPClientAdapterConfig):
     def _reject_unsafe_flags(cls, command: tuple[str, ...]) -> tuple[str, ...]:
         validate_omp_command(command)
         return command
+
+    @model_validator(mode="after")
+    def _api_key_needs_model(self) -> Self:
+        if self.api_key is not None and self.model is None:
+            raise ValueError(
+                "api_key needs model: the provider-qualified model picks which "
+                "provider key env var carries the key"
+            )
+        return self
 
 
 class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
@@ -153,8 +172,19 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
             **features,
         )
         self._omp_command = finalize_omp_command(
-            config.command, approval_mode=config.approval_mode
+            config.command, model=config.model, approval_mode=config.approval_mode
         )
+
+    @property
+    def model_selection(self) -> ModelSelection:
+        """OMP gets ``config.model`` as a launch flag, so only the effort is
+        selected per session."""
+        return super().model_selection.model_copy(update={"model": None})
+
+    def _credential_env(self) -> dict[str, str]:
+        if self.config.api_key is None or self.config.model is None:
+            return {}
+        return omp_provider_env(model=self.config.model, api_key=self.config.api_key)
 
     def _runtime_client_factory(self) -> OmpACPCollectingClient:
         return OmpACPCollectingClient(
@@ -163,21 +193,15 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
         )
 
     def _spawn_command(self, workspace: str | None) -> list[str]:
-        command = self._omp_command
         if workspace is None:
-            return list(command)
+            return list(self._omp_command)
         # omp's own --cwd flag ("Directory to start in (overrides the launch
         # cwd)") gives the same per-room isolation _spawn_cwd would otherwise
         # provide via the subprocess-level cwd -- confirmed live: a bash
         # tool's `pwd`/`ls` inside the session reports this directory, not
         # the subprocess's actual launch dir. See _spawn_cwd for why that
         # path is avoided instead.
-        acp_index = command.index("acp")
-        return [
-            *command[: acp_index + 1],
-            f"--cwd={workspace}",
-            *command[acp_index + 1 :],
-        ]
+        return omp_command_in_workspace(self._omp_command, workspace)
 
     def _spawn_cwd(self, workspace: str | None) -> str | None:
         del workspace
@@ -206,8 +230,8 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
             **kwargs: object,
         ) -> object:
             requested_schema = elicitation_requested_schema(mode, kwargs)
-            field = approve_deny_form_field(requested_schema)
-            if field is None:
+            form_field = approve_deny_form_field(requested_schema)
+            if form_field is None:
                 logger.debug(
                     "Declining unsupported OMP elicitation form for session %s",
                     session_id,
@@ -248,7 +272,7 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
             if option_id == OMP_APPROVE_OPTION_ID:
                 return AcceptElicitationResponse(
                     action="accept",
-                    content={field: OMP_FORM_APPROVE},
+                    content={form_field: OMP_FORM_APPROVE},
                 )
             await self._narrate_cancelled_permission(
                 call=synthetic_call,

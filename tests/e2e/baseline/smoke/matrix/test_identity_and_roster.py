@@ -5,7 +5,8 @@ Two complementary probes:
 * ``test_reports_identity_and_roster`` — the agent must use platform tools
   (``band_get_participants`` / ``band_lookup_peers``) to report who is in the
   room and who is invitable. Every expected value is *self-sourced* so assertions
-  can't drift (agent name, in-room peer name, out-of-room invitable name).
+  can't drift (agent name, in-room peer name, out-of-room name from its lookup
+  result). Concurrent runs may add other valid invitable peers.
 * ``test_reports_peer_description_from_passive_roster`` — the agent must answer
   from the always-injected participants list alone (no roster tools), including
   each peer's ``description``. Guards the passive roster's description
@@ -19,6 +20,7 @@ UUID and the user's display name stay out under the floors-only policy.
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -26,17 +28,33 @@ from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     PASSIVE_ROSTER_DESCRIPTIONS_PROBE,
+    PASSIVE_ROSTER_REPORTING_PROMPT,
+    ROSTER_LOOKUP_PAGE_SIZE,
     ROSTER_PROBE,
+    TOOL_AGENT,
     unique_marker,
 )
 from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.observations.tool_calls import RosterTool
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.observations.tool_results import ToolResults
+from tests.e2e.baseline.toolkit.provisioning import (
+    NAME_PREFIX,
+    ProvisionedAgent,
+    ResourceManager,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter(runs_tool_loop=True)
+def lookup_peer_names(results: ToolResults) -> set[str]:
+    """Test-agent names present in actual lookup output, independent of encoding."""
+    name_pattern = re.compile(
+        rf"[\"']name[\"']\s*:\s*[\"']({re.escape(NAME_PREFIX)}[0-9a-f]+-[a-zA-Z0-9_-]+)[\"']"
+    )
+    return {name for result in results for name in name_pattern.findall(result.output)}
+
+
+@per_adapter(runs_tool_loop=True, **TOOL_AGENT, **EXECUTION_REPORTING)
 @flaky_model("small-model wording of names is non-deterministic")
 @pytest.mark.timeout(extra=120)  # a turn with two platform-tool reads
 @pytest.mark.asyncio(loop_scope="session")
@@ -56,8 +74,8 @@ async def test_reports_identity_and_roster(
         participants=[agent.id, member.id],
     )
 
-    # Precondition: the out-of-room peer really is invitable from this room, so the
-    # agent's own band_lookup_peers can surface it (its Peer.name is what we assert).
+    # Precondition: the room has at least one invitable peer; other live runs can
+    # add more, so any name in this roster is a valid lookup-backed answer.
     roster = await user_ops.lookup_peers(not_in_room=room_id)
     assert invitable.id in {peer.id for peer in roster}, (
         f"expected {invitable.name} to be invitable to the room; "
@@ -69,16 +87,41 @@ async def test_reports_identity_and_roster(
         mid = await user_ops.send_message(
             room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
         )
-        replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        try:
+            replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        except TimeoutError as exc:
+            calls, results = await asyncio.gather(
+                capture.tool_calls(sender_id=agent.id),
+                capture.tool_results(sender_id=agent.id),
+            )
+            raise TimeoutError(
+                f"{exc}; tool calls: {[call.name for call in calls]}; "
+                f"tool results: {[(result.name, result.is_error) for result in results]}"
+            ) from exc
+        await capture.wait_for_processed(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+        lookup_results = (await capture.tool_results(sender_id=agent.id)).named(
+            RosterTool.LOOKUP_PEERS
+        )
+
+    calls.assert_fired(RosterTool.GET_PARTICIPANTS)
+    calls.assert_fired(
+        RosterTool.LOOKUP_PEERS, with_args={"page_size": ROSTER_LOOKUP_PAGE_SIZE}
+    )
+    lookup_results.assert_succeeded(RosterTool.LOOKUP_PEERS)
+    offered_names = lookup_peer_names(lookup_results) - {agent.name, member.name}
+    assert offered_names, "agent lookup returned no out-of-room test-agent names"
 
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.
     replies.assert_contains_any([agent.name])  # identity (only the SDK knows it)
     replies.assert_contains_any([member.name])  # roster (via band_get_participants)
-    replies.assert_contains_any([invitable.name])  # invitable (via band_lookup_peers)
+    replies.assert_contains_any(offered_names)  # invitable (via band_lookup_peers)
 
 
-@per_adapter(runs_tool_loop=True, **EXECUTION_REPORTING)
+@per_adapter(
+    runs_tool_loop=True, prompt=PASSIVE_ROSTER_REPORTING_PROMPT, **EXECUTION_REPORTING
+)
 @flaky_model(
     "small-model wording of descriptions / whether to skip tools is non-deterministic"
 )
@@ -101,11 +144,11 @@ async def test_reports_peer_description_from_passive_roster(
     role, decoy = await asyncio.gather(
         resource_manager.provision_agent(
             "role",
-            description=f"Handles exclusively {unique_marker('descrole')} inquiries.",
+            description=f"Handles exclusively {unique_marker('descrole')} inquiries",
         ),
         resource_manager.provision_agent(
             "decoy",
-            description=f"Handles exclusively {unique_marker('descdecoy')} inquiries.",
+            description=f"Handles exclusively {unique_marker('descdecoy')} inquiries",
         ),
     )
     room_id = await resource_manager.provision_room(

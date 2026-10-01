@@ -48,6 +48,38 @@ def omp_in(
     )
 
 
+class TestOmpACPAdapterModel:
+    def test_model_is_an_omp_launch_flag_not_a_session_selection(self) -> None:
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(model="google/gemini-2.5-flash"))
+
+        assert "--model=google/gemini-2.5-flash" in adapter._spawn_command(None)
+        assert adapter.model_selection.is_empty
+
+    def test_one_model_selects_the_flag_and_the_provider_key_env(self) -> None:
+        adapter = OmpACPAdapter(
+            OmpACPAdapterConfig(
+                model="anthropic/claude-haiku-4-5",
+                api_key="secret",
+                env={"PI_CODING_AGENT_DIR": "/agent-home"},
+            )
+        )
+
+        assert "--model=anthropic/claude-haiku-4-5" in adapter._spawn_command(None)
+        assert adapter._spawn_env() == {
+            "PI_CODING_AGENT_DIR": "/agent-home",
+            "ANTHROPIC_API_KEY": "secret",
+        }
+
+    def test_api_key_without_model_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="api_key needs model"):
+            OmpACPAdapterConfig(api_key="secret")
+
+    def test_api_key_stays_out_of_the_config_repr(self) -> None:
+        config = OmpACPAdapterConfig(model="openai/gpt-5.4-mini", api_key="secret")
+
+        assert "secret" not in repr(config)
+
+
 class TestOmpACPAdapterConfig:
     @pytest.mark.parametrize(
         "command",
