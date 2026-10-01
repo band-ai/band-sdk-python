@@ -982,6 +982,49 @@ class TestACPClientAdapterOnMessage:
         conn.cancel.assert_awaited_once_with("acp-session-123")
 
     @pytest.mark.asyncio
+    async def test_cancelling_the_turn_survives_repeated_cancel(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A second STOP during session/cancel still finishes that cancel."""
+        prompt_started = asyncio.Event()
+        cancel_started = asyncio.Event()
+        release_cancel = asyncio.Event()
+
+        async def endless_prompt(**_: object) -> None:
+            prompt_started.set()
+            await asyncio.Event().wait()
+
+        async def slow_cancel(session_id: str) -> None:
+            cancel_started.set()
+            await release_cancel.wait()
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=endless_prompt)
+        conn.cancel = AsyncMock(side_effect=slow_cancel)
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                FakeAgentTools(),
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await prompt_started.wait()
+        turn.cancel()
+        await cancel_started.wait()
+        turn.cancel()
+        await asyncio.sleep(0)
+        assert not turn.done()
+        release_cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+
+    @pytest.mark.asyncio
     async def test_timeout_cleanup_survives_outer_cancel(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:

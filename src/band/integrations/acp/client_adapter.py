@@ -620,35 +620,29 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 except asyncio.CancelledError:
                     # Cancelling the local request leaves the agent running the
                     # prompt; it only stops on session/cancel.
-                    await asyncio.shield(
-                        self._cancel_agent_turn(
-                            runtime, room_id=room_id, session_id=session_id
+                    await self._await_shielded(
+                        asyncio.create_task(
+                            self._cancel_agent_turn(
+                                runtime, room_id=room_id, session_id=session_id
+                            )
                         )
                     )
                     raise
                 except TimeoutError:
                     if not turn_deadline.expired():
                         raise
-                    # await the Task after CancelledError so STOP cannot free
-                    # the room before on_cleanup finishes.
-                    cleanup = asyncio.create_task(
-                        self._handle_turn_timeout(
-                            runtime,
-                            room_id=room_id,
-                            session_id=session_id,
-                            tools=tools,
-                        )
-                    )
                     try:
-                        await asyncio.shield(cleanup)
+                        await self._await_shielded(
+                            asyncio.create_task(
+                                self._handle_turn_timeout(
+                                    runtime,
+                                    room_id=room_id,
+                                    session_id=session_id,
+                                    tools=tools,
+                                )
+                            )
+                        )
                     except asyncio.CancelledError:
-                        # Further cancels (double STOP / STOP+INTERRUPT) must
-                        # not cancel cleanup itself.
-                        while not cleanup.done():
-                            try:
-                                await asyncio.shield(cleanup)
-                            except asyncio.CancelledError:
-                                continue
                         raise
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self._turn_timeout_s}s"
@@ -689,6 +683,19 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 FAILURE_CODE_TIMEOUT,
             )
         )
+
+    @staticmethod
+    async def _await_shielded(task: asyncio.Task[None]) -> None:
+        """Wait for ``task`` through outer cancels without cancelling it."""
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+            raise
 
     @staticmethod
     async def _cancel_agent_turn(
