@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Literal
 
 from band_sdk_core import is_authorized_sender
@@ -13,7 +12,7 @@ from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import FeatureKwargs, PlatformMessage
+from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPPermissionRequest,
@@ -31,6 +30,15 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.cursor import (
+    DECISION_NOT_PENDING_TEMPLATE,
+    DECISION_RESOLVED_TEMPLATE,
+    DECISION_TIMED_OUT_TEMPLATE,
+    DECISION_UNAUTHORIZED_MESSAGE,
+    PERMISSION_REQUESTED_TEMPLATE,
+    ROOM_COMMAND,
+    CursorCommandWord,
+)
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.decisions import (
@@ -45,43 +53,10 @@ from band.workspaces import WorkspaceResolver, workspace_resolver_for
 logger = logging.getLogger(__name__)
 
 DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
-ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
 _INVALID_DECISION = object()
-DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
-DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisions."
-
-
-ROOM_COMMAND = "/cursor"
-
-
-class CursorCommandWord(StrEnum):
-    """The `/cursor <word> ...` vocabulary this adapter's room commands accept.
-
-    Single source for both the room-facing prompt text and the parser, so
-    the two can't drift apart.
-    """
-
-    DECISIONS = "decisions"
-    SELECT = "select"
-    DENY = "deny"
-    ACCEPT = "accept"
-    REJECT = "reject"
-    ANSWER = "answer"
-
-
-PERMISSION_REQUESTED_TEMPLATE = (
-    "Cursor needs permission to run `{tool}`. "
-    f"Reply `{ROOM_COMMAND} {CursorCommandWord.SELECT} {{token}} <option-id>` "
-    f"or `{ROOM_COMMAND} {CursorCommandWord.DENY} {{token}}`. "
-    "Available options: {options}"
-)
-DECISION_RESOLVED_TEMPLATE = "Cursor {kind} decision `{token}` resolved."
-DECISION_TIMED_OUT_TEMPLATE = (
-    "Cursor {kind} decision `{token}` timed out and was cancelled."
-)
 
 
 @dataclass(frozen=True)

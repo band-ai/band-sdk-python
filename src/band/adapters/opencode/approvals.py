@@ -625,6 +625,12 @@ class RoomApprovals:
                 await client.reply_permission(session_id, entry.token, response=reply)
         except ApprovalReplyError:
             return False
+        logger.info(
+            "OpenCode permission resolved room=%s request=%s reply=%s",
+            self._ports.room_id,
+            entry.token,
+            reply,
+        )
         self._forget(self._permissions, entry)
         return True
 

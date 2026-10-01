@@ -24,6 +24,7 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
     emit_event_instruction,
+    liveness_probe,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.builders import copilot_acp_env, copilot_home_dir
@@ -197,7 +198,7 @@ async def reply_with(
     mark = capture.messages.snapshot()
     mid = await user_ops.send_message(
         capture.room_id,
-        f"Reply with one short sentence that includes the marker {marker}.",
+        liveness_probe(marker),
         mention_id=identity.id,
         mention_name=identity.name,
     )

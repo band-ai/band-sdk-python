@@ -19,9 +19,9 @@ from band.core.types import (
     HistoryProvider,
     PlatformMessage,
 )
-from band.integrations.codex import CodexJsonRpcError, RpcEvent
+from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod, RpcEvent
 from band.testing import FakeAgentTools
-from tests.adapters.codexturns import await_released_turn
+from tests.adapters.codexturns import RecordedRequests, await_released_turn
 
 
 def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessage:
@@ -79,7 +79,7 @@ class _ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
-class _FakeCodexClient:
+class _FakeCodexClient(RecordedRequests):
     def __init__(
         self,
         *,
@@ -117,16 +117,16 @@ class _FakeCodexClient:
         payload = params or {}
         self.requests.append((method, payload))
 
-        if method == "model/list":
+        if method == CodexRequestMethod.MODEL_LIST:
             return {"data": [{"id": "gpt-5.5", "hidden": False}]}
-        if method == "thread/resume":
+        if method == CodexRequestMethod.THREAD_RESUME:
             if self._resume_error is not None:
                 raise self._resume_error
             return {"thread": {"id": str(payload.get("threadId") or "thr-resumed")}}
-        if method == "thread/start":
+        if method == CodexRequestMethod.THREAD_START:
             self._thread_counter += 1
             return {"thread": {"id": f"thr-{self._thread_counter}"}}
-        if method == "turn/start":
+        if method == CodexRequestMethod.TURN_START:
             self._turn_counter += 1
             return {
                 "turn": {
@@ -241,9 +241,9 @@ async def test_on_event_uses_converter_history_to_resume_thread() -> None:
         )
     )
 
-    methods = [method for method, _ in fake_client.requests]
-    assert "thread/resume" in methods
-    assert "thread/start" not in methods
+    methods = fake_client.request_methods
+    assert CodexRequestMethod.THREAD_RESUME in methods
+    assert CodexRequestMethod.THREAD_START not in methods
     assert any("Status: resumed" in event["content"] for event in tools.events_sent)
 
 
@@ -373,9 +373,9 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
         )
     )
 
-    methods_second = [method for method, _ in fake_client_second.requests]
-    assert "thread/resume" in methods_second
-    assert "thread/start" not in methods_second
+    methods_second = fake_client_second.request_methods
+    assert CodexRequestMethod.THREAD_RESUME in methods_second
+    assert CodexRequestMethod.THREAD_START not in methods_second
 
 
 @pytest.mark.asyncio
@@ -457,15 +457,11 @@ async def test_resume_failure_injects_conversation_history() -> None:
         )
     )
 
-    methods = [method for method, _ in fake_client_second.requests]
-    assert "thread/resume" in methods
-    assert "thread/start" in methods
+    methods = fake_client_second.request_methods
+    assert CodexRequestMethod.THREAD_RESUME in methods
+    assert CodexRequestMethod.THREAD_START in methods
 
-    turn_start = next(
-        params
-        for method, params in fake_client_second.requests
-        if method == "turn/start"
-    )
+    turn_start = fake_client_second.params_of(CodexRequestMethod.TURN_START)[0]
     turn_input = turn_start["input"]
     history_items = [
         item for item in turn_input if "[Conversation History]" in item["text"]

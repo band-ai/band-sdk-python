@@ -42,11 +42,11 @@ class ToolResult:
     def from_event(cls, message: ChatMessage) -> ToolResult | None:
         """Build a ``ToolResult`` from a ``tool_result`` event's JSON content.
 
-        Tolerant of shape drift: ``parse_tool_result`` returns ``None`` (logged,
-        not raised) for a non-JSON or nameless payload, so a single odd event
-        never breaks inspection.
+        Observation does not pair results with provider tool calls, so it can read
+        results from frameworks that emit no call ID; history conversion still
+        requires one for correlation.
         """
-        parsed = parse_tool_result(message.content)
+        parsed = parse_tool_result(message.content, require_call_id=False)
         if parsed is None:
             return None
         return cls(

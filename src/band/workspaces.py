@@ -14,13 +14,19 @@ WorkspaceResolver = Callable[[str], str]
 _DEFAULT_WORKSPACE_DIRECTORY = ".band-workspaces"
 
 
+def is_host_absolute(path: str) -> bool:
+    """Whether ``path`` is absolute on the running OS -- on Windows that also
+    needs a drive or UNC share, so ``/opt/x`` is relative there."""
+    return Path(path).is_absolute()
+
+
 def resolve_room_workspace(
     room_id: str, workspace_for_room: WorkspaceResolver | None
 ) -> str:
     """Return a room's absolute workspace, creating the safe default on demand."""
     if workspace_for_room is not None:
         workspace = workspace_for_room(room_id)
-        if not isinstance(workspace, str) or not Path(workspace).is_absolute():
+        if not isinstance(workspace, str) or not is_host_absolute(workspace):
             raise ValueError("workspace_for_room must return an absolute path")
         resolved_workspace = os.path.realpath(workspace)
         Path(resolved_workspace).mkdir(parents=True, exist_ok=True)

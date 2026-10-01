@@ -128,10 +128,9 @@ class ReplyCapture:
         if payload.sender_type == "Agent" and payload.message_type == "text":
             self.messages.append(payload)
             logger.info(
-                "Captured agent reply in room %s from %s: %s",
-                self.room_id,
-                payload.sender_name or payload.sender_id,
-                payload.content[:80],
+                "Captured agent reply message=%s length=%s",
+                payload.id,
+                len(payload.content or ""),
             )
             self._nudge.set()
 

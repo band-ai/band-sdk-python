@@ -21,3 +21,8 @@ workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
   (on by default) it is posted when the turn did not reply through a Band tool.
 - **`reasoning_effort` is not validated.** The valid values depend on the model
   and the Codex CLI version, and the backend rejects unknown ones.
+- **`skill_roots` need Codex CLI 0.136.0 or newer.** Codex has no config key
+  for extra skill folders, so the adapter sends them to each room's app-server
+  with `skills/extraRoots/set` before the room's thread starts. An older CLI
+  rejects the request, and the room fails to start rather than running without
+  the skills. Roots must be absolute paths; Codex accepts ones that don't exist.

@@ -13,6 +13,11 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from band.core.content import BLANK_CONTENT_ERROR, has_visible_content
 from band.core.types import EventMessageType
 
+MENTION_IDENTIFIERS = (
+    "Use a participant's exact ID when available. Handles also work: "
+    "@<username> for users, @<username>/<agent-name> for agents."
+)
+
 
 def require_visible_content(value: str) -> str:
     """Field-validator body shared by every ``content`` field on this page.
@@ -38,11 +43,7 @@ class SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: list[str] = Field(
         ...,
-        description=(
-            "List of participant handles to @mention. At least one required. "
-            "For users: @<username> (e.g., '@john'). "
-            "For agents: @<username>/<agent-name> (e.g., '@john/weather-agent')."
-        ),
+        description=f"List of participants to mention. At least one required. {MENTION_IDENTIFIERS}",
     )
 
     _validate_content = field_validator("content")(require_visible_content)

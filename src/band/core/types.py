@@ -387,6 +387,11 @@ class PlatformConnection:
     ws_url: str
 
 
+# How an adapter settles a tool-permission request: ask in chat, or answer
+# it automatically.
+ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
+
+
 class FeatureKwargs(TypedDict, total=False):
     """The feature keywords every ``SimpleAdapter`` constructor accepts.
 
