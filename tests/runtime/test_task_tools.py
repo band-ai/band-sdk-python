@@ -9,15 +9,19 @@ parameter, rather than passing silently against a hand-rolled fake.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from band_rest.types import Task
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.runtime.tools import AgentTools
+from band.testing import FakeAgentTools
+from tests.runtime.helpers import rest_client_over
 
 
 class TestListTasks:
@@ -390,44 +394,31 @@ class TestSetBoard:
             await tools.set_board(goal_title="Ship v2")
 
 
-TASK = {
-    "id": "task-uuid",
-    "number": 2,
-    "chat_room_id": "room-123",
-    "subject": "Look it up",
-    "detail": "",
-    "state": "active",
-    "overall_status": "completed",
-    "assignments": [],
-    "created_by": {"id": "agent-1", "name": "Coordinator", "type": "Agent"},
-    "inserted_at": "2026-01-01T00:00:00Z",
-    "updated_at": "2026-01-01T00:00:00Z",
-}
-
-
 @pytest.fixture
-async def requested_paths() -> AsyncIterator[tuple[AgentTools, list[str]]]:
-    """AgentTools on the real REST client, recording each request's path."""
-    paths: list[str] = []
+async def sent_requests() -> AsyncIterator[tuple[AgentTools, list[httpx.Request]]]:
+    """AgentTools on the real REST client, recording each request it sends."""
+    task = Task.model_validate(
+        await FakeAgentTools(room_id="room-123").create_task(subject="Look it up")
+    ).model_dump(mode="json")
+    requests: list[httpx.Request] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
-        paths.append(request.url.path)
+        requests.append(request)
         if request.url.path.endswith("/history"):
             return httpx.Response(
                 200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
             )
-        return httpx.Response(200, json={"data": TASK})
+        return httpx.Response(200, json={"data": task})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
-        rest = AsyncRestClient(
-            api_key="test", base_url="https://example.test", httpx_client=http
-        )
-        yield AgentTools("room-123", rest), paths
+    async with rest_client_over(answer) as rest:
+        yield AgentTools("room-123", rest), requests
 
 
 TASK_READS_AND_WRITES: dict[str, Callable[[AgentTools, str], Awaitable[object]]] = {
     "get": lambda tools, id: tools.get_task(id),
-    "update": lambda tools, id: tools.update_task(id, status="completed"),
+    "update": lambda tools, id: tools.update_task(
+        id, status=TaskAssignmentStatus.COMPLETED
+    ),
     "history": lambda tools, id: tools.get_task_history(id),
 }
 
@@ -435,16 +426,28 @@ TASK_READS_AND_WRITES: dict[str, Callable[[AgentTools, str], Awaitable[object]]]
 @pytest.mark.parametrize(
     "call", TASK_READS_AND_WRITES.values(), ids=TASK_READS_AND_WRITES
 )
-@pytest.mark.parametrize("id", ["#2", "2"])
+@pytest.mark.parametrize("id", ["#1", "1"])
 async def test_a_board_number_addresses_its_own_task(
-    requested_paths: tuple[AgentTools, list[str]],
+    sent_requests: tuple[AgentTools, list[httpx.Request]],
     call: Callable[[AgentTools, str], Awaitable[object]],
     id: str,
 ) -> None:
     """A "#N" board number, as the tool text writes it, must reach the task's
     own path rather than truncating to the room's task collection."""
-    tools, paths = requested_paths
+    tools, requests = sent_requests
 
     await call(tools, id)
 
-    assert paths[0].removesuffix("/history").endswith("/chats/room-123/tasks/2")
+    path = requests[0].url.path.removesuffix("/history")
+    assert path.endswith("/chats/room-123/tasks/1")
+
+
+async def test_a_board_number_supersedes_its_own_task(
+    sent_requests: tuple[AgentTools, list[httpx.Request]],
+) -> None:
+    """The platform rejects "#N" as a supersedes_id; it resolves only "N"."""
+    tools, requests = sent_requests
+
+    await tools.create_task(subject="Look it up again", supersedes_id="#1")
+
+    assert json.loads(requests[0].content)["supersedes_id"] == "1"
