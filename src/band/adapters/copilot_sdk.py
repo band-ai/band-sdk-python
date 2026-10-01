@@ -222,16 +222,19 @@ def _turn_incident(data: object) -> str | None:
     """A one-line account of a session event that can explain a silent turn."""
     match data:
         case ModelCallFailureData():
+            kind = data.error_type or (
+                data.failure_kind.value if data.failure_kind else "unknown"
+            )
+            status = "" if data.status_code is None else f" status={data.status_code}"
             return (
-                f"model call failed: {data.error_type or data.failure_kind} "
-                f"status={data.status_code} {data.error_message or ''}".rstrip()
+                f"model call failed: {kind}{status} {data.error_message or ''}".rstrip()
             )
         case AssistantTurnRetryData():
-            return f"turn retried: {data.reason}"
+            return f"turn retried: {data.reason or 'no reason given'}"
         case SessionWarningData():
             return f"warning {data.warning_type}: {data.message}"
         case AbortData():
-            return f"aborted: {data.reason}"
+            return f"aborted: {data.reason.value}"
         case ToolExecutionCompleteData(success=False):
             error = data.error.message if data.error else "no error detail"
             return f"tool {data.tool_call_id} failed: {error}"
@@ -492,11 +495,15 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             # Session errors raise out of send_and_wait, so a None here
             # with no room output means the model genuinely said nothing.
             if final_text is None and not turn.replied_in_room:
-                incidents = "; ".join(turn.incidents) or "none reported"
-                message = f"Copilot turn produced no reply (incidents: {incidents})"
-                logger.warning("Room %s: %s", room_id, message)
+                # Incidents carry session text, so they stay in this one log line
+                # and out of the error the runtime logs and reports to the platform.
+                logger.warning(
+                    "Room %s: Copilot turn produced no reply (incidents: %s)",
+                    room_id,
+                    "; ".join(turn.incidents) or "none reported",
+                )
                 await tools.send_failure(AgentFailure(_PROVIDER, "no assistant reply"))
-                raise RuntimeError(message)
+                raise RuntimeError("Copilot turn produced no reply")
 
             # The turn may already have replied into the room; sending its
             # final text too would duplicate the reply.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
@@ -22,10 +24,16 @@ pytestmark = requires_copilot_sdk
 if _COPILOT_SDK_AVAILABLE:
     from copilot import ToolInvocation
     from copilot.generated.session_events import (
+        AbortData,
+        AbortReason,
+        AssistantTurnRetryData,
         ModelCallFailureData,
+        ModelCallFailureKind,
         ModelCallFailureSource,
         SessionErrorData,
         SessionWarningData,
+        ToolExecutionCompleteData,
+        ToolExecutionCompleteError,
     )
 
 
@@ -84,28 +92,68 @@ class TestReply:
         assert error_events
 
     @pytest.mark.asyncio
-    async def test_no_reply_names_the_trouble_the_turn_hit(self):
-        """A silent turn's error says what went wrong, not just that nothing came."""
-        client = FakeCopilotClient(
-            reply_content=None,
-            turn_events=[
-                ModelCallFailureData(
+    @pytest.mark.parametrize(
+        ("incident", "account"),
+        [
+            pytest.param(
+                lambda: ModelCallFailureData(
                     source=ModelCallFailureSource.TOP_LEVEL,
                     error_type="overloaded_error",
                     status_code=529,
                 ),
-                SessionWarningData(message="context truncated", warning_type="context"),
-            ],
-        )
+                "model call failed: overloaded_error status=529",
+                id="model-call-failure",
+            ),
+            pytest.param(
+                lambda: ModelCallFailureData(
+                    source=ModelCallFailureSource.TOP_LEVEL,
+                    failure_kind=ModelCallFailureKind.TRANSPORT,
+                ),
+                "model call failed: transport",
+                id="model-call-failure-kind-only",
+            ),
+            pytest.param(
+                lambda: AssistantTurnRetryData(turn_id="t1"),
+                "turn retried: no reason given",
+                id="retry",
+            ),
+            pytest.param(
+                lambda: SessionWarningData(
+                    message="context truncated", warning_type="context"
+                ),
+                "warning context: context truncated",
+                id="warning",
+            ),
+            pytest.param(
+                lambda: AbortData(reason=AbortReason.USER_INITIATED),
+                "aborted: user_initiated",
+                id="abort",
+            ),
+            pytest.param(
+                lambda: ToolExecutionCompleteData(
+                    success=False,
+                    tool_call_id="call-1",
+                    error=ToolExecutionCompleteError(message="permission denied"),
+                ),
+                "tool call-1 failed: permission denied",
+                id="tool-failure",
+            ),
+        ],
+    )
+    async def test_no_reply_logs_the_trouble_the_turn_hit(
+        self,
+        incident: Callable[[], object],
+        account: str,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """A silent turn's log says what went wrong, not just that nothing came."""
+        client = FakeCopilotClient(reply_content=None, turn_events=[incident()])
         adapter = await make_started_adapter(client)
 
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(RuntimeError, match="^Copilot turn produced no reply$"):
             await run_message(adapter, ToolSchemaFakeTools())
 
-        assert str(exc_info.value) == (
-            "Copilot turn produced no reply (incidents: model call failed: "
-            "overloaded_error status=529; warning context: context truncated)"
-        )
+        assert f"(incidents: {account})" in caplog.text
 
     @pytest.mark.asyncio
     async def test_session_error_raises_reports_and_evicts(self):
