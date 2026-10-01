@@ -271,13 +271,13 @@ def _normalized_plan(plan: str) -> str:
 
 
 def _assert_revised_scoped_plan(accepted: str, rejected: str) -> None:
-    """Accepted plan must revise the rejected one and stay on the project files."""
+    """Accepted plan must revise the rejected one and name the scoped project files."""
     assert _normalized_plan(accepted) != _normalized_plan(rejected), (
         "Accepted plan is only whitespace-different from the rejected plan: "
         f"{accepted!r}"
     )
     assert SOURCE_FILE in accepted and TEST_FILE in accepted, (
-        f"Accepted plan did not keep the repair scoped to {SOURCE_FILE} and "
+        f"Accepted plan did not name the scoped files {SOURCE_FILE} and "
         f"{TEST_FILE}: {accepted!r}"
     )
 
@@ -577,7 +577,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         checkpoint = await _start_turn(
             room,
             f"Revise the plan to keep the change limited to {SOURCE_FILE} and "
-            f"its test, then request human review with {CURSOR_CREATE_PLAN_METHOD} again. "
+            f"{TEST_FILE}, then request human review with {CURSOR_CREATE_PLAN_METHOD} again. "
             f"If I accept it, reply with {accepted_reply}. Do not implement yet.",
         )
         accepted_plan = await _decide_plan(
