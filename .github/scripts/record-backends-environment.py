@@ -11,6 +11,7 @@ import pathlib
 import platform
 import shutil
 import subprocess
+import tempfile
 
 from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from tests.e2e.baseline.settings import BaselineSettings
@@ -26,18 +27,24 @@ def cli_version(binary: str) -> str:
         return "unavailable"
     # A resolved local path plus a literal flag, so shell=True carries no
     # injection risk; it lets Windows .cmd shims launch through cmd.exe.
-    try:
-        completed = subprocess.run(
-            f'"{cli}" --version',
-            shell=True,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=VERSION_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        return "unavailable"
-    return completed.stdout.strip() if completed.returncode == 0 else "unavailable"
+    # A file, not a pipe: the timeout kills only the shell, and on Windows a pipe
+    # still held by the shim's grandchild would block run() past the timeout.
+    with tempfile.TemporaryFile("w+") as output:
+        try:
+            completed = subprocess.run(
+                f'"{cli}" --version',
+                shell=True,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=VERSION_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            return "unavailable"
+        output.seek(0)
+        version = output.read().strip()
+    return version if completed.returncode == 0 else "unavailable"
 
 
 def main() -> None:
