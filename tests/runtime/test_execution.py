@@ -1604,6 +1604,40 @@ class TestCrashRecoverySync:
         mock_handler.assert_not_called()
         assert "msg-startup-claim-fails" not in ctx.claims.completed_ids(ctx.room_id)
 
+    async def test_refused_claims_never_spend_the_retry_budget(
+        self, mock_link_with_next, mock_handler
+    ):
+        """A platform that refuses claims under load must not poison the message:
+        it runs once a claim finally lands, however many refusals came first."""
+        msg = PlatformMessage(
+            id="msg-claim-refused-under-load",
+            room_id="room-123",
+            content="claim refused under load",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(UTC),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(side_effect=[msg] * 4 + [None])
+        mock_link_with_next.mark_processing = AsyncMock(
+            side_effect=[False, False, False, True]
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False, max_message_retries=1),
+        )
+
+        for _ in range(3):
+            assert await ctx._synchronize_with_next() is False
+        assert await ctx._synchronize_with_next() is True
+
+        mock_handler.assert_awaited_once()
+        assert not ctx._retry_tracker.is_permanently_failed(msg.id)
+
     async def test_startup_backlog_claim_failure_does_not_process_newer_ws_event(
         self, mock_link_with_next, mock_handler
     ):

@@ -27,7 +27,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport
 
-from band.integrations.slack.adapter import SlackAdapter
+from band.integrations.slack.adapter import SlackAdapter, SlackAdapterConfig
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
@@ -62,8 +62,8 @@ async def test_router_mounts_into_fastapi_with_path_prefix():
     inner = _SlackReplyBrain(reply=None)
     rest = _make_rest_mock(["room-1"])
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(app_config,)),
         inner=inner,
-        apps=[app_config],
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(
             chat_postMessage=AsyncMock(return_value={"ok": True, "ts": "x"}),
@@ -106,8 +106,8 @@ async def test_unsigned_request_to_mounted_fastapi_is_rejected():
     inner = _SlackReplyBrain(reply=None)
     rest = _make_rest_mock(["room-1"])
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(app_config,)),
         inner=inner,
-        apps=[app_config],
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(),
     )

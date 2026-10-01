@@ -1,6 +1,6 @@
 """Terminal operator console for Copilot's ``ask_user`` tool.
 
-A handler for ``CopilotSDKAdapterConfig(ask_user=...)`` that answers from
+A handler for ``CopilotSDKAdapter(..., ask_user=...)`` that answers from
 the terminal of whoever runs the agent process: the model's question
 renders as a prompt, the operator's typed line becomes the answer. Use it
 when the answering human is the process operator; when the answering
@@ -120,7 +120,7 @@ class LogGate(logging.Handler):
 class OperatorConsole:
     """Owns the terminal for operator Q&A; ``ask`` is the adapter handler.
 
-    Pass ``ask`` as ``CopilotSDKAdapterConfig(ask_user=...)``; log gating
+    Pass ``ask`` as ``CopilotSDKAdapter(..., ask_user=...)``; log gating
     engages automatically on the first question.
 
     Args:

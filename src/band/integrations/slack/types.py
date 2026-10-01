@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import Field
 
-@dataclass
-class SlackApp:
+from band.core.adapterconfig import BaseAdapterConfig
+
+
+class SlackApp(BaseAdapterConfig):
     """Configuration for one Slack app served by the adapter.
 
     One ``SlackApp`` = one Slack bot user attached to one Band agent.
@@ -14,9 +17,9 @@ class SlackApp:
     multi-tenant setups); each gets its own HTTP route at
     ``/{slug}/events``.
 
-    Required fields depend on the adapter's transport. The adapter
-    validates this at construction time; passing the wrong combination
-    raises ``ValueError``.
+    Required fields depend on the adapter's transport;
+    ``SlackAdapterConfig`` validates the combination and raises
+    ``ValueError`` when a required token is missing.
 
     Attributes:
         slug: URL-safe identifier; used as the HTTP route segment.
@@ -26,14 +29,14 @@ class SlackApp:
         bot_token: The Slack app's bot token (``xoxb-...``) for outbound
             ``chat.postMessage`` etc. Always required.
         app_token: The Slack app-level token (``xapp-...``) used to open
-            a Socket Mode websocket. Required when the adapter is built
-            with ``transport="socket"``; unused in HTTP transport.
+            a Socket Mode websocket. Required when the adapter is
+            configured with ``transport="socket"``; unused in HTTP transport.
     """
 
     slug: str
-    bot_token: str
-    signing_secret: str = ""
-    app_token: str = ""
+    bot_token: str = Field(repr=False)
+    signing_secret: str = Field(default="", repr=False)
+    app_token: str = Field(default="", repr=False)
 
 
 @dataclass

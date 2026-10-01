@@ -27,7 +27,10 @@ from a2a.helpers import get_message_text, new_text_message
 from a2a.types import Role, SendMessageRequest
 
 from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
-from band.integrations.a2a.gateway import A2AGatewayAdapter
+from band.integrations.a2a.gateway import (
+    A2AGatewayAdapter,
+    A2AGatewayAdapterConfig,
+)
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -51,7 +54,9 @@ async def test_gateway_serves_a_real_a2a_client(
     """A raw a2a-sdk client drives the gateway's JSON-RPC endpoint for a live
     Band peer and receives its real reply back over A2A."""
     port = reserve_port()
-    gateway = A2AGatewayAdapter(gateway_url=f"http://127.0.0.1:{port}", port=port)
+    gateway = A2AGatewayAdapter(
+        A2AGatewayAdapterConfig(gateway_url=f"http://127.0.0.1:{port}", port=port)
+    )
 
     async with running_provisioned_agent(gateway, resource_manager, label="a2a-gw"):
         # The Anthropic peer's own id is a stable alias the gateway always

@@ -27,7 +27,7 @@ from typing import Any
 import yaml
 
 from band import Agent
-from band.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.config.loader import load_agent_config
 from band.config.logs import LogSettings
 from band.core.types import Emit
@@ -211,12 +211,14 @@ async def main() -> None:
             logger.info("Loaded custom tools: %s", tool_fn_names)
 
     adapter = ClaudeSDKAdapter(
-        model=model,
-        fallback_model=fallback_model,
-        custom_section=final_prompt,
-        max_thinking_tokens=thinking_tokens,
+        ClaudeSDKAdapterConfig(
+            model=model,
+            fallback_model=fallback_model,
+            custom_section=final_prompt,
+            max_thinking_tokens=thinking_tokens,
+            cwd=workspace,
+        ),
         additional_tools=custom_tools if custom_tools else None,
-        cwd=workspace,
         emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 

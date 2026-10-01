@@ -130,6 +130,21 @@ class TestLettaAdapterOnMessagePerRoom:
         assert "conversation_id" not in call_kwargs
 
     @pytest.mark.asyncio
+    async def test_configured_memory_blocks_follow_the_persona_block(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        adapter, mock_client = adapter_with_client
+        human = {"label": "human", "value": "Prefers short answers."}
+        adapter.config = LettaAdapterConfig(memory_blocks=(human,))
+        mock_client.agents.create.return_value = make_mock_agent("agent-1")
+
+        await adapter._create_agent("room-1")
+
+        blocks = mock_client.agents.create.call_args.kwargs["memory_blocks"]
+        assert [block["label"] for block in blocks] == ["persona", "human"]
+        assert blocks[1] == human
+
+    @pytest.mark.asyncio
     async def test_auto_relay_when_no_send_message(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -234,7 +249,7 @@ class TestLettaAdapterOnMessagePerRoom:
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = adapter_with_client
-        adapter.config.turn_timeout_s = 0.01
+        adapter.config = adapter.config.model_copy(update={"turn_timeout_s": 0.01})
 
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
@@ -273,7 +288,7 @@ class TestLettaAdapterOnMessagePerRoom:
         is merely slow (not the Letta call) must not be misreported as a
         Letta provider timeout -- it must be given time to complete."""
         adapter, mock_client = adapter_with_client
-        adapter.config.turn_timeout_s = 0.05
+        adapter.config = adapter.config.model_copy(update={"turn_timeout_s": 0.05})
 
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
@@ -578,7 +593,9 @@ class TestLettaAdapterSharedMode:
         self, shared_adapter: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = shared_adapter
-        adapter.config.agent_id = "pre-existing-agent"
+        adapter.config = adapter.config.model_copy(
+            update={"agent_id": "pre-existing-agent"}
+        )
 
         mock_client.agents.retrieve.return_value = make_mock_agent("pre-existing-agent")
         mock_client.agents.tools.list.return_value = make_mock_tool_page()
@@ -1575,7 +1592,9 @@ class TestColdBootSeeding:
         """config.agent_id is not a per-room resume target — each room without
         persisted history must get its own Letta agent."""
         adapter, mock_client = adapter_with_client
-        adapter.config.agent_id = "shared-bootstrap-id"
+        adapter.config = adapter.config.model_copy(
+            update={"agent_id": "shared-bootstrap-id"}
+        )
         mock_client.agents.create.return_value = make_mock_agent("room-agent")
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_assistant_message("Hello!")
@@ -1827,3 +1846,11 @@ class TestConfigEnvSourcing:
         monkeypatch.setenv("LETTA_API_KEY", "env-key")
 
         assert LettaAdapterConfig(provider_key="kwarg-key").provider_key == "kwarg-key"
+
+    def test_prefixed_env_fills_a_field_and_an_explicit_value_beats_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_MODEL", "openai/env-model")
+
+        assert LettaAdapterConfig().model == "openai/env-model"
+        assert LettaAdapterConfig(model="openai/explicit").model == "openai/explicit"

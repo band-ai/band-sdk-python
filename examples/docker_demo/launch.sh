@@ -310,8 +310,8 @@ cleanup() {
     while IFS= read -r host; do
       [ -n "$host" ] || continue
       sbx policy check network "$host" >/dev/null 2>&1 || continue   # already gone
-      sbx policy rm network --resource "$host" -f >/dev/null 2>&1 \
-        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host -f"; failed=1; }
+      sbx policy rm network --resource "$host" >/dev/null 2>&1 \
+        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host"; failed=1; }
     done <"$MF_POLICY"
   fi
 

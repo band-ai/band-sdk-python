@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Example showing how to add custom tools to a Band agent.
@@ -24,7 +24,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 from band import Agent, configure_logging
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,17 +76,19 @@ async def main() -> None:
     load_dotenv()
     # Create adapter with custom tools
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
-        checkpointer=InMemorySaver(),
-        additional_tools=[calculate, get_weather],  # Add your tools here
-        custom_section="""You are a helpful assistant with access to:
+        LangGraphAdapterConfig(
+            custom_section="""You are a helpful assistant with access to:
         - Platform tools (band_send_message, band_add_participant, etc.)
         - Calculator tool for math
         - Weather tool for weather info
 
         When users ask math questions, use the calculator.
         When users ask about weather, use get_weather.
-        Always send your response using band_send_message.""",
+        Always send your response using band_send_message."""
+        ),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        checkpointer=InMemorySaver(),
+        additional_tools=[calculate, get_weather],  # Add your tools here
     )
 
     logger.info("Starting agent with custom tools...")

@@ -64,12 +64,15 @@ def _build_anthropic(
 ) -> SimpleAdapter[Any]:
     from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file builds
         AnthropicAdapter,
+        AnthropicAdapterConfig,
     )
 
     return AnthropicAdapter(
-        model=s.llm_models.anthropic_model,
-        provider_key=s.llm_credentials.anthropic_api_key or None,
-        prompt=prompt,
+        AnthropicAdapterConfig(
+            model=s.llm_models.anthropic_model,
+            provider_key=s.llm_credentials.anthropic_api_key or None,
+            custom_section=prompt or "",
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -85,6 +88,7 @@ def _build_claude_sdk(
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import (  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
         ClaudeSDKAdapter,
+        ClaudeSDKAdapterConfig,
     )
 
     # Claude Code gets real Bash/filesystem tools; an unset cwd falls back to
@@ -92,9 +96,11 @@ def _build_claude_sdk(
     # per-cell disposable sandbox.
     sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-claude-sdk-")
     adapter = ClaudeSDKAdapter(
-        model=s.llm_models.anthropic_model,
-        custom_section=prompt,
-        cwd=sandbox.name,
+        ClaudeSDKAdapterConfig(
+            model=s.llm_models.anthropic_model,
+            custom_section=prompt,
+            cwd=sandbox.name,
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -134,16 +140,16 @@ def _build_copilot_sdk(
     adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
-            provider=ProviderConfig(
-                type="anthropic",
-                base_url="https://api.anthropic.com",
-                api_key=s.llm_credentials.anthropic_api_key,
-            ),
             use_logged_in_user=False,
             base_directory=copilot_home_dir(sandbox.name),
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
+        provider=ProviderConfig(
+            type="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key=s.llm_credentials.anthropic_api_key,
+        ),
         **feature_kwargs(features),
     )
     weakref.finalize(adapter, sandbox.cleanup)
@@ -167,9 +173,11 @@ def _build_langgraph(
 
     from band.adapters.langgraph import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file builds
         LangGraphAdapter,
+        LangGraphAdapterConfig,
     )
 
     return LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=prompt or ""),
         llm=ChatOpenAI(
             model=s.llm_models.openai_model,
             api_key=s.llm_credentials.openai_api_key or None,
@@ -181,7 +189,6 @@ def _build_langgraph(
         # in a persistent checkpointer keyed by room_id would silently move langgraph
         # into the codex/opencode "backend session resume" class and invalidate that.
         checkpointer=MemorySaver(),
-        custom_section=prompt or "",
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -201,6 +208,7 @@ def _build_pydantic_ai(
 
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     # pydantic-ai takes native callables with a RunContext-first signature.
@@ -208,8 +216,9 @@ def _build_pydantic_ai(
         [t.as_callable(ctx_annotation=RunContext) for t in tools] if tools else None
     )
     return PydanticAIAdapter(
-        model=f"openai:{s.llm_models.openai_model}",
-        custom_section=prompt,
+        PydanticAIAdapterConfig(
+            model=f"openai:{s.llm_models.openai_model}", custom_section=prompt
+        ),
         additional_tools=native,
         **feature_kwargs(features),
     )
@@ -229,17 +238,18 @@ def _build_strands(
 
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
         StrandsAdapter,
+        StrandsAdapterConfig,
     )
 
     # Strands has no provider-prefix string shorthand (a bare string means a
     # Bedrock model id), so the OpenAI provider is constructed explicitly.
     api_key = s.llm_credentials.openai_api_key
     return StrandsAdapter(
-        model=OpenAIModel(
+        StrandsAdapterConfig(custom_section=prompt),
+        llm=OpenAIModel(
             client_args={"api_key": api_key} if api_key else None,
             model_id=s.llm_models.openai_model,
         ),
-        custom_section=prompt,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -255,12 +265,15 @@ def _build_gemini(
 ) -> SimpleAdapter[Any]:
     from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file builds
         GeminiAdapter,
+        GeminiAdapterConfig,
     )
 
     return GeminiAdapter(
-        model=s.llm_models.gemini_model,
-        provider_key=s.llm_credentials.google_api_key or None,
-        prompt=prompt,
+        GeminiAdapterConfig(
+            model=s.llm_models.gemini_model,
+            provider_key=s.llm_credentials.google_api_key or None,
+            custom_section=prompt or "",
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -276,12 +289,12 @@ def _build_google_adk(
 ) -> SimpleAdapter[Any]:
     from band.adapters.google_adk import (  # noqa: PLC0415 -- isolates the google_adk extra from the other frameworks this file builds
         GoogleADKAdapter,
+        GoogleADKAdapterConfig,
     )
 
     # google-adk reads the provider key / Vertex config from the environment.
     return GoogleADKAdapter(
-        model=s.llm_models.gemini_model,
-        custom_section=prompt,
+        GoogleADKAdapterConfig(model=s.llm_models.gemini_model, custom_section=prompt),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -297,14 +310,17 @@ def _build_crewai(
 ) -> SimpleAdapter[Any]:
     from band.adapters.crewai import (  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file builds
         CrewAIAdapter,
+        CrewAIAdapterConfig,
     )
 
     return CrewAIAdapter(
-        model=s.llm_models.openai_model,
-        role="Test Assistant",
-        goal="Help users with simple tasks for testing.",
-        backstory="A test agent for E2E validation.",
-        custom_section=prompt,
+        CrewAIAdapterConfig(
+            model=s.llm_models.openai_model,
+            role="Test Assistant",
+            goal="Help users with simple tasks for testing.",
+            backstory="A test agent for E2E validation.",
+            custom_section=prompt,
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -336,7 +352,7 @@ def _build_agno(
     # and re-offers them alongside the platform tools each run.
     native = [t.as_callable() for t in tools] if tools else None
     return AgnoAdapter(
-        AgnoAgent(
+        agent=AgnoAgent(
             model=Claude(id=s.llm_models.anthropic_model),
             instructions=prompt,
             tools=native,
@@ -358,6 +374,7 @@ def _build_crewai_flow(
     # capabilities. The minimal flow echoes back so the reply path is observable.
     from band.adapters.crewai_flow import (  # noqa: PLC0415 -- isolates the crewai_flow extra from the other frameworks this file builds
         CrewAIFlowAdapter,
+        CrewAIFlowAdapterConfig,
     )
 
     class _E2EFlow:
@@ -367,7 +384,6 @@ def _build_crewai_flow(
             return {"decision": "direct_response", "content": content, "mentions": []}
 
     return CrewAIFlowAdapter(
-        flow_factory=_E2EFlow,
         # In the baseline room scenarios crewai_flow is a live participant that must
         # react to peer (agent-authored) messages — e.g. the loop_suppression positive,
         # where a peer's directed probe has to drive a turn. The SDK default is the
@@ -375,7 +391,8 @@ def _build_crewai_flow(
         # loops); opting in here is safe because the runtime already drops an agent's
         # OWN messages before dispatch (execution.py self-filter), so crewai_flow reacts
         # to peers without ever looping on its own output.
-        accept_agent_initiated=True,
+        CrewAIFlowAdapterConfig(accept_agent_initiated=True),
+        flow_factory=_E2EFlow,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -544,7 +561,7 @@ def _build_copilot_acp(
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
-        "workspace_for_room": create_room_workspace_resolver(sandbox),
+        "cwd": sandbox,
         "env": copilot_acp_env(s, copilot_home_dir(sandbox)),
     }
     if s.backends.copilot_command.strip():

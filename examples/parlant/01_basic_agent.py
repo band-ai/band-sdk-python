@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[parlant,logging]>=1.2.0"]
+# dependencies = ["band-sdk[parlant,logging]>=4.0.0"]
 # ///
 """
 Basic Parlant agent example using the official Parlant SDK.
@@ -25,7 +25,7 @@ import parlant.sdk as p
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import ParlantAdapter
+from band.adapters import ParlantAdapter, ParlantAdapterConfig
 
 configure_logging(
     logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
@@ -66,8 +66,7 @@ AGENT_DESCRIPTION = """You are a helpful, knowledgeable assistant in the Band mu
 def build_adapter() -> ParlantAdapter:
     """Build the Parlant adapter with basic guidelines (Band tools auto-attached)."""
     adapter = ParlantAdapter(
-        name="Parlant",
-        description=AGENT_DESCRIPTION,
+        ParlantAdapterConfig(name="Parlant", description=AGENT_DESCRIPTION),
         nlp_service=p.NLPServices.openai,  # requires OPENAI_API_KEY
     )
 

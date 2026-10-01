@@ -96,16 +96,16 @@ class TestGatewayConfiguration:
         with pytest.raises(ValueError, match="response_timeout_s"):
             A2AGatewayAdapterConfig(response_timeout_s=0)
 
-    def test_gateway_url_derives_from_port(self) -> None:
+    def test_public_url_derives_from_port(self) -> None:
         """Passing only port must not leave agent cards on the default URL."""
-        adapter = A2AGatewayAdapter(port=8080, rest_client=MagicMock())
-        assert adapter.gateway_url == "http://localhost:8080"
+        config = A2AGatewayAdapterConfig(port=8080)
+        assert config.public_url == "http://localhost:8080"
 
     def test_explicit_gateway_url_wins(self) -> None:
-        adapter = A2AGatewayAdapter(
-            gateway_url="https://gw.example.com", port=8080, rest_client=MagicMock()
+        config = A2AGatewayAdapterConfig(
+            gateway_url="https://gw.example.com", port=8080
         )
-        assert adapter.gateway_url == "https://gw.example.com"
+        assert config.public_url == "https://gw.example.com"
 
 
 class TestGatewayStartup:
@@ -132,6 +132,29 @@ class TestGatewayStartup:
                 "request_options"
             ]
             == DEFAULT_REQUEST_OPTIONS
+        )
+
+    @pytest.mark.asyncio
+    async def test_server_listens_on_configured_port_and_advertises_its_url(
+        self,
+    ) -> None:
+        adapter = A2AGatewayAdapter(
+            A2AGatewayAdapterConfig(port=8080), rest_client=MagicMock()
+        )
+        adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
+            return_value=peers_page([])
+        )
+
+        with patch(
+            "band.integrations.a2a.gateway.adapter.GatewayServer"
+        ) as server_type:
+            server_type.return_value.start = AsyncMock()
+            await adapter.on_started("Gateway", "A2A Gateway")
+
+        server_args = server_type.call_args.kwargs
+        assert (server_args["port"], server_args["gateway_url"]) == (
+            8080,
+            "http://localhost:8080",
         )
 
 
@@ -238,7 +261,7 @@ class TestGatewayExecution:
         # Generous timeout: the test never needs it to fire, and a tight one
         # turns a loaded CI runner into a spurious FAILED terminal event.
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=30),
+            A2AGatewayAdapterConfig(response_timeout_s=30),
             rest_client=MagicMock(),
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
@@ -291,7 +314,7 @@ class TestGatewayExecution:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=0.01),
+            A2AGatewayAdapterConfig(response_timeout_s=0.01),
             rest_client=MagicMock(),
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}

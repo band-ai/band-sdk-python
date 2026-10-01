@@ -34,6 +34,7 @@ except ImportError as error:
 from typing_extensions import Unpack
 
 from band.converters.strands import StrandsHistoryConverter, StrandsMessages
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -393,6 +394,21 @@ class BandTurnHooks(HookProvider):
             logger.warning("Failed to send %s event: %s", message_type, error)
 
 
+class StrandsAdapterConfig(BaseAdapterConfig):
+    """Settings for a Strands agent.
+
+    Attributes:
+        model: Model id Strands resolves to a Bedrock model. Leave it ``None``
+            only when the adapter is given a live ``llm``.
+        system_prompt: Replaces the rendered Band system prompt entirely.
+        custom_section: Extra instructions appended to the rendered prompt.
+    """
+
+    model: str | None = None
+    system_prompt: str | None = None
+    custom_section: str | None = None
+
+
 class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     """Run a Strands model in a Band room."""
 
@@ -403,21 +419,33 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
     def __init__(
         self,
-        model: str | Model,
-        system_prompt: str | None = None,
-        custom_section: str | None = None,
+        config: StrandsAdapterConfig | None = None,
+        *,
         history_converter: StrandsHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
+        llm: Model | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
-        """Create an adapter around a Strands model or Bedrock model identifier."""
+        """Create an adapter around a Strands model or Bedrock model id.
+
+        Args:
+            config: Model id and prompt settings; see :class:`StrandsAdapterConfig`.
+            history_converter: Optional custom history converter.
+            additional_tools: Strands tools and/or portable ``CustomToolDef``
+                (InputModel, handler) tuples.
+            llm: A constructed Strands ``Model`` (e.g. ``OpenAIModel``,
+                ``BedrockModel``), used instead of ``config.model``. Exactly one
+                of the two must be set.
+        """
         super().__init__(
             history_converter=history_converter or StrandsHistoryConverter(),
             **features,
         )
-        self.model = model
-        self.system_prompt = system_prompt
-        self.custom_section = custom_section
+        self.config = config or StrandsAdapterConfig()
+        model = llm or self.config.model
+        if model is None or (llm is not None and self.config.model is not None):
+            raise ValueError("Set exactly one of config.model or llm")
+        self._model: Model | str = model
         self._system_prompt: str | None = None
         self._message_history: dict[str, StrandsMessages] = {}
         self._custom_tools, self._custom_effects = _build_custom_tools(additional_tools)
@@ -425,10 +453,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render the prompt after the platform supplies agent metadata."""
         await super().on_started(agent_name, agent_description)
-        self._system_prompt = self.system_prompt or render_system_prompt(
+        self._system_prompt = self.config.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
             agent_description=self.agent_description or "An AI assistant",
-            custom_section=self.custom_section or "",
+            custom_section=self.config.custom_section or "",
             features=self.features,
         )
         logger.info("Strands adapter started for agent: %s", agent_name)
@@ -448,7 +476,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         """
         framework_tools = self._build_platform_tools(tools) + self._custom_tools
         return Agent(
-            model=self.model,
+            model=self._model,
             messages=messages,
             # Strands accepts functions, dict specs, providers, and AgentTools,
             # but its public annotation cannot express that mixed collection.
@@ -487,7 +515,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> StrandsMessages:
         """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
-            if isinstance(self.model, OpenAIModel):
+            if isinstance(self._model, OpenAIModel):
                 history = _openai_history(history)
             self._message_history[room_id] = list(history)
             if history:

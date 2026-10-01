@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
+# dependencies = ["band-sdk[agno]>=4.0.0", "anthropic>=0.75.0"]
 # ///
 """
 Agno agent with Band memory tools enabled.
@@ -79,7 +79,7 @@ async def main() -> None:
     # capabilities=Capability.MEMORY exposes Band memory tools. Emit defaults
     # to everything the adapter supports, so memory tool calls are visible as
     # room events without an explicit emit=.
-    adapter = AgnoAdapter(agno_agent, capabilities=Capability.MEMORY)
+    adapter = AgnoAdapter(agent=agno_agent, capabilities=Capability.MEMORY)
 
     logger.info("Starting Agno memory secretary...")
     async with Agent.from_config(

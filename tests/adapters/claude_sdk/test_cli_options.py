@@ -10,7 +10,13 @@ from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from claude_agent_sdk.types import _configure_can_use_tool
 
-from band.adapters.claude_sdk import SDK_OWNED_CLI_FLAGS, ClaudeCLIOptions
+from band.adapters.claude_sdk import (
+    SDK_OWNED_CLI_FLAGS,
+    ClaudeApprovalOptions,
+    ClaudeCLIOptions,
+    ClaudeSDKAdapterConfig,
+)
+from band.core.types import Emit
 from tests.adapters.claude_sdk.helpers import SEND_MESSAGE_MCP_NAME, ClaudeRoom
 from tests.paths import host_absolute_path
 
@@ -49,7 +55,7 @@ async def test_cli_options_reach_the_cli(claude_room: OpenRoom, tmp_path: Path) 
         env={"ANTHROPIC_API_KEY": "per-agent-key"},
         extra_args={"debug-to-stderr": None},
     )
-    room = await claude_room(cli=cli)
+    room = await claude_room(ClaudeSDKAdapterConfig(cli=cli))
 
     options = await _cli_options(room)
 
@@ -63,7 +69,9 @@ async def test_cli_options_reach_the_cli(claude_room: OpenRoom, tmp_path: Path) 
 async def test_plugins_leave_band_wiring_in_place(
     claude_room: OpenRoom, tmp_path: Path
 ) -> None:
-    room = await claude_room(cli=ClaudeCLIOptions(plugin_dirs=(str(tmp_path),)))
+    room = await claude_room(
+        ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(plugin_dirs=(str(tmp_path),)))
+    )
 
     options = await _cli_options(room)
 
@@ -76,18 +84,40 @@ async def test_sdk_owned_flags_match_what_the_adapter_makes_the_sdk_emit(
     claude_room: OpenRoom, tmp_path: Path
 ) -> None:
     room = await claude_room(
-        model="sonnet",
-        fallback_model="haiku",
-        effort="high",
-        max_thinking_tokens=1024,
-        cwd=str(tmp_path),
-        approval_mode="manual",
-        cli=ClaudeCLIOptions(plugin_dirs=(str(tmp_path),), add_dirs=(str(tmp_path),)),
+        ClaudeSDKAdapterConfig(
+            model="sonnet",
+            fallback_model="haiku",
+            effort="high",
+            max_thinking_tokens=1024,
+            cwd=tmp_path,
+            approvals=ClaudeApprovalOptions(mode="manual"),
+            cli=ClaudeCLIOptions(
+                plugin_dirs=(str(tmp_path),), add_dirs=(str(tmp_path),)
+            ),
+        )
     )
 
     options = await _cli_options(room, session_id="sess-1")
 
     assert _emitted_flags(options) == SDK_OWNED_CLI_FLAGS
+
+
+@pytest.mark.parametrize(
+    ("emit", "display"),
+    [(Emit.THOUGHTS, "summarized"), (Emit.TOOL_CALLS, None)],
+    ids=["thoughts-posted", "thoughts-not-posted"],
+)
+async def test_thinking_text_is_requested_only_when_thoughts_are_posted(
+    claude_room: OpenRoom, emit: Emit, display: str | None
+) -> None:
+    room = await claude_room(
+        ClaudeSDKAdapterConfig(max_thinking_tokens=1024), emit=emit
+    )
+
+    options = await _cli_options(room)
+
+    assert options.thinking is not None
+    assert options.thinking.get("display") == display
 
 
 @pytest.mark.parametrize(

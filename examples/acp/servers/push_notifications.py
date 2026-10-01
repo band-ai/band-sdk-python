@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 ACP Server with push notifications - Real-time activity from Band peers.
@@ -23,6 +23,7 @@ Architecture:
 Prerequisites:
     1. Set environment variables:
        - BAND_API_KEY: Your Band API key
+       - BAND_AGENT_ID: The agent ID that BAND_API_KEY belongs to
        - BAND_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
        - BAND_REST_URL: REST API URL (default: https://app.band.ai)
 
@@ -62,7 +63,7 @@ class Settings(BaseSettings):
     )
 
     band_api_key: str = ""
-    band_agent_id: str = "acp-server"
+    band_agent_id: str = ""
 
 
 async def main() -> None:
@@ -82,6 +83,8 @@ async def main() -> None:
                 "or configure 'acp_server_agent' in agent_config.yaml"
             )
     else:
+        if not settings.band_agent_id:
+            raise ValueError("BAND_AGENT_ID is required when BAND_API_KEY is set.")
         agent_id = settings.band_agent_id
 
     # Create ACP server adapter

@@ -27,6 +27,8 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
 
 from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
+    CrewAIFlowAdapterConfig,
+    CrewAIFlowTaggedPeerPolicy,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
@@ -113,6 +115,122 @@ class TestTaggedPeer:
         assert "waiting" in statuses
         assert "finalized" not in statuses
 
+    @pytest.mark.asyncio
+    async def test_off_policy_finalizes_without_delegating_to_tagged_peer(
+        self,
+    ) -> None:
+        flow = _flow(
+            [{"decision": "synthesize", "content": "direct final", "mentions": []}]
+        )
+        adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(tagged_peer_policy=CrewAIFlowTaggedPeerPolicy.OFF),
+            flow_factory=lambda: flow,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+        )
+        tools = FakeAgentTools(
+            participants=[participant_seed("p-a", "@example/peer-a")]
+        )
+        await adapter.on_started("router", "")
+        await adapter.on_message(
+            msg=_msg(content="please ask @example/peer-a about it"),
+            tools=tools,  # type: ignore[arg-type]
+            history=None,  # type: ignore[arg-type]
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+        assert [m["content"] for m in tools.messages_sent] == ["direct final"]
+
+
+# ---------------------------------------------------------------------------
+# Delegation round limit
+# ---------------------------------------------------------------------------
+
+
+class TestDelegationRoundLimit:
+    @pytest.mark.asyncio
+    async def test_delegating_past_the_configured_limit_fails_the_run(self) -> None:
+        ns = "crewai_flow:router"
+        payload = {
+            "schema_version": 1,
+            "room_id": "room-1",
+            "run_id": "msg-parent",
+            "parent_message_id": "msg-parent",
+            "status": "reply_recorded",
+            "stage": "waiting_for_replies",
+            "delegation_rounds": 1,
+            "delegations": [
+                {
+                    "delegation_id": "d-A",
+                    "target": {
+                        "participant_id": "p-a",
+                        "handle": "@example/peer-a",
+                        "normalized_key": "peer-a",
+                    },
+                    "status": "replied",
+                    "side_effect_key": "msg-parent:delegate:d-A",
+                    "delegation_message_id": "msg-deleg-A",
+                    "reply_message_id": "msg-reply-A",
+                }
+            ],
+        }
+        flow = _flow(
+            [
+                {
+                    "decision": "delegate",
+                    "delegations": [
+                        {
+                            "delegation_id": "d-B",
+                            "target": "peer-b",
+                            "content": "follow up",
+                            "mentions": ["@example/peer-b"],
+                        }
+                    ],
+                }
+            ]
+        )
+        adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(max_delegation_rounds=1),
+            flow_factory=lambda: flow,
+            state_source=RestCrewAIFlowStateSource(),
+        )
+        tools = FakeAgentTools(
+            participants=[
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
+            ],
+            room_context=[
+                {
+                    "id": "evt-prior",
+                    "message_type": "task",
+                    "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
+                    "metadata": {ns: payload},
+                }
+            ],
+        )
+        await adapter.on_started("router", "")
+        await adapter.on_message(
+            msg=_msg(id="msg-parent", content="orig"),
+            tools=tools,  # type: ignore[arg-type]
+            history=None,  # type: ignore[arg-type]
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.messages_sent == []
+        error_codes = [
+            (e["metadata"].get(ns, {}).get("error") or {}).get("code")
+            for e in tools.events_sent
+            if e["message_type"] == "task"
+        ]
+        assert "max_delegation_rounds_exceeded" in error_codes
+
 
 # ---------------------------------------------------------------------------
 # Sequential chains
@@ -160,10 +278,11 @@ class TestSequentialChains:
         # Note: we drive the same parent run by sending a synthetic
         # follow-up turn whose msg.id == 'msg-parent'.
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(
+                join_policy="first", sequential_chains={"peer-a": "peer-b"}
+            ),
             flow_factory=lambda: flow,
             state_source=RestCrewAIFlowStateSource(),
-            join_policy="first",
-            sequential_chains={"peer-a": "peer-b"},
         )
         tools = FakeAgentTools(
             participants=[
@@ -237,10 +356,12 @@ class TestSequentialChains:
             ]
         )
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(
+                join_policy="first",
+                sequential_chains={"@example/peer-a": "@example/peer-b"},
+            ),
             flow_factory=lambda: flow,
             state_source=RestCrewAIFlowStateSource(),
-            join_policy="first",
-            sequential_chains={"@example/peer-a": "@example/peer-b"},
         )
         tools = FakeAgentTools(
             participants=[
@@ -443,9 +564,9 @@ class TestE2ETrace:
             return len(tools.events_sent)
 
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(join_policy="all"),
             flow_factory=TraceFlow,
             state_source=RestCrewAIFlowStateSource(),
-            join_policy="all",
         )
         tools = FakeAgentTools(
             participants=[

@@ -15,13 +15,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from band_sdk_core import AgentFailure
-from pydantic import ValidationError
+from pydantic import Field, PositiveFloat, ValidationError
 
 from band.converters.copilot_sdk import (
     SESSION_ID_METADATA_KEY,
     CopilotSDKHistoryConverter,
     CopilotSDKSessionState,
 )
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_reply,
@@ -104,25 +105,14 @@ logger = logging.getLogger(__name__)
 _PROVIDER = "copilot_sdk"
 
 
-@dataclass(frozen=True)
-class CopilotSDKAdapterConfig:
+class CopilotSDKAdapterConfig(BaseAdapterConfig):
     """Runtime configuration for Copilot SDK adapter sessions.
 
-    Stays a plain dataclass rather than adopting ``pydantic_settings.BaseSettings``
-    like CodexAdapterConfig/LettaAdapterConfig/OpencodeAdapterConfig: ``provider``
-    holds an external SDK type (``ProviderConfig``) and ``ask_user`` a callable,
-    both a poor fit for settings validation — env-var precedent on individual
-    fields (``github_token``, ``base_directory``/``COPILOT_HOME``) doesn't
-    outweigh that.
-
     Attributes:
-        model: Copilot model to use (None = Copilot CLI default).
+        model: Copilot model to use (None = Copilot CLI default). With the
+            adapter's BYOK ``provider=``, names the provider's model.
         custom_section: Extra system-prompt section.
         reasoning_effort: Reasoning effort for reasoning-capable models.
-        provider: BYOK ``ProviderConfig`` (e.g. ``ProviderConfig(
-            type="openai", base_url=..., api_key=...)``) to run inference
-            against your own key instead of the Copilot subscription;
-            ``model`` then names the provider's model.
         inject_history_on_resume_failure: Inject text history into a
             fresh session when resuming a persisted session fails.
         session_id_prefix: Prefix for per-room Copilot session ids. None
@@ -135,58 +125,26 @@ class CopilotSDKAdapterConfig:
             agents sharing a host.
         github_token: GitHub token for Copilot auth. Auth resolves
             automatically: the token wins when set, otherwise the locally
-            logged-in GitHub user is used. Not required when ``provider``
-            configures BYOK inference.
+            logged-in GitHub user is used. Not required when the adapter's
+            ``provider=`` configures BYOK inference.
         use_logged_in_user: ``True`` forces the logged-in GitHub user;
             ``False`` opts out of GitHub identity entirely (the CLI runs
             with ``--no-auto-login``), which is the BYOK path — pair it
-            with a ``provider`` or the runtime has no credentials at all;
+            with ``provider=`` or the runtime has no credentials at all;
             ``None`` (default) lets the SDK resolve it from
             ``github_token``.
         turn_timeout_s: Max seconds to wait for a turn to complete.
-        ask_user: Routing for Copilot's built-in ``ask_user``
-            human-in-the-loop tool; ``None`` (default) keeps the tool
-            disabled.
-
-            ``"room"`` routes questions to the people in the Band room:
-            the question posts as a room message mentioning whoever
-            triggered the turn, the tool call resolves immediately with
-            a delivery acknowledgement so the turn ends, and the answer
-            arrives as the next room message on the same persisted
-            session. This is the only routing that fits both runtimes —
-            Band delivers a room's messages strictly one at a time, so
-            a turn blocked on a room reply could never receive it, and
-            Copilot keeps an unanswered ``ask_user`` pending forever
-            (no timeout, no cancellation, not replayed on resume). See
-            ``band.integrations.copilot_sdk.room_ask_user``.
-
-            A callable answers on behalf of someone *outside* the room
-            (terminal operator, approval service). It is awaited
-            mid-turn with ``(UserInputRequest, {"session_id"})`` and
-            must return ``{"answer", "wasFreeform"}``; the turn keeps
-            counting against ``turn_timeout_s`` while it waits, so
-            raise ``turn_timeout_s`` above the handler's own answer
-            window or the turn dies before the human can answer. For a
-            terminal-backed handler use
-            :class:`band.integrations.copilot_sdk.OperatorConsole` — it
-            covers the edge cases the SDK leaves to the host (no
-            handler timeout, no cancellation on abort, no answer
-            validation). Its default answer window fits under this
-            default turn timeout; when raising ``answer_timeout_s``,
-            raise ``turn_timeout_s`` above it (e.g. 300/600).
     """
 
     model: str | None = None
     custom_section: str = ""
     reasoning_effort: str | None = None
-    provider: ProviderConfig | None = None
     inject_history_on_resume_failure: bool = True
     session_id_prefix: str | None = None
     base_directory: str | None = None
-    github_token: str | None = None
+    github_token: str | None = Field(default=None, repr=False)
     use_logged_in_user: bool | None = None
-    turn_timeout_s: float = 120.0
-    ask_user: UserInputHandler | Literal["room"] | None = None
+    turn_timeout_s: PositiveFloat = 120.0
 
 
 @dataclass
@@ -275,13 +233,15 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         additional_tools: list[CustomToolDef] | None = None,
         client: Any | None = None,
         client_factory: Callable[[], Any] | None = None,
+        provider: ProviderConfig | None = None,
+        ask_user: UserInputHandler | Literal["room"] | None = None,
         **features: Unpack[FeatureKwargs],
     ):
         """Initialize the Copilot SDK adapter.
 
         Args:
-            config: Value settings for sessions (model, provider, auth,
-                prompts, timeouts) — see :class:`CopilotSDKAdapterConfig`.
+            config: Session settings (model, auth, prompts, timeouts) — see
+                :class:`CopilotSDKAdapterConfig`.
             history_converter: Override the default history converter.
             additional_tools: Developer custom tools as (InputModel, handler).
             client: Externally-owned ``CopilotClient`` shared with other
@@ -291,12 +251,57 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 per-room session ids can't collide.
             client_factory: Factory returning a Copilot client the adapter
                 owns (created and stopped by the adapter; test seam).
+            provider: BYOK ``ProviderConfig`` (e.g. ``ProviderConfig(
+                type="openai", base_url=..., api_key=...)``) to run inference
+                against your own key instead of the Copilot subscription;
+                ``config.model`` then names the provider's model. It may
+                carry a ``bearer_token_provider`` callback, so it is not
+                config data.
+            ask_user: Routing for Copilot's built-in ``ask_user``
+                human-in-the-loop tool; ``None`` (default) keeps the tool
+                disabled.
+
+                ``"room"`` routes questions to the people in the Band room:
+                the question posts as a room message mentioning whoever
+                triggered the turn, the tool call resolves immediately with
+                a delivery acknowledgement so the turn ends, and the answer
+                arrives as the next room message on the same persisted
+                session. This is the only routing that fits both runtimes —
+                Band delivers a room's messages strictly one at a time, so
+                a turn blocked on a room reply could never receive it, and
+                Copilot keeps an unanswered ``ask_user`` pending forever
+                (no timeout, no cancellation, not replayed on resume). See
+                ``band.integrations.copilot_sdk.room_ask_user``.
+
+                A callable answers on behalf of someone *outside* the room
+                (terminal operator, approval service). It is awaited
+                mid-turn with ``(UserInputRequest, {"session_id"})`` and
+                must return ``{"answer", "wasFreeform"}``; the turn keeps
+                counting against ``config.turn_timeout_s`` while it waits,
+                so raise ``turn_timeout_s`` above the handler's own answer
+                window or the turn dies before the human can answer. For a
+                terminal-backed handler use
+                :class:`band.integrations.copilot_sdk.OperatorConsole` — it
+                covers the edge cases the SDK leaves to the host (no
+                handler timeout, no cancellation on abort, no answer
+                validation). Its default answer window fits under the
+                default turn timeout; when raising ``answer_timeout_s``,
+                raise ``turn_timeout_s`` above it (e.g. 300/600).
         """
         if not _COPILOT_SDK_AVAILABLE:
             raise ImportError(
                 "github-copilot-sdk is required for CopilotSDKAdapter.\n"
                 "Install with: pip install 'band-sdk[copilot_sdk]'\n"
                 "Requires GitHub Copilot authentication (token or logged-in user)."
+            )
+        if (
+            ask_user is not None
+            and not callable(ask_user)
+            and ask_user != ASK_USER_ROOM
+        ):
+            raise BandConfigError(
+                f"ask_user must be {ASK_USER_ROOM!r}, a handler callable, or "
+                f"None — got {ask_user!r}."
             )
         if client is not None and client_factory is not None:
             raise BandConfigError(
@@ -309,17 +314,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             **features,
         )
         self.config = config or CopilotSDKAdapterConfig()
-        ask_user = self.config.ask_user
-        if (
-            ask_user is not None
-            and not callable(ask_user)
-            and ask_user != ASK_USER_ROOM
-        ):
-            raise BandConfigError(
-                f"ask_user must be {ASK_USER_ROOM!r}, a handler callable, or "
-                f"None — got {ask_user!r}."
-            )
-
+        self._provider = provider
+        self._ask_user = ask_user
         self._shared_client = client
         self._client_factory = client_factory
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
@@ -341,7 +337,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         # turn-completion is always required (the CLI runtime's continue-nudge
         # affects every turn); room-mode ask_user adds its own section on top.
         extra_sections = [TURN_COMPLETION_GUIDANCE]
-        if self.config.ask_user == ASK_USER_ROOM:
+        if self._ask_user == ASK_USER_ROOM:
             extra_sections.append(ROOM_ASK_USER_GUIDANCE)
         self._system_prompt = render_system_prompt(
             agent_name=self.agent_name,
@@ -384,7 +380,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         """Require GitHub auth only when inference uses the Copilot service."""
         # A singular provider replaces Copilot-hosted inference. Current Copilot
         # SDKs intentionally allow that BYOK path with no GitHub identity.
-        if self.config.provider is not None:
+        if self._provider is not None:
             return
         get_auth_status = getattr(client, "get_auth_status", None)
         if get_auth_status is None:  # test fakes / exotic clients
@@ -395,7 +391,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 "Not authenticated with GitHub Copilot: "
                 f"{getattr(status, 'statusMessage', None) or 'no credentials found'}. "
                 "Log in with the GitHub CLI (gh auth login) or set a token via "
-                "CopilotSDKAdapterConfig(github_token=...), or configure provider=... "
+                "CopilotSDKAdapterConfig(github_token=...), or pass provider=... "
                 "for BYOK inference."
             )
 
@@ -632,19 +628,19 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         kwargs: dict[str, Any] = {
             "model": self.config.model,
             "reasoning_effort": self.config.reasoning_effort,
-            "provider": self.config.provider,
+            "provider": self._provider,
             "tools": bridged_tools,
             "system_message": {"mode": "replace", "content": self._system_prompt},
             "available_tools": available_tools,
             "on_permission_request": PermissionHandler.approve_all,
         }
-        if self.config.ask_user is not None:
+        if self._ask_user is not None:
             # ask_user is session-isolated (no shell/file/host access), so
             # allowing it does not weaken the approve_all stance above.
             available_tools.append("ask_user")
             kwargs["on_user_input_request"] = (
-                self.config.ask_user
-                if callable(self.config.ask_user)
+                self._ask_user
+                if callable(self._ask_user)
                 else self._make_room_ask_user_handler(room_id)
             )
         return kwargs

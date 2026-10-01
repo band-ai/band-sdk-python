@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 LangGraph agent with no LLM inside — a deterministic ping/pong graph.
@@ -29,12 +29,12 @@ from langgraph.pregel import Pregel
 
 from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
+from band.runtime.formatters import strip_leading_mentions
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 _SENDER_PATTERN = re.compile(r"^\[(?P<sender>[^\]]+)\]:\s*(?P<text>.*)$", re.DOTALL)
-_MENTION_TOKEN_PATTERN = re.compile(r"@\[\[[^\]]+\]\]\s*")
 
 
 def _parse_latest_message(message: Any) -> tuple[str, str]:
@@ -47,10 +47,9 @@ def _parse_latest_message(message: Any) -> tuple[str, str]:
     match = _SENDER_PATTERN.match(str(message.content))
     sender = match.group("sender") if match else "there"
     text = match.group("text") if match else str(message.content)
-    # Strip raw "@[[uuid]]" mention tokens before echoing: the echoed text
-    # isn't registered in this reply's `mentions` list, so an unresolved
-    # token would render as "@Unknown" in the chat UI.
-    text = _MENTION_TOKEN_PATTERN.sub("", text).strip()
+    # Drop the leading "@handle" that addressed this agent before echoing: a
+    # handle in the reply's text is re-resolved as a mention by the platform.
+    text = strip_leading_mentions(text).strip()
     return sender, text
 
 

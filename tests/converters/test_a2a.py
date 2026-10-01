@@ -6,7 +6,7 @@ import pytest
 from a2a.types import Task, TaskState, TaskStatus
 
 from band.converters.a2a import A2AHistoryConverter
-from band.integrations.a2a import A2AAdapter
+from band.integrations.a2a import A2AAdapter, A2AAdapterConfig
 from band.integrations.a2a.protocol import TERMINAL_TASK_STATE_NAMES
 from band.testing import FakeAgentTools
 
@@ -63,7 +63,7 @@ class TestA2AHistoryConverter:
         """The write side (adapter task events), the read side (converter) and
         the terminal-state vocabulary must agree, or rooms rejoin amnesiac or
         resubscribe to finished tasks."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         tools = FakeAgentTools()
         task = Task(
             id="task-123",

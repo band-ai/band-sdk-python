@@ -31,8 +31,10 @@ from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolSpec
 
 from band.adapters.strands import (
+    BandTurnHooks,
     CustomToolBridge,
     StrandsAdapter,
+    StrandsAdapterConfig,
     _result_text,
     _tool_result,
 )
@@ -99,7 +101,7 @@ def scripted() -> Callable[..., Awaitable[StrandsAdapter]]:
         **adapter_args: Any,
     ) -> StrandsAdapter:
         adapter = StrandsAdapter(
-            model=ScriptedStrandsModel(
+            llm=ScriptedStrandsModel(
                 turns, input_tokens=input_tokens, output_tokens=output_tokens
             ),
             **adapter_args,
@@ -160,7 +162,8 @@ class TestCustomToolWiring:
             return f"{args.city}: sunny"
 
         adapter = StrandsAdapter(
-            model="m", additional_tools=[(WeatherInput, get_weather)]
+            StrandsAdapterConfig(model="m"),
+            additional_tools=[(WeatherInput, get_weather)],
         )
 
         assert len(adapter._custom_tools) == 1
@@ -186,7 +189,9 @@ class TestCustomToolWiring:
 
         finish.band_terminal = True  # type: ignore[attr-defined]
 
-        adapter = StrandsAdapter(model="m", additional_tools=[(DoneInput, finish)])
+        adapter = StrandsAdapter(
+            StrandsAdapterConfig(model="m"), additional_tools=[(DoneInput, finish)]
+        )
 
         assert adapter._custom_effects == {"done": TurnEffect.ACT}
 
@@ -199,13 +204,18 @@ class TestCustomToolWiring:
             return "hijacked"
 
         with pytest.raises(ValueError, match="band_send_message"):
-            StrandsAdapter(model="m", additional_tools=[band_send_message])
+            StrandsAdapter(
+                StrandsAdapterConfig(model="m"), additional_tools=[band_send_message]
+            )
 
     def test_unnamed_custom_tool_is_rejected(self):
-        adapter_args = {"model": "m", "additional_tools": [partial(lambda x: x, 1)]}
+        unnamed = partial(lambda x: x, 1)
 
         with pytest.raises(ValueError, match="has no name"):
-            StrandsAdapter(**adapter_args)  # type: ignore[arg-type]
+            StrandsAdapter(
+                StrandsAdapterConfig(model="m"),
+                additional_tools=[unnamed],
+            )
 
     def test_terminal_marker_captured_from_native_tool(self):
         @strands_tool
@@ -215,15 +225,56 @@ class TestCustomToolWiring:
 
         native_finish.band_terminal = True  # type: ignore[attr-defined]
 
-        adapter = StrandsAdapter(model="m", additional_tools=[native_finish])
+        adapter = StrandsAdapter(
+            StrandsAdapterConfig(model="m"), additional_tools=[native_finish]
+        )
 
         assert adapter._custom_effects == {"native_finish": TurnEffect.ACT}
+
+
+async def _turn_agent(adapter: StrandsAdapter) -> Any:
+    """The Strands agent the adapter builds for one turn."""
+    await adapter.on_started("Bot", "A bot")
+    tools = FakeAgentTools()
+    hooks = BandTurnHooks(tools, emit_execution=False, custom_effects={})
+    return adapter._build_agent([], tools, hooks)
+
+
+class TestModelSource:
+    @pytest.mark.asyncio
+    async def test_turn_agent_runs_the_configured_model_id(self):
+        adapter = StrandsAdapter(StrandsAdapterConfig(model="my-bedrock-id"))
+
+        agent = await _turn_agent(adapter)
+
+        assert agent.model.config["model_id"] == "my-bedrock-id"
+
+    @pytest.mark.asyncio
+    async def test_turn_agent_runs_the_live_llm(self):
+        llm = ScriptedStrandsModel([SEND_TURN])
+        adapter = StrandsAdapter(llm=llm)
+
+        agent = await _turn_agent(adapter)
+
+        assert agent.model is llm
+
+    @pytest.mark.parametrize(
+        ("config", "llm"),
+        [
+            (None, None),
+            (StrandsAdapterConfig(model="m"), ScriptedStrandsModel([SEND_TURN])),
+        ],
+        ids=["neither", "both"],
+    )
+    def test_requires_exactly_one_model_source(self, config, llm):
+        with pytest.raises(ValueError, match="Set exactly one of config.model or llm"):
+            StrandsAdapter(config, llm=llm)
 
 
 class TestToolRegistration:
     @pytest.mark.asyncio
     async def test_base_tools_only_by_default(self):
-        adapter = StrandsAdapter(model="m")
+        adapter = StrandsAdapter(StrandsAdapterConfig(model="m"))
         await adapter.on_started("Bot", "A bot")
 
         names = {t.tool_name for t in adapter._build_platform_tools(FakeAgentTools())}
@@ -241,7 +292,7 @@ class TestToolRegistration:
     @pytest.mark.asyncio
     async def test_capability_gated_tools_registered(self):
         adapter = StrandsAdapter(
-            model="m",
+            StrandsAdapterConfig(model="m"),
             capabilities=Capability.MEMORY | Capability.CONTACTS,
         )
         await adapter.on_started("Bot", "A bot")
@@ -253,7 +304,7 @@ class TestToolRegistration:
     @pytest.mark.asyncio
     async def test_platform_tool_descriptions_from_registry(self):
 
-        adapter = StrandsAdapter(model="m")
+        adapter = StrandsAdapter(StrandsAdapterConfig(model="m"))
         await adapter.on_started("Bot", "A bot")
 
         by_name = {
@@ -268,8 +319,7 @@ class TestToolRegistration:
     async def test_excluded_tools_never_reach_the_model(self):
         """Reaching a tool is enough to execute it, so a filter must apply here."""
         adapter = StrandsAdapter(
-            model="m",
-            exclude_tools=["band_remove_participant"],
+            StrandsAdapterConfig(model="m"), exclude_tools=["band_remove_participant"]
         )
         await adapter.on_started("Bot", "A bot")
 
@@ -285,7 +335,7 @@ class TestToolRegistration:
         Tools are rebuilt per turn, so a schema shared between turns would carry
         one turn's framework normalization into the next.
         """
-        adapter = StrandsAdapter(model="m")
+        adapter = StrandsAdapter(StrandsAdapterConfig(model="m"))
         await adapter.on_started("Bot", "A bot")
 
         def send_properties(turn_tools: list) -> dict:
@@ -305,9 +355,11 @@ class TestPromptConfiguration:
     @pytest.mark.asyncio
     async def test_explicit_system_prompt_overrides_rendered_prompt(self):
         adapter = StrandsAdapter(
-            model="m",
-            system_prompt="Use only the requested tools.",
-            custom_section="This must not be appended.",
+            StrandsAdapterConfig(
+                model="m",
+                system_prompt="Use only the requested tools.",
+                custom_section="This must not be appended.",
+            )
         )
 
         await adapter.on_started("Bot", "A bot")
@@ -316,7 +368,9 @@ class TestPromptConfiguration:
 
     @pytest.mark.asyncio
     async def test_custom_section_is_included_in_rendered_prompt(self):
-        adapter = StrandsAdapter(model="m", custom_section="Keep replies concise.")
+        adapter = StrandsAdapter(
+            StrandsAdapterConfig(model="m", custom_section="Keep replies concise.")
+        )
 
         await adapter.on_started("Bot", "A bot")
 
@@ -370,10 +424,7 @@ class TestOpenAIRehydration:
         self, history_converter, tools
     ):
         model = self.RecordingOpenAIModel()
-        adapter = StrandsAdapter(
-            model=model,
-            history_converter=history_converter,
-        )
+        adapter = StrandsAdapter(llm=model, history_converter=history_converter)
         await adapter.on_started("Bot", "A bot")
 
         await adapter.on_event(
@@ -686,7 +737,7 @@ class TestUsageMapping:
 class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_unknown_room_is_noop(self):
-        adapter = StrandsAdapter(model="m")
+        adapter = StrandsAdapter(StrandsAdapterConfig(model="m"))
         await adapter.on_cleanup("never-seen-room")  # must not raise
 
     @pytest.mark.asyncio
@@ -788,7 +839,7 @@ class TestSendRoomFileArgsRedaction:
         reporting has no idea this one tool's content argument can carry up
         to MAX_SEND_CONTENT_BYTES of real file data."""
         adapter = StrandsAdapter(
-            model=ScriptedStrandsModel(
+            llm=ScriptedStrandsModel(
                 (
                     ToolTurn(
                         "band_send_room_file",

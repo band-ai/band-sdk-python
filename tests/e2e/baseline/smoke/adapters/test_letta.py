@@ -80,7 +80,7 @@ async def test_reply_arrives_via_mcp_send_tool(
     """
     identity = await cell.provision()
     adapter = cell.build()
-    adapter.config.auto_relay = False
+    adapter.config = adapter.config.model_copy(update={"auto_relay": False})
     room_id = await resource_manager.provision_room(
         title="e2e-letta-mcp-send", participants=[identity.id]
     )

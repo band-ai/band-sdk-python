@@ -11,6 +11,8 @@ from typing import Any, cast
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, JsonValue
 
+from band.runtime.tools import mcp_tool_spelling
+
 
 class ACPStopReason(StrEnum):
     """Terminal stop reasons the Band ACP server can return."""
@@ -103,20 +105,22 @@ class ACPToolCall:
         (e.g. Copilot's ``band-band_send_message``) at construction, so the
         canonical name is the only one the object ever carries.
         """
-        name = str(
-            getattr(tool_call, "title", None) or getattr(tool_call, "name", "unknown")
+        raw_input = getattr(tool_call, "raw_input", None)
+        name, arguments = _mcp_invocation(raw_input) or (
+            str(
+                getattr(tool_call, "title", None)
+                or getattr(tool_call, "name", "unknown")
+            ),
+            cast(dict[str, JsonValue], raw_input)
+            if isinstance(raw_input, dict)
+            else {},
         )
         if canonicalize is not None:
             name = canonicalize(name)
-        raw_input = getattr(tool_call, "raw_input", None)
         return cls(
             tool_call_id=str(getattr(tool_call, "tool_call_id", "")),
             name=name,
-            arguments=(
-                cast(dict[str, JsonValue], raw_input)
-                if isinstance(raw_input, dict)
-                else {}
-            ),
+            arguments=arguments,
         )
 
     def room_event(self) -> ToolCallRoomEvent:
@@ -126,6 +130,27 @@ class ACPToolCall:
             args=self.arguments,
             tool_call_id=self.tool_call_id,
         )
+
+
+_MCP_INVOCATION_KEYS = frozenset({"server", "tool", "arguments"})
+
+
+def _mcp_invocation(
+    raw_input: object,
+) -> tuple[str, dict[str, JsonValue]] | None:
+    """Name and arguments of an MCP call reported as ``rawInput = {server, tool,
+    arguments}`` (codex-acp), whose title is only a display string."""
+    if not isinstance(raw_input, dict) or raw_input.keys() != _MCP_INVOCATION_KEYS:
+        return None
+    server, tool, arguments = (
+        raw_input["server"],
+        raw_input["tool"],
+        raw_input["arguments"],
+    )
+    if not isinstance(server, str) or not isinstance(tool, str):
+        return None
+    args = cast(dict[str, JsonValue], arguments) if isinstance(arguments, dict) else {}
+    return mcp_tool_spelling(server, tool), args
 
 
 @dataclass

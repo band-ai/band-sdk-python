@@ -60,7 +60,7 @@ class TestAgentCreateContactConfig:
         """Agent should pass contact_config to PlatformRuntime."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.HUB_ROOM,
-            hub_task_id="my-hub-task",
+            hub_task_id="550e8400-e29b-41d4-a716-446655440000",
             broadcast_changes=True,
         )
 
@@ -74,7 +74,7 @@ class TestAgentCreateContactConfig:
         # Verify config is passed through
         runtime_config = agent.runtime._contact_config
         assert runtime_config.strategy == ContactEventStrategy.HUB_ROOM
-        assert runtime_config.hub_task_id == "my-hub-task"
+        assert runtime_config.hub_task_id == "550e8400-e29b-41d4-a716-446655440000"
         assert runtime_config.broadcast_changes is True
 
 

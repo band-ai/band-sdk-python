@@ -11,12 +11,15 @@ import pytest
 from acp.exceptions import RequestError
 from acp.helpers import update_agent_message_text
 from acp.schema import (
+    McpServerStdio,
     NewSessionResponse,
     PermissionOption,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
+    SseMcpServer,
 )
+from pydantic import ValidationError
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.exceptions import BandConfigError
@@ -25,6 +28,7 @@ from band.core.types import Capability, Emit
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
+    ACPClientAdapterConfig,
     ACPPermissionRequest,
     _resolve_launcher,
 )
@@ -38,10 +42,15 @@ from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
 from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
-from tests.integrations.acp.acp_toolkit.harness import inject_acp_spawn
+from tests.integrations.acp.acp_toolkit.harness import (
+    Launch,
+    inject_acp_spawn,
+    launch_for,
+)
 from tests.integrations.acp.conftest import make_platform_message
 
 _MOCK_ROOM = "room-123"
+CODEX = ACPClientAdapterConfig(command="codex")
 
 
 def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
@@ -63,100 +72,115 @@ def metadata_values(events: list[dict[str, object]], key: str) -> list[object]:
     return [event["metadata"][key] for event in events]
 
 
-class TestACPClientAdapterInit:
-    """Tests for ACPClientAdapter initialization."""
+class TestACPClientAdapterConfig:
+    """The settings ``ACPClientAdapterConfig`` validates and the launch they produce."""
 
-    def test_init_string_command(self) -> None:
-        """Should accept string command."""
-        adapter = ACPClientAdapter(command="codex")
-        assert adapter._command == ["codex"]
+    @pytest.mark.asyncio
+    async def test_a_string_command_launches_as_one_argument(
+        self, tmp_path: Path
+    ) -> None:
+        adapter = ACPClientAdapter(CODEX, workspace_for_room=lambda _: str(tmp_path))
 
-    def test_init_list_command(self) -> None:
-        """Should accept list command."""
-        adapter = ACPClientAdapter(command=["gemini", "cli"])
-        assert adapter._command == ["gemini", "cli"]
+        launch = await launch_for(adapter)
 
-    def test_init_default_values(self) -> None:
-        """Should initialize with default values."""
-        adapter = ACPClientAdapter(command="codex")
-        assert adapter._env is None
-        assert adapter._mcp_servers == []
+        assert launch.command == ("codex",)
+
+    @pytest.mark.asyncio
+    async def test_settings_reach_the_launched_agent(self, tmp_path: Path) -> None:
+        config = ACPClientAdapterConfig(
+            command=["gemini", "cli"],
+            env={"API_KEY": "test"},
+            auth_method="api_key",
+            use_unstable_protocol=True,
+        )
+        adapter = ACPClientAdapter(config, workspace_for_room=lambda _: str(tmp_path))
+
+        launch = await launch_for(adapter)
+
+        assert launch == Launch(
+            command=("gemini", "cli"),
+            env={"API_KEY": "test"},
+            cwd=str(tmp_path),
+            use_unstable_protocol=True,
+            auth_method="api_key",
+            client_capabilities=None,
+        )
+
+    def test_command_is_required(self) -> None:
+        with pytest.raises(ValidationError, match="command\n  Field required"):
+            ACPClientAdapterConfig.model_validate({})
+
+    @pytest.mark.parametrize("command", [[], ""])
+    def test_an_empty_command_is_rejected(self, command: list[str] | str) -> None:
+        with pytest.raises(ValueError, match="ACP stdio transport requires a command"):
+            ACPClientAdapterConfig(command=command)
+
+    @pytest.mark.parametrize(
+        "setting",
+        [{"host": "10.0.0.5", "port": 8080}, {"host": "10.0.0.5"}, {"port": 8080}],
+        ids=["host-and-port", "host", "port"],
+    )
+    def test_a_shared_tcp_process_is_rejected(self, setting: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="TCP ACP transport cannot guarantee"):
+            ACPClientAdapterConfig.model_validate({"command": "codex", **setting})
+
+    def test_host_mcp_servers_load_as_acp_servers(self) -> None:
+        config = ACPClientAdapterConfig.model_validate(
+            {
+                "command": "codex",
+                "mcp_servers": [
+                    {"name": "fs", "command": "npx", "args": ["fs"], "env": []},
+                    {
+                        "type": "sse",
+                        "name": "band",
+                        "url": "http://h/sse",
+                        "headers": [],
+                    },
+                ],
+            }
+        )
+
+        assert config.mcp_servers == (
+            McpServerStdio(name="fs", command="npx", args=["fs"], env=[]),
+            SseMcpServer(type="sse", name="band", url="http://h/sse", headers=[]),
+        )
+
+    def test_a_malformed_mcp_server_fails_at_load_not_at_session_start(self) -> None:
+        with pytest.raises(ValidationError, match="mcp_servers.0"):
+            ACPClientAdapterConfig.model_validate(
+                {"command": "codex", "mcp_servers": [{"name": "fs"}]}
+            )
+
+    @pytest.mark.parametrize("turn_timeout_s", [0, -1.0])
+    def test_turn_timeout_must_be_positive(self, turn_timeout_s: float) -> None:
+        with pytest.raises(ValueError, match="greater than 0"):
+            ACPClientAdapterConfig(command="codex", turn_timeout_s=turn_timeout_s)
+
+    def test_a_typed_selection_and_a_resolver_are_exclusive(self) -> None:
+        config = ACPClientAdapterConfig(command="codex", reasoning_effort="high")
+
+        with pytest.raises(ValueError, match="not both"):
+            ACPClientAdapter(config, resolve_session_config=AsyncMock())
+
+    def test_a_custom_transport_is_rejected(self) -> None:
+        with pytest.raises(
+            ValueError,
+            match="custom ACP transports cannot guarantee room process isolation",
+        ):
+            ACPClientAdapter(CODEX, spawn_process=object())
+
+    def test_starts_with_no_room_state(self) -> None:
+        adapter = ACPClientAdapter(CODEX)
+
         assert adapter._runtimes == {}
         assert adapter._room_workspaces == {}
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._band_mcp_backend is None
 
-    def test_init_cwd_is_rejected(self) -> None:
-        """Per-room workspaces replaced the adapter-wide cwd knob."""
-        with pytest.raises(ValueError, match="cwd is not supported"):
-            ACPClientAdapter(command="codex", cwd="/workspace")
-
-    def test_init_with_custom_values(self) -> None:
-        """Should accept custom configuration."""
-        adapter = ACPClientAdapter(
-            command="codex",
-            env={"API_KEY": "test"},
-            mcp_servers=[{"type": "stdio", "command": "server"}],
-        )
-        assert adapter._env == {"API_KEY": "test"}
-        assert len(adapter._mcp_servers) == 1
-
-    def test_init_sets_history_converter(self) -> None:
-        """Should set ACPClientHistoryConverter."""
-        adapter = ACPClientAdapter(command="codex")
-        assert adapter.history_converter is not None
-
 
 class TestACPClientAdapterTransport:
-    """Tests for stdio transport validation and rejected legacy knobs."""
-
-    def test_stdio_construction(self) -> None:
-        adapter = ACPClientAdapter(command="copilot")
-        assert adapter._command == ["copilot"]
-
-    def test_requires_command(self) -> None:
-        with pytest.raises(ValueError, match="ACP stdio transport requires a command"):
-            ACPClientAdapter()
-
-    def test_empty_command_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="ACP stdio transport requires a command"):
-            ACPClientAdapter(command=[])
-        with pytest.raises(ValueError, match="ACP stdio transport requires a command"):
-            ACPClientAdapter(command="")
-
-    def test_rejects_tcp_transport(self) -> None:
-        with pytest.raises(
-            ValueError,
-            match="TCP ACP transport cannot guarantee room process isolation",
-        ):
-            ACPClientAdapter(host="10.0.0.5", port=8080)
-
-    def test_rejects_partial_tcp_config(self) -> None:
-        with pytest.raises(
-            ValueError,
-            match="TCP ACP transport cannot guarantee room process isolation",
-        ):
-            ACPClientAdapter(host="10.0.0.5")
-        with pytest.raises(
-            ValueError,
-            match="TCP ACP transport cannot guarantee room process isolation",
-        ):
-            ACPClientAdapter(port=8080)
-
-    def test_rejects_command_and_tcp_together(self) -> None:
-        with pytest.raises(
-            ValueError,
-            match="TCP ACP transport cannot guarantee room process isolation",
-        ):
-            ACPClientAdapter(command="copilot", host="10.0.0.5", port=8080)
-
-    def test_rejects_spawn_process_constructor(self) -> None:
-        with pytest.raises(
-            ValueError,
-            match="custom ACP transports cannot guarantee room process isolation",
-        ):
-            ACPClientAdapter(command="codex", spawn_process=object())
+    """Tests for the injected stdio transport seam."""
 
     @pytest.mark.asyncio
     async def test_injected_spawn_used_on_connection_start(
@@ -167,7 +191,7 @@ class TestACPClientAdapterTransport:
         with patch(
             "band.integrations.acp.client_adapter.shutil.which", return_value=None
         ):
-            adapter = ACPClientAdapter(command="codex")
+            adapter = ACPClientAdapter(CODEX)
             inject_acp_spawn(adapter, transport)
             await adapter.on_started("Codex", "Codex bridge")
             runtime = await adapter._runtime_for("room-1")
@@ -183,7 +207,7 @@ class TestACPClientAdapterTransport:
         transport = make_acp_transport()
         workspace = tmp_path / "acp-room"
         adapter = ACPClientAdapter(
-            command="codex",
+            ACPClientAdapterConfig(command="codex"),
             workspace_for_room=lambda _room_id: str(workspace),
         )
         inject_acp_spawn(adapter, transport)
@@ -206,7 +230,9 @@ class TestACPClientAdapterShutdown:
         self, make_acp_transport
     ) -> None:
         transport = make_acp_transport()
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         inject_acp_spawn(adapter, transport)
         await adapter.on_started("Codex", "bridge")
         runtime = await adapter._runtime_for("room-1")
@@ -228,7 +254,7 @@ class TestACPClientAdapterShutdown:
         connection self-heals unconditionally; the MCP backend must too, or a
         perfectly healthy restarted adapter can never call a Band tool again."""
         transport = make_acp_transport()
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         inject_acp_spawn(adapter, transport)
         await adapter.on_started("Codex", "bridge")
         runtime = await adapter._runtime_for("room-1")
@@ -252,7 +278,7 @@ class TestACPClientAdapterLocalMcpConfig:
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_http_config(self) -> None:
         """Should expose a shared local HTTP MCP server for Band tools."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
         backend = MagicMock(local_server=mock_server)
 
@@ -272,7 +298,7 @@ class TestACPClientAdapterLocalMcpConfig:
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_sse_config(self) -> None:
         """Should expose shared SSE when the ACP agent only supports SSE MCP."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = adapter._build_runtime()
         runtime._agent_mcp_transport = "sse"
         adapter._runtimes["room-1"] = runtime
@@ -297,7 +323,7 @@ class TestACPClientAdapterLocalMcpConfig:
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:
         """Should start the shared Band MCP server only once."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
         backend = MagicMock(local_server=mock_server)
 
@@ -315,7 +341,7 @@ class TestACPClientAdapterLocalMcpConfig:
     async def test_concurrent_first_turns_share_one_backend(self) -> None:
         """Two rooms' concurrent first turns must not each start a backend —
         the loser would leak a running LocalMCPServer (started, never stopped)."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
 
         async def slow_create(**kwargs: object) -> MagicMock:
@@ -337,7 +363,7 @@ class TestACPClientAdapterLocalMcpConfig:
     async def test_final_cleanup_blocks_backend_recreation(self) -> None:
         """A turn arriving after real shutdown must fail loudly, not leak a
         fresh LocalMCPServer nothing will ever stop again."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
@@ -360,7 +386,7 @@ class TestACPClientAdapterLocalMcpConfig:
         """The on_message error path's ``stop()`` tears down to recover a wedged
         turn, not to end the adapter -- a later turn on any room must still be
         able to self-heal by starting a fresh backend."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
@@ -385,7 +411,7 @@ class TestACPClientAdapterLocalMcpConfig:
         adapter call -- the next turn's cache read must notice via
         ``is_running`` and self-heal, instead of handing every later room the
         same dead host/port until a tool call times out."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         crashed_backend = MagicMock(
             local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"),
             is_running=False,
@@ -413,7 +439,7 @@ class TestACPClientAdapterLocalMcpConfig:
         bootstrap is genuinely parked on ``_mcp_backend_lock`` (not just
         sequenced after) while real shutdown holds it -- it must wake to a
         raise, never a backend that outlives shutdown unstopped."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
 
         async def slow_stop() -> None:
@@ -454,8 +480,7 @@ class TestACPClientAdapterLocalMcpConfig:
     async def test_memory_tools_registered_when_declared(self) -> None:
         """Declared MEMORY capability puts its tool group on the loopback server."""
         adapter = ACPClientAdapter(
-            command="codex",
-            capabilities=Capability.MEMORY,
+            ACPClientAdapterConfig(command="codex"), capabilities=Capability.MEMORY
         )
         assert "band_store_memory" in await self._registered_tool_names(adapter)
 
@@ -463,9 +488,7 @@ class TestACPClientAdapterLocalMcpConfig:
     async def test_memory_tools_absent_without_declaration(self) -> None:
         """Undeclared MEMORY keeps its tool group off the server (an
         enterprise feature the adapter must opt into)."""
-        registered = await self._registered_tool_names(
-            ACPClientAdapter(command="codex")
-        )
+        registered = await self._registered_tool_names(ACPClientAdapter(CODEX))
         assert "band_store_memory" not in registered
         assert "band_send_message" in registered
 
@@ -474,14 +497,12 @@ class TestACPClientAdapterLocalMcpConfig:
         """Contact tools stay unconditionally registered — the pre-existing
         default every caller without ``features=`` (every ACP example) relies
         on. Only memory is capability-gated."""
-        registered = await self._registered_tool_names(
-            ACPClientAdapter(command="codex")
-        )
+        registered = await self._registered_tool_names(ACPClientAdapter(CODEX))
         assert "band_list_contacts" in registered
 
     def test_build_system_context_mentions_band_tools(self) -> None:
         """Should keep ACP system context minimal and room-aware."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         adapter.agent_name = "ACP Bridge"
         adapter.agent_description = "Bridge to ACP agents"
         msg = make_platform_message(
@@ -504,7 +525,9 @@ class TestACPClientAdapterLocalMcpConfig:
 
     def test_build_system_context_defers_to_external_mcp_tool_schema(self) -> None:
         """The room value is supplied without assuming a remote tool's field name."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         adapter.agent_name = "ACP Bridge"
         adapter.agent_description = "Bridge to ACP agents"
         msg = make_platform_message("Hello", room_id="room-123")
@@ -528,7 +551,7 @@ class TestACPClientAdapterOnStarted:
     ) -> None:
         """A room runtime's own start() spawns the process and initializes it."""
         transport = make_acp_transport()
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         inject_acp_spawn(adapter, transport)
         await adapter.on_started("Codex Bridge", "Bridge to Codex")
         runtime = await adapter._runtime_for("room-1")
@@ -548,7 +571,9 @@ class TestACPClientAdapterOnStarted:
         connection options.
         """
         transport = make_acp_transport()
-        adapter = ACPClientAdapter(command=["npx", "@zed-industries/codex-acp"])
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command=["npx", "@zed-industries/codex-acp"])
+        )
         inject_acp_spawn(adapter, transport)
         await adapter.on_started("Codex Bridge", "Bridge to Codex")
         runtime = await adapter._runtime_for("room-1")
@@ -570,7 +595,9 @@ class TestACPClientAdapterOnStarted:
         with patch(
             "band.integrations.acp.client_adapter.shutil.which", return_value=None
         ):
-            adapter = ACPClientAdapter(command=["npx", "@zed-industries/codex-acp"])
+            adapter = ACPClientAdapter(
+                ACPClientAdapterConfig(command=["npx", "@zed-industries/codex-acp"])
+            )
             inject_acp_spawn(adapter, transport)
             await adapter.on_started("Codex Bridge", "Bridge to Codex")
             runtime = await adapter._runtime_for("room-1")
@@ -583,7 +610,7 @@ class TestACPClientAdapterOnStarted:
     @pytest.mark.asyncio
     async def test_on_started_stores_agent_info(self, make_acp_transport) -> None:
         """Should store agent name and description."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
 
         await adapter.on_started("Test Agent", "A test agent")
 
@@ -595,7 +622,7 @@ class TestACPClientAdapterOnStarted:
         self, make_acp_transport
     ) -> None:
         """Should select HTTP MCP when the ACP agent advertises it."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         inject_acp_spawn(adapter, make_acp_transport(http=True, sse=True))
         await adapter.on_started("Test Agent", "A test agent")
         runtime = await adapter._runtime_for("room-1")
@@ -608,7 +635,7 @@ class TestACPClientAdapterOnStarted:
         self, make_acp_transport
     ) -> None:
         """Should fall back to SSE MCP when that's all the ACP agent supports."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         inject_acp_spawn(adapter, make_acp_transport(http=False, sse=True))
         await adapter.on_started("Test Agent", "A test agent")
         runtime = await adapter._runtime_for("room-1")
@@ -623,7 +650,9 @@ class TestACPClientAdapterOnMessage:
     @pytest.fixture
     async def adapter_with_mocks(self) -> ACPClientAdapter:
         """Create adapter with mocked ACP connection for one room."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         runtime = await adapter._runtime_for(_MOCK_ROOM)
 
         runtime._conn = AsyncMock()
@@ -917,7 +946,9 @@ class TestACPClientAdapterOnMessage:
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """The adapter's own deadline reports once and remains retryable."""
-        adapter_with_mocks._turn_timeout_s = 0.01
+        adapter_with_mocks.config = adapter_with_mocks.config.model_copy(
+            update={"turn_timeout_s": 0.01}
+        )
 
         async def slow_prompt(**_: object) -> None:
             await asyncio.sleep(1)
@@ -1029,7 +1060,9 @@ class TestACPClientAdapterOnMessage:
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """STOP during timeout cleanup still finishes session/cancel and failure."""
-        adapter_with_mocks._turn_timeout_s = 0.05
+        adapter_with_mocks.config = adapter_with_mocks.config.model_copy(
+            update={"turn_timeout_s": 0.05}
+        )
         cancel_started = asyncio.Event()
         release_cancel = asyncio.Event()
 
@@ -1075,7 +1108,9 @@ class TestACPClientAdapterOnMessage:
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """A second STOP during drain still finishes session/cancel and failure."""
-        adapter_with_mocks._turn_timeout_s = 0.05
+        adapter_with_mocks.config = adapter_with_mocks.config.model_copy(
+            update={"turn_timeout_s": 0.05}
+        )
         cancel_started = asyncio.Event()
         release_cancel = asyncio.Event()
 
@@ -1149,7 +1184,7 @@ class TestACPClientAdapterOnMessage:
     @pytest.mark.asyncio
     async def test_runtime_rejects_calls_when_respawn_is_disabled(self) -> None:
         """A runtime only rejects an unstarted connection when respawn is disabled."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = await adapter._runtime_for("room-123")
 
         with pytest.raises(RuntimeError, match="ACP client not initialized"):
@@ -1162,7 +1197,9 @@ class TestACPClientAdapterPermissionHandler:
     @pytest.fixture
     async def adapter_with_mocks(self) -> ACPClientAdapter:
         """Create adapter with mocked ACP connection for one room."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         runtime = await adapter._runtime_for(_MOCK_ROOM)
 
         runtime._conn = AsyncMock()
@@ -1209,7 +1246,9 @@ class TestACPClientAdapterPermissionHandler:
             received.append(request)
             return "reject"
 
-        adapter = ACPClientAdapter(command="codex", resolve_permission=resolve)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex"), resolve_permission=resolve
+        )
         option_id = await adapter._resolve_permission_option(
             call=ACPToolCall("call-1", "write_file", {}),
             options=(
@@ -1232,7 +1271,9 @@ class TestACPClientAdapterPermissionHandler:
         async def resolve(_request: ACPPermissionRequest) -> str:
             return "missing"
 
-        adapter = ACPClientAdapter(command="codex", resolve_permission=resolve)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex"), resolve_permission=resolve
+        )
         with pytest.raises(ValueError, match="unavailable option"):
             await adapter._resolve_permission_option(
                 call=ACPToolCall("call-1", "write_file", {}),
@@ -1579,7 +1620,7 @@ class TestACPClientAdapterCleanup:
     @pytest.mark.asyncio
     async def test_on_cleanup_removes_mapping(self) -> None:
         """Should remove room -> session mapping."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         adapter._room_to_session["room-123"] = "session-123"
         adapter._room_tools["room-123"] = MagicMock()
         local_server = MagicMock()
@@ -1597,14 +1638,14 @@ class TestACPClientAdapterCleanup:
     @pytest.mark.asyncio
     async def test_on_cleanup_idempotent(self) -> None:
         """Should handle cleanup of non-existent room."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
 
         await adapter.on_cleanup("nonexistent-room")
 
     @pytest.mark.asyncio
     async def test_on_cleanup_twice(self) -> None:
         """Should handle cleanup called twice."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         adapter._room_to_session["room-123"] = "session-123"
 
         await adapter.on_cleanup("room-123")
@@ -1618,7 +1659,7 @@ class TestACPClientAdapterCleanup:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = await adapter._runtime_for("room-1")
         blocked_close = asyncio.Event()
 
@@ -1638,7 +1679,7 @@ class TestACPClientAdapterCleanup:
 
     @pytest.mark.asyncio
     async def test_cancelled_fresh_session_does_not_wait_to_close(self) -> None:
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = await adapter._runtime_for("room-1")
         initialization_started = asyncio.Event()
         close_started = asyncio.Event()
@@ -1674,7 +1715,7 @@ class TestACPClientAdapterCleanup:
     @pytest.mark.asyncio
     async def test_cancelled_fresh_session_close_is_tracked_not_lost(self) -> None:
         """The background close task is retained, not a bare, unreferenced task."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = await adapter._runtime_for("room-1")
         initialization_started = asyncio.Event()
         release_close = asyncio.Event()
@@ -1707,7 +1748,7 @@ class TestACPClientAdapterCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_all_waits_for_background_close_tasks(self) -> None:
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = await adapter._runtime_for("room-1")
         initialization_started = asyncio.Event()
         close_finished = asyncio.Event()
@@ -1743,7 +1784,7 @@ class TestACPClientAdapterStop:
     @pytest.mark.asyncio
     async def test_stop_closes_connection(self) -> None:
         """Should close ACP connection gracefully."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = adapter._build_runtime()
         mock_ctx = MagicMock()
         mock_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -1777,7 +1818,7 @@ class TestACPClientAdapterStop:
     @pytest.mark.asyncio
     async def test_stop_no_connection(self) -> None:
         """Should handle stop when not connected."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         local_server = MagicMock()
         local_server.stop = AsyncMock()
         backend = MagicMock(local_server=local_server)
@@ -1791,7 +1832,7 @@ class TestACPClientAdapterStop:
     @pytest.mark.asyncio
     async def test_stop_handles_exit_error(self) -> None:
         """Should handle errors during shutdown."""
-        adapter = ACPClientAdapter(command="codex")
+        adapter = ACPClientAdapter(CODEX)
         runtime = adapter._build_runtime()
         runtime._ctx = AsyncMock()
         runtime._ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("Cleanup error"))
@@ -2128,7 +2169,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
     @pytest.mark.asyncio
     async def test_prompt_error_clears_connection(self) -> None:
         """Should stop connection on prompt error so next message respawns."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         runtime = await adapter._runtime_for("room-1")
         runtime._conn = AsyncMock()
         runtime._conn.prompt = AsyncMock(side_effect=RuntimeError("Process died"))
@@ -2167,7 +2210,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
         """The agent answered fine; posting its reply to the room is what
         failed. That must not tear down and respawn a healthy connection,
         nor be reported as an ACP provider failure."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         runtime = await adapter._runtime_for("room-1")
         runtime._conn = AsyncMock()
         mock_session = MagicMock()
@@ -2214,7 +2259,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
     @pytest.mark.asyncio
     async def test_session_bookkeeping_failure_leaves_connection_up(self) -> None:
         """A failed session task event must not turn a completed prompt into an ACP failure."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         runtime = await adapter._runtime_for("room-1")
         runtime._conn = AsyncMock()
         mock_session = MagicMock()
@@ -2249,7 +2296,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
     async def test_turn_timeout_preserves_other_room_connection(self) -> None:
         """A timed-out room must not interrupt another room's prompt."""
         adapter = ACPClientAdapter(
-            command="codex", inject_band_tools=False, turn_timeout_s=1
+            ACPClientAdapterConfig(
+                command="codex", inject_band_tools=False, turn_timeout_s=1
+            )
         )
         runtime_a = await adapter._runtime_for("room-a")
         conn_a = AsyncMock()
@@ -2295,7 +2344,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
             )
         )
         await b_started.wait()
-        adapter._turn_timeout_s = 0.01
+        adapter.config = adapter.config.model_copy(update={"turn_timeout_s": 0.01})
 
         tools_a = FakeAgentTools()
 
@@ -2322,22 +2371,6 @@ class TestACPClientAdapterDeadConnectionRecovery:
 
         release_b.set()
         await b_turn
-
-
-class TestACPClientAdapterInjectToolsConfig:
-    """Tests for inject_band_tools configuration."""
-
-    def test_inject_tools_stays_enabled_without_extra_credentials(self) -> None:
-        """Should not require adapter-specific credentials to inject tools."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=True)
-
-        assert adapter._inject_band_tools
-
-    def test_inject_tools_can_be_disabled_explicitly(self) -> None:
-        """Should respect inject_band_tools=False."""
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
-
-        assert not adapter._inject_band_tools
 
 
 class TestResolveLauncher:
@@ -2484,7 +2517,7 @@ class TestACPClientAdapterEmitSupport:
 
     def test_supported_emit_kinds_are_accepted(self) -> None:
         adapter = ACPClientAdapter(
-            command=["omp", "acp"],
+            ACPClientAdapterConfig(command=["omp", "acp"]),
             emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
         )
         assert adapter.features.emit == frozenset(
@@ -2492,9 +2525,13 @@ class TestACPClientAdapterEmitSupport:
         )
 
     def test_silence_is_accepted(self) -> None:
-        adapter = ACPClientAdapter(command=["omp", "acp"], emit=())
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command=["omp", "acp"]), emit=()
+        )
         assert adapter.features.emit == frozenset()
 
     def test_an_unsupported_emit_kind_is_rejected(self) -> None:
         with pytest.raises(BandConfigError):
-            ACPClientAdapter(command=["omp", "acp"], emit=Emit.USAGE)
+            ACPClientAdapter(
+                ACPClientAdapterConfig(command=["omp", "acp"]), emit=Emit.USAGE
+            )
