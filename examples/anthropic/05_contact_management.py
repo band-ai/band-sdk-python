@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]>=1.2.0"]
+# dependencies = ["band-sdk[anthropic]>=4.0.0"]
 # ///
 """
 Contact management example using the Anthropic adapter.
@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
+from band.core.types import Capability
 from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -53,7 +54,8 @@ async def main() -> None:
                 "You can list, add, and remove contacts, and manage contact requests.\n"
                 "Incoming contact requests are auto-approved."
             ),
-        )
+        ),
+        capabilities=Capability.CONTACTS,
     )
 
     contact_config = ContactEventConfig(

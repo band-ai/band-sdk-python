@@ -75,7 +75,7 @@ uv pip install anthropic      # or: openai, google-genai, groq, ...
 
 ## Quick Start
 
-```python
+```python notest
 # Requires: pip install 'band-sdk[agno]' anthropic   (ANTHROPIC_API_KEY set)
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
@@ -99,7 +99,10 @@ Agno is model-agnostic — swap the model and the rest is unchanged. For OpenAI:
 
 ```python
 # Requires: pip install 'band-sdk[agno]' openai   (OPENAI_API_KEY set)
+from agno.agent import Agent as AgnoAgent
 from agno.models.openai import OpenAIChat
+
+from band.adapters import AgnoAdapter
 
 agno_agent = AgnoAgent(
     model=OpenAIChat(id="gpt-4o"),
