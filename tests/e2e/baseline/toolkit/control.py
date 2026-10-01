@@ -16,7 +16,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
 
-# The runtime and execution loggers decide what a control signal does to a room.
+# Parent logger for the SDK control path; raised to DEBUG so pytest captures it.
 SDK_CONTROL_LOGGER = "band.runtime"
 
 

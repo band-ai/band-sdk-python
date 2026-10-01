@@ -266,11 +266,12 @@ def test_supersede_malformed_retry_after_normalizes_to_none() -> None:
 # --- agent.control: mode/scope are closed sets ---
 
 
-def test_agent_control_accepts_a_known_mode() -> None:
+@pytest.mark.parametrize("mode", list(ControlMode))
+def test_agent_control_accepts_a_known_mode(mode: ControlMode) -> None:
     payload = AgentControlPayload.from_wire(
-        WireEvent.AGENT_CONTROL, make_agent_control()
+        WireEvent.AGENT_CONTROL, make_agent_control(mode=mode.value)
     )
-    assert payload.mode is ControlMode.INTERRUPT
+    assert payload.mode is mode
 
 
 def test_agent_control_rejects_an_unknown_mode() -> None:

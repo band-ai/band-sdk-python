@@ -494,6 +494,10 @@ class TestACPClientAdapterLocalMcpConfig:
         system_context = adapter._build_system_context("room-123", msg)
 
         assert "Band tools" in system_context
+        assert "one-line plain text summary" in system_context
+        assert "do not post again" in system_context
+        assert "reply exactly once" not in system_context
+        assert "Never both" not in system_context
         assert "Current chat_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
         assert "Use each MCP tool's schema" in system_context
@@ -976,6 +980,48 @@ class TestACPClientAdapterOnMessage:
 
         assert prompt_cancelled.is_set()
         conn.cancel.assert_awaited_once_with("acp-session-123")
+
+    @pytest.mark.asyncio
+    async def test_timeout_cleanup_survives_outer_cancel(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """STOP during timeout cleanup still finishes session/cancel and failure."""
+        adapter_with_mocks._turn_timeout_s = 0.05
+        cancel_started = asyncio.Event()
+        release_cancel = asyncio.Event()
+
+        async def slow_prompt(**_: object) -> None:
+            await asyncio.Event().wait()
+
+        async def slow_cancel(session_id: str) -> None:
+            cancel_started.set()
+            await release_cancel.wait()
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=slow_prompt)
+        conn.cancel = AsyncMock(side_effect=slow_cancel)
+        tools = FakeAgentTools()
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await cancel_started.wait()
+        turn.cancel()
+        release_cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
 
     @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(

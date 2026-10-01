@@ -253,9 +253,10 @@ async def test_concurrent_permission_asks_are_both_answerable(asks: AskFactory) 
 
     assert await approvals.try_handle_reply("approve req-2", "user-1")
     assert await approvals.try_handle_reply("reject req-1", "user-1")
-    assert [
-        (reply["permission_id"], reply["reply"]) for reply in client.permission_replies
-    ] == [("req-2", "once"), ("req-1", "reject")]
+    assert client.permission_replies == [
+        {"permission_id": "req-2", "reply": "once"},
+        {**DECLINED, "permission_id": "req-1"},
+    ]
     # Both asks resolved, so the turn watcher is no longer parked on a human.
     assert not approvals.awaiting_human()
 
@@ -870,7 +871,9 @@ async def test_auto_decline_approval_mode() -> None:
         room_id="room-1",
     )
 
-    assert [reply["reply"] for reply in fake_client.permission_replies] == ["reject"]
+    assert fake_client.permission_replies == [
+        {**DECLINED, "permission_id": "perm-1"}
+    ]
 
 
 async def test_auto_reject_question_mode() -> None:
@@ -939,7 +942,9 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
     )
     await tools.until(lambda: len(events_of_type(tools, "error")) == 2)
 
-    assert [reply["reply"] for reply in fake_client.permission_replies] == ["reject"]
+    assert fake_client.permission_replies == [
+        {**DECLINED, "permission_id": "perm-1"}
+    ]
     assert fake_client.question_rejections == ["q-1"]
     notices = events_of_type(tools, "error")
     assert all("timed out" in notice["content"].lower() for notice in notices)

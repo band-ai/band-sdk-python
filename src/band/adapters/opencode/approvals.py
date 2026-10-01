@@ -143,15 +143,17 @@ APPROVAL_HANDLED_TEMPLATE = "OpenCode approval `{request_id}` handled with `{rep
 APPROVAL_TIMED_OUT_TEMPLATE = (
     "OpenCode approval `{request_id}` timed out and was handled with `{reply}`."
 )
-REJECTED_PERMISSION_FEEDBACK = (
-    "This request was declined. Do not retry it or try another way to do the "
-    "same thing; reply to the user instead."
-)
 APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
     "OpenCode approval `{request_id}` is no longer pending."
 )
 QUESTION_NO_LONGER_PENDING_TEMPLATE = (
     "OpenCode question `{request_id}` is no longer pending."
+)
+# Feedback carried on POST /permission/{id}/reply so OpenCode hands the turn
+# back to the model instead of ending on a bare RejectedError.
+REJECTED_PERMISSION_FEEDBACK = (
+    "This request was declined. Do not retry it or try another way to do the "
+    "same thing; reply to the user instead."
 )
 
 

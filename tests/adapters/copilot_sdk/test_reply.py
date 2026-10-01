@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import pytest
@@ -150,10 +151,23 @@ class TestReply:
         client = FakeCopilotClient(reply_content=None, turn_events=[incident()])
         adapter = await make_started_adapter(client)
 
-        with pytest.raises(RuntimeError, match="^Copilot turn produced no reply$"):
-            await run_message(adapter, ToolSchemaFakeTools())
+        tools = ToolSchemaFakeTools()
+        with (
+            caplog.at_level(logging.WARNING),
+            pytest.raises(RuntimeError, match="^Copilot turn produced no reply$"),
+        ):
+            await run_message(adapter, tools)
 
-        assert f"(incidents: {account})" in caplog.text
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+            and f"(incidents: {account})" in record.getMessage()
+        ]
+        assert len(warnings) == 1
+        failures = reported_failures(tools)
+        assert failures and failures[0]["message"] == "no assistant reply"
+        assert account not in failures[0]["message"]
 
     @pytest.mark.asyncio
     async def test_session_error_raises_reports_and_evicts(self):
