@@ -84,9 +84,7 @@ class TestSessionConfiguration:
             return {"answer": "beta", "wasFreeform": False}
 
         client = FakeCopilotClient()
-        adapter = await make_started_adapter(
-            client, CopilotSDKAdapterConfig(ask_user=ask_operator)
-        )
+        adapter = await make_started_adapter(client, ask_user=ask_operator)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -104,9 +102,7 @@ class TestSessionConfiguration:
     @pytest.mark.asyncio
     async def test_ask_user_room_registers_adapter_bridge(self):
         client = FakeCopilotClient()
-        adapter = await make_started_adapter(
-            client, CopilotSDKAdapterConfig(ask_user=ASK_USER_ROOM)
-        )
+        adapter = await make_started_adapter(client, ask_user=ASK_USER_ROOM)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -133,9 +129,14 @@ class TestSessionConfiguration:
     def test_invalid_ask_user_value_rejected(self):
         with pytest.raises(BandConfigError, match="ask_user"):
             CopilotSDKAdapter(
-                CopilotSDKAdapterConfig(ask_user="console"),  # type: ignore[arg-type]
                 client_factory=FakeCopilotClient,
+                ask_user="console",  # type: ignore[arg-type]
             )
+
+    @pytest.mark.parametrize("timeout", [0, -1.0])
+    def test_turn_timeout_must_be_positive(self, timeout: float):
+        with pytest.raises(ValueError, match="turn_timeout_s"):
+            CopilotSDKAdapterConfig(turn_timeout_s=timeout)
 
     @pytest.mark.asyncio
     async def test_byok_provider_forwarded(self):
@@ -146,7 +147,9 @@ class TestSessionConfiguration:
         )
         client = FakeCopilotClient()
         adapter = await make_started_adapter(
-            client, CopilotSDKAdapterConfig(model="gpt-4o-mini", provider=provider)
+            client,
+            CopilotSDKAdapterConfig(model="gpt-4o-mini"),
+            provider=provider,
         )
         tools = ToolSchemaFakeTools()
 

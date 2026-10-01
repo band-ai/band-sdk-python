@@ -48,7 +48,7 @@ import logging
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging, create_room_workspace_resolver
+from band import Agent, configure_logging
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
 configure_logging(
@@ -76,7 +76,7 @@ async def main() -> None:
     settings = Settings()
 
     config = CopilotACPAdapterConfig(
-        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
+        cwd=settings.acp_agent_cwd,
         github_token=settings.github_token or None,
         inject_band_tools=True,
     )

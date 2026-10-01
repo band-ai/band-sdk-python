@@ -8,6 +8,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from typing_extensions import Unpack
+
 from band.client.rest import (
     DEFAULT_REQUEST_OPTIONS,
     AsyncRestClient,
@@ -17,10 +19,11 @@ from band.client.rest import (
     ChatRoomRequest,
 )
 from band.converters.acp_server import ACPServerHistoryConverter
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import PlatformMessage
+from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.acp.event_converter import EventConverter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.platform.posting import post_event, post_message
@@ -43,6 +46,10 @@ _PROMPT_TIMEOUT_SECONDS = 300
 # Allow a short quiet period before completing a prompt so split text replies
 # can be forwarded as one logical response.
 _PROMPT_COMPLETION_GRACE_SECONDS = 0.25
+
+
+class BandACPServerAdapterConfig(BaseAdapterConfig):
+    """The ACP server adapter has no plain settings yet."""
 
 
 class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
@@ -75,17 +82,22 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     def __init__(
         self,
+        config: BandACPServerAdapterConfig | None = None,
+        *,
         rest_client: AsyncRestClient | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize ACP server adapter.
 
         Args:
+            config: The adapter's plain settings.
             rest_client: Optional ``AsyncRestClient`` injection seam (tests).
                 Normally the client is built at startup from the platform
                 connection the runtime injects — the credentials given to
                 ``Agent.create()`` are not repeated here.
         """
-        super().__init__(history_converter=ACPServerHistoryConverter())
+        super().__init__(history_converter=ACPServerHistoryConverter(), **features)
+        self.config = config or BandACPServerAdapterConfig()
 
         # Direct REST client for room/message operations; built at startup
         # from the injected platform connection unless a seam is provided.

@@ -10,14 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import warnings
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
+from pydantic import PositiveInt
 from typing_extensions import Unpack
 
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -109,6 +110,34 @@ def _silence_lite_agent_error_panel() -> None:
         logger.warning("Could not silence CrewAI LiteAgent error panel: %s", e)
 
 
+class CrewAIAdapterConfig(BaseAdapterConfig):
+    """Settings for :class:`CrewAIAdapter`.
+
+    Attributes:
+        model: CrewAI LLM model name (e.g. ``"gpt-5.4"``); API keys are read
+            from the environment by CrewAI's ``LLM`` class.
+        role: The agent's role in the crew; ``None`` uses the agent's name.
+        goal: The agent's objective; ``None`` uses the agent's description.
+        backstory: The agent's background; the platform instructions are
+            appended to it.
+        custom_section: Extra instructions added to the platform prompt.
+        verbose: Enables CrewAI's detailed logging.
+        max_iter: Maximum reasoning iterations per turn.
+        max_rpm: Maximum LLM requests per minute; ``None`` is unlimited.
+        allow_delegation: Whether CrewAI may delegate to other crew agents.
+    """
+
+    model: str = "gpt-5.4"
+    role: str | None = None
+    goal: str | None = None
+    backstory: str | None = None
+    custom_section: str | None = None
+    verbose: bool = False
+    max_iter: PositiveInt = 20
+    max_rpm: PositiveInt | None = None
+    allow_delegation: bool = False
+
+
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     """CrewAI adapter using the official CrewAI SDK.
 
@@ -117,17 +146,15 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     Example:
         adapter = CrewAIAdapter(
-            model="gpt-5.4",
-            role="Research Assistant",
-            goal="Help users find and analyze information",
-            backstory="Expert researcher with deep knowledge across domains",
+            CrewAIAdapterConfig(
+                model="gpt-5.4",
+                role="Research Assistant",
+                goal="Help users find and analyze information",
+                backstory="Expert researcher with deep knowledge across domains",
+            )
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
-
-    Note:
-        API keys are configured through environment variables as expected by
-        the CrewAI LLM class (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS})
@@ -137,66 +164,26 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     def __init__(
         self,
-        model: str = "gpt-5.4",
-        role: str | None = None,
-        goal: str | None = None,
-        backstory: str | None = None,
-        custom_section: str | None = None,
-        verbose: bool = False,
-        max_iter: int = 20,
-        max_rpm: int | None = None,
-        allow_delegation: bool = False,
+        config: CrewAIAdapterConfig | None = None,
+        *,
         history_converter: CrewAIHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        system_prompt: str | None = None,  # Deprecated
         **features: Unpack[FeatureKwargs],
     ):
         """Initialize the CrewAI adapter.
 
         Args:
-            model: Model name (e.g., "gpt-5.4", "gpt-5.4-mini", "claude-3-5-sonnet").
-                   API keys are read from environment variables by CrewAI's LLM class.
-            role: Agent's role in the crew (e.g., "Research Assistant")
-            goal: Agent's primary goal or objective
-            backstory: Agent's background and expertise description
-            custom_section: Custom instructions added to the agent's backstory
-            verbose: If True, enables detailed logging from CrewAI
-            max_iter: Maximum iterations for the agent (default: 20)
-            max_rpm: Maximum requests per minute (rate limiting)
-            allow_delegation: Whether to allow task delegation to other agents
-            history_converter: Custom history converter (optional)
-            additional_tools: List of custom tools as (InputModel, callable) tuples.
-                Each InputModel is a Pydantic model defining the tool's input schema,
-                and the callable is the function to execute (sync or async).
-            system_prompt: Deprecated. Use 'backstory' instead for prompt customization.
+            config: Agent settings; defaults to ``CrewAIAdapterConfig()``.
+            history_converter: Custom history converter (optional).
+            additional_tools: Custom tools as ``(InputModel, callable)``
+                tuples; the callable may be sync or async.
         """
-        if system_prompt is not None:
-            warnings.warn(
-                "The 'system_prompt' parameter is deprecated and will be removed in a "
-                "future version. Use 'backstory' parameter instead for prompt "
-                "customization. The CrewAI SDK uses role/goal/backstory pattern.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # If backstory not provided, use system_prompt as backstory for compatibility
-            if backstory is None:
-                backstory = system_prompt
-
         super().__init__(
             history_converter=history_converter or CrewAIHistoryConverter(),
             **features,
         )
 
-        self.model = model
-        self.role = role
-        self.goal = goal
-        self.backstory = backstory
-        self.custom_section = custom_section
-        self.verbose = verbose
-        self.max_iter = max_iter
-        self.max_rpm = max_rpm
-        self.allow_delegation = allow_delegation
-
+        self.config = config or CrewAIAdapterConfig()
         self._crewai_agent: CrewAIAgent | None = None
         self._message_history: dict[str, list[dict[str, Any]]] = {}
         self._custom_tools: list[CustomToolDef] = additional_tools or []
@@ -223,24 +210,26 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
 
-        role = self.role or agent_name
-        goal = self.goal or agent_description or "Help users accomplish their tasks"
+        role = self.config.role or agent_name
+        goal = (
+            self.config.goal or agent_description or "Help users accomplish their tasks"
+        )
 
-        if self.backstory:
+        if self.config.backstory:
             # User provided full backstory -- append capability-gated platform
             # instructions so the LLM knows about memory/contact tools if enabled.
             platform_prompt = render_system_prompt(
                 agent_name=agent_name,
                 agent_description=agent_description,
-                custom_section=self.custom_section or "",
+                custom_section=self.config.custom_section or "",
                 features=self.features,
             )
-            backstory = f"{self.backstory}\n\n{platform_prompt}"
+            backstory = f"{self.config.backstory}\n\n{platform_prompt}"
         else:
             backstory = render_system_prompt(
                 agent_name=agent_name,
                 agent_description=agent_description,
-                custom_section=self.custom_section or "",
+                custom_section=self.config.custom_section or "",
                 features=self.features,
             )
 
@@ -250,18 +239,18 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             role=role,
             goal=goal,
             backstory=backstory,
-            llm=LLM(model=self.model),
+            llm=LLM(model=self.config.model),
             tools=tools,
-            verbose=self.verbose,
-            max_iter=self.max_iter,
-            max_rpm=self.max_rpm,
-            allow_delegation=self.allow_delegation,
+            verbose=self.config.verbose,
+            max_iter=self.config.max_iter,
+            max_rpm=self.config.max_rpm,
+            allow_delegation=self.config.allow_delegation,
         )
 
         logger.info(
             "CrewAI adapter started for agent: %s (model=%s, role=%s)",
             agent_name,
-            self.model,
+            self.config.model,
             role,
         )
 
@@ -460,7 +449,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 "CrewAI",
                 detail=(
                     "Repeated tool failures may also have exhausted "
-                    f"max_iter={self.max_iter}."
+                    f"max_iter={self.config.max_iter}."
                 ),
             )
             await tools.send_failure(AgentFailure(_PROVIDER, detail))

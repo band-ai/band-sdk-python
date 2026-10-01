@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 from band.core.types import Capability
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
@@ -49,24 +49,26 @@ async def main() -> None:
     model = settings.crewai_model
 
     adapter = CrewAIAdapter(
-        model=model,
-        role="Memory-aware assistant",
-        goal=(
-            "Help users while remembering durable preferences, facts, and "
-            "reusable instructions that survive beyond the current conversation."
-        ),
-        backstory=(
-            "You support ongoing collaboration inside Band rooms and know how to "
-            "use memory tools sparingly for durable context."
-        ),
-        custom_section=(
-            "Actively look for durable information worth remembering. "
-            "When a user states a preference, profile detail, standing instruction, "
-            "important project fact, or reusable workflow, call `band_store_memory` "
-            "before replying. Use memory sparingly: do not store one-off requests, "
-            "temporary chat context, or sensitive information unless the user clearly "
-            "asks you to remember it. After storing a memory, briefly acknowledge "
-            "what you saved and continue helping the user."
+        CrewAIAdapterConfig(
+            model=model,
+            role="Memory-aware assistant",
+            goal=(
+                "Help users while remembering durable preferences, facts, and "
+                "reusable instructions that survive beyond the current conversation."
+            ),
+            backstory=(
+                "You support ongoing collaboration inside Band rooms and know how to "
+                "use memory tools sparingly for durable context."
+            ),
+            custom_section=(
+                "Actively look for durable information worth remembering. "
+                "When a user states a preference, profile detail, standing instruction, "
+                "important project fact, or reusable workflow, call `band_store_memory` "
+                "before replying. Use memory sparingly: do not store one-off requests, "
+                "temporary chat context, or sensitive information unless the user clearly "
+                "asks you to remember it. After storing a memory, briefly acknowledge "
+                "what you saved and continue helping the user."
+            ),
         ),
         capabilities=Capability.MEMORY,
     )

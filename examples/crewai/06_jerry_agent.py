@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_jerry_prompt
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -59,8 +59,10 @@ async def main() -> None:
     # Load Jerry's credentials from agent_config.yaml
     # Create adapter with Jerry's character prompt
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        custom_section=generate_jerry_prompt(args.agent_name, args.peer_name),
+        CrewAIAdapterConfig(
+            model="gpt-5.4-mini",
+            custom_section=generate_jerry_prompt(args.agent_name, args.peer_name),
+        ),
     )
 
     logger.info("Jerry is cozy in his hole, watching for Tom...")

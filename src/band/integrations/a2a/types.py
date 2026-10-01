@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from pydantic import Field
+
+from band.core.adapterconfig import BaseAdapterConfig
 
 
-@dataclass
-class A2AAuth:
+class A2AAuth(BaseAdapterConfig):
     """Authentication configuration for A2A agent.
 
     Supports multiple authentication methods that can be combined:
@@ -27,7 +30,7 @@ class A2AAuth:
 
     api_key: str | None = None
     bearer_token: str | None = None
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
 
     def to_headers(self) -> dict[str, str]:
         """Convert auth config to HTTP headers."""
@@ -40,6 +43,20 @@ class A2AAuth:
             result["Authorization"] = f"Bearer {self.bearer_token}"
 
         return result
+
+
+class A2AAdapterConfig(BaseAdapterConfig):
+    """Settings for bridging a Band agent to a remote A2A agent.
+
+    Attributes:
+        remote_url: Base URL of the remote A2A agent.
+        auth: Credentials sent with every request to the remote agent.
+        streaming: Whether to use streaming mode (SSE) for responses.
+    """
+
+    remote_url: str
+    auth: A2AAuth | None = None
+    streaming: bool = True
 
 
 @dataclass

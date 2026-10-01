@@ -55,7 +55,7 @@ Then message the `copilot_acp_agent` from a Band room.
 - **Why socat, not `copilot --acp --port`.** `copilot --acp --port <N>` binds
   `127.0.0.1` only (no host-bind flag), unreachable through Docker port publishing.
   `socat TCP-LISTEN:8080,fork EXEC:"copilot --acp"` fronts the documented stdio ACP
-  server on a routable port — the endpoint `CopilotACPAdapter(host=…, port=…)` dials.
+  server on a routable port — the endpoint `CopilotACPAdapterConfig(host=…, port=…)` dials.
 - **Fresh process per connection.** `,fork` execs a new `copilot --acp` for each TCP
   connection, so a reconnect (e.g. an `ACPRuntime` respawn) lands on a process with no
   prior in-memory sessions. The SDK uses ACP's session-load capability before trusting

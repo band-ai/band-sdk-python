@@ -20,7 +20,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -31,15 +31,17 @@ async def main() -> None:
 
     # Create adapter with CrewAI-style role definition
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        role="Research Assistant",
-        goal="Help users find, analyze, and synthesize information efficiently",
-        backstory="""You are an expert research assistant with years of experience
+        CrewAIAdapterConfig(
+            model="gpt-5.4-mini",
+            role="Research Assistant",
+            goal="Help users find, analyze, and synthesize information efficiently",
+            backstory="""You are an expert research assistant with years of experience
         in academic and business research. You excel at finding relevant information,
         analyzing data, and presenting findings in a clear, actionable format.
         You're known for your attention to detail and ability to connect disparate
         pieces of information into meaningful insights.""",
-        verbose=True,
+            verbose=True,
+        ),
     )
 
     logger.info("Starting CrewAI research agent...")

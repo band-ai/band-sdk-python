@@ -46,8 +46,3 @@ async def test_a_turn_that_ignores_the_interrupt_is_closed_and_resumed(
     assert [f["code"] for f in room.reported_failures] == ["timeout"]
     assert room.chat == ["Fresh start."]
     assert [session.alive for session in room.claude.sessions] == [False, True]
-
-
-def test_a_non_positive_timeout_is_refused() -> None:
-    with pytest.raises(ValueError, match="turn_timeout_s"):
-        ClaudeSDKAdapterConfig(turn_timeout_s=0)

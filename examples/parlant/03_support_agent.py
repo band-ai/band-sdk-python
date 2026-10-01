@@ -25,7 +25,7 @@ import parlant.sdk as p
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import ParlantAdapter
+from band.adapters import ParlantAdapter, ParlantAdapterConfig
 
 configure_logging(
     logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
@@ -86,8 +86,7 @@ SUPPORT_GUIDELINES = [
 def build_adapter() -> ParlantAdapter:
     """Build the support adapter with behavior-only guidelines."""
     adapter = ParlantAdapter(
-        name="Support",
-        description=SUPPORT_DESCRIPTION,
+        ParlantAdapterConfig(name="Support", description=SUPPORT_DESCRIPTION),
         nlp_service=p.NLPServices.openai,  # requires OPENAI_API_KEY
     )
     for condition, action in SUPPORT_GUIDELINES:

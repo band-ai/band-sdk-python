@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.integrations.slack.adapter import SlackAdapter
+from band.integrations.slack.adapter import SlackAdapter, SlackAdapterConfig
 from band.integrations.slack.dedup import SeenEvents
 from band.integrations.slack.socket import (
     SlackSocketListener,
@@ -93,9 +93,8 @@ def _build_adapter_with_socket(
 
     rest = _make_rest_mock(["room-1", "room-2"])
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=tuple(apps), transport="socket"),
         inner=inner,
-        apps=apps,
-        transport="socket",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
     )
@@ -138,31 +137,41 @@ def _events_api_request(
 
 def test_http_transport_requires_signing_secret():
     bad = SlackApp(slug="x", bot_token="xoxb", signing_secret="")
-    with pytest.raises(ValueError, match="signing_secret"):
-        SlackAdapter(
-            inner=_SlackReplyBrain(),
-            apps=[bad],
-            rest_client=MagicMock(),
-        )
+    with pytest.raises(ValueError, match="signing_secret .* missing for: x"):
+        SlackAdapterConfig(apps=(bad,))
 
 
 def test_socket_transport_requires_app_token():
     bad = SlackApp(slug="x", bot_token="xoxb", signing_secret="ignored")
-    with pytest.raises(ValueError, match="app_token"):
-        SlackAdapter(
-            inner=_SlackReplyBrain(),
-            apps=[bad],
-            transport="socket",
-            rest_client=MagicMock(),
+    with pytest.raises(ValueError, match="app_token .* missing for: x"):
+        SlackAdapterConfig(apps=(bad,), transport="socket")
+
+
+@pytest.mark.parametrize("transport", ["http", "socket"])
+def test_every_transport_requires_bot_token(transport: str):
+    bad = SlackApp(slug="x", bot_token="", signing_secret="s", app_token="xapp")
+    with pytest.raises(ValueError, match="bot_token .* missing for: x"):
+        SlackAdapterConfig(apps=(bad,), transport=transport)  # type: ignore[arg-type]
+
+
+def test_socket_transport_rejects_duplicate_app_slugs():
+    """Socket mode keys apps by slug, so a duplicate would silently replace one."""
+    with pytest.raises(ValueError, match="Duplicate SlackApp slug: dev"):
+        SlackAdapterConfig(
+            apps=(_socket_app("dev"), _socket_app("dev")), transport="socket"
         )
+
+
+def test_config_requires_at_least_one_app():
+    with pytest.raises(ValueError, match="apps"):
+        SlackAdapterConfig(apps=())
 
 
 def test_socket_transport_accepts_apps_without_signing_secret():
     """Signing secret is unused over the websocket — must not be required."""
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(_socket_app(),), transport="socket"),
         inner=_SlackReplyBrain(),
-        apps=[_socket_app()],
-        transport="socket",
         rest_client=MagicMock(),
         web_client_factory=lambda a: AsyncMock(),
     )
@@ -170,20 +179,14 @@ def test_socket_transport_accepts_apps_without_signing_secret():
 
 
 def test_unknown_transport_rejected():
-    with pytest.raises(ValueError, match="Unknown transport"):
-        SlackAdapter(
-            inner=_SlackReplyBrain(),
-            apps=[_http_app()],
-            transport="banana",  # type: ignore[arg-type]
-            rest_client=MagicMock(),
-        )
+    with pytest.raises(ValueError, match="transport"):
+        SlackAdapterConfig(apps=(_http_app(),), transport="banana")  # type: ignore[arg-type]
 
 
 def test_router_unavailable_in_socket_mode():
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(_socket_app(),), transport="socket"),
         inner=_SlackReplyBrain(),
-        apps=[_socket_app()],
-        transport="socket",
         rest_client=MagicMock(),
         web_client_factory=lambda a: AsyncMock(),
     )
@@ -328,7 +331,7 @@ async def test_close_disconnects_all_listeners():
     )
     # Manually wire up listeners as if on_started had run.
     for slug, fake in socket_clients.items():
-        app = next(a for a in adapter.apps if a.slug == slug)
+        app = next(a for a in adapter.config.apps if a.slug == slug)
         adapter._socket_listeners.append(SlackSocketListener(app=app, client=fake))
 
     await adapter.close()
@@ -342,7 +345,7 @@ async def test_close_logs_but_does_not_raise_on_disconnect_failure(caplog):
     adapter, _, socket_clients, _, _ = _build_adapter_with_socket()
     fake = next(iter(socket_clients.values()))
     fake.disconnect = AsyncMock(side_effect=RuntimeError("boom"))
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
     adapter._socket_listeners.append(SlackSocketListener(app=app, client=fake))
 
     with caplog.at_level("ERROR"):
@@ -354,8 +357,8 @@ async def test_close_logs_but_does_not_raise_on_disconnect_failure(caplog):
 @pytest.mark.asyncio
 async def test_close_is_safe_when_no_listeners():
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(_http_app(),)),
         inner=_SlackReplyBrain(),
-        apps=[_http_app()],
         rest_client=MagicMock(),
     )
     await adapter.close()  # Must not raise.
@@ -422,7 +425,7 @@ async def test_socket_listener_drops_bot_events(monkeypatch):
                 )
             )
             await fake.connect()
-        return [SlackSocketListener(app=adapter.apps[0], client=fake)]
+        return [SlackSocketListener(app=adapter.config.apps[0], client=fake)]
 
     monkeypatch.setattr(
         "band.integrations.slack.socket.start_socket_listeners",

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from strands.models.openai import OpenAIModel
 
 from band import Agent, configure_logging
-from band.adapters import StrandsAdapter
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
 from band.core.types import Capability
 
 configure_logging(logging.INFO)
@@ -44,8 +44,10 @@ async def main() -> None:
     load_dotenv()
 
     adapter = StrandsAdapter(
-        model=OpenAIModel(model_id="gpt-5.4-mini"),
-        custom_section="You can check the weather with the weather tool.",
+        StrandsAdapterConfig(
+            custom_section="You can check the weather with the weather tool."
+        ),
+        llm=OpenAIModel(model_id="gpt-5.4-mini"),
         additional_tools=[(WeatherInput, get_weather)],  # CustomToolDef tuple
         capabilities=Capability.MEMORY | Capability.CONTACTS,
     )

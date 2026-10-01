@@ -68,9 +68,9 @@ from dotenv import load_dotenv
 from starlette.applications import Starlette
 
 from band import Agent, Emit, configure_logging
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 from band.config import load_agent_config
-from band.integrations.slack import SlackAdapter, SlackApp
+from band.integrations.slack import SlackAdapter, SlackAdapterConfig, SlackApp
 
 configure_logging(logging.INFO, extra_loggers={"slack_sdk": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -112,28 +112,32 @@ async def main() -> None:
     # runs is recorded into the Band room as tool_call / tool_result events,
     # so the room's audit timeline shows what the agent did and with what
     # result. This is the Band-side record; the Slack-side plan/task
-    # progress blocks are a separate knob (SlackAdapter(show_tool_progress=...),
+    # progress blocks are a separate knob (SlackAdapterConfig(show_tool_progress=...),
     # on by default).
     brain = AnthropicAdapter(
-        model="claude-sonnet-4-5-20250929",
-        prompt=(
-            "You are a helpful Slack assistant. Keep replies concise and "
-            "use Slack-flavored markdown when it improves readability."
+        AnthropicAdapterConfig(
+            model="claude-sonnet-4-5-20250929",
+            custom_section=(
+                "You are a helpful Slack assistant. Keep replies concise and "
+                "use Slack-flavored markdown when it improves readability."
+            ),
         ),
         emit=Emit.TOOL_CALLS,
     )
 
     slack = SlackAdapter(
-        inner=brain,
-        apps=[
-            SlackApp(
-                slug="dev",
-                bot_token=bot_token,
-                signing_secret=signing_secret,
-                app_token=app_token,
+        SlackAdapterConfig(
+            apps=(
+                SlackApp(
+                    slug="dev",
+                    bot_token=bot_token,
+                    signing_secret=signing_secret,
+                    app_token=app_token,
+                ),
             ),
-        ],
-        transport=transport,  # type: ignore[arg-type]
+            transport=transport,  # type: ignore[arg-type]
+        ),
+        inner=brain,
     )
 
     agent = Agent.create(

@@ -147,11 +147,11 @@ async def main() -> None:
             cwd=cwd,
             api_key=settings.cursor_api_key or None,
             auth_token=settings.cursor_auth_token or None,
-            resolve_session_config=partial(
-                choose_session_config,
-                preferences=settings.session_config_preferences,
-            ),
-        )
+        ),
+        resolve_session_config=partial(
+            choose_session_config,
+            preferences=settings.session_config_preferences,
+        ),
     )
 
     logger.info("Starting Cursor ACP client bridge...")

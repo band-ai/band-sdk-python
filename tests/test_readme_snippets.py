@@ -151,26 +151,31 @@ class TestAdapterSwapSnippets:
     def test_anthropic_adapter_import_and_init(self) -> None:
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
 
-        adapter = AnthropicAdapter(model="claude-sonnet-4-5")
+        adapter = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-5"))
         assert adapter is not None
 
     @skip_no_pydantic_ai
     def test_pydantic_ai_adapter_import_and_init(self) -> None:
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             PydanticAIAdapter,
+            PydanticAIAdapterConfig,
         )
 
-        adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
+        adapter = PydanticAIAdapter(
+            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
+        )
         assert adapter is not None
 
     def test_gemini_adapter_import_and_init(self) -> None:
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             GeminiAdapter,
+            GeminiAdapterConfig,
         )
 
-        adapter = GeminiAdapter(model="gemini-2.5-flash")
+        adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-2.5-flash"))
         assert adapter is not None
 
 
@@ -317,13 +322,14 @@ class TestPlatformToolsSnippets:
         """README snippet: AnthropicAdapter with capabilities."""
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
         from band.core.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             Capability,
         )
 
         adapter = AnthropicAdapter(
-            model="claude-sonnet-4-5",
+            AnthropicAdapterConfig(model="claude-sonnet-4-5"),
             capabilities={Capability.CONTACTS, Capability.MEMORY},
         )
 
@@ -355,10 +361,11 @@ class TestEmitOptionsSnippets:
         )
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
 
         adapter = AnthropicAdapter(
-            model="claude-sonnet-4-5",
+            AnthropicAdapterConfig(model="claude-sonnet-4-5"),
             emit=Emit.TOOL_CALLS,
         )
 
@@ -415,30 +422,39 @@ class TestCustomInstructionsSnippets:
     def test_langgraph_custom_section(self) -> None:
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             LangGraphAdapter,
+            LangGraphAdapterConfig,
         )
 
         llm = MagicMock()
         checkpointer = MagicMock()
 
         adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(
+                custom_section=(
+                    "You are a support triage agent. Ask concise clarifying questions, "
+                    "summarize decisions, and mention the right specialist when needed."
+                )
+            ),
             llm=llm,
             checkpointer=checkpointer,
-            custom_section=(
-                "You are a support triage agent. Ask concise clarifying questions, "
-                "summarize decisions, and mention the right specialist when needed."
-            ),
         )
 
-        assert "support triage" in adapter.custom_section
+        assert "support triage" in adapter.config.custom_section
 
     def test_anthropic_prompt(self) -> None:
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
 
         adapter = AnthropicAdapter(
-            model="claude-sonnet-4-5",
-            prompt="You are a concise technical reviewer. Focus on risks and next steps.",
+            AnthropicAdapterConfig(
+                model="claude-sonnet-4-5",
+                custom_section=(
+                    "You are a concise technical reviewer. "
+                    "Focus on risks and next steps."
+                ),
+            )
         )
 
         assert adapter is not None
@@ -455,6 +471,7 @@ class TestCustomToolsSnippets:
     def test_anthropic_custom_tools(self) -> None:
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
 
         class WeatherInput(BaseModel):
@@ -466,7 +483,7 @@ class TestCustomToolsSnippets:
             return f"Sunny, 22 C in {args.city}"
 
         adapter = AnthropicAdapter(
-            model="claude-sonnet-4-5",
+            AnthropicAdapterConfig(model="claude-sonnet-4-5"),
             additional_tools=[(WeatherInput, get_weather)],
         )
 
@@ -614,20 +631,23 @@ class TestContactManagementSnippets:
 
 
 class TestA2ABridgeSnippet:
-    """README snippet: A2AAdapter(remote_url=..., auth=...)."""
+    """README snippet: A2AAdapter(A2AAdapterConfig(remote_url=..., auth=...))."""
 
     def test_a2a_adapter_instantiation(self) -> None:
         from band.adapters.a2a import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             A2AAdapter,
+            A2AAdapterConfig,
             A2AAuth,
         )
 
         adapter = A2AAdapter(
-            remote_url="http://localhost:10000",
-            auth=A2AAuth(api_key="test-key"),
+            A2AAdapterConfig(
+                remote_url="http://localhost:10000",
+                auth=A2AAuth(api_key="test-key"),
+            )
         )
 
-        assert adapter.remote_url == "http://localhost:10000"
+        assert adapter.config.remote_url == "http://localhost:10000"
 
 
 # ---------------------------------------------------------------------------
@@ -636,7 +656,7 @@ class TestA2ABridgeSnippet:
 
 
 class TestA2AGatewaySnippet:
-    """README snippet: A2AGatewayAdapter(gateway_url=..., port=...)."""
+    """README snippet: A2AGatewayAdapter(A2AGatewayAdapterConfig(...))."""
 
     @patch.dict(
         os.environ,
@@ -651,14 +671,18 @@ class TestA2AGatewaySnippet:
         )
         from band.adapters.a2a_gateway import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             A2AGatewayAdapter,
+            A2AGatewayAdapterConfig,
         )
 
         gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
         gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
         adapter = A2AGatewayAdapter(
-            gateway_url=gateway_url,
-            port=gateway_port,
+            A2AGatewayAdapterConfig(
+                gateway_url=gateway_url,
+                port=gateway_port,
+                response_timeout_s=300,
+            )
         )
 
         agent = Agent.create(

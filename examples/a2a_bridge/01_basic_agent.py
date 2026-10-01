@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import A2AAdapter
+from band.adapters import A2AAdapter, A2AAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,8 +59,10 @@ async def main() -> None:
 
     # Create adapter pointing to remote A2A agent
     adapter = A2AAdapter(
-        remote_url=a2a_url,
-        streaming=True,  # Enable SSE streaming for real-time updates
+        A2AAdapterConfig(
+            remote_url=a2a_url,
+            streaming=True,  # Enable SSE streaming for real-time updates
+        )
     )
 
     logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)

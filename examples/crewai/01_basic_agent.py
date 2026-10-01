@@ -25,7 +25,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -36,8 +36,10 @@ async def main() -> None:
 
     # Create adapter with framework-specific settings
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        CrewAIAdapterConfig(
+            model="gpt-5.4-mini",
+            custom_section="You are a helpful assistant. Be concise and friendly.",
+        ),
     )
 
     logger.info("Starting CrewAI agent...")

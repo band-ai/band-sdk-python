@@ -57,7 +57,7 @@ and calls Band tools via band-mcp.
   `127.0.0.1` only (no host-bind flag), which Docker port publishing cannot reach.
   `socat TCP-LISTEN:8080,fork EXEC:"copilot --acp"` fronts the documented stdio ACP
   server on a routable port — and is exactly the TCP endpoint the SDK's
-  `CopilotACPAdapter(host=…, port=…)` dials.
+  `CopilotACPAdapterConfig(host=…, port=…)` dials.
 - **Fresh process per connection.** `,fork` execs a new `copilot --acp` for each TCP
   connection, so a reconnect (e.g. an `ACPRuntime` respawn) lands on a process with no
   prior in-memory sessions. The SDK uses ACP's session-load capability before trusting

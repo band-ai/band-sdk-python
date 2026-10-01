@@ -35,7 +35,7 @@ from standalone_calculator import create_calculator_graph
 from standalone_sql_agent import create_sql_agent, download_chinook_db
 
 from band import Agent, configure_logging
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 from band.config import load_agent_config
 from band.integrations.langgraph import graph_as_tool
 
@@ -138,9 +138,10 @@ async def main() -> None:
         "Creating custom LangGraph operations orchestrator with model %s", model
     )
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(
+            custom_section=ORCHESTRATOR_INSTRUCTIONS, inject_system_prompt=True
+        ),
         graph_factory=build_orchestrator_factory(ChatOpenAI(model=model)),
-        custom_section=ORCHESTRATOR_INSTRUCTIONS,
-        inject_system_prompt=True,
     )
 
     logger.info("Starting custom LangGraph operations orchestrator...")

@@ -28,7 +28,12 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
+from tests.integrations.acp.acp_toolkit import (
+    FakeACPAgent,
+    acp_adapter,
+    fake_agent_config,
+    live_line,
+)
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -375,7 +380,9 @@ async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("send the reply", room="room-1")
 
     assert reply.outline == ["tool_call", "message", "tool_result", "task"]
@@ -398,7 +405,9 @@ async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("do the work", room="room-1")
 
     assert reply.outline == ["tool_call", "thought", "tool_result", "task"]
@@ -429,7 +438,9 @@ async def test_permissioned_band_mcp_turn_has_one_causal_transcript(fake_agent) 
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("send the reply", room="room-1")
 
     assert reply.outline == ["tool_call", "message", "tool_result", "task"]
@@ -469,7 +480,9 @@ async def test_turn_events_post_in_causal_order(fake_agent) -> None:
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("weather in SF?", room="room-1")
 
     assert reply.outline == [

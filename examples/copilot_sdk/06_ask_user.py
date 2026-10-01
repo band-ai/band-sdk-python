@@ -6,7 +6,7 @@
 """
 Human-in-the-loop via Copilot's ``ask_user`` tool, answered in the room.
 
-``CopilotSDKAdapterConfig(ask_user="room")`` routes the model's built-in
+``CopilotSDKAdapter(..., ask_user="room")`` routes the model's built-in
 ``ask_user`` tool to the people in the Band room: the question posts as
 a room message mentioning whoever triggered the turn, the turn ends, and
 the answer arrives as the next room message — the same persisted Copilot
@@ -93,10 +93,10 @@ async def main() -> None:
             # the custom section stays for unrelated behavior.
             custom_section="Keep replies short and concrete.",
             github_token=settings.github_token or None,
-            ask_user="room",
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-ask-user-",
         ),
+        ask_user="room",
         emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 

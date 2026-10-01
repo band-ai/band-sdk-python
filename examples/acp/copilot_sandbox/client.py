@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Self-contained (a deployment artifact): configure logging inline.
-from band import Agent, LogSettings, create_room_workspace_resolver
+from band import Agent, LogSettings
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
 logger = logging.getLogger(__name__)
@@ -67,14 +67,14 @@ async def main() -> None:
     mcp_servers = (
         [{"type": "sse", "name": "band", "url": band_mcp_sse_url, "headers": []}]
         if band_mcp_sse_url
-        else None
+        else []
     )
 
     config = CopilotACPAdapterConfig(
         # Drive Copilot's ACP server inside the sandbox over stdio. `-i` (no `-t`)
         # keeps STDIN open with raw pipes — byte-clean for ACP's NDJSON.
         command=("sbx", "exec", "-i", sandbox, "copilot", "--acp"),
-        workspace_for_room=create_room_workspace_resolver(workspace),
+        cwd=workspace,
         # Auth is handled by sbx's host-side secret proxy, not the subprocess env,
         # so no github_token here.
         inject_band_tools=False,  # sandbox egress blocks host loopback; see README

@@ -23,7 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -34,16 +34,17 @@ async def main() -> None:
     load_dotenv()
 
     adapter = CrewAIAdapter(
-        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
-        role="Engineering Handoff Writer",
-        goal=(
-            "Turn room input into a final engineering note that reflects the "
-            "contract checker's facts and the risk reviewer's cautions"
-        ),
-        backstory="""You are the closer in a mixed-agent room. You listen for
+        CrewAIAdapterConfig(
+            model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+            role="Engineering Handoff Writer",
+            goal=(
+                "Turn room input into a final engineering note that reflects the "
+                "contract checker's facts and the risk reviewer's cautions"
+            ),
+            backstory="""You are the closer in a mixed-agent room. You listen for
         concrete implementation facts, rollout risks, and coordinator guidance,
         then write something another developer can act on immediately.""",
-        custom_section="""
+            custom_section="""
 When the room is active:
 1. Wait for the contract checker and risk reviewer if they are present.
 2. Gather the strongest points from the room.
@@ -57,7 +58,8 @@ When the room is active:
 
 Do not try to coordinate the room. Your job is to synthesize.
 """,
-        verbose=True,
+            verbose=True,
+        ),
     )
 
     logger.info("Starting mixed-example engineering handoff writer...")

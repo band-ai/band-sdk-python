@@ -58,8 +58,6 @@ except ImportError:
 
 from band_sdk_core import AgentFailure, is_authorized_sender
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     DirectoryPath,
     Field,
     NonNegativeFloat,
@@ -75,6 +73,7 @@ from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -206,7 +205,7 @@ BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
 RESERVED_CLI_FLAGS: frozenset[str] = SDK_OWNED_CLI_FLAGS | BAND_UNSAFE_CLI_FLAGS
 
 
-class ClaudeCLIOptions(BaseModel):
+class ClaudeCLIOptions(BaseAdapterConfig):
     """How the Claude CLI process is launched; never how Band is wired into it.
 
     Attributes:
@@ -221,8 +220,6 @@ class ClaudeCLIOptions(BaseModel):
             or ``{"flag": None}`` for a bare flag. Flags in
             ``RESERVED_CLI_FLAGS`` are rejected.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     cli_path: str | None = None
     plugin_dirs: tuple[str, ...] = ()
@@ -285,7 +282,7 @@ class ClaudePermissionMode(StrEnum):
 AUTO_FALLBACK_PERMISSION_MODE = ClaudePermissionMode.DEFAULT
 
 
-class ClaudeApprovalOptions(BaseModel):
+class ClaudeApprovalOptions(BaseAdapterConfig):
     """Chat-based approval of Claude's native tool calls (Bash, Write, ...).
 
     Band's own tools are never gated.
@@ -304,8 +301,6 @@ class ClaudeApprovalOptions(BaseModel):
             ``/decline``. ``None`` admits any room participant.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     mode: ApprovalMode
     text_notifications: bool = True
     wait_timeout_s: PositiveFloat = 300.0
@@ -314,7 +309,7 @@ class ClaudeApprovalOptions(BaseModel):
     authorized_senders: frozenset[str] | None = None
 
 
-class ClaudeSDKAdapterConfig(BaseModel):
+class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     """Runtime configuration for Claude Code sessions.
 
     ``effort`` and ``setting_sources`` are typed as ``claude_agent_sdk``'s own
@@ -345,8 +340,6 @@ class ClaudeSDKAdapterConfig(BaseModel):
         approvals: Chat-based approval of native tool calls; ``None`` leaves
             approvals to ``permission_mode``.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     model: str | None = None
     fallback_model: str | None = None
@@ -404,6 +397,10 @@ APPROVAL_REQUESTED_TEMPLATE = (
 )
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
 APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Decision: **{decision}**."
+# An auto_accept / auto_decline decision, announced without asking anyone.
+APPROVAL_POLICY_DECISION_TEMPLATE = (
+    "Approval requested ({summary}). Policy decision: **{decision}**."
+)
 APPROVAL_UNKNOWN_TOKEN_TEMPLATE = (
     "Unknown approval token `{token}`. Available: {available}."
 )
@@ -1724,7 +1721,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         mention = [requester["id"]] if requester else None
         return await self._send_best_effort(
             tools,
-            f"Approval requested ({summary}). Policy decision: **{decision}**.",
+            APPROVAL_POLICY_DECISION_TEMPLATE.format(
+                summary=summary, decision=decision
+            ),
             mention,
             room_id=room_id,
             failure_note="Failed to send approval policy notification",

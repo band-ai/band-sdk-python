@@ -53,7 +53,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import A2AGatewayAdapter
+from band.adapters import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.config import load_agent_config
 
 configure_logging(
@@ -103,20 +103,23 @@ async def main() -> None:
     # gateway_url derives from port unless GATEWAY_URL overrides it (e.g.
     # behind a public host/reverse proxy, where localhost would be unreachable)
     adapter = A2AGatewayAdapter(
-        port=settings.gateway_port, gateway_url=settings.gateway_url
+        A2AGatewayAdapterConfig(
+            port=settings.gateway_port, gateway_url=settings.gateway_url
+        )
     )
 
     # Create and start agent
     # The gateway connects to Band and starts its HTTP server
 
-    logger.info("Starting A2A Gateway on %s...", adapter.gateway_url)
+    logger.info("Starting A2A Gateway on %s...", adapter.config.public_url)
     logger.info("Peers will be exposed at:")
     logger.info(
         "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
-        adapter.gateway_url,
+        adapter.config.public_url,
     )
     logger.info(
-        "  - %s/agents/{peer_id}/v1/message:stream (messaging)", adapter.gateway_url
+        "  - %s/agents/{peer_id}/v1/message:stream (messaging)",
+        adapter.config.public_url,
     )
     logger.info("Waiting for peers to be discovered...")
 

@@ -49,7 +49,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging, create_room_workspace_resolver
-from band.adapters import ACPClientAdapter
+from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
 from band.integrations.acp.client_profiles import resolve_acp_client_profile
 
 configure_logging(
@@ -85,10 +85,12 @@ async def main() -> None:
     profile = resolve_acp_client_profile(settings.acp_client_profile)
 
     adapter = ACPClientAdapter(
-        command=command,
+        ACPClientAdapterConfig(
+            command=command,
+            inject_band_tools=inject_band_tools,
+            auth_method=auth_method,
+        ),
         workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
-        inject_band_tools=inject_band_tools,
-        auth_method=auth_method,
         profile=profile,
     )
 

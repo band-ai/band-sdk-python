@@ -26,7 +26,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import A2AAdapter
+from band.adapters import A2AAdapter, A2AAdapterConfig
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -34,7 +34,7 @@ CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
 def _build_bridge_agent(*, config_name: str, remote_url: str) -> Agent:
     """Create one Band bridge agent for a remote A2A service."""
-    adapter = A2AAdapter(remote_url=remote_url, streaming=True)
+    adapter = A2AAdapter(A2AAdapterConfig(remote_url=remote_url))
 
     return Agent.from_config(
         config_name,

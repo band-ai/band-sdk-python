@@ -20,7 +20,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 from band import Agent, configure_logging
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,9 +56,9 @@ But speak like a PIRATE while doin' it! Arrr!
 
     # Create adapter with pirate personality
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=pirate_personality),
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
-        custom_section=pirate_personality,
     )
 
     logger.info("Starting pirate agent...")

@@ -197,7 +197,7 @@ async def _probe_gemini() -> bool:
         GeminiAdapter,
     )
 
-    adapter = GeminiAdapter(provider_key="test-key")
+    adapter = GeminiAdapter()
     tools = MagicMock()
     tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
     function_calls = [
@@ -332,9 +332,12 @@ async def _probe_codex() -> bool:
 async def _probe_pydantic_ai() -> bool:
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- pydantic_ai extra, absent from the standard dev-crewai/dev-parlant lane venvs
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
-    adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
+    adapter = PydanticAIAdapter(
+        PydanticAIAdapterConfig(model="test"), capabilities=Capability.FILES
+    )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     read_room_file = adapter._agent._function_toolset.tools[BandTool.READ_ROOM_FILE]
 

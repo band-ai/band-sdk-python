@@ -6,14 +6,19 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
+from band.adapters.claude_sdk import (
+    APPROVAL_POLICY_DECISION_TEMPLATE,
+    ClaudeSDKAdapterConfig,
+)
 from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom, with_approvals
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 def policy_notice(decision: str) -> str:
-    return f"Approval requested (Write: notes.md). Policy decision: **{decision}**."
+    return APPROVAL_POLICY_DECISION_TEMPLATE.format(
+        summary="Write: notes.md", decision=decision
+    )
 
 
 @pytest.mark.parametrize(

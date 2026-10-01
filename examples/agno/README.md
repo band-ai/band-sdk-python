@@ -90,7 +90,7 @@ agno_agent = AgnoAgent(
 )
 
 # Bridge it to Band.
-adapter = AgnoAdapter(agno_agent)
+adapter = AgnoAdapter(agent=agno_agent)
 agent = Agent.from_config("agno_agent", adapter=adapter)
 await agent.run()
 ```
@@ -105,7 +105,7 @@ agno_agent = AgnoAgent(
     model=OpenAIChat(id="gpt-4o"),
     instructions="You are a helpful assistant. Be concise and friendly.",
 )
-adapter = AgnoAdapter(agno_agent)
+adapter = AgnoAdapter(agent=agno_agent)
 ```
 
 The adapter runs against the agent instance you pass and takes ownership of it:

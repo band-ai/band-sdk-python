@@ -27,7 +27,7 @@ import asyncio
 import logging
 
 from band import Agent, configure_logging
-from band.adapters import GeminiAdapter
+from band.adapters import GeminiAdapter, GeminiAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,8 +37,10 @@ async def main() -> None:
     # Create adapter with Gemini settings
     # Requires GEMINI_API_KEY environment variable or pass provider_key explicitly
     adapter = GeminiAdapter(
-        model="gemini-2.5-flash",
-        prompt="You are a helpful assistant. Be concise and friendly.",
+        GeminiAdapterConfig(
+            model="gemini-2.5-flash",
+            custom_section="You are a helpful assistant. Be concise and friendly.",
+        )
     )
 
     logger.info("Starting Gemini agent...")

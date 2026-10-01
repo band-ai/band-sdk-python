@@ -27,7 +27,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import GoogleADKAdapter
+from band.adapters import GoogleADKAdapter, GoogleADKAdapterConfig
 from band.core.types import Emit
 
 configure_logging(logging.INFO)
@@ -39,10 +39,10 @@ async def main() -> None:
 
     # Create adapter with custom configuration
     adapter = GoogleADKAdapter(
-        model="gemini-2.5-flash",
-        custom_section=(
-            "You are a research assistant specializing in summarizing information. "
-            "Always provide sources when possible and be thorough but concise."
+        GoogleADKAdapterConfig(
+            model="gemini-2.5-flash",
+            custom_section="You are a research assistant specializing in summarizing information. "
+            "Always provide sources when possible and be thorough but concise.",
         ),
         emit=Emit.TOOL_CALLS,
     )

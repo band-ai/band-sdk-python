@@ -38,7 +38,7 @@ import sys
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -140,11 +140,13 @@ async def main() -> None:
 
     # Create adapter with crew member configuration
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        role=member["role"],
-        goal=member["goal"],
-        backstory=member["backstory"],
-        custom_section=member["custom_section"],
+        CrewAIAdapterConfig(
+            model="gpt-5.4-mini",
+            role=member["role"],
+            goal=member["goal"],
+            backstory=member["backstory"],
+            custom_section=member["custom_section"],
+        ),
     )
 
     logger.info("Starting %s...", member["role"])

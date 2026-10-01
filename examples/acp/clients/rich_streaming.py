@@ -53,7 +53,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging, create_room_workspace_resolver
-from band.adapters import ACPClientAdapter
+from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
 from band.config import load_agent_config
 
 configure_logging(
@@ -88,7 +88,7 @@ async def main() -> None:
 
     # Create an adapter that starts the local ACP agent per Band room.
     adapter = ACPClientAdapter(
-        command=acp_command,
+        ACPClientAdapterConfig(command=acp_command),
         workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
     )
 

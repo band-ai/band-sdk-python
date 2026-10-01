@@ -74,7 +74,7 @@ async def main() -> None:
         "tom_agent",
         # Default emit posts tool_call/tool_result events so Tom's platform
         # actions (lookup, invite, send) are visible in the room.
-        adapter=AgnoAdapter(agno_agent),
+        adapter=AgnoAdapter(agent=agno_agent),
     ) as agent:
         await agent.run_forever()
 

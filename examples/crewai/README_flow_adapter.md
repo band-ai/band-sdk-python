@@ -40,14 +40,18 @@ The Flow instance is local scratch state. If the process restarts, only Band tas
 ## Adapter setup
 
 ```python
-from band.adapters import CrewAIFlowAdapter
+from band.adapters import CrewAIFlowAdapter, CrewAIFlowAdapterConfig
 
 adapter = CrewAIFlowAdapter(
+    CrewAIFlowAdapterConfig(
+        join_policy="all",
+        sequential_chains={"data-fetcher": "presenter"},
+    ),
     flow_factory=flow_factory,
-    join_policy="all",
-    sequential_chains={"data-fetcher": "presenter"},
 )
 ```
+
+`CrewAIFlowAdapterConfig` holds the orchestration policy as plain data (`join_policy`, `metadata_namespace`, `max_delegation_rounds`, `max_run_age`, `text_only_behavior`, `tagged_peer_policy`, `sequential_chains`, `accept_agent_initiated`), so it can also be loaded from YAML or JSON with `CrewAIFlowAdapterConfig.model_validate(data)`. The live objects, `flow_factory` and `state_source`, are keyword-only constructor arguments.
 
 `flow_factory` is called once per inbound message and must return an object with an async `kickoff_async(inputs)` method. A real CrewAI Flow can provide that method through CrewAI's Flow APIs. Tests and examples can also use a small object with the same method.
 
@@ -55,8 +59,8 @@ By default, unmatched Agent-typed messages are ignored unless they match a pendi
 
 ```python
 adapter = CrewAIFlowAdapter(
+    CrewAIFlowAdapterConfig(accept_agent_initiated=True),
     flow_factory=flow_factory,
-    accept_agent_initiated=True,
 )
 ```
 
@@ -219,8 +223,8 @@ Example: if a user says `ask @example/data-fetcher`, the Flow cannot synthesize 
 
 ```python
 adapter = CrewAIFlowAdapter(
+    CrewAIFlowAdapterConfig(sequential_chains={"data-fetcher": "presenter"}),
     flow_factory=flow_factory,
-    sequential_chains={"data-fetcher": "presenter"},
 )
 ```
 

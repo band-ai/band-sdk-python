@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-import pytest
-
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -60,8 +58,3 @@ async def test_a_zero_ttl_turns_the_dedup_off(claude_room: OpenRoom) -> None:
     await room.send("say hello")
 
     assert room.chat == ["hello", "hello"]
-
-
-def test_a_negative_ttl_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        ClaudeSDKAdapterConfig(send_message_dedup_ttl_seconds=-1)

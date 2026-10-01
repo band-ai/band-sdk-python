@@ -28,23 +28,27 @@ from __future__ import annotations
 
 import re
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
+    UNATTENDED_POLICIES,
     AgentSetup,
     ApprovalDialect,
     Notice,
     Outcome,
+    UnattendedPolicy,
     appending_command,
     command_request,
     commands_request,
@@ -91,11 +95,18 @@ class ApprovalRoom:
 
     async def say(self, text: str, *, sender: UserOps | None = None) -> int:
         """Post ``text`` to the agent; return a cursor at what came before it."""
+        cursor, _message_id = await self.post(text, sender=sender)
+        return cursor
+
+    async def post(
+        self, text: str, *, sender: UserOps | None = None
+    ) -> tuple[int, str]:
+        """``say``, also returning the posted message's id for delivery barriers."""
         cursor = self.capture.messages.snapshot()
-        await (sender or self.user_ops).send_message(
+        message_id = await (sender or self.user_ops).send_message(
             self.room_id, text, mention_id=self.agent.id, mention_name=self.agent.name
         )
-        return cursor
+        return cursor, message_id
 
     async def requests(self, count: int, *, since: int = 0) -> list[re.Match[str]]:
         """The first ``count`` approval requests posted after ``since``."""
@@ -137,8 +148,10 @@ async def approval_room(
     budget: SlowTurnBudget,
     wait_timeout_s: float = PATIENT_WAIT_S,
     approvers: frozenset[str] | None = None,
+    build: Callable[[BaselineSettings, AgentSetup], SimpleAdapter[Any]] | None = None,
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
-    """Run the cell's agent in manual approval mode in a fresh room and workdir."""
+    """Run the cell's agent in a fresh room and workdir: in manual approval mode,
+    or as ``build`` makes it."""
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
@@ -148,7 +161,7 @@ async def approval_room(
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
         setup = AgentSetup(root, wait_timeout_s, approvers)
-        adapter = dialect.build(cell.settings, setup)
+        adapter = (build or dialect.build)(cell.settings, setup)
         async with running_provisioned_agent(
             adapter, cell.resources, label=f"approval-{label}"
         ) as agent:
@@ -351,3 +364,48 @@ async def test_a_question_is_answered_in_free_text_from_the_room(
             deadline_s=BUDGET.deadline_s,
         )
         await notice.assert_shown(room.capture, room.agent.id)
+
+
+@per_adapter(Adapter.CLAUDE_SDK)
+@pytest.mark.parametrize("policy", UNATTENDED_POLICIES, ids=lambda p: p.name)
+@flaky_infra("a live coding-agent turn that must reach a native tool use can time out")
+@pytest.mark.timeout(extra=BUDGET.extra_s)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_host_config_policy_settles_tool_use_with_nobody_asked(
+    cell: AdapterCell,
+    policy: UnattendedPolicy,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """A host's plain-data config decides alone: auto_accept runs the write and
+    auto_decline refuses it, each announcing its decision; dontAsk refuses a
+    write the default mode would allow, announcing nothing. No one is asked."""
+    marker = unique_marker("policy")
+    async with approval_room(
+        cell,
+        user_ops,
+        reply_capture,
+        label=policy.name,
+        budget=BUDGET,
+        build=policy.build,
+    ) as (room, workdir):
+        target = workdir / "policy.txt"
+        start, message_id = await room.post(policy.request(marker, target))
+        await room.capture.wait_for_processed(
+            message_id, room.agent.id, deadline_s=BUDGET.deadline_s
+        )
+        await room.capture.wait_until(
+            lambda _msgs: policy.settled(room.said_since(start)),
+            deadline_s=BUDGET.deadline_s,
+        )
+
+        # The tool was really attempted, so a missing file is the policy's doing.
+        tool_calls = await room.capture.tool_calls(sender_id=room.agent.id)
+        tool_calls.assert_fired(policy.tool)
+        said = room.said_since(start)
+        assert room.dialect.find_requests(room.capture.messages.since(start)) == []
+        assert policy.decisions(said) == policy.announced
+        if policy.runs:
+            assert target.read_text().strip() == marker
+        else:
+            assert not target.exists(), f"{policy.name} still wrote the file"

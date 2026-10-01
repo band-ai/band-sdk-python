@@ -25,6 +25,7 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
 
 from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
+    CrewAIFlowAdapterConfig,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
@@ -397,11 +398,11 @@ class TestReplyMatching:
             ],
         )
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(join_policy="first"),
             flow_factory=lambda: _flow(
                 {"decision": "synthesize", "content": "first answer", "mentions": []}
             ),
             state_source=RestCrewAIFlowStateSource(),
-            join_policy="first",
         )
         await _start(adapter, "router")
         await _turn(
@@ -544,11 +545,11 @@ class TestReplyMatching:
             ],
         )
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(join_policy="first"),
             flow_factory=lambda: _flow(
                 {"decision": "synthesize", "content": "reserved reply", "mentions": []}
             ),
             state_source=RestCrewAIFlowStateSource(),
-            join_policy="first",
         )
         await _start(adapter, "router")
         await _turn(
@@ -684,9 +685,9 @@ class TestReplyMatching:
             {"decision": "direct_response", "content": "agent routed", "mentions": []}
         )
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(accept_agent_initiated=True),
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
-            accept_agent_initiated=True,
         )
         tools = FakeAgentTools(participants=[participant_seed("p", "@example/x")])
         await _start(adapter)
@@ -846,11 +847,11 @@ class TestPersistedRunPolicy:
             ],
         )
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(join_policy="all"),
             flow_factory=lambda: _flow(
                 {"decision": "synthesize", "content": "first answer", "mentions": []}
             ),
             state_source=RestCrewAIFlowStateSource(),
-            join_policy="all",
         )
         await _start(adapter, "router")
         await _turn(

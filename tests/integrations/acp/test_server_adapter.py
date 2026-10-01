@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.content import BLANK_CONTENT_ERROR
+from band.core.exceptions import BandConfigError
+from band.core.types import Emit
 from band.integrations.acp.router import AgentRouter
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
@@ -44,6 +46,10 @@ class TestBandACPServerAdapterInit:
         adapter = BandACPServerAdapter()
 
         assert adapter.history_converter is not None
+
+    def test_feature_requests_are_checked_against_what_it_supports(self) -> None:
+        with pytest.raises(BandConfigError, match="tool_calls"):
+            BandACPServerAdapter(emit=Emit.TOOL_CALLS)
 
 
 class TestBandACPServerAdapterOnStarted:

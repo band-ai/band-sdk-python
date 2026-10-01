@@ -23,11 +23,13 @@ uv sync --extra pydantic_ai
 
 ```python
 from band import Agent
-from band.adapters import PydanticAIAdapter
+from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
 adapter = PydanticAIAdapter(
-    model="openai:gpt-5.4-mini",
-    custom_section="You are a helpful assistant.",
+    PydanticAIAdapterConfig(
+        model="openai:gpt-5.4-mini",
+        custom_section="You are a helpful assistant.",
+    )
 )
 
 agent = Agent.create(
@@ -113,8 +115,7 @@ This is a [known issue in Pydantic AI](https://github.com/pydantic/pydantic-ai/i
 1. **Use Anthropic instead** (recommended for production):
    ```python
    adapter = PydanticAIAdapter(
-       model="anthropic:claude-3-5-sonnet-latest",
-       ...
+       PydanticAIAdapterConfig(model="anthropic:claude-3-5-sonnet-latest")
    )
    ```
 

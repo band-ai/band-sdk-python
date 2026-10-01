@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
+from band.core.adapterconfig import BaseAdapterConfig, EnvAdapterConfig
 from band.core.exceptions import BandConfigError
 from band.integrations.mcp.local_server import LOCAL_MCP_HOST
 
@@ -42,8 +42,7 @@ def is_letta_cloud_url(base_url: str) -> bool:
         return False
 
 
-@dataclass
-class LettaMCPConfig:
+class LettaMCPConfig(BaseAdapterConfig):
     """How the Letta server reaches the Band MCP tools.
 
     Two modes:
@@ -59,34 +58,40 @@ class LettaMCPConfig:
     - ``external``: register a separately-run Band MCP server (e.g. band-mcp)
       at ``server_url``.  Required for Letta Cloud, which cannot reach a
       laptop-local server.
+
+    Attributes:
+        mode: ``"self_host"`` or ``"external"`` (see above).
+        server_url: external mode: URL of the running Band MCP server (ignored
+            when self-hosted — the adapter advertises its own server's URL).
+        server_name: Registration name in Letta. ``None`` resolves to
+            ``"band"`` in external mode and to a fresh unique
+            ``"band-{suffix}"`` per registration when self-hosted: Letta
+            soft-deletes registrations, so a deregistered name can never be
+            reused (unique-constraint conflict), and fresh names also keep
+            concurrent adapter instances on one Letta server from cross-wiring
+            their tools. A fixed name in self-host mode skips deregistration on
+            shutdown (so the name is not poisoned) but ties the row to one
+            server URL; the in-process MCP server binds an OS-assigned port
+            each start, so a process restart usually changes the URL and
+            ``register()`` fails until the stale row is removed from Letta
+            manually. Prefer ``None`` unless the advertised URL is stable
+            across restarts.
+        bind_host: self_host mode: interface the local server binds.
+        advertised_host: self_host mode: hostname Letta uses to reach the
+            local server (defaults to ``bind_host``). Set
+            ``"host.docker.internal"`` for a dockerized Letta.
+        transport: MCP transport Letta uses to reach the server.
     """
 
     mode: Literal["self_host", "external"] = "self_host"
-    # external mode: URL of the running Band MCP server (ignored when
-    # self-hosted — the adapter advertises its own server's URL).
     server_url: str = "http://localhost:8002/sse"
-    # Registration name in Letta. None resolves to "band" in external mode and
-    # to a fresh unique "band-{suffix}" per registration when self-hosted:
-    # Letta soft-deletes registrations, so a deregistered name can never be
-    # reused (unique-constraint conflict), and fresh names also keep concurrent
-    # adapter instances on one Letta server from cross-wiring their tools.
-    #
-    # Setting a fixed name in self-host mode skips deregistration on shutdown
-    # (so the name is not poisoned) but ties the row to one server URL. Because
-    # the in-process MCP server binds an OS-assigned port each start, a process
-    # restart usually changes the URL — ``register()`` then fails until the stale
-    # row is removed from Letta manually. Prefer leaving this None (ephemeral
-    # names) unless the advertised URL is stable across restarts.
     server_name: str | None = None
-    # self_host mode: interface the local server binds.
     bind_host: str = LOCAL_MCP_HOST
-    # self_host mode: hostname Letta uses to reach the local server (defaults
-    # to bind_host). Set "host.docker.internal" for a dockerized Letta.
     advertised_host: str | None = None
     transport: MCPTransport = "sse"
 
 
-class LettaAdapterConfig(BaseSettings):
+class LettaAdapterConfig(EnvAdapterConfig):
     """Configuration for the Letta adapter.
 
     Works with both Letta Cloud and self-hosted Letta.  For Letta Cloud
@@ -95,31 +100,61 @@ class LettaAdapterConfig(BaseSettings):
     to your server (e.g. ``"http://localhost:8283"``) — no ``provider_key``
     is required.
 
-    Platform tools reach the Letta server over MCP; see ``LettaMCPConfig``
-    (``mcp``) for the self-hosted default and the external band-mcp mode.
-    ``embedding`` is required by Letta's Docker server on agent create
-    (e.g. ``"openai/text-embedding-3-small"``); Letta Cloud picks a default
-    when omitted.
-
     Most fields can also be set via a ``LETTA_``-prefixed environment
     variable (e.g. ``LETTA_BASE_URL``, ``LETTA_MODEL``, ``LETTA_EMBEDDING``);
     ``provider_key`` additionally accepts ``LETTA_API_KEY``, matching Letta
-    Cloud's own naming. An explicit constructor kwarg always wins over the
-    environment.
+    Cloud's own naming. An explicit value always wins over the environment.
+
+    Attributes:
+        agent_id: Existing Letta agent to resume; in shared mode, a bootstrap
+            hint for the lone agent.
+        model: Letta model handle for created agents.
+        provider_key: Letta API key. Required for Letta Cloud; omit for
+            self-hosted.
+        base_url: Letta server URL.
+        custom_section: Extra instructions appended to the system prompt.
+        include_base_instructions: Include the Band base instructions in the
+            system prompt.
+        persona: Full override of the created agent's persona block.
+        turn_timeout_s: Seconds a Letta round-trip may take before the turn
+            fails with a ``timeout``.
+        memory_blocks: Extra memory blocks for created agents.
+        summary_max_length: Max characters of the per-turn summary.
+        project: Letta Cloud project scoping (ignored for self-hosted).
+        org_scoped: Self-hosted only: provision a dedicated Letta organization
+            and user per adapter instance so MCP tool storage never collides
+            between instances sharing one server (Letta dedupes MCP-discovered
+            Tool rows by ``(name, organization_id)``; with no scoping, a second
+            instance silently re-points the first instance's tool to its own
+            MCP server). ``None`` auto-enables for a self-hosted ``base_url``
+            and stays off for Letta Cloud; ``False`` opts a self-hosted
+            deployment out. ``True`` against Letta Cloud raises
+            ``BandConfigError``: Cloud does not expose the admin API this needs.
+        embedding: Embedding model passed on agent create. Letta's Docker
+            server requires one; Cloud picks its own default when ``None``.
+        mcp: How the Letta server reaches the Band MCP tools.
+        mcp_server_url: Deprecated; use ``mcp=LettaMCPConfig(...)``.
+        mcp_server_name: Deprecated; use ``mcp=LettaMCPConfig(...)``.
+        auto_relay: Relay the agent's plain assistant text into the room when
+            it did not call the MCP send tool. Keeps the agent responsive when
+            the model skips tools, but can mask a dead MCP tool path — disable
+            to make an unused tool path fail loudly (an error event) instead.
+        delete_agents_on_cleanup: Delete the room's Letta agent on cleanup.
+            Off by default: persisted agents are what makes resume-by-id work
+            across restarts. Per_room mode only — the shared agent outlives
+            any single room.
+        consolidate_memory_on_cleanup: Ask Letta to consolidate room context
+            into memory on cleanup. Another live Letta/LLM call during
+            teardown, so CI can disable it without changing turn behavior.
+        teardown_timeout_s: Upper bound for best-effort Letta teardown calls,
+            which can stall when the server closes MCP sessions.
+        mode: ``per_room`` creates one Letta agent per room; ``shared`` uses
+            one agent with per-room Conversations for isolation.
     """
 
-    # extra="forbid" (not the usual settings "ignore"): this config is
-    # commonly built with many explicit kwargs, so a typo'd field name
-    # must fail construction instead of silently vanishing.
     # populate_by_name: an aliased field stays constructible by its field name
     # and keeps its prefix-derived environment variable.
-    model_config = SettingsConfigDict(
-        env_prefix="LETTA_",
-        case_sensitive=False,
-        extra="forbid",
-        env_ignore_empty=True,
-        populate_by_name=True,
-    )
+    model_config = SettingsConfigDict(env_prefix="LETTA_", populate_by_name=True)
 
     agent_id: str | None = None
     model: str | None = None
@@ -128,62 +163,24 @@ class LettaAdapterConfig(BaseSettings):
     # would read a bare env var and could swallow an unrelated secret.
     provider_key: str | None = Field(
         default=None, validation_alias=AliasChoices("LETTA_API_KEY")
-    )  # Required for Letta Cloud; omit for self-hosted
+    )
     base_url: str = LETTA_CLOUD_BASE_URL
     custom_section: str = ""
     include_base_instructions: bool = True
     persona: str | None = None
     turn_timeout_s: float = 300.0
-    memory_blocks: list[dict[str, str]] = Field(default_factory=list)
+    memory_blocks: tuple[dict[str, str], ...] = ()
     summary_max_length: int = 150
-
-    # Letta Cloud project scoping (ignored for self-hosted)
     project: str | None = None
-
-    # Self-hosted only: provision a dedicated Letta organization + user per
-    # adapter instance so MCP tool storage never collides between instances
-    # sharing one server (Letta dedupes MCP-discovered Tool rows by
-    # (name, organization_id); with no scoping, a second instance silently
-    # re-points the first instance's tool to its own MCP server). None
-    # (default) auto-enables for a self-hosted base_url and stays off for
-    # Letta Cloud. Explicit False is the only meaningful override — it opts
-    # a self-hosted deployment back out. Explicit True against Letta Cloud
-    # raises BandConfigError at construction (see _reject_org_scoped_cloud
-    # below): Cloud does not expose the admin API this needs, so honoring it
-    # would fail deep inside on_started instead of failing loud up front.
     org_scoped: bool | None = None
-
-    # Embedding model passed on agent create. Letta's Docker server requires
-    # one; Cloud picks its own default when None.
     embedding: str | None = None
-
-    # MCP tool path configuration (see LettaMCPConfig).
     mcp: LettaMCPConfig = Field(default_factory=LettaMCPConfig)
-    # Deprecated compatibility shims for the pre-nested MCP config API.
     mcp_server_url: str | None = None
     mcp_server_name: str | None = None
-
-    # Relay the agent's plain assistant text into the room when it did not
-    # call the MCP send tool. Keeps the agent responsive when the model skips
-    # tools, but can mask a dead MCP tool path — disable to make an unused
-    # tool path fail loudly (an error event) instead.
     auto_relay: bool = True
-
-    # Delete the room's Letta agent on cleanup. Off by default: persisted
-    # agents are what makes resume-by-id work across restarts. Opt in as
-    # hygiene for long-lived self-hosted servers (per_room mode only — the
-    # shared agent outlives any single room).
     delete_agents_on_cleanup: bool = False
-    # Ask Letta to consolidate room context into memory on cleanup. This is
-    # useful for long-lived agents but is another live Letta/LLM call during
-    # teardown, so CI can disable it without changing turn behavior.
     consolidate_memory_on_cleanup: bool = True
-    # Upper bound for best-effort Letta teardown calls. Letta server cleanup
-    # paths can stall when closing MCP sessions; teardown must warn and move on.
     teardown_timeout_s: float = 10.0
-
-    # Operating mode: per_room creates one Letta agent per room,
-    # shared uses one agent with per-room Conversations for isolation.
     mode: Literal["per_room", "shared"] = "per_room"
 
     def __init__(self, **data: Any) -> None:
@@ -203,34 +200,29 @@ class LettaAdapterConfig(BaseSettings):
             data["provider_key"] = api_key
         super().__init__(**data)
 
-    @model_validator(mode="after")
-    def _apply_deprecated_field_shims(self) -> LettaAdapterConfig:
-        if self.mcp_server_url is not None or self.mcp_server_name is not None:
-            warnings.warn(
-                "mcp_server_url and mcp_server_name are deprecated on "
-                "LettaAdapterConfig, use mcp=LettaMCPConfig(...) instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            server_url = (
-                self.mcp_server_url
-                if self.mcp_server_url is not None
-                else self.mcp.server_url
-            )
-            server_name = (
-                self.mcp_server_name
-                if self.mcp_server_name is not None
-                else self.mcp.server_name
-            )
-            self.mcp = LettaMCPConfig(
-                mode="external",
-                server_url=server_url,
-                server_name=server_name,
-                transport=self.mcp.transport,
-            )
-            self.mcp_server_url = None
-            self.mcp_server_name = None
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_deprecated_mcp_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        server_url = data.get("mcp_server_url")
+        server_name = data.get("mcp_server_name")
+        if server_url is None and server_name is None:
+            return data
+        warnings.warn(
+            "mcp_server_url and mcp_server_name are deprecated on "
+            "LettaAdapterConfig, use mcp=LettaMCPConfig(...) instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        mcp = LettaMCPConfig.model_validate(data.get("mcp", {}))
+        folded = LettaMCPConfig(
+            mode="external",
+            server_url=mcp.server_url if server_url is None else server_url,
+            server_name=mcp.server_name if server_name is None else server_name,
+            transport=mcp.transport,
+        )
+        return {**data, "mcp": folded, "mcp_server_url": None, "mcp_server_name": None}
 
     @model_validator(mode="after")
     def _reject_org_scoped_cloud(self) -> LettaAdapterConfig:

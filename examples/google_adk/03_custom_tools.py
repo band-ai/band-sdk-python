@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from band import Agent, configure_logging
-from band.adapters import GoogleADKAdapter
+from band.adapters import GoogleADKAdapter, GoogleADKAdapterConfig
 from band.core.types import Emit
 
 configure_logging(logging.INFO)
@@ -81,15 +81,15 @@ async def main() -> None:
 
     # Create adapter with custom tools
     adapter = GoogleADKAdapter(
-        model="gemini-2.5-flash",
+        GoogleADKAdapterConfig(
+            model="gemini-2.5-flash",
+            custom_section="You are a helpful assistant with access to a calculator and "
+            "weather tool in addition to the platform tools.",
+        ),
         additional_tools=[
             (CalculatorInput, calculator),
             (WeatherInput, weather),
         ],
-        custom_section=(
-            "You are a helpful assistant with access to a calculator and "
-            "weather tool in addition to the platform tools."
-        ),
         emit=Emit.TOOL_CALLS,
     )
 

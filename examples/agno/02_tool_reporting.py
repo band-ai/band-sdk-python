@@ -66,7 +66,7 @@ async def main() -> None:
 
     # Default emit narrates everything the adapter supports, including
     # tool_call/tool_result events posted to the room.
-    adapter = AgnoAdapter(agno_agent)
+    adapter = AgnoAdapter(agent=agno_agent)
 
     logger.info("Starting Agno agent with tool reporting...")
     async with Agent.from_config(

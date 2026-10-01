@@ -19,6 +19,17 @@ text. `tests/framework_conformance/test_tool_text_drift.py` is the drift
 guard; an adapter that builds its own tool schemas sets `advertised_arg_text`
 on its test config so the guard can read what the model actually sees.
 
+## Adapter Constructor Shape
+
+Every adapter is built as `XAdapter(config: XAdapterConfig | None = None, *,
+history_converter=..., additional_tools=..., <live objects>, **features)`.
+`XAdapterConfig` subclasses `BaseAdapterConfig` (or `EnvAdapterConfig` when env
+vars may set it) from `src/band/core/adapterconfig.py`. It is frozen, rejects
+unknown fields, and holds plain data only, so it loads from YAML/JSON. Clients,
+graphs, LLM objects, factories and callbacks stay keyword-only constructor
+arguments. Validate settings in the config, not the constructor.
+`tests/framework_conformance/test_adapter_shape.py` enforces the shape.
+
 ## Adapter Feature Flags & Capability Negotiation
 
 Every adapter constructor takes `emit=`/`capabilities=`/`include_tools=`/etc.

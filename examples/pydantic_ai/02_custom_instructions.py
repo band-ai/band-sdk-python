@@ -19,7 +19,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import PydanticAIAdapter
+from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,8 +46,9 @@ async def main() -> None:
 
     # Create adapter with custom instructions
     adapter = PydanticAIAdapter(
-        model="anthropic:claude-3-5-sonnet-latest",
-        custom_section=CUSTOM_PROMPT,
+        PydanticAIAdapterConfig(
+            model="anthropic:claude-3-5-sonnet-latest", custom_section=CUSTOM_PROMPT
+        )
     )
 
     logger.info("Starting support agent...")

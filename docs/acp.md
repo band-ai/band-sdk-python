@@ -4,6 +4,23 @@ Facts about `ACPClientAdapter` (Band room → room-owned ACP subprocess) that sp
 modules or that the code cannot say for itself. The server side is
 `ACPServer` + `BandACPServerAdapter`.
 
+## Configuration
+
+`ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig`,
+`CopilotACPAdapterConfig` and `OmpACPAdapterConfig` extend it with backend defaults
+and fields. Callables (`workspace_for_room`, `resolve_session_config`,
+`resolve_permission`) are keyword-only constructor arguments.
+
+```python
+from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
+
+config = ACPClientAdapterConfig.model_validate(
+    {"command": "codex-acp", "turn_timeout_s": 600}
+)
+adapter = ACPClientAdapter(config)
+assert adapter.config.command == ("codex-acp",)
+```
+
 ## Turn delivery
 
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to

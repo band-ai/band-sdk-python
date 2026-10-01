@@ -24,7 +24,7 @@ import parlant.sdk as p
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import ParlantAdapter
+from band.adapters import ParlantAdapter, ParlantAdapterConfig
 
 configure_logging(
     logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
@@ -60,8 +60,7 @@ You are a collaborative assistant in the Band multi-agent platform.
 def build_adapter() -> ParlantAdapter:
     """Build the Parlant adapter with comprehensive guidelines."""
     adapter = ParlantAdapter(
-        name="Parlant",
-        description=CUSTOM_DESCRIPTION,
+        ParlantAdapterConfig(name="Parlant", description=CUSTOM_DESCRIPTION),
         nlp_service=p.NLPServices.openai,  # requires OPENAI_API_KEY
     )
 

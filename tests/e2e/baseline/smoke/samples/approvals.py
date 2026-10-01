@@ -20,6 +20,16 @@ from pathlib import Path
 from typing import Any
 
 from band.adapters.claude_sdk import (
+    APPROVAL_POLICY_DECISION_TEMPLATE,
+    APPROVAL_UNAUTHORIZED_MESSAGE,
+    APPROVAL_UNKNOWN_TOKEN_TEMPLATE,
+    ClaudeApprovalOptions,
+    ClaudePermissionMode,
+    ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
+    ClaudeSDKCommand,
+)
+from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE as CLAUDE_REQUESTED,
 )
 from band.adapters.claude_sdk import (
@@ -27,14 +37,6 @@ from band.adapters.claude_sdk import (
 )
 from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE as CLAUDE_TIMED_OUT,
-)
-from band.adapters.claude_sdk import (
-    APPROVAL_UNAUTHORIZED_MESSAGE,
-    APPROVAL_UNKNOWN_TOKEN_TEMPLATE,
-    ClaudeApprovalOptions,
-    ClaudeSDKAdapter,
-    ClaudeSDKAdapterConfig,
-    ClaudeSDKCommand,
 )
 from band.adapters.codex import (
     APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED,
@@ -109,6 +111,14 @@ def command_request(marker: str, target: Path) -> str:
     return (
         f"Use your shell tool to run exactly `{marker_command(marker, target)}`. "
         "You must execute it with the tool, not answer from memory."
+    )
+
+
+def write_request(marker: str, target: Path) -> str:
+    """Ask for a file edit (which ``acceptEdits`` allows unprompted) writing ``marker``."""
+    return (
+        f"Use your Write tool to create `{target}` containing exactly `{marker}`. "
+        "Do not use the shell. If the write is refused, do not retry; just say so."
     )
 
 
@@ -531,3 +541,88 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         extra_deps=(Dep.OPENCODE_BASH_ASKS,),
     ),
 }
+
+
+CLAUDE_POLICY_DECISION = template_pattern(APPROVAL_POLICY_DECISION_TEMPLATE)
+
+
+@dataclass(frozen=True)
+class UnattendedPolicy:
+    """A host's Claude config that settles native tool use with nobody asked.
+
+    ``config`` is plain data, as the host's YAML holds it; ``request`` asks for
+    a write through the native ``tool``; ``decision`` is what the adapter's
+    policy notice announces (``None``: the CLI decides silently); ``runs`` is
+    whether the write reaches the disk.
+    """
+
+    name: str
+    config: dict[str, Any]
+    request: Callable[[str, Path], str]
+    tool: str
+    decision: str | None
+    runs: bool
+
+    def build(
+        self, settings: BaselineSettings, setup: AgentSetup
+    ) -> SimpleAdapter[Any]:
+        return ClaudeSDKAdapter(
+            ClaudeSDKAdapterConfig.model_validate(
+                {
+                    "model": settings.llm_models.anthropic_model,
+                    "custom_section": SHELL_PROMPT,
+                    "cwd": str(setup.workdir),
+                    **self.config,
+                }
+            )
+        )
+
+    @property
+    def announced(self) -> set[str]:
+        """The decisions its policy notices must announce, and no others."""
+        return set() if self.decision is None else {self.decision}
+
+    @staticmethod
+    def decisions(contents: list[str]) -> set[str]:
+        """Every decision the adapter's policy notices announced."""
+        return {
+            match["decision"]
+            for content in contents
+            for match in CLAUDE_POLICY_DECISION.finditer(content)
+        }
+
+    def settled(self, contents: list[str]) -> bool:
+        """The policy's decision is shown and the agent closed with a reply."""
+        decided = self.decision is None or self.decision in self.decisions(contents)
+        closed = any(CLAUDE_POLICY_DECISION.search(c) is None for c in contents)
+        return decided and closed
+
+
+UNATTENDED_POLICIES = (
+    UnattendedPolicy(
+        name="auto-accept",
+        config={"approvals": {"mode": "auto_accept"}},
+        request=command_request,
+        tool="Bash",
+        decision="accept",
+        runs=True,
+    ),
+    UnattendedPolicy(
+        name="auto-decline",
+        config={"approvals": {"mode": "auto_decline"}},
+        request=command_request,
+        tool="Bash",
+        decision="decline",
+        runs=False,
+    ),
+    # A file write acceptEdits (the default) allows, so a dropped mode shows up
+    # as a written file.
+    UnattendedPolicy(
+        name="dont-ask",
+        config={"permission_mode": ClaudePermissionMode.DONT_ASK.value},
+        request=write_request,
+        tool="Write",
+        decision=None,
+        runs=False,
+    ),
+)

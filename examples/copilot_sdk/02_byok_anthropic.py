@@ -61,16 +61,16 @@ async def main() -> None:
     adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model="claude-haiku-4-5",
-            provider=ProviderConfig(
-                type="anthropic",
-                # base_url is required by the runtime, even for known providers.
-                base_url="https://api.anthropic.com",
-                api_key=settings.anthropic_api_key,
-            ),
             custom_section="You are a helpful assistant. Be concise and friendly.",
             use_logged_in_user=False,
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-byok-",
+        ),
+        provider=ProviderConfig(
+            type="anthropic",
+            # base_url is required by the runtime, even for known providers.
+            base_url="https://api.anthropic.com",
+            api_key=settings.anthropic_api_key,
         ),
         emit=Emit.TOOL_CALLS,
     )
