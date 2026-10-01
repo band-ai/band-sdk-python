@@ -21,6 +21,7 @@ from band.client.streaming.client import (
     AgentControlPayload,
     ContactAddedPayload,
     ContactRequestReceivedPayload,
+    ControlMode,
     MessageCreatedPayload,
     ParticipantRemovedPayload,
     RoomRemovedPayload,
@@ -269,7 +270,7 @@ def test_agent_control_accepts_a_known_mode() -> None:
     payload = AgentControlPayload.from_wire(
         WireEvent.AGENT_CONTROL, make_agent_control()
     )
-    assert payload.mode == "interrupt"
+    assert payload.mode is ControlMode.INTERRUPT
 
 
 def test_agent_control_rejects_an_unknown_mode() -> None:
