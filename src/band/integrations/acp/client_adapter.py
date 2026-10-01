@@ -629,9 +629,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 except TimeoutError:
                     if not turn_deadline.expired():
                         raise
-                    # A STOP/INTERRUPT can cancel this task while cleanup awaits
-                    # session/cancel.
-                    await asyncio.shield(
+                    # await the Task after CancelledError so STOP cannot free
+                    # the room before on_cleanup finishes.
+                    cleanup = asyncio.create_task(
                         self._handle_turn_timeout(
                             runtime,
                             room_id=room_id,
@@ -639,6 +639,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                             tools=tools,
                         )
                     )
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        await cleanup
+                        raise
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self._turn_timeout_s}s"
                     ) from None

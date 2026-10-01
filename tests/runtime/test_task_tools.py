@@ -1,10 +1,13 @@
 """Tests for AgentTools' task-board methods (list_tasks, create_task,
 get_task, update_task, get_task_history, get_board, set_board).
 
-Mirrors tests/runtime/test_tools.py's TestMemoryTools/TestFileTools pattern:
-mock_rest_client is an autospec of the real Fern client, so an assertion
-here fails immediately if band-client-rest renames a method or drops a
-parameter, rather than passing silently against a hand-rolled fake.
+Most cases mirror tests/runtime/test_tools.py's TestMemoryTools/TestFileTools
+pattern: mock_rest_client is an autospec of the real Fern client, so an
+assertion here fails immediately if band-client-rest renames a method or
+drops a parameter, rather than passing silently against a hand-rolled fake.
+
+Board-number path/body coverage uses a real AsyncRestClient over an httpx
+MockTransport instead, so the wire URL and JSON body are what get asserted.
 """
 
 from __future__ import annotations
@@ -428,11 +431,13 @@ TASK_READS_AND_WRITES: dict[str, Callable[[AgentTools, str], Awaitable[object]]]
     "history": lambda tools, id: tools.get_task_history(id),
 }
 
+BOARD_NUMBER = "1"
+
 
 @pytest.mark.parametrize(
     "call", TASK_READS_AND_WRITES.values(), ids=TASK_READS_AND_WRITES
 )
-@pytest.mark.parametrize("id", ["#1", "1"])
+@pytest.mark.parametrize("id", [f"#{BOARD_NUMBER}", BOARD_NUMBER])
 async def test_a_board_number_addresses_its_own_task(
     sent_requests: tuple[AgentTools, list[httpx.Request]],
     call: Callable[[AgentTools, str], Awaitable[object]],
@@ -444,7 +449,7 @@ async def test_a_board_number_addresses_its_own_task(
 
     await call(tools, id)
 
-    assert addressed_task(requests[0]) == "1"
+    assert addressed_task(requests[0]) == BOARD_NUMBER
 
 
 async def test_a_board_number_supersedes_its_own_task(
@@ -453,6 +458,8 @@ async def test_a_board_number_supersedes_its_own_task(
     """The platform rejects "#N" as a supersedes_id; it resolves only "N"."""
     tools, requests = sent_requests
 
-    await tools.create_task(subject="Look it up again", supersedes_id="#1")
+    await tools.create_task(
+        subject="Look it up again", supersedes_id=f"#{BOARD_NUMBER}"
+    )
 
-    assert json.loads(requests[0].content)["supersedes_id"] == "1"
+    assert json.loads(requests[0].content)["supersedes_id"] == BOARD_NUMBER

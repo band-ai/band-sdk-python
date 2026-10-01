@@ -1014,6 +1014,9 @@ class TestACPClientAdapterOnMessage:
         )
         await cancel_started.wait()
         turn.cancel()
+        await asyncio.sleep(0)
+        # Bare shield would finish the outer task here while cleanup orphans.
+        assert not turn.done()
         release_cancel.set()
         with pytest.raises(asyncio.CancelledError):
             await turn
@@ -1022,6 +1025,7 @@ class TestACPClientAdapterOnMessage:
         failures = reported_failures(tools)
         assert len(failures) == 1
         assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
+        assert _MOCK_ROOM not in adapter_with_mocks._runtimes
 
     @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(
