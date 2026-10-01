@@ -6,7 +6,8 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
+from band.core.types import ApprovalMode
+
 QuestionMode = Literal["manual", "auto_reject"]
 ApprovalReply = Literal["once", "always", "reject"]
 

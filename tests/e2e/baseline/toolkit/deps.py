@@ -39,7 +39,10 @@ from urllib.parse import urlparse
 
 from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
+from tests.e2e.baseline.toolkit.omp_credentials import (
+    omp_command,
+    omp_provider_api_key,
+)
 from tests.paths import REPO_ROOT
 
 # REPO_ROOT: used to reject a Codex working directory inside the SDK checkout,
@@ -226,14 +229,13 @@ def _bun_meets_min_version(min_version: str) -> bool:
 
 
 def _omp_cli_responds(settings: BaselineSettings) -> bool:
-    """The OMP ``acp`` subcommand responds (``OMP_COMMAND`` overrides the full base command)."""
-    raw = settings.backends.omp_command.strip()
-    base = raw.split() if raw else ["omp", "acp"]
-    if shutil.which(base[0]) is None:
+    """The OMP command every baseline test launches answers ``--help``."""
+    command = omp_command(settings)
+    if shutil.which(command[0]) is None:
         return False
     try:
         completed = subprocess.run(
-            [*base, "--help"],
+            [*command, "--help"],
             check=False,
             capture_output=True,
             text=True,

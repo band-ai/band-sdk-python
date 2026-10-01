@@ -19,7 +19,7 @@ import pytest
 from band.core.memory_types import MemoryListScope
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import Capability
-from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.scorecard import env_gated_skip
 from tests.e2e.baseline.settings import BaselineSettings
@@ -133,14 +133,6 @@ async def test_recall_memory_across_memory_adapters(
 
 @per_adapter(
     supports={Capability.MEMORY},
-    exclude=[
-        ExcludedAdapter(
-            Adapter.CREWAI,
-            "the second, post-reboot retrieval turn reads the memory but ends on "
-            "an empty completion before band_send_message runs, so no reply ever "
-            "reaches the room; reproduced on every attempt, not a transient",
-        )
-    ],
     **MEMORY_AGENT,
 )
 @flaky_infra("only transient failures")
@@ -167,6 +159,25 @@ async def test_memory_survives_adapter_rehydration(
             mention_name=identity.name,
         )
         await capture.wait_for_processed(mid, identity.id)
+        stored_turn = await capture.memory(identity, scope=MemoryListScope.AGENT)
+        store_results = await capture.tool_results(
+            sender_id=identity.id, include_memory=True
+        )
+
+    store_contents = [
+        call.args.get("content")
+        for call in stored_turn.calls
+        if call.name == MemoryTool.STORE.value
+    ]
+    assert any(
+        isinstance(content, str) and marker in content for content in store_contents
+    ), f"store tool input lost the exact marker {marker!r}: {store_contents}"
+    store_results.assert_succeeded(MemoryTool.STORE.value)
+    persisted_contents = [record.content for record in stored_turn.stored]
+    assert any(marker in content for content in persisted_contents), (
+        f"persisted memory lost the exact marker {marker!r}: {persisted_contents}; "
+        f"store results: {[result.output for result in store_results.named(MemoryTool.STORE.value)]}"
+    )
 
     retrieval_room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-retrieve-{cell.adapter_id}", participants=[identity.id]
@@ -193,7 +204,7 @@ async def test_memory_survives_adapter_rehydration(
     # (opencode reports a tool call once, on the first frame it sees, which for a
     # PENDING frame carries no arguments yet) and to whether the model chose to
     # filter server-side rather than list and read.
-    replies.assert_contains_any([marker])
+    replies.assert_contains_exact(marker)
     mem.calls.assert_list_called()
     mem.calls.assert_get_called()
     mem.stored.assert_stored(content=marker)

@@ -23,6 +23,7 @@ import pytest
 from tests.paths import CI_SCRIPTS, REPO_ROOT
 
 _EMIT_LANE_MATRIX = CI_SCRIPTS / "emit-lane-matrix.py"
+_RUN_BASELINE_E2E = CI_SCRIPTS / "run-baseline-e2e.sh"
 _READ_MENTIONS = CI_SCRIPTS / "read-integrations-mentions.sh"
 _ROSTER = Path(".github") / "integrations-team.txt"
 
@@ -36,6 +37,39 @@ posix_shell_only = pytest.mark.skipif(
     sys.platform == "win32" or shutil.which("bash") is None,
     reason="needs a POSIX bash (Windows `bash` is the WSL launcher)",
 )
+
+
+@posix_shell_only
+def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
+    stub = tmp_path / "uv"
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "with Path(os.environ['CALL_LOG']).open('a') as log:\n"
+        "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "Path(os.environ['BAND_E2E_SCORECARD_JSON']).write_text('[]')\n"
+        "sys.exit(1)\n"
+    )
+    stub.chmod(0o755)
+    call_log = tmp_path / "calls.txt"
+    result = subprocess.run(
+        ["bash", str(_RUN_BASELINE_E2E)],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "CALL_LOG": str(call_log),
+            "FINAL": str(tmp_path / "scorecard.json"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    (command,) = call_log.read_text().splitlines()
+    assert "-p no:rerunfailures" in command
+    assert "--last-failed" not in command
 
 
 def _emit_lane_matrix(lane: str, os_id: str) -> subprocess.CompletedProcess[str]:

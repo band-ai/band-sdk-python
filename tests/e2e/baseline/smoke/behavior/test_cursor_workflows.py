@@ -8,16 +8,10 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from acp.schema import SessionConfigOptionSelect
 
-from band.adapters.cursor_acp import (
-    DECISION_RESOLVED_TEMPLATE,
-    ROOM_COMMAND,
-    CursorACPAdapter,
-    CursorCommandWord,
-)
 from band.client.streaming import DeliveryStatus
 from band.core.memory_types import (
     MemorySegment,
@@ -26,12 +20,12 @@ from band.core.memory_types import (
     MemoryType,
 )
 from band.core.types import Capability, MessageType
-from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
-from band.integrations.acp.session_config import (
-    ACPConfigRequest,
-    SessionConfigResolver,
-    flatten_select_options,
+from band.integrations.acp.cursor import (
+    DECISION_RESOLVED_TEMPLATE,
+    ROOM_COMMAND,
+    CursorCommandWord,
 )
+from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
 from band.runtime.tools.effects import turn_effect
 from band.runtime.tools.types import TurnEffect
 from tests.e2e.baseline.agents import Adapter, per_adapter
@@ -55,6 +49,13 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+if TYPE_CHECKING:
+    from band.adapters.cursor_acp import CursorACPAdapter
+    from band.integrations.acp.session_config import (
+        ACPConfigRequest,
+        SessionConfigResolver,
+    )
 
 REPAIR_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=6)
 PLAN_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=6)
@@ -191,6 +192,13 @@ async def _assert_repaired_project(root: Path) -> None:
 
 def _select_mode(mode: str) -> SessionConfigResolver:
     async def resolve(request: ACPConfigRequest) -> dict[str, str]:
+        # The ACP extra is absent from the crewai and parlant collection venvs.
+        from acp.schema import SessionConfigOptionSelect  # noqa: PLC0415
+
+        from band.integrations.acp.session_config import (  # noqa: PLC0415
+            flatten_select_options,
+        )
+
         option = next(
             (
                 item
@@ -366,6 +374,7 @@ async def test_repairs_a_failing_project_after_a_human_gate(
     ):
         room = ApprovalRoom(
             agent,
+            Adapter.CURSOR_ACP,
             room_id,
             capture,
             DIALECTS[Adapter.CURSOR_ACP],
@@ -449,6 +458,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
     ):
         room = ApprovalRoom(
             identity,
+            Adapter.CURSOR_ACP,
             room_id,
             capture,
             DIALECTS[Adapter.CURSOR_ACP],
@@ -477,6 +487,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
     ):
         room = ApprovalRoom(
             identity,
+            Adapter.CURSOR_ACP,
             room_id,
             capture,
             DIALECTS[Adapter.CURSOR_ACP],
@@ -511,6 +522,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
     ):
         room = ApprovalRoom(
             identity,
+            Adapter.CURSOR_ACP,
             room_id,
             capture,
             DIALECTS[Adapter.CURSOR_ACP],

@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
 from tests.e2e.baseline.settings import BaselineSettings
@@ -28,6 +29,7 @@ class ControlRuntime:
         self._invocations = 0
         self.started = asyncio.Event()
         self.cancelled = asyncio.Event()
+        self.received_control_modes: list[ControlMode] = []
         self.completed_message_ids: list[str] = []
 
     async def on_execute(self, _ctx: object, event: object) -> None:
@@ -47,7 +49,10 @@ class ControlRuntime:
         try:
             await asyncio.wait_for(self.cancelled.wait(), timeout=deadline_s)
         except TimeoutError:
-            raise TimeoutError("STOP did not cancel the active cycle") from None
+            raise TimeoutError(
+                "control signal did not cancel the active cycle; "
+                f"SDK received modes: {[mode.value for mode in self.received_control_modes]}"
+            ) from None
 
     async def wait_for_start(self, *, deadline_s: float) -> None:
         try:
@@ -72,7 +77,12 @@ async def running_control_runtime(
         rest_url=settings.endpoints.rest_url,
     )
     runtime = AgentRuntime(link=link, agent_id=agent.id, on_execute=control.on_execute)
-    link.on_control = runtime.handle_control
+
+    async def record_control(payload: AgentControlPayload) -> None:
+        control.received_control_modes.append(payload.mode)
+        await runtime.handle_control(payload)
+
+    link.on_control = record_control
     await runtime.start()
     try:
         yield control

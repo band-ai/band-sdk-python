@@ -70,6 +70,16 @@ class ContentAssertions:
                 f"no {self._noun()} contained any of {options}:\n{haystack}"
             )
 
+    def assert_contains_exact(self, value: str) -> None:
+        """Require a nonempty value verbatim in one message's content."""
+        if not value:
+            raise ValueError("expected content value cannot be empty")
+        if not any(value in item.content for item in self):  # type: ignore[attr-defined]
+            haystack = "\n".join(item.content for item in self)  # type: ignore[attr-defined]
+            raise AssertionError(
+                f"no {self._noun()} contained exact value {value!r}:\n{haystack}"
+            )
+
     def assert_contains_none(self, options: Iterable[str]) -> None:
         """Assert *no* item's content contains any of ``options`` (tolerant
         substring). The dual of :meth:`assert_contains_any`, and just as tolerant.
