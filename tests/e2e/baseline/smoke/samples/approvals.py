@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from band_rest import ChatMessage
 
@@ -122,11 +122,12 @@ def command_request(marker: str, target: Path, *, done: str) -> str:
     )
 
 
-def write_request(marker: str, target: Path) -> str:
+def write_request(marker: str, target: Path, *, done: str) -> str:
     """Ask for a file edit (which ``acceptEdits`` allows unprompted) writing ``marker``."""
     return (
         f"Use your Write tool to create `{target}` containing exactly `{marker}`. "
-        "Do not use the shell. If the write is refused, do not retry; just say so."
+        "Do not use the shell. If the write is refused, do not retry. "
+        f"After the write attempt is resolved, finish with exactly `{done}`."
     )
 
 
@@ -619,6 +620,12 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
 CLAUDE_POLICY_DECISION = template_pattern(APPROVAL_POLICY_DECISION_TEMPLATE)
 
 
+class ClosingRequest(Protocol):
+    """Asks for one write of ``marker`` to ``target``, closed by ``done``."""
+
+    def __call__(self, marker: str, target: Path, *, done: str) -> str: ...
+
+
 @dataclass(frozen=True)
 class UnattendedPolicy:
     """A host's Claude config that settles native tool use with nobody asked.
@@ -631,7 +638,7 @@ class UnattendedPolicy:
 
     name: str
     config: dict[str, Any]
-    request: Callable[[str, Path], str]
+    request: ClosingRequest
     tool: str
     decision: str | None
     runs: bool
@@ -664,11 +671,10 @@ class UnattendedPolicy:
             for match in CLAUDE_POLICY_DECISION.finditer(content)
         }
 
-    def settled(self, contents: list[str]) -> bool:
-        """The policy's decision is shown and the agent closed with a reply."""
+    def settled(self, contents: list[str], done: str) -> bool:
+        """The policy's decision is shown and the agent closed with ``done``."""
         decided = self.decision is None or self.decision in self.decisions(contents)
-        closed = any(CLAUDE_POLICY_DECISION.search(c) is None for c in contents)
-        return decided and closed
+        return decided and any(closes_with(content, done) for content in contents)
 
 
 UNATTENDED_POLICIES = (

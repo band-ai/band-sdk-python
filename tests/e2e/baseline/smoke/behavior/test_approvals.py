@@ -587,7 +587,7 @@ async def test_a_host_config_policy_settles_tool_use_with_nobody_asked(
     """A host's plain-data config decides alone: auto_accept runs the write and
     auto_decline refuses it, each announcing its decision; dontAsk refuses a
     write the default mode would allow, announcing nothing. No one is asked."""
-    marker = unique_marker("policy")
+    marker, done = unique_marker("policy"), unique_marker("closed")
     async with approval_room(
         cell,
         user_ops,
@@ -597,12 +597,12 @@ async def test_a_host_config_policy_settles_tool_use_with_nobody_asked(
         build=policy.build,
     ) as (room, workdir):
         target = workdir / "policy.txt"
-        start, message_id = await room.post(policy.request(marker, target))
+        start, message_id = await room.post(policy.request(marker, target, done=done))
         await room.capture.wait_for_processed(
             message_id, room.agent.id, deadline_s=BUDGET.deadline_s
         )
         await room.capture.wait_until(
-            lambda _msgs: policy.settled(room.said_since(start)),
+            lambda _msgs: policy.settled(room.said_since(start), done),
             deadline_s=BUDGET.deadline_s,
         )
 
