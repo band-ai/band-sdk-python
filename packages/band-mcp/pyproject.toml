@@ -27,10 +27,9 @@ dependencies = [
     # No added install footprint.
     "typer>=0.16.0",
     "pydantic-settings>=2.1.0",
-    # Unversioned on purpose: band-sdk pins band-client-rest exactly, and two
-    # exact pins drift apart -- band-mcp's moved ahead of the published
-    # band-sdk's, so the released wheel could not install at all.
-    "band-client-rest",
+    # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
+    # for band-client-rest Bugs" for why this stays exact.
+    "band-client-rest==0.0.41",
     # Auto-bumped after every band-sdk release by release.yml's
     # bump-mcp-sdk-floor job, so this always tracks the most recently
     # published band-sdk version -- band-mcp is developed in lockstep in
