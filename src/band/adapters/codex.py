@@ -247,6 +247,11 @@ _REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
     {CodexItemType.DYNAMIC_TOOL_CALL}
 )
 
+# The prompt and the reply; the reply's text is read by the turn loop.
+_MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
+)
+
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
 # _extract_thought_text.
 _THOUGHT_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
@@ -2409,11 +2414,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        if item_type in _REQUESTED_TOOL_ITEM_TYPES:
-            return
-
-        # Skip known non-actionable types
-        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
+        if item_type in _REQUESTED_TOOL_ITEM_TYPES or item_type in _MESSAGE_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)

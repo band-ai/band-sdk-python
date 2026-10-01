@@ -5,8 +5,7 @@
 """Provision (and tear down) the three demo agents on the Band platform.
 
 Registers the PM, Developer, and Architect via the Human User API and writes two
-artifacts next to this file (``delete`` also removes the rooms the conductor
-recorded in ``.demo/room_ids.txt``):
+artifacts next to this file:
 
   * ``agent_config.yaml`` — keyed config the conductor reads (id + key per role).
   * ``.demo/agents.env``  — shell-sourceable ids, keys, and names for launch.sh
@@ -27,7 +26,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
 import yaml
 from band_rest import AsyncRestClient
 from band_rest.types import AgentRegisterRequest
@@ -44,6 +42,8 @@ DEMO_DIR = HERE / ".demo"
 AGENTS_ENV = DEMO_DIR / "agents.env"
 AGENT_IDS = DEMO_DIR / "agent_ids.txt"
 ROOM_IDS = DEMO_DIR / "room_ids.txt"
+ROOM_DELETION_POLL_S = 1.0
+ROOM_DELETION_TIMEOUT_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -165,21 +165,21 @@ def record_room(room_id: str) -> None:
         ledger.write(f"{room_id}\n")
 
 
-async def delete_rooms(settings: ProvisionSettings) -> None:
+async def delete_rooms(client: AsyncRestClient) -> None:
     """Delete every recorded room; one already gone counts as deleted."""
     if not ROOM_IDS.exists():
         return
-    # The generated Human API has no delete-chat operation yet.
-    async with httpx.AsyncClient(
-        base_url=settings.band_rest_url,
-        headers={"X-API-Key": settings.band_api_key_user},
-        timeout=30.0,
-    ) as http:
-        for room_id in ROOM_IDS.read_text(encoding="utf-8").split():
-            response = await http.delete(f"/api/v1/me/chats/{room_id}")
-            if response.status_code != httpx.codes.NOT_FOUND:
-                response.raise_for_status()
-            logger.info("Deleted room %s", room_id)
+    room_ids = ROOM_IDS.read_text(encoding="utf-8").split()
+    deletions = client.human_api_bulk_deletions
+    job = (await deletions.bulk_delete_my_chats(ids=room_ids)).data
+    async with asyncio.timeout(ROOM_DELETION_TIMEOUT_S):
+        while job.status not in ("completed", "failed"):
+            await asyncio.sleep(ROOM_DELETION_POLL_S)
+            job = (await deletions.show_my_bulk_deletion(job.id)).data
+    left = [item.id for item in job.results if item.status != "succeeded"]
+    if left:
+        raise RuntimeError(f"Could not delete rooms {left}; rerun to retry")
+    logger.info("Deleted rooms %s", ", ".join(room_ids))
     ROOM_IDS.unlink()
 
 
@@ -199,7 +199,7 @@ async def main() -> None:
     settings = ProvisionSettings()
     client = make_client(settings)
     if len(sys.argv) > 1 and sys.argv[1] == "delete":
-        await delete_rooms(settings)
+        await delete_rooms(client)
         await delete(client)
     else:
         await create(client)

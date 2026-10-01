@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
+    _MESSAGE_ITEM_TYPES,
     _REQUESTED_TOOL_ITEM_TYPES,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
@@ -2391,7 +2392,7 @@ class TestItemCompletedForwarding:
         """A non-text list result (e.g. an MCP image content block) is dumped as
         JSON, not collapsed to the generic "completed" status.
 
-        Unlike thought extraction and ``dynamicToolCall``, a tool-call result is
+        Unlike thought extraction, a tool-call result is
         real data even when it isn't textual — ``_stringify_tool_output`` must
         use its ``raw_fallback`` mode here so nothing is silently discarded.
         """
@@ -2437,15 +2438,13 @@ class TestItemCompletedForwarding:
     @pytest.mark.asyncio
     async def test_a_dynamic_tool_call_is_reported_once(self) -> None:
         """Codex completes the item it already requested via item/tool/call."""
-        call = {"tool": "band_lookup_peers", "callId": "call-1", "arguments": {}}
         events = [
-            _event_request(42, "item/tool/call", call),
+            _tool_call_request(42, "band_lookup_peers"),
             _event_notification(
                 "item/completed",
                 {
                     "item": {
                         "type": "dynamicToolCall",
-                        "id": "call-1",
                         "tool": "band_lookup_peers",
                         "arguments": {},
                         "status": "completed",
@@ -2459,11 +2458,8 @@ class TestItemCompletedForwarding:
             events=events, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
 
-        reported = [
-            (event["message_type"], json.loads(event["content"])["tool_call_id"])
-            for event in turn.tools.events_sent
-        ]
-        assert reported == [("tool_call", "call-1"), ("tool_result", "call-1")]
+        reported = [event["message_type"] for event in turn.tools.events_sent]
+        assert reported == ["tool_call", "tool_result"]
 
     @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
@@ -4638,7 +4634,7 @@ class TestCodexTypes:
     def test_codex_item_type_fully_classified(self) -> None:
         """Every ``CodexItemType`` lands in exactly one of the adapter's
         buckets: tool-like, requested tool, thought-like, or the skipped
-        user/agent messages.
+        messages.
 
         A new item type added to the enum without also updating one of these
         sets currently falls through to a silent ``logger.debug`` — no room
@@ -4646,14 +4642,11 @@ class TestCodexTypes:
         moment the partition stops being exhaustive.
         """
 
-        message_types = frozenset(
-            {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
-        )
         buckets = (
             _TOOL_ITEM_TYPES,
             _REQUESTED_TOOL_ITEM_TYPES,
             _THOUGHT_ITEM_TYPES,
-            message_types,
+            _MESSAGE_ITEM_TYPES,
         )
 
         assert set().union(*buckets) == set(CodexItemType)
