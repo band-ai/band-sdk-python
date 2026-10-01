@@ -34,7 +34,7 @@ from band.integrations.crewai import (
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import missing_reply_error
+from band.runtime.tools import BandTool, missing_reply_error
 
 if TYPE_CHECKING:
     from crewai import Agent as CrewAIAgent
@@ -432,6 +432,13 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             logger.debug("Room %s: CrewAI returned no text: %s", room_id, e)
             result = None
 
+        self._message_history[room_id].extend(
+            {
+                "role": "assistant",
+                "content": f"[sent via {BandTool.SEND_MESSAGE}] {post}",
+            }
+            for post in reply_tracker.posts
+        )
         final_text = (result.raw or "") if result else ""
         if final_text:
             self._message_history[room_id].append(

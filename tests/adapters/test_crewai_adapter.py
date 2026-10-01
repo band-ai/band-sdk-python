@@ -599,6 +599,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.SEND_MESSAGE,
                 json.dumps({"status": "success"}),
+                {"content": "Hi.", "mentions": ["@owner"]},
                 custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
@@ -647,6 +648,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.STORE_MEMORY,
                 json.dumps({"status": "success"}),
+                {},
                 custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
@@ -672,6 +674,50 @@ class TestErrorHandling:
         mock_tools.send_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_the_next_turn_remembers_what_the_agent_posted(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A turn whose work was a band_send_message must leave that message in
+        the room's history. CrewAI's final answer rarely repeats it, and an
+        agent that can't see it already asked a peer asks again whenever the
+        peer's reply wakes it -- the loop a coordinator falls into."""
+        module = importlib.import_module("band.adapters.crewai")
+        tools_module = importlib.import_module("band.integrations.crewai.tools")
+        prompts: list[str] = []
+
+        posts = ["Please check the API contract.", "Thanks, that settles it."]
+
+        async def _kickoff(prompt):
+            prompts.append(prompt)
+            tools_module._mark_productive_work(
+                module._reply_tracker_var.get(),
+                BandTool.SEND_MESSAGE,
+                json.dumps({"status": "success"}),
+                {"content": posts[len(prompts) - 1], "mentions": ["@ops/checker"]},
+                custom_effects=None,
+            )
+            raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        for bootstrap in (True, False):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=bootstrap,
+                room_id="room-123",
+            )
+
+        earlier, _, _ = prompts[1].partition("[New message -- act on this now:]")
+        assert "(to @ops/checker) Please check the API contract." in earlier
+
+    @pytest.mark.asyncio
     async def test_read_only_turn_with_empty_final_answer_completes(
         self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
@@ -693,6 +739,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.LIST_TASKS,
                 json.dumps({"status": "success", "data": []}),
+                {},
                 custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
