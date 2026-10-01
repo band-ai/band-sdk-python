@@ -160,8 +160,10 @@ def _mark_productive_work(
 
 
 def _describe_post(arguments: Mapping[str, Any]) -> str:
-    mentions = " ".join(arguments.get("mentions") or [])
-    return f"(to {mentions}) {arguments.get('content', '')}".strip()
+    content = arguments.get("content", "")
+    if mentions := " ".join(arguments.get("mentions") or []):
+        return f"(to {mentions}) {content}"
+    return content
 
 
 # --- Tool factory ---
