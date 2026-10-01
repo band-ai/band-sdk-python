@@ -35,7 +35,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from band import Agent, configure_logging
-from band.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.types import Emit
 
 configure_logging(
@@ -56,7 +56,9 @@ async def main() -> None:
     # adapter's pinned default (the npm `claude` binary's auto-selection
     # fails under API-key auth); pass `model=` to override.
     adapter = ClaudeSDKAdapter(
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        ClaudeSDKAdapterConfig(
+            custom_section="You are a helpful assistant. Be concise and friendly.",
+        ),
         emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 

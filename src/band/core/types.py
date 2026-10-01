@@ -398,7 +398,7 @@ class FeatureKwargs(TypedDict, total=False):
     Adapters forward these via ``**features: Unpack[FeatureKwargs]`` instead
     of repeating the five parameters in every signature, and instead of
     taking a wrapping ``AdapterFeatures`` object -- callers pass the knobs
-    directly, e.g. ``ClaudeSDKAdapter(model="...", emit=Emit.THOUGHTS)``.
+    directly, e.g. ``ClaudeSDKAdapter(config, emit=Emit.THOUGHTS)``.
     ``AdapterFeatures`` itself is the internal frozen container ``self.features``
     resolves to; it is not part of the public constructor surface.
     """

@@ -352,13 +352,16 @@ async def run_claude_sdk_agent(
     """Run the Claude Agent SDK agent."""
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         ClaudeSDKAdapter,
+        ClaudeSDKAdapterConfig,
     )
 
     adapter = ClaudeSDKAdapter(
-        model=model,
-        fallback_model=fallback_model,
-        custom_section=custom_section,
-        max_thinking_tokens=10000 if enable_thinking else None,
+        ClaudeSDKAdapterConfig(
+            model=model,
+            fallback_model=fallback_model,
+            custom_section=custom_section,
+            max_thinking_tokens=10000 if enable_thinking else None,
+        ),
         emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 

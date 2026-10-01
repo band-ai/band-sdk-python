@@ -7,7 +7,11 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.claude_sdk import DONT_ASK_PERMISSION_MODE, ClaudeSDKAdapter
+from band.adapters.claude_sdk import (
+    DONT_ASK_PERMISSION_MODE,
+    ClaudeApprovalOptions,
+    ClaudeSDKAdapterConfig,
+)
 from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -16,7 +20,9 @@ OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 async def test_dont_ask_denies_an_unlisted_native_tool_without_asking_the_room(
     claude_room: OpenRoom,
 ) -> None:
-    room = await claude_room(permission_mode=DONT_ASK_PERMISSION_MODE)
+    room = await claude_room(
+        ClaudeSDKAdapterConfig(permission_mode=DONT_ASK_PERMISSION_MODE)
+    )
     room.claude.script([WRITE_NOTE, room.model_reply("Could not write.")])
 
     await room.send("Jot a note")
@@ -39,7 +45,7 @@ FALLBACK_WARNING = (
 async def test_an_unavailable_mode_is_warned_about_once(
     claude_room: OpenRoom, caplog: pytest.LogCaptureFixture
 ) -> None:
-    room = await claude_room(permission_mode="auto")
+    room = await claude_room(ClaudeSDKAdapterConfig(permission_mode="auto"))
     room.claude.unavailable_modes.add("auto")
     room.claude.script([room.model_reply("Hello.")], [room.model_reply("Again.")])
 
@@ -54,6 +60,7 @@ def test_dont_ask_refuses_every_approval_mode_it_would_bypass(
     approval_mode: str,
 ) -> None:
     with pytest.raises(ValueError, match=DONT_ASK_PERMISSION_MODE):
-        ClaudeSDKAdapter(
-            permission_mode=DONT_ASK_PERMISSION_MODE, approval_mode=approval_mode
+        ClaudeSDKAdapterConfig(
+            permission_mode=DONT_ASK_PERMISSION_MODE,
+            approvals=ClaudeApprovalOptions(mode=approval_mode),
         )

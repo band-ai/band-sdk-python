@@ -31,7 +31,9 @@ from band.adapters.claude_sdk import (
 from band.adapters.claude_sdk import (
     APPROVAL_UNAUTHORIZED_MESSAGE,
     APPROVAL_UNKNOWN_TOKEN_TEMPLATE,
+    ClaudeApprovalOptions,
     ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
     ClaudeSDKCommand,
 )
 from band.adapters.codex import (
@@ -292,12 +294,16 @@ class ApprovalDialect:
 
 def _claude_sdk(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     return ClaudeSDKAdapter(
-        model=settings.llm_models.anthropic_model,
-        custom_section=SHELL_PROMPT,
-        cwd=str(setup.workdir),
-        approval_mode="manual",
-        approval_wait_timeout_s=setup.wait_timeout_s,
-        approval_authorized_senders=setup.approvers,
+        ClaudeSDKAdapterConfig(
+            model=settings.llm_models.anthropic_model,
+            custom_section=SHELL_PROMPT,
+            cwd=setup.workdir,
+            approvals=ClaudeApprovalOptions(
+                mode="manual",
+                wait_timeout_s=setup.wait_timeout_s,
+                authorized_senders=setup.approvers,
+            ),
+        )
     )
 
 

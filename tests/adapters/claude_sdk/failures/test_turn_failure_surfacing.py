@@ -10,6 +10,8 @@ import pytest
 from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
     APPROVAL_RESOLVED_TEMPLATE,
+    ClaudeApprovalOptions,
+    ClaudeSDKAdapterConfig,
     TurnResultAlreadyReported,
 )
 from band.core.types import Emit
@@ -18,6 +20,7 @@ from tests.adapters.claude_sdk.helpers import (
     MISSING_REPLY_TEXT,
     SEND_MESSAGE_MCP_NAME,
     ClaudeRoom,
+    with_approvals,
 )
 from tests.baseline.decisions import ModelDecision
 
@@ -132,7 +135,7 @@ async def test_a_declined_side_tool_never_explains_a_silent_turn(
     """Policy declines ``Bash`` and says so, yet the question is still
     unanswered, so the missing reply is reported; a turn that replies after
     the same decline stays quiet."""
-    room = await claude_room(approval_mode="auto_decline")
+    room = await claude_room(with_approvals("auto_decline"))
     room.claude.script(
         [ModelDecision.call("Bash", command="rm -rf build")],
         [
@@ -157,7 +160,12 @@ async def test_a_declined_reply_explains_the_silence_only_if_the_room_was_told(
     Declining that reply in the room already tells the room why none came, so
     no missing reply is reported; when the approval prompt never reaches the
     room, the decline explains nothing and the missing reply is reported."""
-    room = await claude_room(approval_mode="manual", setting_sources=["project"])
+    room = await claude_room(
+        ClaudeSDKAdapterConfig(
+            setting_sources=("project",),
+            approvals=ClaudeApprovalOptions(mode="manual"),
+        )
+    )
     room.claude.project_ask_rules = [SEND_MESSAGE_MCP_NAME]
     room.claude.script([room.model_reply("Here you go.")], [room.model_reply("Again.")])
 

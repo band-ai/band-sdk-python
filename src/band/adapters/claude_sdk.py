@@ -19,8 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, Self, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -49,6 +48,7 @@ try:
         PermissionResultAllow,
         PermissionResultDeny,
         SdkPluginConfig,
+        SettingSource,
         ToolPermissionContext,
     )
 
@@ -57,7 +57,17 @@ except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
 from band_sdk_core import AgentFailure, is_authorized_sender
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    DirectoryPath,
+    Field,
+    NonNegativeFloat,
+    PositiveFloat,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import Unpack
 
 from band.converters.claude_sdk import (
@@ -100,7 +110,6 @@ from band.runtime.decisions import (
     DecisionEntry,
     DecisionRegistry,
     Timeout,
-    sender_allowlist,
 )
 from band.runtime.formatters import format_tokens, strip_leading_mentions
 from band.runtime.tools import (
@@ -213,7 +222,7 @@ class ClaudeCLIOptions(BaseModel):
             ``RESERVED_CLI_FLAGS`` are rejected.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     cli_path: str | None = None
     plugin_dirs: tuple[str, ...] = ()
@@ -254,12 +263,110 @@ _TIMEOUT_DRAIN_SECONDS = 10.0
 
 ApprovalDecision = Literal["accept", "decline"]
 
-# dontAsk denies every prompt without calling can_use_tool, so no approval_mode
-# ever gets to decide.
+# dontAsk denies every prompt without calling can_use_tool, so no approval
+# policy ever gets to decide.
 DONT_ASK_PERMISSION_MODE: PermissionMode = "dontAsk"
 # The mode the CLI starts in when the account or model can't run "auto".
 AUTO_PERMISSION_MODE: PermissionMode = "auto"
 AUTO_FALLBACK_PERMISSION_MODE: PermissionMode = "default"
+
+
+class ClaudeApprovalOptions(BaseModel):
+    """Chat-based approval of Claude's native tool calls (Bash, Write, ...).
+
+    Band's own tools are never gated.
+
+    Attributes:
+        mode: ``"manual"`` asks the room (``/approve``, ``/decline``);
+            ``"auto_accept"`` and ``"auto_decline"`` decide without asking.
+        text_notifications: Post a room message for each auto decision.
+        wait_timeout_s: Seconds a manual approval waits before
+            ``timeout_decision`` applies. The wait counts toward the
+            adapter's ``turn_timeout_s``.
+        timeout_decision: Decision applied when a manual approval times out.
+        max_pending_per_room: Pending approvals kept per room; the oldest is
+            declined when a new one would exceed it.
+        authorized_senders: Sender ids allowed to ``/approve`` and
+            ``/decline``. ``None`` admits any room participant.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: ApprovalMode
+    text_notifications: bool = True
+    wait_timeout_s: PositiveFloat = 300.0
+    timeout_decision: ApprovalDecision = "decline"
+    max_pending_per_room: PositiveInt = 50
+    authorized_senders: frozenset[str] | None = None
+
+
+class ClaudeSDKAdapterConfig(BaseModel):
+    """Runtime configuration for Claude Code sessions.
+
+    ``permission_mode``, ``effort`` and ``setting_sources`` are typed as
+    ``claude_agent_sdk``'s own literals, so the installed SDK decides which
+    values are valid.
+
+    Attributes:
+        model: Full model ID or family alias (``"sonnet"``, ``"opus"``,
+            ``"haiku"``, ``"inherit"``). ``None`` pins ``DEFAULT_MODEL``.
+        fallback_model: Model the CLI uses when ``model`` is unavailable.
+        custom_section: Extra instructions appended to the system prompt.
+        max_thinking_tokens: Extended-thinking budget; ``None`` disables it.
+        effort: Response effort level; ``None`` uses the model default.
+        permission_mode: Claude Code permission mode, forwarded to the CLI
+            (https://code.claude.com/docs/en/permission-modes). ``"dontAsk"``
+            cannot be combined with ``approvals``.
+        cwd: Existing working directory for Claude Code sessions.
+        setting_sources: Host settings the CLI loads (skills, subagents,
+            settings under ``~/.claude`` and ``./.claude``). Empty by default
+            so the agent's capabilities are defined by the adapter, not by
+            whatever config sits on the host.
+        turn_timeout_s: Seconds a turn may run before it is interrupted and
+            a ``timeout`` failure is posted to the room; ``None`` leaves turns
+            unbounded.
+        send_message_dedup_ttl_seconds: Window in which identical
+            ``band_send_message`` calls collapse into one post, absorbing CLI
+            or MCP transport retries; ``0`` disables it.
+        cli: How the Claude CLI process is launched.
+        approvals: Chat-based approval of native tool calls; ``None`` leaves
+            approvals to ``permission_mode``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str | None = None
+    fallback_model: str | None = None
+    custom_section: str | None = None
+    max_thinking_tokens: PositiveInt | None = None
+    effort: EffortLevel | None = None
+    permission_mode: PermissionMode = "acceptEdits"
+    cwd: DirectoryPath | None = None
+    setting_sources: tuple[SettingSource, ...] = ()
+    turn_timeout_s: PositiveFloat | None = None
+    send_message_dedup_ttl_seconds: NonNegativeFloat = DEFAULT_DEDUP_TTL_SECONDS
+    cli: ClaudeCLIOptions = Field(default_factory=ClaudeCLIOptions)
+    approvals: ClaudeApprovalOptions | None = None
+
+    @model_validator(mode="after")
+    def _check_approvals_can_decide(self) -> Self:
+        if self.approvals is None:
+            return self
+        if self.permission_mode == DONT_ASK_PERMISSION_MODE:
+            raise ValueError(
+                f"permission_mode={DONT_ASK_PERMISSION_MODE!r} denies tool calls "
+                "without consulting approvals; set approvals=None"
+            )
+        if (
+            self.turn_timeout_s is not None
+            and self.approvals.wait_timeout_s >= self.turn_timeout_s
+        ):
+            raise ValueError(
+                "approvals.wait_timeout_s must be less than turn_timeout_s, "
+                "or the turn times out before the approval does"
+            )
+        return self
+
 
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
@@ -301,7 +408,7 @@ _LOCAL_CMDS = frozenset(ClaudeSDKCommand)
 # make a room approve every lookup before the agent could answer.
 TOOL_SEARCH = "ToolSearch"
 # Band's MCP tools and ToolSearch are intentionally always available;
-# approval_mode only gates Claude Code's side-effecting native tools.
+# Approvals only gate Claude Code's side-effecting native tools.
 NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(TOOL_SEARCH)}$).+"
 
 # Patterns that look like secrets/tokens in shell commands
@@ -410,10 +517,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
     Example:
         adapter = ClaudeSDKAdapter(
-            custom_section="You are a helpful assistant.",
+            ClaudeSDKAdapterConfig(
+                model="opus",
+                custom_section="You are a helpful assistant.",
+            )
         )
-        # Or pin a model / family alias:
-        # adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
@@ -427,84 +535,21 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
     def __init__(
         self,
-        model: str | None = None,
-        fallback_model: str | None = None,
-        custom_section: str | None = None,
-        max_thinking_tokens: int | None = None,
-        effort: EffortLevel | None = None,
-        permission_mode: PermissionMode = "acceptEdits",
+        config: ClaudeSDKAdapterConfig | None = None,
+        *,
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        cwd: str | None = None,
-        setting_sources: list[str] | None = None,
-        cli: ClaudeCLIOptions | None = None,
-        turn_timeout_s: float | None = None,
-        # Chat-based approval flow (opt-in)
-        approval_mode: ApprovalMode | None = None,
-        approval_text_notifications: bool = True,
-        approval_wait_timeout_s: float = 300.0,
-        approval_timeout_decision: ApprovalDecision = "decline",
-        max_pending_approvals_per_room: int = 50,
-        approval_authorized_senders: set[str] | None = None,
-        send_message_dedup_ttl_seconds: float = DEFAULT_DEDUP_TTL_SECONDS,
         **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Claude SDK adapter.
 
         Args:
-            model: Claude model to use. Pass a full ID (e.g.
-                ``"claude-opus-4-7-20251224"``) or a family alias
-                (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
-                When ``None`` (default), the adapter pins ``DEFAULT_MODEL``
-                rather than letting the npm ``claude`` binary auto-select,
-                which fails under API-key auth (legacy thinking request shape).
-            fallback_model: Optional fallback model passed to
-                ``ClaudeAgentOptions.fallback_model``. The npm ``claude``
-                binary uses it when the primary model is unavailable.
-                Aliases are accepted here too.
-            custom_section: Custom instructions added to system prompt
-            max_thinking_tokens: Max tokens for extended thinking (optional)
-            effort: Response effort level. ``None`` uses the model default.
-            permission_mode: Claude Code permission mode, forwarded to the CLI
-                (https://code.claude.com/docs/en/permission-modes; how each
-                mode meets ``approval_mode`` is in docs/adapters/claude_sdk.md).
-                ``"dontAsk"`` with any ``approval_mode`` raises ``ValueError``.
+            config: Session settings (model, permissions, CLI launch,
+                approvals, timeouts); see :class:`ClaudeSDKAdapterConfig`.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
-            cwd: Working directory for Claude Code sessions. If set, Claude Code
-                will operate in this directory (e.g., a mounted git repo).
-            cli: How the Claude CLI process is launched (executable, plugins,
-                extra directories, env, extra flags); see ``ClaudeCLIOptions``.
-            turn_timeout_s: Seconds a turn may run before it is interrupted and
-                a timeout failure is posted to the room. ``None`` (default)
-                leaves turns unbounded. A manual approval wait counts toward
-                it, so keep it above ``approval_wait_timeout_s``.
-            approval_mode: Chat-based approval mode.  ``None`` (default) disables
-                chat-based approval -- the SDK's ``permission_mode`` controls
-                approvals entirely.  Set to ``"manual"`` to route approval
-                requests to the chat room (``/approve``, ``/decline``),
-                ``"auto_accept"`` to approve everything, or ``"auto_decline"``
-                to decline everything.
-            approval_text_notifications: When True, send a chat message for
-                auto-approve / auto-decline decisions.
-            approval_wait_timeout_s: Seconds to wait for a manual approval
-                before falling back to ``approval_timeout_decision``.
-            approval_timeout_decision: Decision to apply when a manual approval
-                times out (``"accept"`` or ``"decline"``).
-            max_pending_approvals_per_room: Cap on concurrent pending approvals
-                per room.  Oldest entries are evicted (declined) when full.
-            approval_authorized_senders: Optional set of sender IDs allowed to
-                issue ``/approve`` and ``/decline`` commands.  When ``None``
-                (default), any room participant can approve.  ``/approvals``
-                and ``/status`` are always available to all participants.
-            send_message_dedup_ttl_seconds: Window (seconds) inside which two
-                ``band_send_message`` MCP tool calls with identical
-                ``(content, mentions)`` are collapsed into one platform POST.
-                Mitigates duplicate-message events caused by Claude CLI / MCP
-                transport retries when the event loop is stalled.
-                Defaults to 30 s; set to ``0`` to disable dedup entirely.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
@@ -516,51 +561,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             history_converter=history_converter or ClaudeSDKHistoryConverter(),
             **features,
         )
-
-        self.model = model
-        self.fallback_model = fallback_model
-        self.custom_section = custom_section
-        self.max_thinking_tokens = max_thinking_tokens
-        self.effort = effort
-        if permission_mode == DONT_ASK_PERMISSION_MODE and approval_mode is not None:
-            raise ValueError(
-                f"permission_mode={DONT_ASK_PERMISSION_MODE!r} denies tool calls "
-                f"without consulting approval_mode={approval_mode!r}; "
-                "set approval_mode=None"
-            )
-        self.permission_mode: PermissionMode = permission_mode
-        if cwd and not Path(cwd).is_dir():
-            raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
-        self.cwd = cwd
-        self.cli = cli or ClaudeCLIOptions()
-        if turn_timeout_s is not None and turn_timeout_s <= 0:
-            raise ValueError("turn_timeout_s must be > 0 when set")
-        self.turn_timeout_s = turn_timeout_s
-        # Which host settings the CLI loads (skills/subagents/settings from
-        # ~/.claude and ./.claude). Default isolates the bridged agent so its
-        # capabilities are defined here, not by whatever config sits on the host
-        # (the source of Windows-vs-Linux tool drift). Pass e.g. ["user", "project"]
-        # to opt back into host config.
-        self.setting_sources: list[str] = (
-            list(setting_sources) if setting_sources is not None else []
-        )
-
-        # Chat-based approval config
-        self.approval_mode: ApprovalMode | None = approval_mode
-        self.approval_text_notifications = approval_text_notifications
-        self.approval_wait_timeout_s = approval_wait_timeout_s
-        self.approval_timeout_decision: ApprovalDecision = approval_timeout_decision
-        # Validated here because registries are built lazily, inside the
-        # approval callback, where a bad value would first surface.
-        if max_pending_approvals_per_room < 1:
-            raise ValueError("max_pending_approvals_per_room must be >= 1")
-        self.max_pending_approvals_per_room = max_pending_approvals_per_room
-        self.approval_authorized_senders = sender_allowlist(approval_authorized_senders)
-
-        # send_message dedup window.  0 disables the wrapper.
-        if send_message_dedup_ttl_seconds < 0:
-            raise ValueError("send_message_dedup_ttl_seconds must be >= 0")
-        self.send_message_dedup_ttl_seconds = send_message_dedup_ttl_seconds
+        self.config = config or ClaudeSDKAdapterConfig()
 
         # Session manager and MCP server (created after start)
         self._session_manager: ClaudeSessionManager | None = None
@@ -614,6 +615,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # refuse to start a second concurrent turn on the same client.
         self._turn_tasks: dict[str, asyncio.Task[None]] = {}
 
+    @property
+    def _approvals(self) -> ClaudeApprovalOptions:
+        """The approval policy, read only on paths gated by approvals being set."""
+        if (approvals := self.config.approvals) is None:
+            raise RuntimeError("chat-based approvals are disabled")
+        return approvals
+
+    @property
+    def _approval_label(self) -> str:
+        approvals = self.config.approvals
+        return approvals.mode if approvals is not None else "disabled"
+
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
@@ -627,7 +640,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         system_prompt = generate_claude_sdk_agent_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
-            custom_section=self.custom_section,
+            custom_section=self.config.custom_section,
             features=self.features,
         )
 
@@ -635,15 +648,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # known-good one rather than the npm `claude` binary's auto-selection,
         # which fails under API-key auth (see DEFAULT_MODEL). fallback_model
         # stays None unless explicitly set.
-        resolved_model = self.model or DEFAULT_MODEL
+        resolved_model = self.config.model or DEFAULT_MODEL
         sdk_options = ClaudeAgentOptions(
             model=resolved_model,
-            fallback_model=self.fallback_model,
+            fallback_model=self.config.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
             allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
-            permission_mode=self.permission_mode,
-            effort=self.effort,
+            permission_mode=self.config.permission_mode,
+            effort=self.config.effort,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
             # Left at the SDK default, setting_sources loads the host's user + project
@@ -654,26 +667,24 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # install the model wandered through ToolSearch/Bash/Agent/Skill instead of
             # calling the Band tool. Loading no host config keeps the tool set lean, so
             # ToolSearch does not engage and the Band tools stay directly in context.
-            # Configurable via the constructor for callers who want their host config.
-            # cast: the public param is list[str]; the SDK types it as a list of the
-            # "user"/"project"/"local" literals. The CLI validates the values.
-            setting_sources=cast("Any", self.setting_sources),
-            **self.cli.sdk_fields(),
+            # Configurable via the config for callers who want their host config.
+            setting_sources=list(self.config.setting_sources),
+            **self.config.cli.sdk_fields(),
         )
 
         # Add extended thinking if configured
-        if self.max_thinking_tokens:
-            sdk_options.max_thinking_tokens = self.max_thinking_tokens
+        if self.config.max_thinking_tokens:
+            sdk_options.max_thinking_tokens = self.config.max_thinking_tokens
 
         # Set working directory if configured
-        if self.cwd:
-            sdk_options.cwd = self.cwd
+        if self.config.cwd:
+            sdk_options.cwd = self.config.cwd
 
-        # When approval_mode is set, add a PreToolUse hook that returns
+        # When approvals are set, add a PreToolUse hook that returns
         # "ask" for native tools so the SDK delegates to can_use_tool instead
         # of auto-resolving permissions via the permission_mode. Band's MCP
         # tools remain outside this matcher and keep their normal bypass.
-        if self.approval_mode is not None:
+        if self.config.approvals is not None:
             sdk_options.hooks = {
                 "PreToolUse": [
                     HookMatcher(
@@ -685,7 +696,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Create session manager (with room-specific approval callback when enabled)
         can_use_tool_factory = (
-            self._make_can_use_tool if self.approval_mode is not None else None
+            self._make_can_use_tool if self.config.approvals is not None else None
         )
         self._session_manager = ClaudeSessionManager(
             sdk_options,
@@ -696,10 +707,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, effort=%s, approval=%s)",
             agent_name,
             resolved_model,
-            self.fallback_model or "none",
-            self.max_thinking_tokens,
-            self.effort or "default",
-            self.approval_mode,
+            self.config.fallback_model or "none",
+            self.config.max_thinking_tokens,
+            self.config.effort or "default",
+            self._approval_label,
         )
 
     async def _create_mcp_backend(self) -> BandMCPBackend:
@@ -753,7 +764,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await self._bind_mcp_tools(room_id, tools)
 
         # Approval flow: track notify target and intercept local commands
-        if self.approval_mode is not None:
+        if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
                 "id": msg.sender_id,
                 "name": msg.sender_name or msg.sender_type,
@@ -932,7 +943,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         release_future: asyncio.Future[None],
     ) -> None:
         """Run one turn to completion; always releases ``release_future``."""
-        deadline = asyncio.timeout(self.turn_timeout_s)
+        deadline = asyncio.timeout(self.config.turn_timeout_s)
         try:
             try:
                 async with deadline:
@@ -1021,7 +1032,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         session id so the next message resumes it on a fresh process.
         """
         logger.warning(
-            "Room %s: Claude turn timed out after %ss", room_id, self.turn_timeout_s
+            "Room %s: Claude turn timed out after %ss",
+            room_id,
+            self.config.turn_timeout_s,
         )
         try:
             async with asyncio.timeout(_TIMEOUT_DRAIN_SECONDS):
@@ -1043,7 +1056,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 exc_info=True,
             )
             await self._retire_client(room_id)
-        return f"Claude turn timed out after {self.turn_timeout_s}s"
+        return f"Claude turn timed out after {self.config.turn_timeout_s}s"
 
     async def _cancel_turn(self, room_id: str) -> None:
         """Cancel and await a detached turn before its session is closed."""
@@ -1076,7 +1089,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         wrapper lives per room and swaps its inner tools rather than resetting
         its cache. The adapter's own notices never pass through it.
         """
-        if self.send_message_dedup_ttl_seconds <= 0:
+        if self.config.send_message_dedup_ttl_seconds <= 0:
             self._mcp_room_tools[room_id] = tools
             return
         existing = self._mcp_room_tools.get(room_id)
@@ -1088,7 +1101,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._mcp_room_tools[room_id] = cast(
             AgentToolsProtocol,
             DedupingAgentTools(
-                tools, ttl_seconds=self.send_message_dedup_ttl_seconds, label=room_id
+                tools,
+                ttl_seconds=self.config.send_message_dedup_ttl_seconds,
+                label=room_id,
             ),
         )
 
@@ -1136,7 +1151,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 case SystemMessage(
                     subtype="status", data={"permissionMode": str() as mode}
                 ) if (
-                    self.permission_mode == AUTO_PERMISSION_MODE
+                    self.config.permission_mode == AUTO_PERMISSION_MODE
                     and mode == AUTO_FALLBACK_PERMISSION_MODE
                 ):
                     logger.warning(
@@ -1144,7 +1159,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         "the requested %s",
                         room_id,
                         mode,
-                        self.permission_mode,
+                        self.config.permission_mode,
                     )
                 case ResultMessage():
                     await self._on_turn_complete(
@@ -1624,20 +1639,20 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             "can_use_tool: %s in room %s (mode=%s)",
             tool_name,
             room_id,
-            self.approval_mode,
+            self._approvals.mode,
         )
 
         # --- auto modes ---------------------------------------------------
-        if self.approval_mode == "auto_accept":
-            if self.approval_text_notifications:
+        if self._approvals.mode == "auto_accept":
+            if self._approvals.text_notifications:
                 await self._notify_auto_decision(
                     room_id, summary, "accept", requester=requester
                 )
             return PermissionResultAllow()
 
-        if self.approval_mode == "auto_decline":
+        if self._approvals.mode == "auto_decline":
             notified = False
-            if self.approval_text_notifications:
+            if self._approvals.text_notifications:
                 notified = await self._notify_auto_decision(
                     room_id, summary, "decline", requester=requester
                 )
@@ -1739,7 +1754,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "Room %s: Evicted oldest pending approval %s (capacity %s)",
                 room_id,
                 evicted.token,
-                self.max_pending_approvals_per_room,
+                self._approvals.max_pending_per_room,
             )
 
         # Notify user — if we can't deliver the prompt, decline immediately
@@ -1769,7 +1784,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         try:
             decision = await registry.wait(
-                entry, pending.future, timeout_s=self.approval_wait_timeout_s
+                entry, pending.future, timeout_s=self._approvals.wait_timeout_s
             )
         finally:
             self._clear_pending_approval(room_id, entry)
@@ -1817,7 +1832,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         mention: list[str] | None,
         tool_use_id: str | None,
     ) -> PermissionResultAllow | PermissionResultDeny:
-        decision = self.approval_timeout_decision
+        decision = self._approvals.timeout_decision
         notified = False
         if tools:
             notified = await self._send_best_effort(
@@ -1890,7 +1905,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             return
 
         # --- /approve [token] | /decline [token] ---
-        if not is_authorized_sender(self.approval_authorized_senders, sender["id"]):
+        if not is_authorized_sender(self._approvals.authorized_senders, sender["id"]):
             await tools.send_message(
                 APPROVAL_UNAUTHORIZED_MESSAGE,
                 mentions=mention,
@@ -1952,10 +1967,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         lines = [
             "**Claude SDK Status**",
-            f"- model: `{self.model or 'auto'}`",
-            f"- fallback_model: `{self.fallback_model or 'none'}`",
-            f"- permission_mode: `{self.permission_mode}`",
-            f"- approval_mode: `{self.approval_mode or 'disabled'}`",
+            f"- model: `{self.config.model or 'auto'}`",
+            f"- fallback_model: `{self.config.fallback_model or 'none'}`",
+            f"- permission_mode: `{self.config.permission_mode}`",
+            f"- approval_mode: `{self._approval_label}`",
             f"- pending_approvals: {pending_count}",
             f"- active_sessions: {session_count}",
             f"- session_id: `{session_id}`",
@@ -2003,7 +2018,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         return f"a-{seq}"
 
     def _new_approval_registry(self) -> DecisionRegistry[PendingApproval]:
-        return DecisionRegistry(max_pending=self.max_pending_approvals_per_room)
+        return DecisionRegistry(max_pending=self._approvals.max_pending_per_room)
 
     def _clear_pending_approval(
         self, room_id: str, entry: DecisionEntry[PendingApproval]

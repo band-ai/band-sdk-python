@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -54,7 +54,7 @@ async def test_leaving_a_room_forgets_what_it_already_said(
 
 
 async def test_a_zero_ttl_turns_the_dedup_off(claude_room: OpenRoom) -> None:
-    room = await claude_room(send_message_dedup_ttl_seconds=0)
+    room = await claude_room(ClaudeSDKAdapterConfig(send_message_dedup_ttl_seconds=0))
     room.claude.script([room.model_reply("hello"), room.model_reply("hello")])
 
     await room.send("say hello")
@@ -64,4 +64,4 @@ async def test_a_zero_ttl_turns_the_dedup_off(claude_room: OpenRoom) -> None:
 
 def test_a_negative_ttl_is_rejected() -> None:
     with pytest.raises(ValueError):
-        ClaudeSDKAdapter(send_message_dedup_ttl_seconds=-1)
+        ClaudeSDKAdapterConfig(send_message_dedup_ttl_seconds=-1)

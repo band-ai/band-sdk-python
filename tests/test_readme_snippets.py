@@ -373,10 +373,11 @@ class TestEmitOptionsSnippets:
         )
         from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             ClaudeSDKAdapter,
+            ClaudeSDKAdapterConfig,
         )
 
         adapter = ClaudeSDKAdapter(
-            model="sonnet",
+            ClaudeSDKAdapterConfig(model="sonnet"),
             capabilities={Capability.MEMORY},
             emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )

@@ -79,6 +79,7 @@ def _build_claude_sdk(
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import (  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
         ClaudeSDKAdapter,
+        ClaudeSDKAdapterConfig,
     )
 
     # Claude Code gets real Bash/filesystem tools; an unset cwd falls back to
@@ -86,9 +87,11 @@ def _build_claude_sdk(
     # per-cell disposable sandbox.
     sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-claude-sdk-")
     adapter = ClaudeSDKAdapter(
-        model=s.llm_models.anthropic_model,
-        custom_section=prompt,
-        cwd=sandbox.name,
+        ClaudeSDKAdapterConfig(
+            model=s.llm_models.anthropic_model,
+            custom_section=prompt,
+            cwd=sandbox.name,
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )

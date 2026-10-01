@@ -48,12 +48,12 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 ```python notest
 from band import Agent
-from band.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 
 adapter = ClaudeSDKAdapter(
-    # Omit `model` to use the npm `claude` binary's default, or pass a
+    # Omit `model` to use the adapter's pinned default, or pass a
     # family alias (`"sonnet"` / `"opus"` / `"haiku"`).
-    custom_section="You are a helpful assistant.",
+    ClaudeSDKAdapterConfig(custom_section="You are a helpful assistant."),
 )
 
 agent = Agent.create(
@@ -104,9 +104,11 @@ Enable extended thinking for complex reasoning tasks:
 from band.core.types import Emit
 
 adapter = ClaudeSDKAdapter(
-    model="opus",
-    fallback_model="sonnet",
-    max_thinking_tokens=10000,  # Enable extended thinking
+    ClaudeSDKAdapterConfig(
+        model="opus",
+        fallback_model="sonnet",
+        max_thinking_tokens=10000,  # Enable extended thinking
+    ),
     emit=Emit.TOOL_CALLS | Emit.THOUGHTS,  # Report tool calls and thinking as events
 )
 ```

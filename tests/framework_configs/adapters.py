@@ -20,6 +20,7 @@ from band.adapters.claude_sdk import (
 )
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
 )
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.adapters.copilot_sdk import (
@@ -515,36 +516,21 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
     if not _HAS_CLAUDE_SDK:
         return None  # optional dep not installed; skip in CI
 
+    custom = ClaudeSDKAdapterConfig(
+        model="claude-opus-4-20250514",
+        fallback_model="sonnet",
+        custom_section="Be helpful.",
+        max_thinking_tokens=10000,
+        effort="high",
+        permission_mode="bypassPermissions",
+    )
     return AdapterConfig(
         framework_id="claude_sdk",
         display_name="ClaudeSDK",
         adapter_factory=_claude_sdk_factory,
-        expected_initial_values={
-            "model": _default_from_init(ClaudeSDKAdapter, "model"),
-            "fallback_model": _default_from_init(ClaudeSDKAdapter, "fallback_model"),
-            "custom_section": _default_from_init(ClaudeSDKAdapter, "custom_section"),
-            "max_thinking_tokens": _default_from_init(
-                ClaudeSDKAdapter, "max_thinking_tokens"
-            ),
-            "effort": _default_from_init(ClaudeSDKAdapter, "effort"),
-            "permission_mode": _default_from_init(ClaudeSDKAdapter, "permission_mode"),
-        },
-        custom_kwargs={
-            "model": "claude-opus-4-20250514",
-            "fallback_model": "sonnet",
-            "custom_section": "Be helpful.",
-            "max_thinking_tokens": 10000,
-            "effort": "high",
-            "permission_mode": "bypassPermissions",
-        },
-        custom_expected={
-            "model": "claude-opus-4-20250514",
-            "fallback_model": "sonnet",
-            "custom_section": "Be helpful.",
-            "max_thinking_tokens": 10000,
-            "effort": "high",
-            "permission_mode": "bypassPermissions",
-        },
+        expected_initial_values={"config": ClaudeSDKAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         skip_on_started_conformance=True,  # on_started creates real MCP server + ClaudeSessionManager; tested in tests/adapters/claude_sdk/lifecycle/test_on_started.py
     )
 
