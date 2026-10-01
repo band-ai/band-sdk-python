@@ -617,6 +617,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                             prompt_text=prompt_text,
                             on_chunk=emitter.emit,
                         )
+                except asyncio.CancelledError:
+                    # Cancelling the local request leaves the agent running the
+                    # prompt; it only stops on session/cancel.
+                    await asyncio.shield(
+                        self._cancel_agent_turn(
+                            runtime, room_id=room_id, session_id=session_id
+                        )
+                    )
+                    raise
                 except TimeoutError:
                     if not turn_deadline.expired():
                         raise
@@ -653,10 +662,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             room_id,
             session_id,
         )
-        try:
-            await runtime.cancel_turn(session_id)
-        except Exception:
-            logger.exception("ACP turn cancellation failed (room=%s)", room_id)
+        await self._cancel_agent_turn(runtime, room_id=room_id, session_id=session_id)
         await self.on_cleanup(room_id)
         await tools.send_failure(
             AgentFailure(
@@ -665,6 +671,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 FAILURE_CODE_TIMEOUT,
             )
         )
+
+    @staticmethod
+    async def _cancel_agent_turn(
+        runtime: ACPRuntime, *, room_id: str, session_id: str
+    ) -> None:
+        """Tell the agent to stop this room's prompt; best effort."""
+        try:
+            await runtime.cancel_turn(session_id)
+        except Exception:
+            logger.exception("ACP turn cancellation failed (room=%s)", room_id)
 
     def _install_turn_handlers(
         self,

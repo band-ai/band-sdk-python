@@ -943,7 +943,7 @@ class TestACPClientAdapterOnMessage:
     async def test_cancelling_the_turn_cancels_its_prompt(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """A cancelled turn must not leave its ACP prompt running unowned."""
+        """A cancelled turn stops its prompt on both sides of the ACP connection."""
         prompt_started = asyncio.Event()
         prompt_cancelled = asyncio.Event()
 
@@ -955,9 +955,8 @@ class TestACPClientAdapterOnMessage:
                 prompt_cancelled.set()
                 raise
 
-        self._runtime(adapter_with_mocks)._conn.prompt = AsyncMock(
-            side_effect=endless_prompt
-        )
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=endless_prompt)
         turn = asyncio.create_task(
             adapter_with_mocks.on_message(
                 make_platform_message("Hello", room_id="room-123"),
@@ -976,6 +975,7 @@ class TestACPClientAdapterOnMessage:
             await turn
 
         assert prompt_cancelled.is_set()
+        conn.cancel.assert_awaited_once_with("acp-session-123")
 
     @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(
