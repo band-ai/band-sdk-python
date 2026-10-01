@@ -253,6 +253,14 @@ class Reply:
         ]
 
     @property
+    def tool_call_args(self) -> list[dict[str, Any]]:
+        """Narrated tool_call arguments in order (see ``tool_call_names``)."""
+        return [
+            ToolCallRoomEvent.model_validate_json(e["content"]).args
+            for e in self.tool_calls
+        ]
+
+    @property
     def tool_result_names(self) -> list[str]:
         """Narrated tool_result names in order (see ``tool_call_names``)."""
         return [

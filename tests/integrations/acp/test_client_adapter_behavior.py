@@ -15,6 +15,7 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pytest
 from acp import RequestError
@@ -749,6 +750,49 @@ async def test_prefixed_band_post_suppresses_text_and_narrates_canonically(
     assert reply.tool_call_names == ["band_send_message"]
     assert reply.tool_result_names == ["band_send_message"]
     assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+def codex_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
+    """codex-acp's MCP tool call: a display title, the identity in ``rawInput``."""
+    return {
+        "title": f"mcp.{server}.{tool}",
+        "raw_input": {"server": server, "tool": tool, "arguments": arguments},
+    }
+
+
+@pytest.mark.asyncio
+async def test_codex_band_post_is_the_one_reply_and_narrates_its_own_arguments(
+    fake_agent,
+) -> None:
+    """codex-acp names an MCP call only in ``rawInput``; reading its display
+    title instead left the reply unrecognized, so the held text posted too."""
+    fake_agent.will_call_tool(
+        "tc-1",
+        **codex_mcp_call("band", "band_send_message", content="The answer."),
+        result='{"id": "msg-1"}',
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == []
+    assert reply.tool_call_names == ["band_send_message"]
+    assert reply.tool_call_args == [{"content": "The answer."}]
+
+
+@pytest.mark.asyncio
+async def test_codex_call_to_another_servers_same_named_tool_is_not_a_reply(
+    fake_agent,
+) -> None:
+    fake_agent.will_call_tool(
+        "tc-1",
+        **codex_mcp_call("other", "band_send_message", content="elsewhere"),
+        result="ok",
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == ["The answer."]
+    assert reply.tool_call_names == ["other-band_send_message"]
 
 
 @pytest.mark.asyncio
