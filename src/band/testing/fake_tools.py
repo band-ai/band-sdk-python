@@ -67,6 +67,7 @@ from band.runtime.tools import (
     append_mention_handles_hint,
     available_mention_handles,
     matches_identifier,
+    serialize_tool_result,
     strip_handle_prefix,
 )
 
@@ -290,7 +291,7 @@ class FakeAgentTools:
             for request in (sent_contact_requests or [])
         ]
         self.memories: list[dict[str, Any]] = [
-            AgentMemory.model_validate(memory).model_dump()
+            serialize_tool_result(AgentMemory.model_validate(memory))
             for memory in (memories or [])
         ]
         self.files: list[dict[str, Any]] = [
@@ -810,19 +811,21 @@ class FakeAgentTools:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Store and return the memory in the real serialized AgentMemory shape."""
-        memory = AgentMemory(
-            id=str(uuid.uuid4()),
-            content=content,
-            system=system,
-            type=type,
-            segment=segment,
-            scope=scope,
-            status="active",
-            thought=thought,
-            subject_id=subject_id,
-            metadata=metadata,
-            inserted_at=_FAKE_TIMESTAMP,
-        ).model_dump()
+        memory = serialize_tool_result(
+            AgentMemory(
+                id=str(uuid.uuid4()),
+                content=content,
+                system=system,
+                type=type,
+                segment=segment,
+                scope=scope,
+                status="active",
+                thought=thought,
+                subject_id=subject_id,
+                metadata=metadata,
+                inserted_at=_FAKE_TIMESTAMP,
+            )
+        )
         self.memories.append(memory)
         return deepcopy(memory)
 

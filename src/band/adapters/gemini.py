@@ -249,6 +249,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
         gemini_tools = self._build_gemini_tools(tools)
         tool_rounds = 0
+        tool_sequence: list[list[str]] = []
         # Gemini reports usage per call; sum across the loop into one
         # TurnUsage, emitted on every exit via the finally.
         turn_usage = TurnUsage()
@@ -257,7 +258,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 if tool_rounds >= self.max_tool_rounds:
                     message = (
                         f"Exceeded max tool rounds ({self.max_tool_rounds}) "
-                        f"in room {room_id}"
+                        f"in room {room_id}; tool sequence: {tool_sequence}"
                     )
                     await tools.send_failure(AgentFailure(_PROVIDER, message))
                     raise RuntimeError(message)
@@ -280,6 +281,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 function_calls = list(response.function_calls or [])
                 if not function_calls:
                     break
+                tool_sequence.append([call.name or "" for call in function_calls])
 
                 tool_response_parts = await self._process_function_calls(
                     function_calls=function_calls,

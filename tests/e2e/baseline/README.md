@@ -261,7 +261,9 @@ fixture-closure / platform-touching cases under `guards/`.
 
 - `second_user_ops` drives a second human (`BAND_API_KEY_USER_2`), for scenarios
   where who sends a message matters (e.g. an approver allowlist). It fails, never
-  skips, without the key (`Dep.SECOND_USER`).
+  skips, without the key (`Dep.SECOND_USER`). Approval tests establish an accepted
+  contact before inviting this user. Shared CI identities retain that contact
+  across jobs; no test removes a relationship another job may need.
 
 - `reply_capture` and `judge` pre-bind their plumbing (the WS observer; the judge
   model + key), so tests pass only the test-specific arguments.
@@ -573,7 +575,7 @@ the `dev` extra but are split out for isolation.
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the single Copilot-hosted auth smoke) |
+| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
 
@@ -657,12 +659,11 @@ Lanes live in the registry, not the workflow YAML. To add one:
    guard suite on every PR rather than silently never running / never being
    selectable.
 
-## Scorecard (the adapter×test artifact)
+## Scorecard and expected cells
 
-One place to see **adapter × test → pass / fail / skip / N-A (+ reason)**. An excluded
-adapter would otherwise vanish from the results (`specs()` omits it, no test node) with
-its reason buried in a comment; the scorecard makes the full grid observable and gives
-CI a queryable N-A instead of a silent gap.
+The scorecard records **test × adapter → pass / fail / skip / N-A (+ reason)**.
+Bespoke and non-adapter parametrized tests use the `suite` column and their full
+nodeid. Excluded adapters get explicit N/A rows.
 
 - **Reasons live at the call site.** `@per_adapter(exclude=…)` takes
   `ExcludedAdapter(adapter, reason)` records — a non-empty reason is required at
@@ -674,14 +675,25 @@ CI a queryable N-A instead of a silent gap.
   report, keyed by exact nodeid — no junit scraping), out-of-lane cells as `skip`, and
   the `@per_adapter` exclusions as `na` with their reasons. Empty (the local default)
   emits nothing.
-- **CI folds the lanes together and gates on the result.** Each `e2e` lane writes its
-  own slice to `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final
-  `scorecard` job merges them (`python -m tests.e2e.baseline.scorecard merge … --out …
-  --markdown … --expected-lanes …`) into one `artifacts/scorecard.json` (+ a markdown
-  grid, also written to the run's step summary). A cell runs in exactly one lane, so
-  the union keeps its real outcome over the `skip`s and never clobbers an `na`.
+- **CI checks every supported lane and OS pair.** Each lane writes
+  `artifacts/scorecard-<lane>-<os>.json`. The final job compares every fragment
+  with `expected-cells.json`, including bespoke smokes, and writes a merged grid
+  for the run summary. An absent fragment, missing result, required skip, unexpected
+  active cell, or failure reddens the gate. The manifest lists supported OSes
+  for each lane and explicit N/A reasons for environment-gated file cells.
+- **Update the manifest when intentional coverage changes.** Collect the default
+  extra, then union Parlant's structurally separate extra:
 
-The logic (`na_rows` / `outcome_row` / `merge` / `gate`) lives in `scorecard.py` as pure
+  ```bash
+  uv run python -m tests.e2e.baseline.scorecard manifest
+  uv run --isolated --python 3.12 --extra dev-parlant --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
+  ```
+
+  Review the JSON diff and keep the conformance collection check passing. The
+  gate derives selected lanes from the workflow dispatch inputs, not from
+  whichever fragments happened to arrive.
+
+The logic (`na_rows` / `outcome_row` / `merge` / `gate_manifest`) lives in `scorecard.py` as pure
 functions (unit-tested in `tests/framework_conformance/test_scorecard.py`); the
 conftest is a thin `pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
 
@@ -692,22 +704,10 @@ unattended. A `workflow_dispatch` with the default `lane: all` / `os: all` repro
 that run exactly — it is not a lesser "manual mode." Only a *scoped* dispatch (one
 lane and/or one OS) skips the parts below that assume the full matrix ran.
 
-**Fail-loud rule** (`gate()` in `scorecard.py`): a `fail` cell reddens the run. A
-`skip` cell reddens it too, but only if its home lane (from `ci_lanes()` — see "CI
-lanes" above) was one of this invocation's `--expected-lanes`; a `skip` from a lane
-that was never selected this run is simply out of scope. `na` (+ reason) always
-passes. A cell-level gate can't see a whole OS leg of an expected lane producing *zero*
-scorecard fragment (`ScorecardRow` carries no OS dimension) — the `scorecard` job's
-final "Compute gate verdict" step backstops that by also failing whenever
-`needs.e2e.result != 'success'`.
-
-That backstop is also the *only* net for a bespoke `@lane`-pinned smoke (parlant,
-and the non-`@per_adapter` tests in `backends`/`letta`) — this is a pre-existing
-property of the scorecard module, not something this gate changes: `outcome_row`
-only recognizes a nodeid whose `[…]` parametrization is a registered adapter id
-(`_ADAPTER_IDS`), so a bespoke smoke never produces a `ScorecardRow` at all and is
-structurally invisible to the cell-level grid. It is still covered — just at the
-coarser matrix-leg granularity, not the per-cell one the grid markets.
+**Fail-loud rule** (`gate_manifest()` in `scorecard.py`): every expected first
+attempt must pass in its assigned lane on each supported selected OS. An N/A passes
+only when the checked-in manifest declares that cell N/A. The separate matrix-job
+verdict also catches setup failures and timeouts before pytest could write a result.
 
 A subtlety worth calling out for on-call: once `release-gate.yml` has recorded a
 *failure*, GitHub does not automatically re-check it just because a later nightly run
@@ -725,32 +725,12 @@ with nothing actually broken. Declining to report is the safe direction, since t
 release gate treats an absent status as blocking anyway. A `timeout-minutes` leg kill
 does *not* cancel the run, so a genuine hang still reddens.
 
-**Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
-
-1. **Per-test** (`flaky.py`, already existed before this policy): `flaky_model`
-   reruns a test whose failure can be genuine LLM non-determinism (an `AssertionError`
-   is retried too — a capable model's bad moment); `flaky_infra` reruns only
-   non-assertion failures (timeouts, cold starts) and lets an `AssertionError` fail
-   loud immediately, since that's a real bug. Every flaky-prone test carries an
-   explicit kind + reason (`assert_flaky_is_classified` rejects a raw
-   `@pytest.mark.flaky`).
-2. **Per-lane** (`e2e.yml`'s run step): if the lane's first pytest invocation has any
-   failure at all, it reruns only the failed nodeids once (`--last-failed --lfnf=none`)
-   before the scorecard is written. This absorbs a whole-lane transient (e.g. a
-   rate-limit window) that per-test taxonomy wouldn't catch on its own; a genuine bug
-   still fails the rerun and reddens the gate (`ScorecardCollector`'s "last write wins"
-   is exactly this rerun's final report being the cell's real outcome). `--lfnf=none` is
-   load-bearing, not decoration: pytest's default for "`--last-failed` with no
-   lastfailed cache" is to run *everything*, so an attempt 1 that died without
-   recording a failed nodeid (collection error, import-time raise, OOM kill) would
-   silently promote the retry into a second full live lane — double the provider spend
-   and wall clock against a leg that carries a wall-clock cap. With the flag, such a
-   retry deselects everything and exits 5, which the script reads as "nothing to retry"
-   and keeps attempt 1's verdict.
-
-No time-boxed automatic override is layered on top of either — a lane stuck failing
-on a real provider outage does not silently start passing after N nights. The
-deliberate manual-override path is the `main-branch-protection` ruleset's existing
+**First-attempt policy:** `run-baseline-e2e.sh` invokes pytest once with
+`-p no:rerunfailures`; it never performs a failed-node lane retry. Existing
+`flaky_model` and `flaky_infra` markers still classify likely causes for
+diagnosis, but cannot rescue a nightly cell. The scorecard retains a first
+failure even if a later report arrives. The manual-override path is the
+`main-branch-protection` ruleset's existing
 `OrganizationAdmin` bypass actor, used the same way any other required-check override
 would be.
 

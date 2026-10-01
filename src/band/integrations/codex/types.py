@@ -61,6 +61,19 @@ class CodexApprovalMethod(StrEnum):
 
 CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApprovalMethod)
 
+
+class CodexRequestMethod(StrEnum):
+    """Client-to-server request methods the SDK sends to ``codex app-server``."""
+
+    INITIALIZE = "initialize"
+    MODEL_LIST = "model/list"
+    SKILLS_EXTRA_ROOTS_SET = "skills/extraRoots/set"
+    THREAD_RESUME = "thread/resume"
+    THREAD_START = "thread/start"
+    TURN_START = "turn/start"
+    TURN_INTERRUPT = "turn/interrupt"
+
+
 CODEX_PROVIDER = "codex"
 
 
