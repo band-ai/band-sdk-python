@@ -940,6 +940,44 @@ class TestACPClientAdapterOnMessage:
         assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
 
     @pytest.mark.asyncio
+    async def test_cancelling_the_turn_cancels_its_prompt(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A cancelled turn must not leave its ACP prompt running unowned."""
+        prompt_started = asyncio.Event()
+        prompt_cancelled = asyncio.Event()
+
+        async def endless_prompt(**_: object) -> None:
+            prompt_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                prompt_cancelled.set()
+                raise
+
+        adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.prompt = AsyncMock(
+            side_effect=endless_prompt
+        )
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                FakeAgentTools(),
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await prompt_started.wait()
+
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        assert prompt_cancelled.is_set()
+
+    @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
