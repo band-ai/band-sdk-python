@@ -257,24 +257,14 @@ class TestToolSetComposition:
     def test_lookup_peers_reports_serialized_result_for_raw_model_return(
         self, builder_mod
     ):
-        """lookup_peers (and the other six read-only tools that call
-        call.tools.X directly, bypassing execute_tool_call's own
-        serialization boundary) must still emit a tool_result event when the
-        platform method returns a raw Pydantic/Fern model. report_result's
-        json.dumps has no default=str, so an unserialized model previously
-        raised inside report_result -- caught by its own try/except and only
-        logged as a warning -- silently dropping the tool_result event."""
+        """A raw platform model still produces an observable tool result."""
 
-        class FakePeersResponse:
-            def __init__(self, data):
-                self._data = data
-
-            def model_dump(self):
-                return self._data
+        class FakePeersResponse(BaseModel):
+            peers: list[dict[str, str]]
 
         tools_obj = MagicMock()
         tools_obj.lookup_peers = AsyncMock(
-            return_value=FakePeersResponse({"peers": [{"id": "p1"}]})
+            return_value=FakePeersResponse(peers=[{"id": "p1"}])
         )
         tools_obj.send_event = AsyncMock()
         context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)

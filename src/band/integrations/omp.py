@@ -15,10 +15,11 @@ OMP_YOLO_FLAG = "--yolo"
 OMP_AUTO_APPROVE_FLAG = "--auto-approve"
 OMP_APPROVAL_MODE_WRITE = "write"
 OMP_APPROVAL_MODE_YOLO = "yolo"
+OMP_ACP_SUBCOMMAND = "acp"
 
 DEFAULT_OMP_ACP_COMMAND: tuple[str, ...] = (
     "omp",
-    "acp",
+    OMP_ACP_SUBCOMMAND,
     OMP_APPROVAL_MODE_FLAG,
     OMP_APPROVAL_MODE_ALWAYS_ASK,
 )
@@ -50,7 +51,7 @@ OMP_ELICITATION_CALL_ID_PREFIX = "omp-elicitation:"
 OMP_PINNED_PACKAGE = "@oh-my-pi/pi-coding-agent@18.2.8"
 OMP_MIN_BUN = "1.3.14"
 
-DEFAULT_OMP_MODEL = "google/gemini-2.5-flash"
+DEFAULT_OMP_MODEL = "openai/gpt-5.4-mini"
 
 # Documented OMP model-provider credential routes (not Vertex / GOOGLE_*).
 _OMP_PROVIDER_API_KEY_ENV: dict[str, str] = {
@@ -94,10 +95,10 @@ def omp_provider_api_key_env(provider: str) -> str:
 
 
 def omp_provider_env(*, model: str, api_key: str) -> dict[str, str]:
-    """Build OMP child env with ``OMP_MODEL`` and the provider API key only."""
+    """Build OMP child env with the selected provider's API key."""
     provider = omp_model_provider(model)
     env_key = omp_provider_api_key_env(provider)
-    return {"OMP_MODEL": model, env_key: api_key}
+    return {env_key: api_key}
 
 
 def validate_omp_command(command: Sequence[str]) -> None:
@@ -128,13 +129,31 @@ def validate_omp_command(command: Sequence[str]) -> None:
 
 
 def finalize_omp_command(
-    command: Sequence[str], *, approval_mode: str = OMP_APPROVAL_MODE_ALWAYS_ASK
+    command: Sequence[str],
+    *,
+    model: str | None = None,
+    approval_mode: str = OMP_APPROVAL_MODE_ALWAYS_ASK,
 ) -> list[str]:
-    """Append the explicitly selected approval mode after validating the supplied command."""
+    """Validate ``command`` and append the model and the selected approval mode last."""
     validate_omp_command(command)
     if approval_mode not in (OMP_APPROVAL_MODE_ALWAYS_ASK, OMP_APPROVAL_MODE_YOLO):
         raise ValueError(f"Unsupported OMP approval mode {approval_mode!r}")
-    return [*command, OMP_APPROVAL_MODE_FLAG, approval_mode]
+    finalized = list(command)
+    if model is not None:
+        finalized.append(f"--model={model}")
+    finalized.extend((OMP_APPROVAL_MODE_FLAG, approval_mode))
+    return finalized
+
+
+def omp_command_in_workspace(command: Sequence[str], workspace: str) -> list[str]:
+    """Insert OMP's ``--cwd`` right after the ``acp`` subcommand that owns it."""
+    if OMP_ACP_SUBCOMMAND not in command:
+        raise ValueError(
+            f"OMP command must include the {OMP_ACP_SUBCOMMAND!r} subcommand, "
+            f"got {list(command)!r}"
+        )
+    split = list(command).index(OMP_ACP_SUBCOMMAND) + 1
+    return [*command[:split], f"--cwd={workspace}", *command[split:]]
 
 
 def omp_elicitation_call_id(session_id: str) -> str:
