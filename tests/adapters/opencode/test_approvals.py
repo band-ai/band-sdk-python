@@ -871,9 +871,7 @@ async def test_auto_decline_approval_mode() -> None:
         room_id="room-1",
     )
 
-    assert fake_client.permission_replies == [
-        {**DECLINED, "permission_id": "perm-1"}
-    ]
+    assert fake_client.permission_replies == [{**DECLINED, "permission_id": "perm-1"}]
 
 
 async def test_auto_reject_question_mode() -> None:
@@ -942,9 +940,7 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
     )
     await tools.until(lambda: len(events_of_type(tools, "error")) == 2)
 
-    assert fake_client.permission_replies == [
-        {**DECLINED, "permission_id": "perm-1"}
-    ]
+    assert fake_client.permission_replies == [{**DECLINED, "permission_id": "perm-1"}]
     assert fake_client.question_rejections == ["q-1"]
     notices = events_of_type(tools, "error")
     assert all("timed out" in notice["content"].lower() for notice in notices)
