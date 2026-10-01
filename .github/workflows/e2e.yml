@@ -245,28 +245,11 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
 
-    - name: Install Cursor CLI (Linux)
-      if: matrix.lane == 'backends' && matrix.os == 'ubuntu'
-      run: |
-        curl -fsS https://cursor.com/install | bash
-        test -x "$HOME/.local/bin/agent"
-        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-    - name: Install Cursor CLI (Windows)
-      if: matrix.lane == 'backends' && matrix.os == 'windows'
-      shell: powershell
-      run: |
-        irm 'https://cursor.com/install?win32=true' | iex
-        $agentDir = Join-Path $env:LOCALAPPDATA 'cursor-agent'
-        $agentCommand = Join-Path $agentDir 'agent.exe'
-        if (-not (Test-Path $agentCommand)) {
-          $agentCommand = Join-Path $agentDir 'agent.cmd'
-        }
-        if (-not (Test-Path $agentCommand)) {
-          throw 'Cursor agent command was not installed'
-        }
-        Add-Content -Path $env:GITHUB_PATH -Value $agentDir
-        Add-Content -Path $env:GITHUB_ENV -Value "CURSOR_COMMAND=$agentCommand acp"
+    # cursor_acp drives `agent acp`; auth is the backends-only CURSOR_API_KEY on
+    # the baseline step below.
+    - name: Install the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends'
+      run: bash .github/scripts/setup-cursor.sh
 
     - name: Verify Cursor CLI (Linux)
       if: matrix.lane == 'backends' && matrix.os == 'ubuntu'
@@ -307,7 +290,8 @@ jobs:
     # Bash resolving the shebang (see the codex step's comment above).
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       env:
-        CURSOR_API_KEY: ${{ secrets.E2E_CURSOR_API_KEY }}
+        # Only cursor_acp reads it, and only the backends lane runs cursor_acp.
+        CURSOR_API_KEY: ${{ matrix.lane == 'backends' && secrets.E2E_CURSOR_API_KEY || '' }}
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
         BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
         BAND_E2E_TEST_SELECTOR: ${{ inputs.test_selector || '' }}

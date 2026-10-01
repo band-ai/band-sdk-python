@@ -205,6 +205,10 @@ class ApprovalRoom:
                     len(result.output),
                 )
 
+    def unanswered_requests(self, *, since: int) -> list[re.Match[str]]:
+        """Captured requests after ``since`` with no decision or expected timeout."""
+        return self._unhandled_requests(self.capture.messages.since(since))
+
     def _unhandled_requests(
         self, messages: list[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:

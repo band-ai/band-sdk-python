@@ -49,8 +49,8 @@ failure fails that room turn visibly instead of falling back.
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
   session; Cursor turns are serialized.
   Its plan/agent mode is selected from each session's advertised catalog before the first
-  prompt. In the live `backends` lane, CI passes `E2E_CURSOR_API_KEY` as `CURSOR_API_KEY`
-  only to the baseline step; local runs may use a stored `agent login`.
+  prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
+  as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
 
 ## Server prompt outcomes
 

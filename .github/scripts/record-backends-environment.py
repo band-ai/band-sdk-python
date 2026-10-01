@@ -15,6 +15,10 @@ import subprocess
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.deps import cli_binary
 
+# This runs in an always() step ahead of the scorecard uploads; a stalled CLI
+# must not hold it until the job timeout.
+VERSION_TIMEOUT_S = 30
+
 
 def cli_version(binary: str) -> str:
     if (cli := shutil.which(binary)) is None:
@@ -23,13 +27,17 @@ def cli_version(binary: str) -> str:
     # Windows batch shims need cmd.exe to launch.
     if pathlib.Path(cli).suffix.lower() in {".cmd", ".bat"}:
         command = f'"{cli}" --version'
-    completed = subprocess.run(
-        command,
-        shell=isinstance(command, str),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            shell=isinstance(command, str),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=VERSION_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return "unavailable"
     return completed.stdout.strip() if completed.returncode == 0 else "unavailable"
 
 

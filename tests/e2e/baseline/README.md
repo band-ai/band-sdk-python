@@ -579,9 +579,10 @@ the `dev` extra but are split out for isolation.
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
 
-The `backends` CI job installs Cursor `agent` natively on Ubuntu and Windows and
+The `backends` CI job installs a pinned Cursor `agent` on Ubuntu and Windows
+(`.github/scripts/setup-cursor.sh`; bump `CURSOR_CLI_VERSION` deliberately) and
 passes the `E2E_CURSOR_API_KEY` organization secret as `CURSOR_API_KEY` only to the
-baseline test step. For a focused local Cursor run, install the CLI, authenticate
+backends lane's baseline test step. For a focused local Cursor run, install the CLI, authenticate
 with `agent login` or set `CURSOR_API_KEY`, and use the repo's `.env.test`:
 
 ```bash

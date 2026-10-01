@@ -8,9 +8,10 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+from band_rest import ChatMessage
 
 from band.client.streaming import DeliveryStatus
 from band.core.memory_types import (
@@ -19,7 +20,7 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-from band.core.types import Capability, MessageType
+from band.core.types import Capability
 from band.integrations.acp.cursor import (
     DECISION_RESOLVED_TEMPLATE,
     ROOM_COMMAND,
@@ -75,47 +76,60 @@ PLAN_REQUEST = re.compile(
 @dataclass(frozen=True)
 class TurnCheckpoint:
     cursor: int
-    closed_count: int
-    text_ids: frozenset[str]
+    # Server time of the room's newest item before the turn; None in an empty room.
+    started: datetime | None
 
 
-async def _closed_turn_count(room: ApprovalRoom) -> int:
-    tasks = await room.capture.tasks(sender_id=room.agent.id)
-    return sum(task.content == ACP_SESSION_CLOSED_EVENT for task in tasks)
+async def _room_now(user_ops: UserOps, room_id: str) -> datetime | None:
+    latest = await user_ops.list_messages(room_id, limit=1)
+    return latest[-1].inserted_at if latest else None
+
+
+def _posted_after(message: ChatMessage, stamp: datetime | None) -> bool:
+    # Strict, so the previous turn's close event at the boundary never counts.
+    return stamp is None or (
+        message.inserted_at is not None and message.inserted_at > stamp
+    )
 
 
 async def _start_turn(room: ApprovalRoom, text: str) -> TurnCheckpoint:
-    closed_count = await _closed_turn_count(room)
-    messages = await room.user_ops.list_messages(
-        room.room_id, message_type=MessageType.TEXT
+    started = await _room_now(room.user_ops, room.room_id)
+    return TurnCheckpoint(await room.say(text), started)
+
+
+async def _turn_failure(
+    room: ApprovalRoom, checkpoint: TurnCheckpoint, what: str
+) -> NoReturn:
+    # Adapter failures, such as a rejected session config, arrive only as error events.
+    errors = await room.capture.errors(
+        sender_id=room.agent.id, since=checkpoint.started
     )
-    cursor = await room.say(text)
-    return TurnCheckpoint(cursor, closed_count, frozenset(m.id for m in messages))
+    pytest.fail(
+        f"{what}; room messages: {room.said_since(checkpoint.cursor)}; "
+        f"agent errors: {[error.content for error in errors]}"
+    )
+
+
+async def _turn_closed(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> bool:
+    # A decision releases the triggering message before the detached turn ends,
+    # so only the session-closed event marks the turn's end.
+    tasks = await room.capture.tasks(sender_id=room.agent.id, since=checkpoint.started)
+    return any(
+        task.content == ACP_SESSION_CLOSED_EVENT
+        and _posted_after(task, checkpoint.started)
+        for task in tasks
+    )
 
 
 async def _wait_for_turn_close(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> None:
     async def wait() -> None:
-        while await _closed_turn_count(room) <= checkpoint.closed_count:
+        while not await _turn_closed(room, checkpoint):
             await asyncio.sleep(TURN_POLL_INTERVAL_S)
 
     try:
         await asyncio.wait_for(wait(), timeout=room.budget.deadline_s)
     except TimeoutError:
-        pytest.fail(
-            f"Cursor turn did not close after the decision: "
-            f"{room.said_since(checkpoint.cursor)}"
-        )
-
-
-async def _new_agent_text(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> list[str]:
-    messages = await room.user_ops.list_messages(
-        room.room_id, message_type=MessageType.TEXT
-    )
-    return [
-        message.content or ""
-        for message in messages
-        if message.id not in checkpoint.text_ids and message.sender_id == room.agent.id
-    ]
+        await _turn_failure(room, checkpoint, "Cursor turn did not close")
 
 
 def _project(root: Path) -> Path:
@@ -218,9 +232,11 @@ def _select_mode(mode: str) -> SessionConfigResolver:
     return resolve
 
 
-async def _plan_request(room: ApprovalRoom, *, since: int) -> tuple[str, str]:
+async def _plan_request(
+    room: ApprovalRoom, checkpoint: TurnCheckpoint
+) -> tuple[str, str]:
     def find_request() -> tuple[str, str] | None:
-        for message in room.capture.messages.since(since):
+        for message in room.capture.messages.since(checkpoint.cursor):
             if match := PLAN_REQUEST.search(message.content or ""):
                 return match["token"], match["plan"]
         return None
@@ -231,9 +247,8 @@ async def _plan_request(room: ApprovalRoom, *, since: int) -> tuple[str, str]:
             deadline_s=room.budget.deadline_s,
         )
     except TimeoutError:
-        pytest.fail(
-            f"Cursor did not send cursor/create_plan in plan mode; "
-            f"room messages: {room.said_since(since)}"
+        await _turn_failure(
+            room, checkpoint, "Cursor did not send cursor/create_plan in plan mode"
         )
     request = find_request()
     assert request is not None
@@ -247,34 +262,32 @@ async def _decide_plan(
     accept: bool,
     reply_marker: str,
 ) -> str:
-    token, plan = await _plan_request(room, since=checkpoint.cursor)
+    token, plan = await _plan_request(room, checkpoint)
     word = CursorCommandWord.ACCEPT if accept else CursorCommandWord.REJECT
     after_decision = await room.say(f"{ROOM_COMMAND} {word} {token}")
     notice = DECISION_RESOLVED_TEMPLATE.format(kind="plan", token=token)
     await room.shown(notice, since=after_decision)
     try:
-        await room.capture.wait_until(
-            lambda items, cursor=after_decision: any(
+        messages = await room.capture.wait_until(
+            lambda items: any(
                 PLAN_REQUEST.search(item.content or "")
                 or reply_marker in (item.content or "")
-                for item in items[cursor:]
+                for item in items[after_decision:]
             ),
             deadline_s=room.budget.deadline_s,
         )
     except TimeoutError:
-        pytest.fail(
-            f"Cursor did not finish the plan decision: "
-            f"{room.said_since(after_decision)}"
-        )
-    await _wait_for_turn_close(room, checkpoint)
-    requests = [
+        await _turn_failure(room, checkpoint, "Cursor did not finish the plan decision")
+    # A repeated request would hold the turn open on a new manual decision.
+    repeated = [
         match["token"]
-        for content in await _new_agent_text(room, checkpoint)
-        if (match := PLAN_REQUEST.search(content))
+        for item in messages[after_decision:]
+        if (match := PLAN_REQUEST.search(item.content or ""))
     ]
-    assert requests == [token], (
-        f"Cursor requested another plan without separate human review: {requests}"
+    assert not repeated, (
+        f"Cursor requested another plan without separate human review: {repeated}"
     )
+    await _wait_for_turn_close(room, checkpoint)
     return plan
 
 
@@ -296,14 +309,14 @@ async def _decide_permissions_until_reply(
         else:
             outcome = Outcome.APPROVE
         denied += outcome is Outcome.DECLINE
-        after_decision = await room.say(room.dialect.reply(outcome, request))
+        after_decision = await room.decide(outcome, request)
         await room.shown(
             room.dialect.notice(outcome, request).text, since=after_decision
         )
         try:
-            messages = await room.capture.wait_until(
+            await room.capture.wait_until(
                 lambda items, cursor=after_decision: (
-                    bool(room.dialect.find_requests(items[cursor:]))
+                    bool(room.unanswered_requests(since=checkpoint.cursor))
                     or any(
                         reply_marker in (item.content or "") for item in items[cursor:]
                     )
@@ -311,15 +324,14 @@ async def _decide_permissions_until_reply(
                 deadline_s=room.budget.deadline_s,
             )
         except TimeoutError:
-            pytest.fail(
-                f"Cursor did not finish after {outcome}: "
-                f"{room.said_since(after_decision)}"
+            await _turn_failure(
+                room, checkpoint, f"Cursor did not finish after {outcome}"
             )
-        requests = room.dialect.find_requests(messages[after_decision:])
-        if not requests:
+        pending = room.unanswered_requests(since=checkpoint.cursor)
+        if not pending:
             await _wait_for_turn_close(room, checkpoint)
             return denied
-        requested_tool = requests[0]["tool"].partition(":")[0]
+        requested_tool = pending[0]["tool"].partition(":")[0]
         if (
             deny_first_tool is not None
             and turn_effect(requested_tool) is not TurnEffect.REPLY
@@ -328,7 +340,7 @@ async def _decide_permissions_until_reply(
                 "Cursor requested another permission after the denied action: "
                 f"{room.said_since(checkpoint.cursor)}"
             )
-        request = requests[0]
+        request = pending[0]
     pytest.fail(
         f"Cursor requested permission more than {MAX_PERMISSION_REQUESTS} times: "
         f"{room.said_since(checkpoint.cursor)}"
@@ -589,7 +601,6 @@ async def test_sequential_rooms_keep_their_work_after_restart(
         )
 
     handled: dict[str, str] = {}
-    boundaries: dict[str, datetime] = {}
     async with running_agent(identity, adapter(), cell.settings):
         for expected_count, room_id in enumerate(rooms, start=1):
             marker = markers[room_id]
@@ -611,8 +622,9 @@ async def test_sequential_rooms_keep_their_work_after_restart(
                 assert len(stored) == expected_count
                 assert len(stored.where(content=marker)) == 1
                 handled[room_id] = mid
-                boundaries[room_id] = capture.turn_boundary()
 
+    # Every turn-1 event is durable once its message is processed.
+    recall_since = {room_id: await _room_now(user_ops, room_id) for room_id in rooms}
     offline = {
         room_id: await user_ops.send_message(
             room_id,
@@ -643,7 +655,7 @@ async def test_sequential_rooms_keep_their_work_after_restart(
         for room_id in rooms:
             calls = await captures[room_id].tool_calls(
                 sender_id=identity.id,
-                since=boundaries[room_id],
+                since=recall_since[room_id],
                 include_memory=True,
             )
             assert not calls, f"Cursor used tools to recall the room marker: {calls}"
