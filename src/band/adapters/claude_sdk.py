@@ -49,6 +49,7 @@ try:
         PermissionResultDeny,
         SdkPluginConfig,
         SettingSource,
+        ThinkingConfigEnabled,
         ToolPermissionContext,
     )
 
@@ -177,6 +178,7 @@ SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
         "plugin-dir",
         "resume",
         "setting-sources",
+        "thinking-display",
         "verbose",
     }
 )
@@ -685,7 +687,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Add extended thinking if configured
         if self.config.max_thinking_tokens:
-            sdk_options.max_thinking_tokens = self.config.max_thinking_tokens
+            sdk_options.thinking = self._thinking(self.config.max_thinking_tokens)
 
         # Set working directory if configured
         if self.config.cwd:
@@ -1293,6 +1295,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, e)
+
+    def _thinking(self, budget_tokens: int) -> ThinkingConfigEnabled:
+        thinking: ThinkingConfigEnabled = {
+            "type": "enabled",
+            "budget_tokens": budget_tokens,
+        }
+        if Emit.THOUGHTS in self.features.emit:
+            # Opus 4.7+ omits thinking text by default, which leaves nothing
+            # to post as a thought.
+            thinking["display"] = "summarized"
+        return thinking
 
     async def _narrate_thinking(
         self, block: ThinkingBlock, room_id: str, tools: AgentToolsProtocol

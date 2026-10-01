@@ -16,6 +16,7 @@ from band.adapters.claude_sdk import (
     ClaudeCLIOptions,
     ClaudeSDKAdapterConfig,
 )
+from band.core.types import Emit
 from tests.adapters.claude_sdk.helpers import SEND_MESSAGE_MCP_NAME, ClaudeRoom
 from tests.paths import host_absolute_path
 
@@ -99,6 +100,24 @@ async def test_sdk_owned_flags_match_what_the_adapter_makes_the_sdk_emit(
     options = await _cli_options(room, session_id="sess-1")
 
     assert _emitted_flags(options) == SDK_OWNED_CLI_FLAGS
+
+
+@pytest.mark.parametrize(
+    ("emit", "display"),
+    [(Emit.THOUGHTS, "summarized"), (Emit.TOOL_CALLS, None)],
+    ids=["thoughts-posted", "thoughts-not-posted"],
+)
+async def test_thinking_text_is_requested_only_when_thoughts_are_posted(
+    claude_room: OpenRoom, emit: Emit, display: str | None
+) -> None:
+    room = await claude_room(
+        ClaudeSDKAdapterConfig(max_thinking_tokens=1024), emit=emit
+    )
+
+    options = await _cli_options(room)
+
+    assert options.thinking is not None
+    assert options.thinking.get("display") == display
 
 
 @pytest.mark.parametrize(
