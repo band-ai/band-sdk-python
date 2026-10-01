@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.4](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.3...band-mcp-v2.2.4) (2026-10-01)
+
+
+### Bug Fixes
+
+* **band-mcp:** leave the band-client-rest pin to band-sdk ([#718](https://github.com/band-ai/band-sdk-python/issues/718)) ([70ce454](https://github.com/band-ai/band-sdk-python/commit/70ce45464019642aec6382e08c35de29209d9d88))
+
 ## [2.2.3](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.2...band-mcp-v2.2.3) (2026-10-01)
 
 
