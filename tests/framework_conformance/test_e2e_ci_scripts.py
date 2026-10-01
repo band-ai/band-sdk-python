@@ -270,3 +270,7 @@ def test_cli_version_reports_not_found_and_timeout(
 
     assert module.cli_version("missing-cli") == "not found"
     assert module.cli_version("slow-cli") == "timed out after 0.2s"
+
+    _fake_cli(bin_dir, "empty-cli")
+    monkeypatch.setattr(module, "VERSION_TIMEOUT_S", 30)
+    assert module.cli_version("empty-cli") == "empty version output"

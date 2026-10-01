@@ -225,6 +225,22 @@ def _project_state(root: Path) -> dict[str, bytes]:
     }
 
 
+def _assert_project_unchanged(root: Path, original_state: dict[str, bytes]) -> None:
+    assert _project_state(root) == original_state
+
+
+def _assert_changed_within(
+    root: Path, original_state: dict[str, bytes], allowed: set[str]
+) -> None:
+    final_state = _project_state(root)
+    changed = {
+        path
+        for path in original_state.keys() | final_state.keys()
+        if original_state.get(path) != final_state.get(path)
+    }
+    assert changed <= allowed, changed
+
+
 async def _run_project_command(root: Path, *args: str) -> tuple[int, str]:
     process = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -492,7 +508,7 @@ async def test_repairs_a_failing_project_after_a_human_gate(
             reply_marker=denied_reply,
             deny_first_tool=BACKUP_FILE,
         )
-        assert _project_state(root) == original_state
+        _assert_project_unchanged(root, original_state)
         assert len(await _stored_memories(capture, agent)) == 0
 
         checkpoint = await _start_turn(
@@ -505,12 +521,13 @@ async def test_repairs_a_failing_project_after_a_human_gate(
         )
         request = await _permission_request(room, checkpoint)
         # Nothing may change while the human gate is pending.
-        assert _project_state(root) == original_state
+        _assert_project_unchanged(root, original_state)
         await _decide_permissions_until_closed(
             room, request, checkpoint=checkpoint, reply_marker=report
         )
         assert source.read_text() != original
         assert (root / TEST_FILE).read_bytes() == original_state[TEST_FILE]
+        _assert_changed_within(root, original_state, {SOURCE_FILE})
         await _assert_repaired_project(root)
         stored = await _stored_memories(capture, agent)
         assert len(stored) == 1
@@ -567,7 +584,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
             word=CursorCommandWord.REJECT,
             reply_marker=rejected_reply,
         )
-        assert _project_state(root) == original_state
+        _assert_project_unchanged(root, original_state)
 
     async with (
         running_agent(identity, plan_adapter(), cell.settings),
@@ -587,7 +604,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
             reply_marker=accepted_reply,
         )
         _assert_revised_scoped_plan(accepted_plan, rejected_plan)
-        assert _project_state(root) == original_state
+        _assert_project_unchanged(root, original_state)
 
     agent_adapter = cursor_test_adapter(
         cell.settings,
@@ -608,18 +625,12 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         )
         request = await _permission_request(room, checkpoint)
         # Nothing may change while the human gate is pending.
-        assert _project_state(root) == original_state
+        _assert_project_unchanged(root, original_state)
         await _decide_permissions_until_closed(
             room, request, checkpoint=checkpoint, reply_marker=implementation_reply
         )
     assert source.read_text() != original
-    final_state = _project_state(root)
-    changed = {
-        path
-        for path in original_state.keys() | final_state.keys()
-        if original_state.get(path) != final_state.get(path)
-    }
-    assert changed <= {SOURCE_FILE, TEST_FILE}, changed
+    _assert_changed_within(root, original_state, {SOURCE_FILE, TEST_FILE})
     await _assert_repaired_project(root)
 
 

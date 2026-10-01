@@ -44,7 +44,9 @@ def cli_version(binary: str) -> str:
             return f"timed out after {VERSION_TIMEOUT_S}s"
         output.seek(0)
         version = output.read().strip()
-    return version if completed.returncode == 0 else f"exited {completed.returncode}"
+    if completed.returncode != 0:
+        return f"exited {completed.returncode}"
+    return version or "empty version output"
 
 
 def main() -> None:
