@@ -493,15 +493,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             # with no room output means the model genuinely said nothing.
             if final_text is None and not turn.replied_in_room:
                 incidents = "; ".join(turn.incidents) or "none reported"
-                logger.warning(
-                    "Room %s: Copilot turn produced no reply (incidents: %s)",
-                    room_id,
-                    incidents,
-                )
+                message = f"Copilot turn produced no reply (incidents: {incidents})"
+                logger.warning("Room %s: %s", room_id, message)
                 await tools.send_failure(AgentFailure(_PROVIDER, "no assistant reply"))
-                raise RuntimeError(
-                    f"Copilot turn produced no reply (incidents: {incidents})"
-                )
+                raise RuntimeError(message)
 
             # The turn may already have replied into the room; sending its
             # final text too would duplicate the reply.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import quote
 
 import httpx
@@ -13,6 +13,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _EVENT_READ_TIMEOUT_S = 60.0
+
+
+ApprovalReply = Literal["once", "always", "reject"]
 
 
 class OpencodeClientProtocol(Protocol):
@@ -41,7 +44,7 @@ class OpencodeClientProtocol(Protocol):
     ) -> None: ...
 
     async def reply_permission(
-        self, permission_id: str, *, reply: str, message: str | None = None
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
     ) -> None: ...
 
     async def reply_question(
@@ -162,7 +165,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         response.raise_for_status()
 
     async def reply_permission(
-        self, permission_id: str, *, reply: str, message: str | None = None
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
     ) -> None:
         # Only this route carries ``message``. OpenCode ends the turn on a bare
         # reject but hands a reject with a message back to the model.

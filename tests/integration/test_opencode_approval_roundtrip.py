@@ -110,7 +110,6 @@ async def test_manual_approval_survives_a_real_platform_round_trip(
         OpencodeAdapterConfig(approval_mode="manual"),
         ApprovalPorts(
             room_id=chat_id,
-            session_id=lambda: "sess-1",
             client=lambda: cast(OpencodeClientProtocol, fake_client),
             tools=lambda: cast(AgentToolsProtocol, tools),
             # A real participant id: the platform validates the send's mentions.

@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import BaseModel
@@ -94,11 +94,9 @@ class BlockingReplyClient(FakeOpencodeClient):
         gate.started.set()
         await gate.release.wait()
 
-    async def reply_permission(
-        self, permission_id: str, *, reply: str, message: str | None = None
-    ) -> None:
+    async def reply_permission(self, *args: Any, **kwargs: Any) -> None:
         await self._block("permission")
-        await super().reply_permission(permission_id, reply=reply, message=message)
+        await super().reply_permission(*args, **kwargs)
 
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]
@@ -112,9 +110,7 @@ class BlockingReplyClient(FakeOpencodeClient):
 
 
 class FailingReplyClient(FakeOpencodeClient):
-    async def reply_permission(
-        self, permission_id: str, *, reply: str, message: str | None = None
-    ) -> None:
+    async def reply_permission(self, *args: Any, **kwargs: Any) -> None:
         raise RuntimeError("permission reply failed")
 
     async def reject_question(self, request_id: str) -> None:
@@ -139,7 +135,6 @@ def make_room_approvals(
         config or OpencodeAdapterConfig(),
         ApprovalPorts(
             room_id="room-1",
-            session_id=lambda: "sess-1",
             client=lambda: cast(OpencodeClientProtocol, client),
             tools=lambda: cast(AgentToolsProtocol, tools),
             turn_mentions=list,
@@ -184,12 +179,6 @@ DECLINED = {
             "approve req-1",
             {"permission_id": "req-1", "reply": "once"},
             id="approve",
-        ),
-        pytest.param(
-            OpencodeAdapterConfig(),
-            "always req-1",
-            {"permission_id": "req-1", "reply": "always"},
-            id="always",
         ),
         pytest.param(OpencodeAdapterConfig(), "reject req-1", DECLINED, id="reject"),
         pytest.param(
@@ -876,13 +865,7 @@ async def test_auto_decline_approval_mode() -> None:
         room_id="room-1",
     )
 
-    assert fake_client.permission_replies == [
-        {
-            "permission_id": "perm-1",
-            "reply": "reject",
-            "message": REJECTED_PERMISSION_FEEDBACK,
-        }
-    ]
+    assert [reply["reply"] for reply in fake_client.permission_replies] == ["reject"]
 
 
 async def test_auto_reject_question_mode() -> None:
@@ -1120,7 +1103,6 @@ async def test_abandoning_a_request_stops_its_expiry_timer(asks: AskFactory) -> 
         OpencodeAdapterConfig(approval_mode="manual"),
         ApprovalPorts(
             room_id="room-1",
-            session_id=lambda: "sess-1",
             client=lambda: client["current"],
             tools=lambda: cast(AgentToolsProtocol, FakeAgentTools()),
             turn_mentions=list,

@@ -53,7 +53,6 @@ class ApprovalPorts:
     """What the approval machinery needs from the adapter, per room."""
 
     room_id: str
-    session_id: Callable[[], str | None]
     client: Callable[[], OpencodeClientProtocol | None]
     tools: Callable[[], AgentToolsProtocol | None]
     turn_mentions: Callable[[], list[dict[str, str]]]
@@ -144,8 +143,8 @@ APPROVAL_TIMED_OUT_TEMPLATE = (
     "OpenCode approval `{request_id}` timed out and was handled with `{reply}`."
 )
 REJECTED_PERMISSION_FEEDBACK = (
-    "The user declined this request in the Band room. Do not retry it or try "
-    "another way to do the same thing; reply to the user instead."
+    "This request was declined. Do not retry it or try another way to do the "
+    "same thing; reply to the user instead."
 )
 APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
     "OpenCode approval `{request_id}` is no longer pending."
@@ -607,7 +606,7 @@ class RoomApprovals:
 
     async def _approve_own_band_tool(self, request_id: str) -> None:
         try:
-            async with self._permission_reply(
+            async with self._client_reply(
                 "auto-approve permission", request_id
             ) as client:
                 await client.reply_permission(request_id, reply="always")
@@ -619,9 +618,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the reply I/O for an already-claimed permission."""
         try:
-            async with self._permission_reply(
-                "reply to permission", entry.token
-            ) as client:
+            async with self._client_reply("reply to permission", entry.token) as client:
                 await client.reply_permission(
                     entry.token,
                     reply=reply,
@@ -650,7 +647,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the answer I/O for an already-claimed question."""
         try:
-            async with self._question_reply("answer question", entry.token) as client:
+            async with self._client_reply("answer question", entry.token) as client:
                 await client.reply_question(entry.token, answers=answers)
         except ApprovalReplyError:
             return False
@@ -669,7 +666,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the reject I/O for an already-claimed question."""
         try:
-            async with self._question_reply("reject question", entry.token) as client:
+            async with self._client_reply("reject question", entry.token) as client:
                 await client.reject_question(entry.token)
         except ApprovalReplyError:
             return False
@@ -707,18 +704,7 @@ class RoomApprovals:
             raise ApprovalReplyError from error
 
     @asynccontextmanager
-    async def _permission_reply(
-        self, action: str, request_id: str
-    ) -> AsyncIterator[OpencodeClientProtocol]:
-        client = self._ports.client()
-        if client is None or not self._ports.session_id():
-            await self._fail_request(action, request_id)
-            raise ApprovalReplyError
-        async with self._reply_guard(action, request_id):
-            yield client
-
-    @asynccontextmanager
-    async def _question_reply(
+    async def _client_reply(
         self, action: str, request_id: str
     ) -> AsyncIterator[OpencodeClientProtocol]:
         if (client := self._ports.client()) is None:

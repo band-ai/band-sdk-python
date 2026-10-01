@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -619,12 +620,10 @@ async def test_session_idle_does_not_abort_an_in_flight_approval(
             self.reply_started = asyncio.Event()
             self.allow_reply = asyncio.Event()
 
-        async def reply_permission(
-            self, permission_id: str, *, reply: str, message: str | None = None
-        ) -> None:
+        async def reply_permission(self, *args: Any, **kwargs: Any) -> None:
             self.reply_started.set()
             await self.allow_reply.wait()
-            await super().reply_permission(permission_id, reply=reply, message=message)
+            await super().reply_permission(*args, **kwargs)
 
     fake_client = BlockBeforeReplyClient()
     adapter = make_adapter(fake_client)
@@ -1243,10 +1242,8 @@ async def test_approval_wait_does_not_shorten_the_resumed_turn(
     class LateFinishClient(FakeOpencodeClient):
         """Finishes the turn 0.3s after the approval lands."""
 
-        async def reply_permission(
-            self, permission_id: str, *, reply: str, message: str | None = None
-        ) -> None:
-            await super().reply_permission(permission_id, reply=reply, message=message)
+        async def reply_permission(self, *args: Any, **kwargs: Any) -> None:
+            await super().reply_permission(*args, **kwargs)
 
             async def finish() -> None:
                 await asyncio.sleep(0.3)

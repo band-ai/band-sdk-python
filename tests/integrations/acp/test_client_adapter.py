@@ -955,7 +955,7 @@ class TestACPClientAdapterOnMessage:
                 prompt_cancelled.set()
                 raise
 
-        adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.prompt = AsyncMock(
+        self._runtime(adapter_with_mocks)._conn.prompt = AsyncMock(
             side_effect=endless_prompt
         )
         turn = asyncio.create_task(

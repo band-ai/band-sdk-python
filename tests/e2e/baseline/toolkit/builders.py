@@ -117,7 +117,7 @@ def _build_copilot_sdk(
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
-    # ask_user / base_directory / a shared client are bespoke knobs exercised by
+    # ask_user / a shared client are bespoke knobs exercised by
     # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
     from copilot import (  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
         ProviderConfig,

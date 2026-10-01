@@ -659,7 +659,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config,
             ApprovalPorts(
                 room_id=state.room_id,
-                session_id=lambda: self._if_owner(owner, lambda t: t.session_id, None),
                 client=lambda: self._if_owner(owner, lambda t: t.client, None),
                 tools=lambda: self._if_owner(owner, lambda t: t.tools, None),
                 turn_mentions=lambda: self._if_owner(
