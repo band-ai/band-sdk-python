@@ -534,7 +534,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "band-client-rest", specifier = "==0.0.41" },
+    { name = "band-client-rest" },
     { name = "band-sdk", editable = "." },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1,<2" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
