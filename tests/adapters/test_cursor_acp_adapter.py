@@ -26,6 +26,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.session_config import ACPConfigRequest
 from band.integrations.acp.types import ACPToolCall
 from band.testing import FakeAgentTools
@@ -584,6 +585,9 @@ class TestCursorACPAdapterDecisions:
         )
         await tools.prompt_sent.wait()
         token = next(iter(adapter._pending_decisions))
+        assert tools.messages == [
+            PLAN_REQUESTED_TEMPLATE.format(plan="Plan", token=token)
+        ]
 
         await adapter._handle_control_message(
             cast(

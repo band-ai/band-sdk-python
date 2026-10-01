@@ -24,7 +24,7 @@ VERSION_TIMEOUT_S = 30
 
 def cli_version(binary: str) -> str:
     if (cli := shutil.which(binary)) is None:
-        return "unavailable"
+        return "not found"
     # A resolved local path plus a literal flag, so shell=True carries no
     # injection risk; it lets Windows .cmd shims launch through cmd.exe.
     # A file, not a pipe: the timeout kills only the shell, and on Windows a pipe
@@ -41,10 +41,10 @@ def cli_version(binary: str) -> str:
                 timeout=VERSION_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:
-            return "unavailable"
+            return f"timed out after {VERSION_TIMEOUT_S}s"
         output.seek(0)
         version = output.read().strip()
-    return version if completed.returncode == 0 else "unavailable"
+    return version if completed.returncode == 0 else f"exited {completed.returncode}"
 
 
 def main() -> None:

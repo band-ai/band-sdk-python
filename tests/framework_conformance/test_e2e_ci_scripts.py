@@ -12,6 +12,7 @@ file rather than on a re-implementation of it.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ from tests.paths import CI_SCRIPTS, REPO_ROOT
 _EMIT_LANE_MATRIX = CI_SCRIPTS / "emit-lane-matrix.py"
 _RUN_BASELINE_E2E = CI_SCRIPTS / "run-baseline-e2e.sh"
 _READ_MENTIONS = CI_SCRIPTS / "read-integrations-mentions.sh"
+_RECORD_BACKENDS_ENVIRONMENT = CI_SCRIPTS / "record-backends-environment.py"
 _ROSTER = Path(".github") / "integrations-team.txt"
 
 # POSIX-shell only. On Windows, `shutil.which("bash")` finds System32\bash.exe —
@@ -184,3 +186,38 @@ def test_mentions_reader_emits_at_handles_for_a_real_roster(tmp_path: Path) -> N
 
     assert result.returncode == 0
     assert (tmp_path / "out.txt").read_text().strip() == "mentions=@alice @bob"
+
+
+def _fake_cli(directory: Path, name: str, body: str) -> None:
+    cli = directory / name
+    cli.write_text(f"#!/bin/sh\n{body}\n")
+    cli.chmod(0o755)
+
+
+@posix_shell_only
+def test_environment_record_reports_each_cli_version_probe(tmp_path: Path) -> None:
+    """The scorecard evidence names each CLI's version, or why it has none."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_cli(bin_dir, "fake-cursor", "echo 2026.01.01-abc123")
+    _fake_cli(bin_dir, "copilot", "exit 3")
+
+    result = subprocess.run(
+        [sys.executable, str(_RECORD_BACKENDS_ENVIRONMENT)],
+        check=False,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+            "PYTHONPATH": str(REPO_ROOT),
+            "CURSOR_COMMAND": "fake-cursor acp",
+        },
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    [record] = (tmp_path / "artifacts").glob("environment-backends-*.json")
+    environment = json.loads(record.read_text())
+    assert environment["cursor_cli"] == "2026.01.01-abc123"
+    assert environment["copilot_cli"] == "exited 3"

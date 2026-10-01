@@ -247,9 +247,10 @@ jobs:
 
     # The install directory is named by the pinned version, so the script's hash
     # changes the key exactly when the version does.
-    - name: Cache the Cursor CLI (cursor_acp)
+    - name: Restore the Cursor CLI (cursor_acp)
+      id: cursor-cli-cache
       if: matrix.lane == 'backends'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cursor-agent-*
         key: cursor-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/setup-cursor.sh') }}
@@ -260,14 +261,20 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-cursor.sh
 
-    - name: Verify Cursor CLI (Linux)
-      if: matrix.lane == 'backends' && matrix.os == 'ubuntu'
+    # pwsh resolves both the Linux `agent` symlink and the Windows `agent.cmd`.
+    - name: Verify Cursor CLI
+      if: matrix.lane == 'backends'
+      shell: pwsh
       run: agent --version
 
-    - name: Verify Cursor CLI (Windows)
-      if: matrix.lane == 'backends' && matrix.os == 'windows'
-      shell: powershell
-      run: agent --version
+    # Saved as soon as the install verifies: the combined cache action saves only
+    # when the whole job passes, so a red lane would re-download on every run.
+    - name: Save the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends' && steps.cursor-cli-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cursor-agent-*
+        key: ${{ steps.cursor-cli-cache.outputs.cache-primary-key }}
 
     - name: Install Bun and OMP (omp_acp)
       if: matrix.lane == 'backends'

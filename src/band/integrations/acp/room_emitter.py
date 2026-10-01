@@ -225,6 +225,6 @@ class RoomTurnEmitter:
                 "acp_client_session_id": self._session_id,
                 "acp_client_room_id": self._room_id,
             },
-            log_label="ACP client session",
+            log_label=ACP_SESSION_CLOSED_EVENT,
         )
         return False

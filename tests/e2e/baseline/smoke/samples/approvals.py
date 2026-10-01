@@ -14,7 +14,7 @@ import asyncio
 import codecs
 import re
 import string
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -194,6 +194,17 @@ def template_pattern(template: str, *, token: str = "token") -> re.Pattern[str]:
     return re.compile("".join(parts) + "$", re.DOTALL | re.MULTILINE)
 
 
+def find_requests(
+    pattern: re.Pattern[str], messages: Sequence[MessageCreatedPayload | ChatMessage]
+) -> list[re.Match[str]]:
+    """Every distinct ``pattern`` request among ``messages``, in order, by token."""
+    found: dict[str, re.Match[str]] = {}
+    for message in messages:
+        for match in pattern.finditer(message.content or ""):
+            found.setdefault(match["token"], match)
+    return list(found.values())
+
+
 @dataclass(frozen=True)
 class Notice:
     """The adapter's confirmation of an outcome: a chat message the capture streams,
@@ -303,14 +314,10 @@ class ApprovalDialect:
         return next(iter(self.find_requests(messages)), None)
 
     def find_requests(
-        self, messages: list[MessageCreatedPayload | ChatMessage]
+        self, messages: Sequence[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:
         """Every distinct approval request among ``messages``, in order."""
-        found: dict[str, re.Match[str]] = {}
-        for message in messages:
-            for match in self.request.finditer(message.content or ""):
-                found.setdefault(match["token"], match)
-        return list(found.values())
+        return find_requests(self.request, messages)
 
     def settled(
         self,
