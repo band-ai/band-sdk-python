@@ -25,6 +25,7 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 
 from __future__ import annotations
 
+from pydantic import Field
 from typing_extensions import Unpack
 
 from band.core.types import FeatureKwargs
@@ -35,7 +36,7 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
-from band.workspaces import WorkspaceResolver, workspace_resolver_for
+from band.workspaces import WorkspaceResolver
 
 DEFAULT_COPILOT_COMMAND: tuple[str, ...] = ("copilot", "--acp")
 
@@ -49,15 +50,12 @@ class CopilotACPAdapterConfig(ACPClientAdapterConfig):
 
     Attributes:
         command: The ``copilot`` launch command.
-        cwd: Root under which each room gets its own workspace directory;
-            exclusive with the adapter's ``workspace_for_room``.
         github_token: Sets ``GITHUB_TOKEN`` for the CLI unless ``env``
             already does.
     """
 
     command: tuple[str, ...] = DEFAULT_COPILOT_COMMAND
-    cwd: str | None = None
-    github_token: str | None = None
+    github_token: str | None = Field(default=None, repr=False)
 
 
 class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
@@ -92,17 +90,15 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
         super().__init__(
             config,
             additional_tools=additional_tools,
-            workspace_for_room=workspace_resolver_for(config.cwd, workspace_for_room),
+            workspace_for_room=workspace_for_room,
             resolve_session_config=resolve_session_config,
             resolve_permission=resolve_permission,
             **features,
         )
 
-    def _spawn_env(self) -> dict[str, str] | None:
-        env = dict(self.config.env or {})
-        if self.config.github_token:
-            env.setdefault("GITHUB_TOKEN", self.config.github_token)
-        return env or None
+    def _credential_env(self) -> dict[str, str]:
+        token = self.config.github_token
+        return {"GITHUB_TOKEN": token} if token else {}
 
 
 __all__ = [

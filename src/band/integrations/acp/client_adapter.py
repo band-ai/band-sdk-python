@@ -22,8 +22,10 @@ from uuid import uuid4
 from acp import spawn_agent_process
 from acp.exceptions import RequestError
 from acp.schema import (
+    AcpMcpServer,
     ClientCapabilities,
     HttpMcpServer,
+    McpServerStdio,
     NewSessionResponse,
     PermissionOption,
     SetSessionConfigOptionResponse,
@@ -115,6 +117,7 @@ from band.workspaces import (
     claim_room_workspace,
     release_room_workspace,
     resolve_room_workspace,
+    workspace_resolver_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +154,8 @@ class ACPTurnTimeoutError(TimeoutError):
 
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+# What ACP's session/new takes; YAML/JSON entries validate into these.
+SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
 DEFAULT_BAND_MCP_BACKEND_KIND: BandMCPBackendKind = "http"
 
 # Prefixes the change-triggered roster/contacts updates injected into a
@@ -243,14 +248,9 @@ def _to_agent_failure(exc: Exception) -> AgentFailure:
     return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
+# A TCP endpoint is one shared process, so it cannot serve one room each.
+_TCP_SETTINGS = ("host", "port")
 _TCP_TRANSPORT_REJECTED = "TCP ACP transport cannot guarantee room process isolation"
-# Settings that would share one process or directory across rooms, refused
-# unless a config subclass declares the name as a field of its own.
-_UNISOLATED_SETTINGS: dict[str, str] = {
-    "cwd": "cwd is not supported; use workspace_for_room or the default",
-    "host": _TCP_TRANSPORT_REJECTED,
-    "port": _TCP_TRANSPORT_REJECTED,
-}
 
 
 class ACPClientAdapterConfig(BaseAdapterConfig):
@@ -262,6 +262,8 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         command: The agent's launch command; a single string is one argv
             element.
         env: Extra environment for the agent subprocess.
+        cwd: Root under which each room gets its own workspace directory;
+            exclusive with the adapter's ``workspace_for_room``.
         mcp_servers: MCP servers passed to each new ACP session.
         inject_band_tools: Serve the Band tools to each session over a
             loopback MCP server.
@@ -279,7 +281,8 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
 
     command: tuple[str, ...]
     env: dict[str, str] | None = None
-    mcp_servers: tuple[dict[str, Any], ...] = ()
+    cwd: str | None = None
+    mcp_servers: tuple[SessionMcpServer, ...] = ()
     inject_band_tools: bool = True
     auth_method: str | None = None
     custom_section: str = ""
@@ -290,11 +293,9 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_unisolated_settings(cls, data: Any) -> Any:
-        if isinstance(data, Mapping):
-            for name, reason in _UNISOLATED_SETTINGS.items():
-                if name in data and name not in cls.model_fields:
-                    raise ValueError(reason)
+    def _reject_tcp_transport(cls, data: Any) -> Any:
+        if isinstance(data, Mapping) and any(name in data for name in _TCP_SETTINGS):
+            raise ValueError(_TCP_TRANSPORT_REJECTED)
         return data
 
     @field_validator("command", mode="before")
@@ -381,7 +382,9 @@ class ACPClientAdapter(
             raise ValueError(
                 "custom ACP transports cannot guarantee room process isolation"
             )
-        self._workspace_for_room = workspace_for_room
+        self._workspace_for_room = workspace_resolver_for(
+            config.cwd, workspace_for_room
+        )
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         self._custom_effects = custom_tool_effects(self._custom_tools)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
@@ -565,8 +568,13 @@ class ACPClientAdapter(
         return list(self.config.command)
 
     def _spawn_env(self) -> dict[str, str] | None:
-        """The environment to launch the ACP agent subprocess with."""
-        return self.config.env
+        """The configured env over the backend's credentials, or ``None``."""
+        env = {**self._credential_env(), **(self.config.env or {})}
+        return env or None
+
+    def _credential_env(self) -> dict[str, str]:
+        """Environment a backend derives from its credential settings."""
+        return {}
 
     def _spawn_cwd(self, workspace: str | None) -> str | None:
         """The subprocess-level cwd to launch the ACP agent with, for this room's workspace."""

@@ -71,9 +71,16 @@ class TestOmpACPAdapterConfig:
         with pytest.raises(ValueError, match="Unsafe OMP"):
             OmpACPAdapterConfig(command=command, approval_mode="yolo")
 
-    def test_an_unknown_approval_mode_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="approval_mode"):
-            OmpACPAdapterConfig.model_validate({"approval_mode": "write"})
+    @pytest.mark.parametrize(
+        "settings",
+        [{"approval_mode": "write"}, {"use_unstable_protocol": False}],
+        ids=["unknown-approval-mode", "stable-protocol-without-approval-forms"],
+    )
+    def test_settings_omp_cannot_run_with_are_rejected(
+        self, settings: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValueError, match=next(iter(settings))):
+            OmpACPAdapterConfig.model_validate(settings)
 
     def test_cwd_and_a_workspace_resolver_are_exclusive(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not both"):

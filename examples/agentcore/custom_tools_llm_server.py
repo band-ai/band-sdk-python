@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=1.2.0",
+#   "band-sdk[anthropic]>=4.0.0",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 #   "pydantic>=2",

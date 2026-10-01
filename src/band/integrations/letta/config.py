@@ -162,7 +162,7 @@ class LettaAdapterConfig(EnvAdapterConfig):
     # not applied), so it must be the full LETTA_* name — an unprefixed alias
     # would read a bare env var and could swallow an unrelated secret.
     provider_key: str | None = Field(
-        default=None, validation_alias=AliasChoices("LETTA_API_KEY")
+        default=None, validation_alias=AliasChoices("LETTA_API_KEY"), repr=False
     )
     base_url: str = LETTA_CLOUD_BASE_URL
     custom_section: str = ""

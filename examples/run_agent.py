@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=1.2.0",
+#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=4.0.0",
 #   "python-dotenv>=1.1.1",
 # ]
 # ///
@@ -64,7 +64,7 @@ from dotenv import load_dotenv
 
 from band import Agent, LogSettings
 from band.config import load_agent_config
-from band.core.types import Emit
+from band.core.types import Capability, Emit
 from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -542,6 +542,7 @@ async def run_pydantic_ai_contacts_agent(
     adapter = PydanticAIAdapter(
         PydanticAIAdapterConfig(model=model, custom_section=CONTACTS_INSTRUCTIONS),
         emit=Emit.TOOL_CALLS,  # Show tool calls
+        capabilities=Capability.CONTACTS,
     )
 
     logger.info("Starting Pydantic AI contacts agent with model: %s", model)
@@ -628,7 +629,6 @@ async def run_contacts_hub_agent(
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.HUB_ROOM,
-        hub_task_id="contacts-hub",  # Custom task ID for the hub room
         broadcast_changes=True,
     )
 
@@ -702,6 +702,7 @@ Acknowledge these updates to the user when you see them.
 """,
         ),
         emit=Emit.TOOL_CALLS,
+        capabilities=Capability.CONTACTS,
     )
 
     logger.info("Starting contacts broadcast-only agent with model: %s", model)

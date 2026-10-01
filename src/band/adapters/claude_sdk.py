@@ -263,7 +263,7 @@ ApprovalDecision = Literal["accept", "decline"]
 
 class ClaudePermissionMode(StrEnum):
     """Claude Code's permission modes, exactly ``claude_agent_sdk``'s
-    ``PermissionMode`` values (pinned by test_permission_modes.py).
+    ``PermissionMode`` values (pinned by tests/adapters/claude_sdk/test_config.py).
 
     See https://code.claude.com/docs/en/permission-modes.
     """
@@ -665,7 +665,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
             allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
-            # Same values as the SDK's PermissionMode (test_permission_modes.py).
+            # Same values as the SDK's PermissionMode (pinned by tests/adapters/claude_sdk/test_config.py).
             permission_mode=cast("PermissionMode", self.config.permission_mode),
             effort=self.config.effort,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_BYTES,

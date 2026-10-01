@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from band_sdk_core import AgentFailure
-from pydantic import PositiveFloat, ValidationError
+from pydantic import Field, PositiveFloat, ValidationError
 
 from band.converters.copilot_sdk import (
     SESSION_ID_METADATA_KEY,
@@ -137,7 +137,7 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
     inject_history_on_resume_failure: bool = True
     session_id_prefix: str | None = None
     base_directory: str | None = None
-    github_token: str | None = None
+    github_token: str | None = Field(default=None, repr=False)
     use_logged_in_user: bool | None = None
     turn_timeout_s: PositiveFloat = 120.0
 

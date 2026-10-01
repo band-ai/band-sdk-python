@@ -23,6 +23,8 @@ on its test config so the guard can read what the model actually sees.
 
 Every adapter is built as `XAdapter(config: XAdapterConfig | None = None, *,
 history_converter=..., additional_tools=..., <live objects>, **features)`.
+`config` is required (no `None` default) only when no usable default exists,
+such as a remote endpoint or app credentials.
 `XAdapterConfig` subclasses `BaseAdapterConfig` (or `EnvAdapterConfig` when env
 vars may set it) from `src/band/core/adapterconfig.py`. It is frozen, rejects
 unknown fields, and holds plain data only, so it loads from YAML/JSON. Clients,

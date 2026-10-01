@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import Literal, Self
 
 from band_sdk_core import is_authorized_sender
-from pydantic import PositiveFloat, PositiveInt, model_validator
+from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
@@ -41,12 +41,13 @@ from band.runtime.decisions import (
     Timeout,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.workspaces import WorkspaceResolver, workspace_resolver_for
+from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
-CURSOR_AUTH_METHOD = "cursor_login"
+CursorAuthMethod = Literal["cursor_login"]
+CURSOR_AUTH_METHOD: CursorAuthMethod = "cursor_login"
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
@@ -92,9 +93,7 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
 
     Attributes:
         command: The ``agent acp`` launch command.
-        auth_method: Cursor's ACP login method.
-        cwd: Root under which each room gets its own workspace directory;
-            exclusive with the adapter's ``workspace_for_room``.
+        auth_method: Cursor's ACP login method; fixed.
         api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
             exclusive with ``auth_token``.
         auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
@@ -115,10 +114,9 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
     """
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
-    auth_method: str | None = CURSOR_AUTH_METHOD
-    cwd: str | None = None
-    api_key: str | None = None
-    auth_token: str | None = None
+    auth_method: CursorAuthMethod = CURSOR_AUTH_METHOD
+    api_key: str | None = Field(default=None, repr=False)
+    auth_token: str | None = Field(default=None, repr=False)
     approval_mode: ApprovalMode = "manual"
     question_mode: QuestionMode = "manual"
     plan_mode: PlanMode = "manual"
@@ -189,21 +187,19 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         super().__init__(
             config,
             additional_tools=additional_tools,
-            workspace_for_room=workspace_resolver_for(config.cwd, workspace_for_room),
+            workspace_for_room=workspace_for_room,
             profile=self._cursor_profile,
             resolve_session_config=resolve_session_config,
             resolve_permission=self._resolve_cursor_permission,
             **features,
         )
 
-    def _spawn_env(self) -> dict[str, str] | None:
-        """The configured env plus Cursor's credentials, never overriding it."""
-        env = dict(self.config.env or {})
-        if self.config.api_key:
-            env.setdefault("CURSOR_API_KEY", self.config.api_key)
-        if self.config.auth_token:
-            env.setdefault("CURSOR_AUTH_TOKEN", self.config.auth_token)
-        return env or None
+    def _credential_env(self) -> dict[str, str]:
+        credentials = {
+            "CURSOR_API_KEY": self.config.api_key,
+            "CURSOR_AUTH_TOKEN": self.config.auth_token,
+        }
+        return {name: value for name, value in credentials.items() if value}
 
     async def on_message(
         self,

@@ -11,11 +11,13 @@ import pytest
 from acp.exceptions import RequestError
 from acp.helpers import update_agent_message_text
 from acp.schema import (
+    McpServerStdio,
     NewSessionResponse,
     PermissionOption,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
+    SseMcpServer,
 )
 from pydantic import ValidationError
 
@@ -114,20 +116,40 @@ class TestACPClientAdapterConfig:
             ACPClientAdapterConfig(command=command)
 
     @pytest.mark.parametrize(
-        ("setting", "error"),
-        [
-            ({"cwd": "/workspace"}, "cwd is not supported"),
-            ({"host": "10.0.0.5", "port": 8080}, "TCP ACP transport cannot guarantee"),
-            ({"host": "10.0.0.5"}, "TCP ACP transport cannot guarantee"),
-            ({"port": 8080}, "TCP ACP transport cannot guarantee"),
-        ],
-        ids=["cwd", "host-and-port", "host", "port"],
+        "setting",
+        [{"host": "10.0.0.5", "port": 8080}, {"host": "10.0.0.5"}, {"port": 8080}],
+        ids=["host-and-port", "host", "port"],
     )
-    def test_settings_shared_across_rooms_are_rejected(
-        self, setting: dict[str, object], error: str
-    ) -> None:
-        with pytest.raises(ValueError, match=error):
+    def test_a_shared_tcp_process_is_rejected(self, setting: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="TCP ACP transport cannot guarantee"):
             ACPClientAdapterConfig.model_validate({"command": "codex", **setting})
+
+    def test_host_mcp_servers_load_as_acp_servers(self) -> None:
+        config = ACPClientAdapterConfig.model_validate(
+            {
+                "command": "codex",
+                "mcp_servers": [
+                    {"name": "fs", "command": "npx", "args": ["fs"], "env": []},
+                    {
+                        "type": "sse",
+                        "name": "band",
+                        "url": "http://h/sse",
+                        "headers": [],
+                    },
+                ],
+            }
+        )
+
+        assert config.mcp_servers == (
+            McpServerStdio(name="fs", command="npx", args=["fs"], env=[]),
+            SseMcpServer(type="sse", name="band", url="http://h/sse", headers=[]),
+        )
+
+    def test_a_malformed_mcp_server_fails_at_load_not_at_session_start(self) -> None:
+        with pytest.raises(ValidationError, match="mcp_servers.0"):
+            ACPClientAdapterConfig.model_validate(
+                {"command": "codex", "mcp_servers": [{"name": "fs"}]}
+            )
 
     @pytest.mark.parametrize("turn_timeout_s", [0, -1.0])
     def test_turn_timeout_must_be_positive(self, turn_timeout_s: float) -> None:

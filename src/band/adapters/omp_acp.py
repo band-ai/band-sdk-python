@@ -48,7 +48,7 @@ from band.integrations.omp import (
     validate_omp_command,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.workspaces import WorkspaceResolver, workspace_resolver_for
+from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -99,16 +99,13 @@ class OmpACPAdapterConfig(ACPClientAdapterConfig):
             ``"yolo"`` gives the agent full access to its host.
         command: The ``omp acp`` launch command; approval flags other than
             ``approval_mode`` are rejected.
-        cwd: Root under which each room gets its own workspace directory;
-            exclusive with the adapter's ``workspace_for_room``.
-        use_unstable_protocol: On, because OMP asks for tool approval through
+        use_unstable_protocol: Always on: OMP asks for tool approval through
             unstable elicitation forms.
     """
 
     approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
-    cwd: str | None = None
-    use_unstable_protocol: bool = True
+    use_unstable_protocol: Literal[True] = True
 
     @field_validator("command")
     @classmethod
@@ -148,12 +145,15 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
         super().__init__(
             config,
             additional_tools=additional_tools,
-            workspace_for_room=workspace_resolver_for(config.cwd, workspace_for_room),
+            workspace_for_room=workspace_for_room,
             resolve_session_config=resolve_session_config,
             resolve_permission=resolve_permission,
             client_capabilities=_OMP_FORM_CAPABILITIES,
             spawn_process=spawn_process,
             **features,
+        )
+        self._omp_command = finalize_omp_command(
+            config.command, approval_mode=config.approval_mode
         )
 
     def _runtime_client_factory(self) -> OmpACPCollectingClient:
@@ -163,11 +163,9 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
         )
 
     def _spawn_command(self, workspace: str | None) -> list[str]:
-        command = finalize_omp_command(
-            self.config.command, approval_mode=self.config.approval_mode
-        )
+        command = self._omp_command
         if workspace is None:
-            return command
+            return list(command)
         # omp's own --cwd flag ("Directory to start in (overrides the launch
         # cwd)") gives the same per-room isolation _spawn_cwd would otherwise
         # provide via the subprocess-level cwd -- confirmed live: a bash

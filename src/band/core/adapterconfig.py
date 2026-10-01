@@ -11,7 +11,8 @@ Every adapter is built the same way::
         **features: Unpack[FeatureKwargs],
     )
 
-``XAdapterConfig`` holds values a host could write down (model names, prompts,
+``config`` is required only when no usable default exists (a remote endpoint,
+app credentials). ``XAdapterConfig`` holds values a host could write down (model names, prompts,
 timeouts, modes) and subclasses :class:`BaseAdapterConfig`, or
 :class:`EnvAdapterConfig` when its fields may also come from environment
 variables. Live objects stay keyword-only constructor arguments, so a config can

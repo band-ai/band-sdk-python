@@ -28,8 +28,8 @@ class A2AAuth(BaseAdapterConfig):
         auth = A2AAuth(headers={"X-Custom-Auth": "value"})
     """
 
-    api_key: str | None = None
-    bearer_token: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    bearer_token: str | None = Field(default=None, repr=False)
     headers: dict[str, str] = Field(default_factory=dict)
 
     def to_headers(self) -> dict[str, str]:

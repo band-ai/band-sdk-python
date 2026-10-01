@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import Field
+
 from band.core.adapterconfig import BaseAdapterConfig
 
 
@@ -32,9 +34,9 @@ class SlackApp(BaseAdapterConfig):
     """
 
     slug: str
-    bot_token: str
-    signing_secret: str = ""
-    app_token: str = ""
+    bot_token: str = Field(repr=False)
+    signing_secret: str = Field(default="", repr=False)
+    app_token: str = Field(default="", repr=False)
 
 
 @dataclass

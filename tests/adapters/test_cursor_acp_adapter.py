@@ -165,6 +165,10 @@ class TestCursorACPAdapterConfig:
             ({"api_key": "a", "auth_token": "b"}, "either api_key or auth_token"),
             ({"command": ()}, "requires a command"),
             (
+                {"auth_method": "api_key"},
+                "auth_method\n  Input should be 'cursor_login'",
+            ),
+            (
                 {"decision_timeout_s": 0.0},
                 "decision_timeout_s\n  Input should be greater than 0",
             ),
@@ -184,6 +188,7 @@ class TestCursorACPAdapterConfig:
         ids=[
             "ambiguous-auth",
             "empty-command",
+            "foreign-auth-method",
             "non-positive-decision-timeout",
             "non-positive-max-pending",
             "decision-timeout-equals-turn-timeout",
