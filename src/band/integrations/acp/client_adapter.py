@@ -642,7 +642,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     try:
                         await asyncio.shield(cleanup)
                     except asyncio.CancelledError:
-                        await cleanup
+                        # Further cancels (double STOP / STOP+INTERRUPT) must
+                        # not cancel cleanup itself.
+                        while not cleanup.done():
+                            try:
+                                await asyncio.shield(cleanup)
+                            except asyncio.CancelledError:
+                                continue
                         raise
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self._turn_timeout_s}s"

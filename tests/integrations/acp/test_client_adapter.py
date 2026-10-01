@@ -1028,6 +1028,53 @@ class TestACPClientAdapterOnMessage:
         assert _MOCK_ROOM not in adapter_with_mocks._runtimes
 
     @pytest.mark.asyncio
+    async def test_timeout_cleanup_survives_repeated_cancel(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A second STOP during drain still finishes session/cancel and failure."""
+        adapter_with_mocks._turn_timeout_s = 0.05
+        cancel_started = asyncio.Event()
+        release_cancel = asyncio.Event()
+
+        async def slow_prompt(**_: object) -> None:
+            await asyncio.Event().wait()
+
+        async def slow_cancel(session_id: str) -> None:
+            cancel_started.set()
+            await release_cancel.wait()
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=slow_prompt)
+        conn.cancel = AsyncMock(side_effect=slow_cancel)
+        tools = FakeAgentTools()
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await cancel_started.wait()
+        turn.cancel()
+        await asyncio.sleep(0)
+        turn.cancel()
+        await asyncio.sleep(0)
+        assert not turn.done()
+        release_cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
+        assert _MOCK_ROOM not in adapter_with_mocks._runtimes
+
+    @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
