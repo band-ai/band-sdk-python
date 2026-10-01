@@ -315,8 +315,8 @@ cleanup() {
     done <"$MF_POLICY"
   fi
 
-  # Provisioned agents: provision.py deletes by the ids it recorded.
-  ( cd "$HERE" && uv run provision.py delete ) || { warn "agent deletion reported an error"; failed=1; }
+  # Meeting rooms and provisioned agents: provision.py deletes by the ids recorded.
+  ( cd "$HERE" && uv run provision.py delete ) || { warn "room/agent deletion reported an error"; failed=1; }
 
   rm -f "$HERE/.demo/room.url"
   if [ "$failed" -eq 0 ]; then

@@ -44,7 +44,7 @@ participant and can interject at any time by @mentioning an agent.
 |---|---|
 | `breaker.py` | Pure conversation circuit breaker (no IO); the safety piece |
 | `conductor.py` | Host-side room driver that enforces the breaker |
-| `provision.py` | Register / tear down the three agents (Human API) |
+| `provision.py` | Register / tear down the three agents and the meeting room (Human API) |
 | `launch.sh` | One-command build / up / down; owns a `.demo/run` manifest |
 | `Dockerfile.cli` | PM + Dev kit image = base kit + the `claude` and `codex` CLIs |
 | `agents/{pm,dev,architect}/` | Per-agent sbx workspace (`main.py`, `band.yaml`, `pyproject.toml`, `uv.lock`, `prompt.md`) |
@@ -143,8 +143,8 @@ touching code:
 3. The conductor creates the room and posts the brief. Maya and Sam discuss;
    Maya invites Jordan; Jordan posts a `VERDICT:`. The conductor then opens the
    floor to you (see [Ending the meeting](#ending-the-meeting)).
-4. Cleanup removes exactly the sandboxes, secrets, policy rules, and agents this
-   run recorded.
+4. Cleanup removes exactly the sandboxes, secrets, policy rules, meeting room,
+   and agents this run recorded.
 
 ## The never-in-VM proof
 

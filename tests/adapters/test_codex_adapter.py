@@ -19,6 +19,8 @@ from pydantic import BaseModel, ValidationError
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
+    _MESSAGE_ITEM_TYPES,
+    _REQUESTED_TOOL_ITEM_TYPES,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
     NO_APPROVALS_TO_RESOLVE_MESSAGE,
@@ -2390,7 +2392,7 @@ class TestItemCompletedForwarding:
         """A non-text list result (e.g. an MCP image content block) is dumped as
         JSON, not collapsed to the generic "completed" status.
 
-        Unlike thought extraction and ``dynamicToolCall``, a tool-call result is
+        Unlike thought extraction, a tool-call result is
         real data even when it isn't textual — ``_stringify_tool_output`` must
         use its ``raw_fallback`` mode here so nothing is silently discarded.
         """
@@ -2434,101 +2436,30 @@ class TestItemCompletedForwarding:
         assert "image/png" in result_data["output"]
 
     @pytest.mark.asyncio
-    async def test_item_completed_dynamicToolCall_emits_tool_events(self) -> None:
-        """dynamicToolCall emits tool_call + tool_result for Codex dynamic tools."""
+    async def test_a_dynamic_tool_call_is_reported_once(self) -> None:
+        """Codex completes the item it already requested via item/tool/call."""
         events = [
+            _tool_call_request(42, "band_lookup_peers"),
             _event_notification(
                 "item/completed",
                 {
                     "item": {
                         "type": "dynamicToolCall",
-                        "callId": "dyn-1",
-                        "tool": "read_file",
-                        "arguments": {"path": "src/app.py"},
-                        "result": {"content": "print('hello')"},
-                        "status": "completed",
-                    }
-                },
-            ),
-            _turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
-        )
-        tools = ToolSchemaFakeTools()
-
-        await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        tool_call_events = events_of_type(tools, "tool_call")
-        tool_result_events = events_of_type(tools, "tool_result")
-        assert len(tool_call_events) == 1
-        assert len(tool_result_events) == 1
-
-        call_data = json.loads(tool_call_events[0]["content"])
-        assert call_data["name"] == "read_file"
-        assert call_data["args"]["path"] == "src/app.py"
-        assert call_data["tool_call_id"] == "dyn-1"
-
-        result_data = json.loads(tool_result_events[0]["content"])
-        assert "print('hello')" in result_data["output"]
-        assert result_data["tool_call_id"] == "dyn-1"
-
-    @pytest.mark.asyncio
-    async def test_item_completed_dynamicToolCall_non_text_list_result_falls_back_to_status(
-        self,
-    ) -> None:
-        """A result list with no extractable text falls through to the status default.
-
-        ``_stringify_tool_output`` skips a list that yields no text parts and
-        tries the next candidate field rather than dumping the uninformative
-        list as JSON (the same skip-and-continue behavior thought extraction
-        relies on to avoid placeholders).
-        """
-        events = [
-            _event_notification(
-                "item/completed",
-                {
-                    "item": {
-                        "type": "dynamicToolCall",
-                        "callId": "dyn-2",
-                        "tool": "count_files",
+                        "tool": "band_lookup_peers",
                         "arguments": {},
-                        "result": [1, 2, 3],
                         "status": "completed",
                     }
                 },
             ),
             _turn_completed(),
         ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
 
-        await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
+        turn = await run_codex_turn(
+            events=events, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
 
-        tool_result_events = events_of_type(tools, "tool_result")
-        assert len(tool_result_events) == 1
-        result_data = json.loads(tool_result_events[0]["content"])
-        assert result_data["output"] == "completed"
+        reported = [event["message_type"] for event in turn.tools.events_sent]
+        assert reported == ["tool_call", "tool_result"]
 
     @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
@@ -4701,8 +4632,9 @@ class TestCodexTypes:
         assert key == ""
 
     def test_codex_item_type_fully_classified(self) -> None:
-        """Every ``CodexItemType`` lands in exactly one of the adapter's three
-        buckets: tool-like, thought-like, or the skipped user/agent messages.
+        """Every ``CodexItemType`` lands in exactly one of the adapter's
+        buckets: tool-like, requested tool, thought-like, or the skipped
+        messages.
 
         A new item type added to the enum without also updating one of these
         sets currently falls through to a silent ``logger.debug`` — no room
@@ -4710,11 +4642,15 @@ class TestCodexTypes:
         moment the partition stops being exhaustive.
         """
 
-        message_types = {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
-        classified = _TOOL_ITEM_TYPES | _THOUGHT_ITEM_TYPES | message_types
+        buckets = (
+            _TOOL_ITEM_TYPES,
+            _REQUESTED_TOOL_ITEM_TYPES,
+            _THOUGHT_ITEM_TYPES,
+            _MESSAGE_ITEM_TYPES,
+        )
 
-        assert classified == set(CodexItemType)
-        assert not (_TOOL_ITEM_TYPES & _THOUGHT_ITEM_TYPES)
+        assert set().union(*buckets) == set(CodexItemType)
+        assert sum(len(bucket) for bucket in buckets) == len(CodexItemType)
 
 
 class TestSessionAutoApproval:
