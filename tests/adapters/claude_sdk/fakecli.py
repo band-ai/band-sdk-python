@@ -60,6 +60,14 @@ class Hangup:
     """The CLI process dies: the stream ends with no result."""
 
 
+@dataclass(frozen=True)
+class StreamFails:
+    """Reading the CLI's output raises ``error``, as a broken pipe or a read
+    timeout would; the SDK re-raises it unchanged to the turn."""
+
+    error: Exception
+
+
 @dataclass
 class Hold:
     """Parks the turn at this step: ``async with hold`` waits for the turn to
@@ -80,7 +88,7 @@ class Hold:
         self.released.set()
 
 
-Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup
+Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup | StreamFails
 Turn = Sequence[Step]
 
 
@@ -142,7 +150,7 @@ class FakeCLISession(Transport):
         self.options = options
         self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
-        self._outbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._outbox: asyncio.Queue[dict[str, Any] | Exception | None] = asyncio.Queue()
         self._awaiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._hooks: dict[str, list[dict[str, Any]]] = {}
@@ -173,6 +181,8 @@ class FakeCLISession(Transport):
 
     async def read_messages(self) -> AsyncIterator[dict[str, Any]]:
         while (message := await self._outbox.get()) is not None:
+            if isinstance(message, Exception):
+                raise message
             yield message
 
     async def write(self, data: str) -> None:
@@ -254,6 +264,10 @@ class FakeCLISession(Transport):
                     case Hangup():
                         self.alive = False
                         self._outbox.put_nowait(None)
+                        return
+                    case StreamFails(error=error):
+                        self.alive = False
+                        self._outbox.put_nowait(error)
                         return
         # A broken script must fail the test (assert_done), not die unseen in this task.
         except Exception as error:  # noqa: BLE001

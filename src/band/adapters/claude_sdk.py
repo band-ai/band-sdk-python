@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, ClassVar, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -56,6 +56,10 @@ try:
     _CLAUDE_SDK_AVAILABLE = True
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
+    if not TYPE_CHECKING:
+        # ClaudeSDKAdapterConfig's annotations name these; without them the
+        # config cannot be built, so the adapter's install hint is never reached.
+        EffortLevel = SettingSource = str
 
 from band_sdk_core import AgentFailure, is_authorized_sender
 from pydantic import (
@@ -956,26 +960,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         release_future: asyncio.Future[None],
     ) -> None:
         """Run one turn to completion; always releases ``release_future``."""
-        deadline = asyncio.timeout(self.config.turn_timeout_s)
         try:
             try:
-                async with deadline:
-                    await client.query(full_message)
-                    # MCP tools handle execution; this dispatches the stream.
-                    await self._process_response(client, room_id, tools)
-
-            except TimeoutError:
-                if not deadline.expired():
-                    logger.exception("Error processing message")
-                    await tools.send_failure(
-                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    raise
-                detail = await self._abandon_timed_out_turn(client, room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, detail, FAILURE_CODE_TIMEOUT)
-                )
-                raise TurnResultAlreadyReported(detail) from None
+                await self._query_within_deadline(client, room_id, tools, full_message)
 
             except TurnResultAlreadyReported:
                 # The failure was already reported via send_failure deeper in
@@ -1032,6 +1019,33 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         if release is not None and not release.done():
             release.set_result(None)
+
+    async def _query_within_deadline(
+        self,
+        client: ClaudeSDKClient,
+        room_id: str,
+        tools: AgentToolsProtocol,
+        full_message: str,
+    ) -> None:
+        """Run the query; a turn past ``turn_timeout_s`` is abandoned and reported.
+
+        A ``TimeoutError`` raised by the SDK itself, not by the deadline,
+        propagates as an ordinary turn failure.
+        """
+        deadline = asyncio.timeout(self.config.turn_timeout_s)
+        try:
+            async with deadline:
+                await client.query(full_message)
+                # MCP tools handle execution; this dispatches the stream.
+                await self._process_response(client, room_id, tools)
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            detail = await self._abandon_timed_out_turn(client, room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, detail, FAILURE_CODE_TIMEOUT)
+            )
+            raise TurnResultAlreadyReported(detail) from None
 
     async def _abandon_timed_out_turn(
         self, client: ClaudeSDKClient, room_id: str
