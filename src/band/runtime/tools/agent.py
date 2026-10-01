@@ -481,10 +481,13 @@ class AgentTools(AgentToolsProtocol):
         """
         content, metadata = to_failure_event(failure)
         try:
-            return await self.send_event(content, MessageType.ERROR, metadata)
+            response = await self.send_event(content, MessageType.ERROR, metadata)
         except Exception as exc:
             logger.exception("send_failure could not post the failure event")
             return {"ok": False, "error": str(exc)}
+        if self._ctx is not None:
+            self._ctx.note_turn_failure_reported()
+        return response
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         """
