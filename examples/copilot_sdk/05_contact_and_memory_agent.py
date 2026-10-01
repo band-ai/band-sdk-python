@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[copilot_sdk]>=1.5.0"]
+# dependencies = ["band-sdk[copilot_sdk]>=4.0.0"]
 # ///
 """
 Copilot SDK agent with contact and memory tools enabled.

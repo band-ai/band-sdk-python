@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]>=1.2.0"]
+# dependencies = ["band-sdk[crewai]>=4.0.0"]
 # ///
 """
 CrewAI agent with contact and memory tools enabled.
@@ -61,7 +61,7 @@ async def main() -> None:
                 "treat it as fresh room context."
             ),
         ),
-        capabilities=Capability.MEMORY,
+        capabilities=Capability.MEMORY | Capability.CONTACTS,
     )
 
     contact_config = ContactEventConfig(
