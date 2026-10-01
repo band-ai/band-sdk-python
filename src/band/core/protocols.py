@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from band_sdk_core import AgentFailure
@@ -52,6 +53,12 @@ GENERIC_PROVIDER_FAILURE_MESSAGE = (
 )
 
 
+class FailureMetadataKey(StrEnum):
+    """Room metadata key used by the shared failure event contract."""
+
+    FAILURE = "failure"
+
+
 class TurnResultAlreadyReported(Exception):
     """A terminal turn failure that a nested handler already reported via
     ``send_failure``. An adapter's outer ``except`` re-raises this without
@@ -72,7 +79,7 @@ def to_failure_event(failure: AgentFailure) -> tuple[str, dict[str, Any]]:
         if has_visible_content(failure.message)
         else f"{failure.provider} failed without an error message."
     )
-    return content, {"failure": failure.to_dict()}
+    return content, {FailureMetadataKey.FAILURE: failure.to_dict()}
 
 
 async def send_event_safe(
