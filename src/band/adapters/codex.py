@@ -241,14 +241,10 @@ _TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
     }
 )
 
-# item/completed "type" values that post nothing. A dynamic tool call was
-# already reported when its item/tool/call request ran, under the same call id.
-_SKIPPED_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
-    {
-        CodexItemType.USER_MESSAGE,
-        CodexItemType.AGENT_MESSAGE,
-        CodexItemType.DYNAMIC_TOOL_CALL,
-    }
+# Tools Codex asks the adapter to run (item/tool/call). The adapter reports them
+# there, with the real result, so their item/completed is the same call again.
+_REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.DYNAMIC_TOOL_CALL}
 )
 
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
@@ -2413,7 +2409,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        if item_type in _SKIPPED_ITEM_TYPES:
+        if item_type in _REQUESTED_TOOL_ITEM_TYPES:
+            return
+
+        # Skip known non-actionable types
+        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)

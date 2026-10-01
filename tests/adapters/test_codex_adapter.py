@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from band.adapters.codex import (
     _MAX_DIFF_METADATA_BYTES,
-    _SKIPPED_ITEM_TYPES,
+    _REQUESTED_TOOL_ITEM_TYPES,
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
     NO_APPROVALS_TO_RESOLVE_MESSAGE,
@@ -4636,8 +4636,9 @@ class TestCodexTypes:
         assert key == ""
 
     def test_codex_item_type_fully_classified(self) -> None:
-        """Every ``CodexItemType`` lands in exactly one of the adapter's three
-        buckets: tool-like, thought-like, or skipped.
+        """Every ``CodexItemType`` lands in exactly one of the adapter's
+        buckets: tool-like, requested tool, thought-like, or the skipped
+        user/agent messages.
 
         A new item type added to the enum without also updating one of these
         sets currently falls through to a silent ``logger.debug`` — no room
@@ -4645,7 +4646,15 @@ class TestCodexTypes:
         moment the partition stops being exhaustive.
         """
 
-        buckets = (_TOOL_ITEM_TYPES, _THOUGHT_ITEM_TYPES, _SKIPPED_ITEM_TYPES)
+        message_types = frozenset(
+            {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
+        )
+        buckets = (
+            _TOOL_ITEM_TYPES,
+            _REQUESTED_TOOL_ITEM_TYPES,
+            _THOUGHT_ITEM_TYPES,
+            message_types,
+        )
 
         assert set().union(*buckets) == set(CodexItemType)
         assert sum(len(bucket) for bucket in buckets) == len(CodexItemType)
