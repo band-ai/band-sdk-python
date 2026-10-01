@@ -376,8 +376,8 @@ class AgentTools(AgentToolsProtocol):
 
         Args:
             content: Message content to send
-            mentions: List of participant handles (strings). SDK resolves handles to IDs.
-                      Format: @<username> for users, @<username>/<agent-name> for agents.
+            mentions: List of participant IDs, handles, or names (strings).
+                      SDK resolves them to IDs for the platform.
                       Passing list[dict[str, str]] is deprecated; use list[str] instead.
             attachment_ids: File ids to show with this message. Not part of the
                       ``band_send_message`` tool schema -- only a Python caller

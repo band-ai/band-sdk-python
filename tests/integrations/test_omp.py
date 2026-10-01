@@ -18,9 +18,9 @@ from band.integrations.omp import (
     is_omp_approve_deny_form,
     normalize_omp_mcp_device_call,
     normalize_omp_mcp_tool_name,
+    omp_command_in_workspace,
     omp_elicitation_call_id,
     omp_model_provider,
-    omp_provider_api_key_env,
     omp_provider_env,
     validate_omp_command,
 )
@@ -33,6 +33,28 @@ def test_default_command_is_safe_after_finalize() -> None:
         OMP_APPROVAL_MODE_FLAG,
         OMP_APPROVAL_MODE_ALWAYS_ASK,
     ]
+
+
+def test_final_command_selects_the_model_before_safety_override() -> None:
+    assert finalize_omp_command(DEFAULT_OMP_ACP_COMMAND, model=DEFAULT_OMP_MODEL)[
+        -3:
+    ] == [
+        f"--model={DEFAULT_OMP_MODEL}",
+        OMP_APPROVAL_MODE_FLAG,
+        OMP_APPROVAL_MODE_ALWAYS_ASK,
+    ]
+
+
+def test_workspace_cwd_needs_the_acp_subcommand_it_belongs_to() -> None:
+    assert omp_command_in_workspace(("bunx", "omp", "acp", "-v"), "/w") == [
+        "bunx",
+        "omp",
+        "acp",
+        "--cwd=/w",
+        "-v",
+    ]
+    with pytest.raises(ValueError, match="'acp' subcommand"):
+        omp_command_in_workspace(("omp-acp-wrapper",), "/w")
 
 
 @pytest.mark.parametrize(
@@ -133,12 +155,13 @@ def test_omp_elicitation_call_id_format() -> None:
     assert call_id.startswith(f"{OMP_ELICITATION_CALL_ID_PREFIX}session-abc:")
 
 
-def test_provider_env_uses_gemini_for_google_models() -> None:
-    assert omp_model_provider(DEFAULT_OMP_MODEL) == "google"
-    assert omp_provider_api_key_env("google") == "GEMINI_API_KEY"
+def test_provider_env_routes_the_selected_model_key_only() -> None:
+    assert omp_model_provider(DEFAULT_OMP_MODEL) == "openai"
     env = omp_provider_env(model=DEFAULT_OMP_MODEL, api_key="secret")
-    assert env["OMP_MODEL"] == DEFAULT_OMP_MODEL
-    assert env["GEMINI_API_KEY"] == "secret"
+    assert env == {"OPENAI_API_KEY": "secret"}
+    assert omp_provider_env(model="google/gemini-2.5-flash", api_key="secret") == {
+        "GEMINI_API_KEY": "secret"
+    }
 
 
 def test_default_command_uses_approval_mode_constants() -> None:

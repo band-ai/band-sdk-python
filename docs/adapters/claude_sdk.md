@@ -30,3 +30,24 @@ Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
 
   When the account or model can't run `"auto"`, the CLI starts the session in
   `"default"`, and the adapter logs a warning.
+- **CLI launch options never override the adapter's own wiring.**
+  `cli=ClaudeCLIOptions(...)` sets the executable, plugin folders, extra
+  directories, env and extra flags, but cannot replace the Band MCP server, the
+  tool allowlist or `setting_sources`: an `extra_args` flag in
+  `RESERVED_CLI_FLAGS` raises `ValueError`, as does a dash-prefixed key. That
+  covers every flag the adapter sets (use its typed option instead) plus flags
+  such as `settings`, `agents`, `bare` and `dangerously-skip-permissions` that
+  would bypass Band's wiring, permission gating or host-config isolation. `env`
+  reaches only the Claude CLI process; the host's `os.environ` is untouched.
+
+```python
+import pytest
+
+from band.adapters.claude_sdk import ClaudeCLIOptions, ClaudeSDKAdapter
+
+adapter = ClaudeSDKAdapter(cli=ClaudeCLIOptions(extra_args={"debug-to-stderr": None}))
+assert adapter.cli.extra_args == {"debug-to-stderr": None}
+
+with pytest.raises(ValueError, match="adapter-owned CLI flags"):
+    ClaudeCLIOptions(extra_args={"mcp-config": "{}"})
+```
