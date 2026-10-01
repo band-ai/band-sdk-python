@@ -144,6 +144,11 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
+    # Post an `error` event when a message fails its final attempt and the
+    # adapter didn't report it; otherwise the room can't tell it from a message
+    # never received.
+    report_turn_failures_to_room: bool = True
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
