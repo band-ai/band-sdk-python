@@ -12,6 +12,7 @@ from acp import (
     run_agent,
     update_agent_message_text,
 )
+from acp.exceptions import RequestError
 from acp.schema import (
     AgentCapabilities,
     AudioContentBlock,
@@ -37,6 +38,7 @@ from acp.schema import (
 )
 
 from band import __version__
+from band.integrations.acp.types import ACPStopReason, ConcurrentPromptError
 
 if TYPE_CHECKING:
     from acp.interfaces import Agent, Client
@@ -73,17 +75,16 @@ class ACPServer:
             adapter: The Band ACP server adapter for platform interaction.
         """
         self._adapter = adapter
-        self._conn: Client | None = None
 
     def on_connect(self, conn: Client) -> None:
-        """Store client reference for sending session_update notifications.
+        """Forward the connected ACP client to the adapter for session_update.
 
-        Called by the ACP SDK when a client connects.
+        Called by the ACP SDK when a client connects. The adapter is the
+        single source of truth for outbound session_update.
 
         Args:
             conn: The connected ACP client interface.
         """
-        self._conn = conn
         self._adapter.set_acp_client(conn)
 
     def _auth_method(self, **kwargs: Any) -> AuthMethodAgent:
@@ -470,8 +471,13 @@ class ACPServer:
         """
         text = self._extract_text(prompt)
         logger.debug("ACP prompt for session %s: %s", session_id, text[:100])
-        await self._adapter.handle_prompt(session_id, text)
-        return PromptResponse(stop_reason="end_turn")  # type: ignore[call-arg]  # Pydantic alias: stopReason
+        try:
+            outcome = await self._adapter.handle_prompt(session_id, text)
+        except ConcurrentPromptError as exc:
+            raise RequestError.invalid_params({"message": str(exc)}) from exc
+        if isinstance(outcome, ACPStopReason):
+            return PromptResponse(stop_reason=outcome)  # type: ignore[call-arg]  # Pydantic alias: stopReason
+        raise RequestError.internal_error(outcome.to_extension_data())
 
     async def cancel(self, *, session_id: str, **kwargs: Any) -> None:
         """Handle ACP cancel request.

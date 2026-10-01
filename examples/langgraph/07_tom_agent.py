@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Tom the cat agent using LangGraph.
@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_tom_prompt
 
 from band import Agent, configure_logging
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,9 +43,9 @@ async def main() -> None:
     # Load Tom's credentials from agent_config.yaml
     # Create adapter with Tom's character prompt
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=generate_tom_prompt("Tom")),
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
-        custom_section=generate_tom_prompt("Tom"),
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")

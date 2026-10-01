@@ -8,7 +8,30 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, cast
 
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, JsonValue
+
+from band.runtime.tools import mcp_tool_spelling
+
+
+class ACPStopReason(StrEnum):
+    """Terminal stop reasons the Band ACP server can return."""
+
+    END_TURN = "end_turn"
+    CANCELLED = "cancelled"
+
+
+class ACPServerUpdate(StrEnum):
+    """ACP session update kinds constructed directly by this server."""
+
+    AGENT_MESSAGE_CHUNK = "agent_message_chunk"
+
+
+PromptOutcome = ACPStopReason | AgentFailure
+
+
+class ConcurrentPromptError(ValueError):
+    """A room already has an active ACP prompt."""
 
 
 class ToolCallRoomEvent(BaseModel):
@@ -82,20 +105,22 @@ class ACPToolCall:
         (e.g. Copilot's ``band-band_send_message``) at construction, so the
         canonical name is the only one the object ever carries.
         """
-        name = str(
-            getattr(tool_call, "title", None) or getattr(tool_call, "name", "unknown")
+        raw_input = getattr(tool_call, "raw_input", None)
+        name, arguments = _mcp_invocation(raw_input) or (
+            str(
+                getattr(tool_call, "title", None)
+                or getattr(tool_call, "name", "unknown")
+            ),
+            cast(dict[str, JsonValue], raw_input)
+            if isinstance(raw_input, dict)
+            else {},
         )
         if canonicalize is not None:
             name = canonicalize(name)
-        raw_input = getattr(tool_call, "raw_input", None)
         return cls(
             tool_call_id=str(getattr(tool_call, "tool_call_id", "")),
             name=name,
-            arguments=(
-                cast(dict[str, JsonValue], raw_input)
-                if isinstance(raw_input, dict)
-                else {}
-            ),
+            arguments=arguments,
         )
 
     def room_event(self) -> ToolCallRoomEvent:
@@ -105,6 +130,27 @@ class ACPToolCall:
             args=self.arguments,
             tool_call_id=self.tool_call_id,
         )
+
+
+_MCP_INVOCATION_KEYS = frozenset({"server", "tool", "arguments"})
+
+
+def _mcp_invocation(
+    raw_input: object,
+) -> tuple[str, dict[str, JsonValue]] | None:
+    """Name and arguments of an MCP call reported as ``rawInput = {server, tool,
+    arguments}`` (codex-acp), whose title is only a display string."""
+    if not isinstance(raw_input, dict) or raw_input.keys() != _MCP_INVOCATION_KEYS:
+        return None
+    server, tool, arguments = (
+        raw_input["server"],
+        raw_input["tool"],
+        raw_input["arguments"],
+    )
+    if not isinstance(server, str) or not isinstance(tool, str):
+        return None
+    args = cast(dict[str, JsonValue], arguments) if isinstance(arguments, dict) else {}
+    return mcp_tool_spelling(server, tool), args
 
 
 @dataclass
@@ -194,12 +240,29 @@ class PendingACPPrompt:
 
     Attributes:
         session_id: The ACP session identifier.
-        done_event: Signals when the prompt has been fully answered.
-        terminal_message_seen: Tracks whether a terminal room message has arrived.
+        done_event: Signals when the prompt has ended.
+        outcome: The first terminal result, once settled.
         completion_task: Debounced completion task for multi-message replies.
+        posted: True once the room accepted this prompt's post.
+        reply_started: True once a text reply has opened the grace window.
     """
 
     session_id: str
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
-    terminal_message_seen: bool = False
+    outcome: PromptOutcome | None = None
     completion_task: asyncio.Task[None] | None = None
+    posted: bool = False
+    reply_started: bool = False
+
+    def finish(self, outcome: PromptOutcome | None) -> None:
+        """Stop the grace timer and mark the prompt as ended."""
+        completion_task = self.completion_task
+        self.completion_task = None
+        if (
+            completion_task is not None
+            and completion_task is not asyncio.current_task()
+        ):
+            completion_task.cancel()
+        if outcome is not None:
+            self.outcome = outcome
+        self.done_event.set()

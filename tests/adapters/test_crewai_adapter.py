@@ -16,7 +16,6 @@ import importlib
 import json
 import sys
 import threading
-import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock
@@ -24,7 +23,7 @@ from unittest.mock import DEFAULT, AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER
+from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER, CrewAIAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -220,34 +219,14 @@ def room_context(crewai_mocks, mock_tools):
     return _room_context
 
 
-class TestCrewAISpecificInitialization:
-    """CrewAI-specific initialization tests (shared init tests live in conformance)."""
-
-    def test_system_prompt_deprecation_warning(self, CrewAIAdapter):
-        """system_prompt parameter should emit DeprecationWarning."""
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            adapter = CrewAIAdapter(system_prompt="Old style prompt")
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "system_prompt" in str(w[0].message)
-            assert "backstory" in str(w[0].message)
-            # system_prompt should be used as backstory when backstory not provided
-            assert adapter.backstory == "Old style prompt"
-
-    def test_system_prompt_does_not_override_backstory(self, CrewAIAdapter):
-        """If both system_prompt and backstory are provided, backstory takes precedence."""
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            adapter = CrewAIAdapter(
-                system_prompt="Old style prompt",
-                backstory="New style backstory",
-            )
-            # backstory should not be overwritten
-            assert adapter.backstory == "New style backstory"
+class TestConfigValidation:
+    @pytest.mark.parametrize("field", ["max_iter", "max_rpm"])
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_iteration_and_rate_limits_must_be_positive(
+        self, field: str, value: int
+    ) -> None:
+        with pytest.raises(ValueError, match="greater than 0"):
+            CrewAIAdapterConfig.model_validate({field: value})
 
 
 class TestOnStarted:
@@ -265,9 +244,11 @@ class TestOnStarted:
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter(
-            role="Research Analyst",
-            goal="Find information",
-            backstory="Expert researcher",
+            CrewAIAdapterConfig(
+                role="Research Analyst",
+                goal="Find information",
+                backstory="Expert researcher",
+            )
         )
 
         await adapter.on_started(agent_name="TestBot", agent_description="")
@@ -276,6 +257,19 @@ class TestOnStarted:
         assert call_kwargs["role"] == "Research Analyst"
         assert call_kwargs["goal"] == "Find information"
         assert "Expert researcher" in call_kwargs["backstory"]
+
+    @pytest.mark.asyncio
+    async def test_builds_llm_and_iteration_limit_from_config(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
+        crewai_mocks.LLM.reset_mock()
+
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(model="gpt-5.4-mini", max_iter=7))
+        await adapter.on_started(agent_name="TestBot", agent_description="")
+
+        crewai_mocks.LLM.assert_called_once_with(model="gpt-5.4-mini")
+        assert crewai_mocks.Agent.call_args[1]["max_iter"] == 7
 
     @pytest.mark.asyncio
     async def test_uses_agent_name_as_default_role(self, CrewAIAdapter, crewai_mocks):
@@ -605,6 +599,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.SEND_MESSAGE,
                 json.dumps({"status": "success"}),
+                {"content": "Hi.", "mentions": ["@owner"]},
                 custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
@@ -653,6 +648,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.STORE_MEMORY,
                 json.dumps({"status": "success"}),
+                {},
                 custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
@@ -678,6 +674,50 @@ class TestErrorHandling:
         mock_tools.send_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_the_next_turn_remembers_what_the_agent_posted(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A turn whose work was a band_send_message must leave that message in
+        the room's history. CrewAI's final answer rarely repeats it, and an
+        agent that can't see it already asked a peer asks again whenever the
+        peer's reply wakes it -- the loop a coordinator falls into."""
+        module = importlib.import_module("band.adapters.crewai")
+        tools_module = importlib.import_module("band.integrations.crewai.tools")
+        prompts: list[str] = []
+
+        posts = ["Please check the API contract.", "Thanks, that settles it."]
+
+        async def _kickoff(prompt):
+            prompts.append(prompt)
+            tools_module._mark_productive_work(
+                module._reply_tracker_var.get(),
+                BandTool.SEND_MESSAGE,
+                json.dumps({"status": "success"}),
+                {"content": posts[len(prompts) - 1], "mentions": ["@ops/checker"]},
+                custom_effects=None,
+            )
+            raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        for bootstrap in (True, False):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=bootstrap,
+                room_id="room-123",
+            )
+
+        earlier, _, _ = prompts[1].partition("[New message -- act on this now:]")
+        assert "(to @ops/checker) Please check the API contract." in earlier
+
+    @pytest.mark.asyncio
     async def test_read_only_turn_with_empty_final_answer_completes(
         self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
@@ -699,6 +739,7 @@ class TestErrorHandling:
                 module._reply_tracker_var.get(),
                 BandTool.LIST_TASKS,
                 json.dumps({"status": "success", "data": []}),
+                {},
                 custom_effects=None,
             )
             raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
@@ -931,7 +972,7 @@ class TestVerboseMode:
     async def test_verbose_mode_passed_to_agent(self, CrewAIAdapter, crewai_mocks):
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(verbose=True)
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(verbose=True))
         await adapter.on_started("TestBot", "Test bot")
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -944,7 +985,7 @@ class TestMaxRpm:
         """max_rpm parameter should be passed to CrewAI Agent."""
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(max_rpm=10)
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(max_rpm=10))
         await adapter.on_started("TestBot", "Test bot")
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -961,11 +1002,6 @@ class TestMaxRpm:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         assert call_kwargs["max_rpm"] is None
 
-    def test_max_rpm_stored_on_adapter(self, CrewAIAdapter):
-        """max_rpm should be stored on the adapter instance."""
-        adapter = CrewAIAdapter(max_rpm=60)
-        assert adapter.max_rpm == 60
-
 
 class TestAllowDelegation:
     @pytest.mark.asyncio
@@ -973,7 +1009,7 @@ class TestAllowDelegation:
         """allow_delegation parameter should be passed to CrewAI Agent."""
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(allow_delegation=True)
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(allow_delegation=True))
         await adapter.on_started("TestBot", "Test bot")
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -991,11 +1027,6 @@ class TestAllowDelegation:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         assert call_kwargs["allow_delegation"] is False
-
-    def test_allow_delegation_stored_on_adapter(self, CrewAIAdapter):
-        """allow_delegation should be stored on the adapter instance."""
-        adapter = CrewAIAdapter(allow_delegation=True)
-        assert adapter.allow_delegation is True
 
 
 class TestParticipantsUpdate:
@@ -1679,15 +1710,20 @@ class TestLazyNestAsyncio:
         ``sys.modules`` re-executes it, but anything still holding a class from the
         old module object then has a ``__module__`` that resolves to nothing, and
         pydantic (which looks annotations up through that name) can no longer build
-        the tool models.
+        the tool models. The original names are restored afterwards so classes
+        imported elsewhere (e.g. ``CrewAIAdapterConfig``) keep their identity.
         """
 
         nest_mock = sys.modules["nest_asyncio"]
         nest_mock.reset_mock()
+        module = importlib.import_module("band.adapters.crewai")
+        original_names = dict(vars(module))
 
-        importlib.reload(importlib.import_module("band.adapters.crewai"))
-
-        nest_mock.apply.assert_not_called()
+        try:
+            importlib.reload(module)
+            nest_mock.apply.assert_not_called()
+        finally:
+            vars(module).update(original_names)
 
     def test_ensure_nest_asyncio_applies_once(
         self, CrewAIAdapter, crewai_mocks, monkeypatch

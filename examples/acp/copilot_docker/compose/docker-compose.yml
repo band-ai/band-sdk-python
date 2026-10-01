@@ -1,12 +1,11 @@
-# Copilot-in-a-container reachable over TCP; Band tools via a SEPARATE band-mcp
-# service on the same compose network (the cloud-style "independently scaled
-# services" topology).
+# Copilot and Band tools as two independent services (the cloud-style topology).
 #
-#   host: client.py (Band SDK)  --TCP-->  copilot:8080 (published)
-#   copilot (in container)      --SSE-->  band-mcp:3000 (compose DNS)
+#   host: client.py (Band SDK)  --stdio-->  docker compose exec -T copilot copilot --acp
+#                                           (one process per Band room)
+#   copilot (in container)      --SSE---->  band-mcp:3000 (compose DNS)
 #
-# The SDK on the host never resolves band-mcp:3000 — that URL is dialed by Copilot
-# INSIDE the compose network. Only the ACP port (8080) is published to the host.
+# Nothing is published to the host: the SDK reaches Copilot through `docker
+# compose exec`, and only Copilot dials band-mcp, inside the compose network.
 
 services:
   band-mcp:
@@ -32,10 +31,9 @@ services:
     environment:
       # Copilot-entitled token; the Copilot CLI reads it automatically.
       GITHUB_TOKEN: ${GITHUB_TOKEN:?set GITHUB_TOKEN (Copilot-entitled) in .env}
-    ports:
-      # Loopback only: this copilot --acp is unauthenticated and runs allow-all
-      # tools, so it must not be reachable off-host. Widen to "0.0.0.0:8080:8080"
-      # deliberately (behind your own auth) only when the SDK runs on another host.
-      - "127.0.0.1:8080:8080"  # the host-side SDK (client.py) connects here over TCP
+    volumes:
+      # Same path on both sides: the SDK creates one workspace per room under it
+      # on the host and hands that path to Copilot as the session cwd.
+      - ${COPILOT_WORKSPACES:?set COPILOT_WORKSPACES (absolute path) in .env}:${COPILOT_WORKSPACES}
     depends_on:
       - band-mcp

@@ -83,7 +83,13 @@ def _sdk_symbols() -> dict[str, object]:
         "ContactRequestReceivedEvent": ContactRequestReceivedEvent,
     }
 
-    for adapter_name in ("AnthropicAdapter", "ClaudeSDKAdapter", "GeminiAdapter"):
+    for adapter_name in (
+        "AnthropicAdapter",
+        "AnthropicAdapterConfig",
+        "ClaudeSDKAdapter",
+        "GeminiAdapter",
+        "GeminiAdapterConfig",
+    ):
         adapter_cls = _try_lazy_adapter(adapter_name)
         if adapter_cls is not None:
             symbols[adapter_name] = adapter_cls
@@ -114,10 +120,12 @@ def _langgraph_symbols() -> dict[str, object]:
 def _fixture_doubles() -> dict[str, object]:
     """Doubles and pre-built values snippets assume already exist."""
     anthropic_cls = _try_lazy_adapter("AnthropicAdapter")
-    if anthropic_cls is not None:
+    anthropic_config_cls = _try_lazy_adapter("AnthropicAdapterConfig")
+    if anthropic_cls is not None and anthropic_config_cls is not None:
         adapter: object = anthropic_cls(
-            model="claude-sonnet-4-5",
-            api_key=MARKDOWN_API_KEY,
+            anthropic_config_cls(
+                model="claude-sonnet-4-5", provider_key=MARKDOWN_API_KEY
+            )
         )
     else:
         adapter = AnyAdapter(

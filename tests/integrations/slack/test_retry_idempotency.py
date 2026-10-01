@@ -28,7 +28,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from band.core.simple_adapter import SimpleAdapter
-from band.integrations.slack.adapter import SlackAdapter
+from band.integrations.slack.adapter import SlackAdapter, SlackAdapterConfig
 from band.integrations.slack.server import (
     DEFAULT_SEEN_EVENTS_CACHE_SIZE,
     SeenEvents,
@@ -313,8 +313,8 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     brain = _Brain()
     apps = [_app()]
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=tuple(apps)),
         inner=brain,
-        apps=apps,
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(chat_postMessage=AsyncMock()),
     )

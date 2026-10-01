@@ -41,7 +41,7 @@ pytest.importorskip("parlant.sdk")
 
 import parlant.sdk as p
 
-from band.adapters.parlant import ParlantAdapter
+from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 
 _SHORT = "You are a friendly assistant in a chat room. Reply in one short sentence."
 
@@ -77,10 +77,12 @@ async def test_parlant_replies(
     turn completed before we read the reply.
     """
     adapter = ParlantAdapter(
-        name="E2E Showcase Agent",
-        description="A test agent for baseline E2E validation. Keep replies short.",
+        ParlantAdapterConfig(
+            name="E2E Showcase Agent",
+            description="A test agent for baseline E2E validation. Keep replies short.",
+            custom_section=_SHORT,
+        ),
         nlp_service=p.NLPServices.openai,
-        custom_section=_SHORT,
     )
     async with running_provisioned_agent(
         adapter, resource_manager, label="parlant"

@@ -8,6 +8,7 @@ import pytest
 
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.types import ACPStopReason
 
 
 class TestACPServerInitialize:
@@ -104,7 +105,7 @@ class TestACPServerPrompt:
     async def test_prompt_extracts_text_and_delegates(self) -> None:
         """Should extract text from content blocks and delegate to adapter."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value=ACPStopReason.END_TURN)
         server = ACPServer(adapter)
 
         prompt_blocks = [{"text": "Hello world"}]
@@ -117,7 +118,7 @@ class TestACPServerPrompt:
     async def test_prompt_multiple_text_blocks(self) -> None:
         """Should concatenate text from multiple blocks."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value=ACPStopReason.END_TURN)
         server = ACPServer(adapter)
 
         prompt_blocks = [
@@ -134,7 +135,7 @@ class TestACPServerPrompt:
     async def test_prompt_skips_non_text_blocks(self) -> None:
         """Should skip content blocks without text."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value=ACPStopReason.END_TURN)
         server = ACPServer(adapter)
 
         prompt_blocks = [
@@ -152,7 +153,7 @@ class TestACPServerPrompt:
     async def test_prompt_with_object_blocks(self) -> None:
         """Should handle content blocks as objects (not just dicts)."""
         adapter = BandACPServerAdapter()
-        adapter.handle_prompt = AsyncMock()
+        adapter.handle_prompt = AsyncMock(return_value=ACPStopReason.END_TURN)
         server = ACPServer(adapter)
 
         # Simulate object-style content blocks (TextContentBlock)
@@ -183,17 +184,15 @@ class TestACPServerCancel:
 class TestACPServerOnConnect:
     """Tests for ACPServer.on_connect()."""
 
-    def test_on_connect_stores_client(self) -> None:
-        """Should store client reference and pass to adapter."""
+    def test_on_connect_forwards_client_to_adapter(self) -> None:
+        """Should forward the SDK client to the adapter for session_update."""
         adapter = BandACPServerAdapter()
-        adapter.set_acp_client = MagicMock()
         server = ACPServer(adapter)
-
         mock_client = MagicMock()
+
         server.on_connect(mock_client)
 
-        assert server._conn is mock_client
-        adapter.set_acp_client.assert_called_once_with(mock_client)
+        assert adapter.get_acp_client() is mock_client
 
 
 class TestACPServerExtractText:

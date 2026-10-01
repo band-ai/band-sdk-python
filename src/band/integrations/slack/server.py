@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING
 
 from starlette.requests import Request
@@ -46,7 +46,7 @@ __all__ = [
 
 
 def build_router(
-    apps: list[SlackApp],
+    apps: Sequence[SlackApp],
     *,
     dispatcher: EventDispatcher | None = None,
     seen_events: SeenEvents | None = None,

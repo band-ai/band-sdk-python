@@ -16,7 +16,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, LogSettings
-from band.adapters.crewai import CrewAIAdapter
+from band.adapters.crewai import CrewAIAdapter, CrewAIAdapterConfig
 from band.core.types import Capability
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
@@ -63,8 +63,10 @@ async def main() -> None:
     identity = Identity()
     config = ArchitectConfig()
     adapter = CrewAIAdapter(
-        model=config.model,
-        custom_section=build_persona(),
+        CrewAIAdapterConfig(
+            model=config.model,
+            custom_section=build_persona(),
+        ),
         # Default emit already surfaces tool_call/tool_result in the room
         # (CrewAI has no native reasoning stream, so THOUGHTS is unsupported).
         # Memory tools are opt-in so the architect can record its verdict

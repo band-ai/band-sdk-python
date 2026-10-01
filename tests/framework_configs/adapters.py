@@ -19,7 +19,9 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK,
 )
 from band.adapters.claude_sdk import (
+    ClaudePermissionMode,
     ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
 )
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.adapters.copilot_sdk import (
@@ -32,11 +34,11 @@ from band.adapters.copilot_sdk import (
 
 # Both classes construct with crewai absent; do not fake the package via
 # ``sys.modules`` instead — see ``tests/test_module_isolation.py``.
-from band.adapters.crewai import CrewAIAdapter
-from band.adapters.crewai_flow import CrewAIFlowAdapter
-from band.adapters.google_adk import GoogleADKAdapter
+from band.adapters.crewai import CrewAIAdapter, CrewAIAdapterConfig
+from band.adapters.crewai_flow import CrewAIFlowAdapter, CrewAIFlowAdapterConfig
+from band.adapters.google_adk import GoogleADKAdapter, GoogleADKAdapterConfig
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.adapters.parlant import ParlantAdapter
+from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
@@ -96,7 +98,7 @@ class AdapterConfig:
 
     # {attr_name: expected_value} verified by test_default_initialization.
     # For most adapters these are true defaults from __init__; for PydanticAI
-    # ``model`` is a required kwarg injected by the factory (not a real default).
+    # ``config`` (carrying the model) is injected by the factory (not a real default).
     expected_initial_values: dict[str, Any] = field(default_factory=dict)
 
     # For test_custom_initialization
@@ -145,9 +147,12 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     """
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
-    adapter = PydanticAIAdapter(model="test", capabilities=ALL_CAPABILITIES)
+    adapter = PydanticAIAdapter(
+        PydanticAIAdapterConfig(model="test"), capabilities=ALL_CAPABILITIES
+    )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
         name: tool.function_schema
@@ -215,8 +220,8 @@ def _langgraph_factory(**kw: Any) -> Any:
     return LangGraphAdapter(**kw)
 
 
-# The CrewAI conformance instance is config-only: safe for inspecting primitive
-# attributes (model, role, etc.) and on_cleanup, never for runtime work — the
+# The CrewAI conformance instance is config-only: safe for inspecting its config
+# and on_cleanup, never for runtime work — the
 # factories below guard the methods that would build a Crew or hit an LLM.
 # For runtime tests, use monkeypatch fixtures in tests/adapters/test_crewai_adapter.py.
 
@@ -255,20 +260,22 @@ def _claude_sdk_factory(**kw: Any) -> Any:
 def _pydantic_ai_factory(**kw: Any) -> Any:
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
-    if "model" not in kw:
-        kw["model"] = _PYDANTIC_AI_INJECTED_MODEL
+    if "config" not in kw and "llm" not in kw:
+        kw["config"] = PydanticAIAdapterConfig(model=_PYDANTIC_AI_INJECTED_MODEL)
     return PydanticAIAdapter(**kw)
 
 
 def _strands_factory(**kw: Any) -> Any:
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
         StrandsAdapter,
+        StrandsAdapterConfig,
     )
 
-    if "model" not in kw:
-        kw["model"] = _STRANDS_INJECTED_MODEL
+    if "config" not in kw and "llm" not in kw:
+        kw["config"] = StrandsAdapterConfig(model=_STRANDS_INJECTED_MODEL)
     return StrandsAdapter(**kw)
 
 
@@ -334,13 +341,13 @@ def _google_adk_factory(**kw: Any) -> Any:
 # Registry  (built lazily to avoid top-level adapter imports)
 # ---------------------------------------------------------------------------
 
-# PydanticAI requires ``model`` as a mandatory kwarg (no default in __init__).
-# The conformance factory injects this value so the adapter can be instantiated
-# without a real API key.  ``expected_initial_values["model"]`` then verifies
-# the factory injection, NOT a real adapter default.
+# PydanticAI needs a model (``config.model`` or ``llm``) and has no default.
+# The conformance factory injects a config with this model so the adapter can be
+# instantiated without a real API key; ``expected_initial_values["config"]`` then
+# verifies the factory injection, NOT a real adapter default.
 _PYDANTIC_AI_INJECTED_MODEL = "openai:gpt-5.4"
 
-# Strands likewise requires ``model``. A plain string is fine at construction
+# Strands likewise needs a model. A plain string is fine at construction
 # time: the adapter passes it through to Strands (which treats strings as
 # Bedrock model ids), and no client is created until the first message turn.
 _STRANDS_INJECTED_MODEL = "strands-conformance-model"
@@ -348,49 +355,37 @@ _STRANDS_INJECTED_MODEL = "strands-conformance-model"
 
 def _build_anthropic_config() -> AdapterConfig:
     from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
-        AnthropicAdapter,
+        AnthropicAdapterConfig,
     )
 
+    custom = AnthropicAdapterConfig(
+        model="claude-opus-4-20250514", max_tokens=8192, custom_section="Be helpful."
+    )
     return AdapterConfig(
         framework_id="anthropic",
         display_name="Anthropic",
         adapter_factory=_anthropic_factory,
-        expected_initial_values={
-            "model": _default_from_init(AnthropicAdapter, "model"),
-            "max_tokens": _default_from_init(AnthropicAdapter, "max_tokens"),
-        },
-        custom_kwargs={
-            "model": "claude-opus-4-20250514",
-            "max_tokens": 8192,
-            "prompt": "Be helpful.",
-        },
-        custom_expected={
-            "model": "claude-opus-4-20250514",
-            "max_tokens": 8192,
-            "_prompt": "Be helpful.",
-        },
+        expected_initial_values={"config": AnthropicAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
     )
 
 
 def _build_langgraph_config() -> AdapterConfig:
     from band.adapters.langgraph import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
-        LangGraphAdapter,
+        LangGraphAdapterConfig,
     )
 
+    custom = LangGraphAdapterConfig(
+        custom_section="Be helpful.", recursion_limit=10, inject_system_prompt=True
+    )
     return AdapterConfig(
         framework_id="langgraph",
         display_name="LangGraph",
         adapter_factory=_langgraph_factory,
-        expected_initial_values={
-            "prompt_template": _default_from_init(LangGraphAdapter, "prompt_template"),
-            "custom_section": _default_from_init(LangGraphAdapter, "custom_section"),
-        },
-        custom_kwargs={
-            "custom_section": "Be helpful.",
-        },
-        custom_expected={
-            "custom_section": "Be helpful.",
-        },
+        expected_initial_values={"config": LangGraphAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         has_custom_tools_attr=True,
         custom_tools_attr="additional_tools",
         has_history_converter=True,
@@ -398,44 +393,26 @@ def _build_langgraph_config() -> AdapterConfig:
 
 
 def _build_crewai_config() -> AdapterConfig:
-    crewai_cls = CrewAIAdapter
     _crewai_available = _crewai_installed()
+    custom = CrewAIAdapterConfig(
+        model="gpt-5.4-mini",
+        role="Research Analyst",
+        goal="Find and analyze information",
+        backstory="Expert researcher",
+        custom_section="Be thorough.",
+        verbose=True,
+        max_iter=30,
+        max_rpm=10,
+        allow_delegation=True,
+    )
 
     return AdapterConfig(
         framework_id="crewai",
         display_name="CrewAI",
         adapter_factory=_crewai_factory,
-        expected_initial_values={
-            "model": _default_from_init(crewai_cls, "model"),
-            "role": _default_from_init(crewai_cls, "role"),
-            "goal": _default_from_init(crewai_cls, "goal"),
-            "backstory": _default_from_init(crewai_cls, "backstory"),
-            "verbose": _default_from_init(crewai_cls, "verbose"),
-            "max_iter": _default_from_init(crewai_cls, "max_iter"),
-            "allow_delegation": _default_from_init(crewai_cls, "allow_delegation"),
-        },
-        custom_kwargs={
-            "model": "gpt-5.4-mini",
-            "role": "Research Analyst",
-            "goal": "Find and analyze information",
-            "backstory": "Expert researcher",
-            "custom_section": "Be thorough.",
-            "verbose": True,
-            "max_iter": 30,
-            "max_rpm": 10,
-            "allow_delegation": True,
-        },
-        custom_expected={
-            "model": "gpt-5.4-mini",
-            "role": "Research Analyst",
-            "goal": "Find and analyze information",
-            "backstory": "Expert researcher",
-            "custom_section": "Be thorough.",
-            "verbose": True,
-            "max_iter": 30,
-            "max_rpm": 10,
-            "allow_delegation": True,
-        },
+        expected_initial_values={"config": CrewAIAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         # on_started does a runtime `from crewai import Agent, LLM` which fails
         # when crewai is not installed (conflict group with parlant/pydantic-ai).
         skip_on_started_conformance=not _crewai_available,
@@ -461,23 +438,17 @@ def _crewai_flow_factory(**kw: Any) -> Any:
 
 
 def _build_crewai_flow_config() -> AdapterConfig:
-    flow_cls = CrewAIFlowAdapter
+    custom = CrewAIFlowAdapterConfig(
+        max_delegation_rounds=6, accept_agent_initiated=True
+    )
 
     return AdapterConfig(
         framework_id="crewai_flow",
         display_name="CrewAIFlow",
         adapter_factory=_crewai_flow_factory,
-        expected_initial_values={
-            "_max_delegation_rounds": _default_from_init(
-                flow_cls, "max_delegation_rounds"
-            ),
-        },
-        custom_kwargs={
-            "max_delegation_rounds": 6,
-        },
-        custom_expected={
-            "_max_delegation_rounds": 6,
-        },
+        expected_initial_values={"config": CrewAIFlowAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         has_custom_tools_attr=False,
     )
 
@@ -515,36 +486,21 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
     if not _HAS_CLAUDE_SDK:
         return None  # optional dep not installed; skip in CI
 
+    custom = ClaudeSDKAdapterConfig(
+        model="claude-opus-4-20250514",
+        fallback_model="sonnet",
+        custom_section="Be helpful.",
+        max_thinking_tokens=10000,
+        effort="high",
+        permission_mode=ClaudePermissionMode.BYPASS_PERMISSIONS,
+    )
     return AdapterConfig(
         framework_id="claude_sdk",
         display_name="ClaudeSDK",
         adapter_factory=_claude_sdk_factory,
-        expected_initial_values={
-            "model": _default_from_init(ClaudeSDKAdapter, "model"),
-            "fallback_model": _default_from_init(ClaudeSDKAdapter, "fallback_model"),
-            "custom_section": _default_from_init(ClaudeSDKAdapter, "custom_section"),
-            "max_thinking_tokens": _default_from_init(
-                ClaudeSDKAdapter, "max_thinking_tokens"
-            ),
-            "effort": _default_from_init(ClaudeSDKAdapter, "effort"),
-            "permission_mode": _default_from_init(ClaudeSDKAdapter, "permission_mode"),
-        },
-        custom_kwargs={
-            "model": "claude-opus-4-20250514",
-            "fallback_model": "sonnet",
-            "custom_section": "Be helpful.",
-            "max_thinking_tokens": 10000,
-            "effort": "high",
-            "permission_mode": "bypassPermissions",
-        },
-        custom_expected={
-            "model": "claude-opus-4-20250514",
-            "fallback_model": "sonnet",
-            "custom_section": "Be helpful.",
-            "max_thinking_tokens": 10000,
-            "effort": "high",
-            "permission_mode": "bypassPermissions",
-        },
+        expected_initial_values={"config": ClaudeSDKAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         skip_on_started_conformance=True,  # on_started creates real MCP server + ClaudeSessionManager; tested in tests/adapters/claude_sdk/lifecycle/test_on_started.py
     )
 
@@ -552,33 +508,26 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
 def _build_pydantic_ai_config() -> AdapterConfig:
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
+    custom = PydanticAIAdapterConfig(
+        model="anthropic:claude-sonnet-4-5-20250929",
+        system_prompt="You are a helpful bot.",
+        custom_section="Be concise.",
+    )
     return AdapterConfig(
         framework_id="pydantic_ai",
         display_name="PydanticAI",
         adapter_factory=_pydantic_ai_factory,
         expected_initial_values={
             # Injected by _pydantic_ai_factory, not a real __init__ default.
-            # Verifies that the factory injection is stored correctly.
-            "model": _PYDANTIC_AI_INJECTED_MODEL,
-            "system_prompt": _default_from_init(PydanticAIAdapter, "system_prompt"),
-            "custom_section": _default_from_init(PydanticAIAdapter, "custom_section"),
+            "config": PydanticAIAdapterConfig(model=_PYDANTIC_AI_INJECTED_MODEL),
             # None, so the agent inherits whatever Agent.instrument_all() the host set.
-            "instrument": _default_from_init(PydanticAIAdapter, "instrument"),
+            "_instrument": _default_from_init(PydanticAIAdapter, "instrument"),
         },
-        custom_kwargs={
-            "model": "anthropic:claude-sonnet-4-5-20250929",
-            "system_prompt": "You are a helpful bot.",
-            "custom_section": "Be concise.",
-            "instrument": True,
-        },
-        custom_expected={
-            "model": "anthropic:claude-sonnet-4-5-20250929",
-            "system_prompt": "You are a helpful bot.",
-            "custom_section": "Be concise.",
-            "instrument": True,
-        },
+        custom_kwargs={"config": custom, "instrument": True},
+        custom_expected={"config": custom, "_instrument": True},
         skip_on_started_conformance=True,  # on_started creates real OpenAI client; tested in test_pydantic_ai_adapter
         advertised_arg_text=_pydantic_ai_advertised_arg_text,
     )
@@ -586,30 +535,24 @@ def _build_pydantic_ai_config() -> AdapterConfig:
 
 def _build_strands_config() -> AdapterConfig:
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
-        StrandsAdapter,
+        StrandsAdapterConfig,
     )
 
+    custom = StrandsAdapterConfig(
+        model="custom-bedrock-model-id",
+        system_prompt="You are a helpful bot.",
+        custom_section="Be concise.",
+    )
     return AdapterConfig(
         framework_id="strands",
         display_name="Strands",
         adapter_factory=_strands_factory,
         expected_initial_values={
             # Injected by _strands_factory, not a real __init__ default.
-            # Verifies that the factory injection is stored correctly.
-            "model": _STRANDS_INJECTED_MODEL,
-            "system_prompt": _default_from_init(StrandsAdapter, "system_prompt"),
-            "custom_section": _default_from_init(StrandsAdapter, "custom_section"),
+            "config": StrandsAdapterConfig(model=_STRANDS_INJECTED_MODEL),
         },
-        custom_kwargs={
-            "model": "custom-bedrock-model-id",
-            "system_prompt": "You are a helpful bot.",
-            "custom_section": "Be concise.",
-        },
-        custom_expected={
-            "model": "custom-bedrock-model-id",
-            "system_prompt": "You are a helpful bot.",
-            "custom_section": "Be concise.",
-        },
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
     )
 
 
@@ -621,22 +564,16 @@ def _build_parlant_config() -> AdapterConfig:
     except ImportError:
         _parlant_available = False
 
+    custom = ParlantAdapterConfig(
+        system_prompt="Custom system prompt", custom_section="Be helpful."
+    )
     return AdapterConfig(
         framework_id="parlant",
         display_name="Parlant",
         adapter_factory=_parlant_factory,
-        expected_initial_values={
-            "system_prompt": _default_from_init(ParlantAdapter, "system_prompt"),
-            "custom_section": _default_from_init(ParlantAdapter, "custom_section"),
-        },
-        custom_kwargs={
-            "system_prompt": "Custom system prompt",
-            "custom_section": "Be helpful.",
-        },
-        custom_expected={
-            "system_prompt": "Custom system prompt",
-            "custom_section": "Be helpful.",
-        },
+        expected_initial_values={"config": ParlantAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         has_custom_tools_attr=False,
         # on_started does a runtime `from parlant.core.application import Application`
         # which fails when parlant SDK is not installed (conflict group with crewai).
@@ -728,6 +665,10 @@ def _build_opencode_config() -> AdapterConfig:
 
 
 def _build_agno_config() -> AdapterConfig:
+    from band.adapters.agno import (  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+        AgnoAdapterConfig,
+    )
+
     return AdapterConfig(
         framework_id="agno",
         display_name="Agno",
@@ -735,14 +676,15 @@ def _build_agno_config() -> AdapterConfig:
         # AgnoAdapter has no model/prompt of its own (the caller's Agno agent
         # owns those); assert the adapter-level state instead.
         expected_initial_values={
+            "config": AgnoAdapterConfig(),
             "agent": None,  # the run copy is built in on_started
             # Band tools are resolved per-run via a callable factory installed in
             # on_started, cached by contact-flag; nothing is cached before start.
             "_band_tools_cache": {},
         },
-        # No model/prompt kwargs to customize; nothing to assert here.
-        custom_kwargs={},
-        custom_expected={},
+        # AgnoAdapterConfig has no settings, so its default is the only value.
+        custom_kwargs={"config": AgnoAdapterConfig()},
+        custom_expected={"config": AgnoAdapterConfig()},
         # AgnoAdapter does not expose Band custom tools (no additional_tools).
         has_custom_tools_attr=False,
     )
@@ -750,27 +692,21 @@ def _build_agno_config() -> AdapterConfig:
 
 def _build_gemini_config() -> AdapterConfig:
     from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
-        GeminiAdapter,
+        GeminiAdapterConfig,
     )
 
+    custom = GeminiAdapterConfig(
+        model="gemini-2.5-pro",
+        system_prompt="You are a helpful bot.",
+        custom_section="Be concise.",
+    )
     return AdapterConfig(
         framework_id="gemini",
         display_name="Gemini",
         adapter_factory=_gemini_factory,
-        expected_initial_values={
-            "model": _default_from_init(GeminiAdapter, "model"),
-            "system_prompt": _default_from_init(GeminiAdapter, "system_prompt"),
-        },
-        custom_kwargs={
-            "model": "gemini-2.5-flash",
-            "system_prompt": "You are a helpful bot.",
-            "prompt": "Be concise.",
-        },
-        custom_expected={
-            "model": "gemini-2.5-flash",
-            "system_prompt": "You are a helpful bot.",
-            "_prompt": "Be concise.",
-        },
+        expected_initial_values={"config": GeminiAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
     )
 
 
@@ -806,28 +742,19 @@ ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)
 
 
 def _build_google_adk_config() -> AdapterConfig:
+    custom = GoogleADKAdapterConfig(
+        model="gemini-2.5-pro",
+        custom_section="Be helpful.",
+        max_history_messages=10,
+        max_transcript_chars=5_000,
+    )
     return AdapterConfig(
         framework_id="google_adk",
         display_name="GoogleADK",
         adapter_factory=_google_adk_factory,
-        expected_initial_values={
-            "model": _default_from_init(GoogleADKAdapter, "model"),
-            "custom_section": _default_from_init(GoogleADKAdapter, "custom_section"),
-            "max_history_messages": _default_from_init(
-                GoogleADKAdapter, "max_history_messages"
-            ),
-            "max_transcript_chars": _default_from_init(
-                GoogleADKAdapter, "max_transcript_chars"
-            ),
-        },
-        custom_kwargs={
-            "model": "gemini-2.5-pro",
-            "custom_section": "Be helpful.",
-        },
-        custom_expected={
-            "model": "gemini-2.5-pro",
-            "custom_section": "Be helpful.",
-        },
+        expected_initial_values={"config": GoogleADKAdapterConfig()},
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
         skip_on_started_conformance=False,
     )
 

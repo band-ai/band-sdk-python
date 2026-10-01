@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Thinker agent for the 20 Questions Arena game.
@@ -38,7 +38,7 @@ from prompts import create_llm, create_llm_by_name, generate_thinker_prompt
 from setup_logging import setup_logging
 
 from band import Agent
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +78,9 @@ async def main() -> None:
 
     # Create adapter with Thinker's game prompt
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=generate_thinker_prompt("Thinker")),
         llm=llm,
         checkpointer=InMemorySaver(),
-        custom_section=generate_thinker_prompt("Thinker"),
     )
 
     logger.info("Thinker is ready -- waiting for a user to start a game...")

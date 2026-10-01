@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=1.6.0"]
+# dependencies = ["band-sdk[strands]>=4.0.0"]
 # ///
 """
 Jerry the mouse agent - outsmarts Tom!
@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_jerry_prompt
 
 from band import Agent, configure_logging
-from band.adapters import StrandsAdapter
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,8 +43,8 @@ async def main() -> None:
     load_dotenv()
 
     adapter = StrandsAdapter(
-        model=OpenAIModel(model_id="gpt-5.4-mini"),
-        custom_section=generate_jerry_prompt("Jerry"),
+        StrandsAdapterConfig(custom_section=generate_jerry_prompt("Jerry")),
+        llm=OpenAIModel(model_id="gpt-5.4-mini"),
     )
 
     logger.info("Jerry is watching for Tom from his mouse hole...")

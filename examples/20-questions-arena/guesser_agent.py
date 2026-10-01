@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Guesser agent for the 20 Questions Arena game.
@@ -38,7 +38,7 @@ from prompts import create_llm, create_llm_by_name, generate_guesser_prompt
 from setup_logging import setup_logging
 
 from band import Agent
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +88,9 @@ async def main() -> None:
 
     # Create adapter with Guesser's game prompt
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=generate_guesser_prompt("Guesser")),
         llm=llm,
         checkpointer=InMemorySaver(),
-        custom_section=generate_guesser_prompt("Guesser"),
     )
 
     logger.info("Guesser is ready -- waiting to be invited to a game...")

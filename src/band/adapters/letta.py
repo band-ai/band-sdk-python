@@ -139,16 +139,23 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def __init__(
         self,
         config: LettaAdapterConfig | None = None,
+        *,
         history_converter: LettaHistoryConverter | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
-        self._config = config or LettaAdapterConfig()
+        """
+        Initialize the Letta adapter.
 
+        Args:
+            config: Adapter settings; defaults to ``LettaAdapterConfig()``,
+                which also reads ``LETTA_``-prefixed environment variables.
+            history_converter: Custom history converter (optional)
+        """
         super().__init__(
             history_converter=history_converter or LettaHistoryConverter(),
             **features,
         )
-        self.config = self._config
+        self.config = config or LettaAdapterConfig()
 
         # Letta SDK async client (shared across rooms)
         self._client: Any = None
@@ -861,17 +868,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
     async def _create_agent(self, room_id: str | None = None) -> str:
         """Create a new Letta agent with MCP tools attached."""
-        memory_blocks = (
-            list(self.config.memory_blocks) if self.config.memory_blocks else []
-        )
-
-        # Add persona block with tool enforcement + system prompt
-        memory_blocks.insert(
-            0, {"label": "persona", "value": self._instruction_text(room_id)}
-        )
-
+        # The persona block (tool enforcement + system prompt) leads.
+        persona = {"label": "persona", "value": self._instruction_text(room_id)}
         create_kwargs: dict[str, Any] = {
-            "memory_blocks": memory_blocks,
+            "memory_blocks": [persona, *self.config.memory_blocks],
             "include_base_tools": True,
         }
         if self.config.model:

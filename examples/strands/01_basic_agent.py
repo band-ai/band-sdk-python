@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=1.6.0"]
+# dependencies = ["band-sdk[strands]>=4.0.0"]
 # ///
 """
 Basic Strands Agents example.
@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from strands.models.openai import OpenAIModel
 
 from band import Agent, configure_logging
-from band.adapters import StrandsAdapter
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,8 +36,10 @@ async def main() -> None:
 
     # Create adapter with framework-specific settings
     adapter = StrandsAdapter(
-        model=OpenAIModel(model_id="gpt-5.4-mini"),
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        StrandsAdapterConfig(
+            custom_section="You are a helpful assistant. Be concise and friendly."
+        ),
+        llm=OpenAIModel(model_id="gpt-5.4-mini"),
     )
 
     logger.info("Starting Strands agent...")

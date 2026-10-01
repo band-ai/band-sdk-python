@@ -14,7 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from band.adapters.parlant import PARLANT_PREAMBLE_TAG, ParlantAdapter
+from band.adapters.parlant import (
+    PARLANT_PREAMBLE_TAG,
+    ParlantAdapter,
+    ParlantAdapterConfig,
+)
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import PlatformMessage
 
@@ -131,16 +135,38 @@ class TestInitialization:
         """system_prompt/custom_section only shape an adapter-created agent."""
         with pytest.raises(ValueError, match="parlant_agent"):
             ParlantAdapter(
+                ParlantAdapterConfig(system_prompt="You are a custom assistant."),
                 server=mock_parlant_server,
                 parlant_agent=mock_parlant_agent,
-                system_prompt="You are a custom assistant.",
             )
         with pytest.raises(ValueError, match="parlant_agent"):
             ParlantAdapter(
+                ParlantAdapterConfig(custom_section="Be helpful."),
                 server=mock_parlant_server,
                 parlant_agent=mock_parlant_agent,
-                custom_section="Be helpful.",
             )
+
+    def test_borrowed_agent_requires_its_server(self, mock_parlant_agent):
+        with pytest.raises(ValueError, match="requires the server"):
+            ParlantAdapter(parlant_agent=mock_parlant_agent)
+
+    @pytest.mark.parametrize(
+        "owned_server_kwargs",
+        [{"nlp_service": "svc"}, {"server_options": {"host": "127.0.0.1"}}],
+    )
+    def test_owned_server_options_rejected_with_borrowed_server(
+        self, mock_parlant_server, owned_server_kwargs
+    ):
+        with pytest.raises(ValueError, match="caller-provided server"):
+            ParlantAdapter(server=mock_parlant_server, **owned_server_kwargs)
+
+
+class TestConfig:
+    @pytest.mark.parametrize("field", ["response_timeout", "response_poll"])
+    @pytest.mark.parametrize("value", [0, -1.0])
+    def test_rejects_non_positive_response_budget(self, field, value):
+        with pytest.raises(ValueError, match="greater than 0"):
+            ParlantAdapterConfig(**{field: value})
 
 
 class TestOnStarted:
@@ -157,8 +183,8 @@ class TestOnStarted:
     ):
         """custom_section must reach the created Parlant agent's description."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(custom_section="Be helpful."),
             server=mock_parlant_server,
-            custom_section="Be helpful.",
         )
 
         mock_app = MagicMock()
@@ -185,8 +211,8 @@ class TestOnStarted:
     ):
         """system_prompt must fully replace the created agent's description."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(system_prompt="You are a custom assistant."),
             server=mock_parlant_server,
-            system_prompt="You are a custom assistant.",
         )
 
         mock_app = MagicMock()
@@ -270,7 +296,9 @@ class TestLifecycleOwnedServer:
         self, owned_server, mock_parlant_agent
     ):
         factory, cm, server = owned_server
-        adapter = ParlantAdapter(name="Tom", description="A cat", nlp_service="svc")
+        adapter = ParlantAdapter(
+            ParlantAdapterConfig(name="Tom", description="A cat"), nlp_service="svc"
+        )
 
         await adapter.on_started("BandName", "Band description")
 
@@ -298,7 +326,7 @@ class TestLifecycleOwnedServer:
     ):
         band_tools = ["band-tool-entry"]
         stub_band_tools.return_value = band_tools
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         adapter.add_guideline(condition="c1", action="a1")
         adapter.add_guideline(condition="c2", action="a2", tools=[])
         adapter.add_guideline(condition="c3", action="a3", metadata={"k": "v"})
@@ -348,7 +376,7 @@ class TestLifecycleOwnedServer:
         ] == ["first", "second", "second", "third"]
 
     async def test_add_guideline_after_start_raises(self, owned_server):
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         await adapter.on_started("BandName", "Band description")
 
         with pytest.raises(RuntimeError, match="before the agent starts"):
@@ -363,14 +391,16 @@ class TestLifecycleOwnedServer:
         async def configure(srv, agent):
             seen.append((srv, agent))
 
-        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+        adapter = ParlantAdapter(
+            ParlantAdapterConfig(name="X", description="Y"), configure=configure
+        )
         await adapter.on_started("BandName", "Band description")
 
         assert seen == [(server, mock_parlant_agent)]
 
     async def test_cleanup_all_closes_owned_server(self, owned_server):
         _, cm, _ = owned_server
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         await adapter.on_started("BandName", "Band description")
 
         await adapter.cleanup_all()
@@ -413,7 +443,7 @@ class TestLifecycleOwnedServer:
     async def test_restart_with_owned_server_applies_guidelines_to_fresh_agent(
         self, owned_server, mock_parlant_agent
     ):
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         adapter.add_guideline(condition="c", action="a")
 
         await adapter.on_started("BandName", "Band description")
@@ -430,7 +460,9 @@ class TestLifecycleOwnedServer:
         async def configure(srv, agent):
             raise RuntimeError("configure blew up")
 
-        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+        adapter = ParlantAdapter(
+            ParlantAdapterConfig(name="X", description="Y"), configure=configure
+        )
 
         with pytest.raises(RuntimeError, match="configure blew up"):
             await adapter.on_started("BandName", "Band description")
@@ -448,10 +480,9 @@ class TestOnMessage:
     def initialized_adapter(self, mock_parlant_server, mock_parlant_agent):
         """Create an initialized adapter with mocked app."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.05, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.05,
-            response_poll=0.01,
         )
         adapter.agent_name = "TestBot"
         adapter.agent_description = "A test bot"
@@ -847,10 +878,9 @@ class TestErrorHandling:
         (which reports ``send_failure``) ever sees it.
         """
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.2, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.2,
-            response_poll=0.01,
         )
         adapter.agent_name = "TestBot"
 
@@ -1071,10 +1101,9 @@ class TestResponseWaitBudget:
         """A genuinely silent turn is bounded: once the total budget elapses the wait
         returns (no hang) and nothing is forwarded."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.05, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.05,
-            response_poll=0.01,
         )
         # Never any event: every poll window is empty.
         app = MagicMock()
@@ -1106,10 +1135,9 @@ class TestResponseWaitBudget:
         acknowledgment, not an answer, so the adapter must NOT forward it as the reply
         — the turn is given up honestly (no send_message) rather than faking success."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.05, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.05,
-            response_poll=0.01,
         )
         # The preamble arrives on the first poll; no final ever follows.
         seen = {"delivered": False}

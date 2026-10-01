@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
+# dependencies = ["band-sdk[agno]>=4.0.0", "anthropic>=0.75.0"]
 # ///
 """
 Basic Agno agent example.
@@ -58,7 +58,7 @@ async def main() -> None:
     )
 
     # Bridge the Agno agent to Band.
-    adapter = AgnoAdapter(agno_agent)
+    adapter = AgnoAdapter(agent=agno_agent)
 
     logger.info("Starting Agno agent...")
     async with Agent.from_config(

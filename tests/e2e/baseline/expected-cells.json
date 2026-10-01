@@ -819,6 +819,33 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-accept-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-decline-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[dont-ask-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_question_is_answered_in_free_text_from_the_room",
       "adapter": "opencode",
       "lanes": [
