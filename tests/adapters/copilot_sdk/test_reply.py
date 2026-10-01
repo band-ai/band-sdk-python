@@ -21,7 +21,12 @@ pytestmark = requires_copilot_sdk
 
 if _COPILOT_SDK_AVAILABLE:
     from copilot import ToolInvocation
-    from copilot.generated.session_events import SessionErrorData
+    from copilot.generated.session_events import (
+        ModelCallFailureData,
+        ModelCallFailureSource,
+        SessionErrorData,
+        SessionWarningData,
+    )
 
 
 class TestReply:
@@ -77,6 +82,30 @@ class TestReply:
         assert not tools.messages_sent
         error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
         assert error_events
+
+    @pytest.mark.asyncio
+    async def test_no_reply_names_the_trouble_the_turn_hit(self):
+        """A silent turn's error says what went wrong, not just that nothing came."""
+        client = FakeCopilotClient(
+            reply_content=None,
+            turn_events=[
+                ModelCallFailureData(
+                    source=ModelCallFailureSource.TOP_LEVEL,
+                    error_type="overloaded_error",
+                    status_code=529,
+                ),
+                SessionWarningData(message="context truncated", warning_type="context"),
+            ],
+        )
+        adapter = await make_started_adapter(client)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await run_message(adapter, ToolSchemaFakeTools())
+
+        assert str(exc_info.value) == (
+            "Copilot turn produced no reply (incidents: model call failed: "
+            "overloaded_error status=529; warning context: context truncated)"
+        )
 
     @pytest.mark.asyncio
     async def test_session_error_raises_reports_and_evicts(self):

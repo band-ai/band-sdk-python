@@ -68,8 +68,13 @@ try:
         ToolResult,
     )
     from copilot.generated.session_events import (
+        AbortData,
         AssistantReasoningData,
+        AssistantTurnRetryData,
         AssistantUsageData,
+        ModelCallFailureData,
+        SessionWarningData,
+        ToolExecutionCompleteData,
     )
 
     _COPILOT_SDK_AVAILABLE = True
@@ -209,6 +214,29 @@ class TurnState:
     reasonings: dict[str, str] = field(default_factory=dict)
     # Summed across the turn's per-call assistant.usage events; emitted once.
     usage: TurnUsage = field(default_factory=TurnUsage)
+    # Non-fatal trouble the turn hit, reported when it ends without a reply.
+    incidents: list[str] = field(default_factory=list)
+
+
+def _turn_incident(data: object) -> str | None:
+    """A one-line account of a session event that can explain a silent turn."""
+    match data:
+        case ModelCallFailureData():
+            return (
+                f"model call failed: {data.error_type or data.failure_kind} "
+                f"status={data.status_code} {data.error_message or ''}".rstrip()
+            )
+        case AssistantTurnRetryData():
+            return f"turn retried: {data.reason}"
+        case SessionWarningData():
+            return f"warning {data.warning_type}: {data.message}"
+        case AbortData():
+            return f"aborted: {data.reason}"
+        case ToolExecutionCompleteData(success=False):
+            error = data.error.message if data.error else "no error detail"
+            return f"tool {data.tool_call_id} failed: {error}"
+        case _:
+            return None
 
 
 class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
@@ -464,9 +492,16 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             # Session errors raise out of send_and_wait, so a None here
             # with no room output means the model genuinely said nothing.
             if final_text is None and not turn.replied_in_room:
-                logger.warning("Room %s: Copilot turn produced no reply", room_id)
+                incidents = "; ".join(turn.incidents) or "none reported"
+                logger.warning(
+                    "Room %s: Copilot turn produced no reply (incidents: %s)",
+                    room_id,
+                    incidents,
+                )
                 await tools.send_failure(AgentFailure(_PROVIDER, "no assistant reply"))
-                raise RuntimeError("Copilot turn produced no reply")
+                raise RuntimeError(
+                    f"Copilot turn produced no reply (incidents: {incidents})"
+                )
 
             # The turn may already have replied into the room; sending its
             # final text too would duplicate the reply.
@@ -910,6 +945,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 turn.reasonings[data.reasoning_id] = data.content
             elif isinstance(data, AssistantUsageData):
                 turn.usage += self._usage_from_event(data)  # sum per-call usage
+            elif incident := _turn_incident(data):
+                turn.incidents.append(incident)
 
         unsubscribe = session.on(collect)
         try:

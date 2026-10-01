@@ -128,7 +128,10 @@ def _build_copilot_sdk(
         CopilotSDKAdapterConfig,
     )
 
-    return CopilotSDKAdapter(
+    # A per-cell COPILOT_HOME, as copilot_acp gets: host hooks and extensions
+    # in ~/.copilot otherwise steer or deny the turn under test.
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-sdk-")
+    adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
             provider=ProviderConfig(
@@ -137,11 +140,14 @@ def _build_copilot_sdk(
                 api_key=s.llm_credentials.anthropic_api_key,
             ),
             use_logged_in_user=False,
+            base_directory=copilot_home_dir(sandbox.name),
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+    weakref.finalize(adapter, sandbox.cleanup)
+    return adapter
 
 
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
