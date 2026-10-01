@@ -35,6 +35,8 @@ x-codex: &codex-base
     PHOENIX_CHANNELS_CLIENT_WHEEL: ${PHOENIX_CHANNELS_CLIENT_WHEEL:-}
   volumes: &codex-volumes
     - ./agent_config.yaml:/app/agent_config.yaml:ro
+    # The codex runner reads role prompts from <AGENT_CONFIG dir>/prompts.
+    - ./prompts:/app/prompts:ro
     - shared_repo:/workspace/repo
     - shared_notes:/workspace/notes
     - shared_state:/workspace/state

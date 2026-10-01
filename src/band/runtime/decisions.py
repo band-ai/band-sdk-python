@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Generic, Literal, TypeVar
@@ -46,13 +46,6 @@ class Registration(Generic[T]):
     @property
     def removed(self) -> list[DecisionEntry[T]]:
         return [entry for entry in (self.evicted, self.replaced) if entry is not None]
-
-
-def sender_allowlist(senders: Iterable[str] | None) -> frozenset[str] | None:
-    """A configured allowlist in the shape ``band_sdk_core.is_authorized_sender``
-    takes: ``None`` admits anyone; any collection, empty included, only its
-    members."""
-    return None if senders is None else frozenset(senders)
 
 
 class DecisionRegistry(Mapping[str, T]):

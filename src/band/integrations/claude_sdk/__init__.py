@@ -5,10 +5,10 @@ NOTE: The old BandClaudeSDKAgent has been removed.
 Use the new composition-based pattern instead:
 
     from band import Agent
-    from band.adapters import ClaudeSDKAdapter
+    from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 
-    adapter = ClaudeSDKAdapter()  # uses npm `claude` binary's default model
-    # Or: ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
+    adapter = ClaudeSDKAdapter()  # pins the adapter's DEFAULT_MODEL
+    # Or: ClaudeSDKAdapter(ClaudeSDKAdapterConfig(model="opus"))
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()
 

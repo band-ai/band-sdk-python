@@ -23,7 +23,6 @@ from band.adapters.omp_acp import (
 )
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.client_types import ACPClientSessionState
-from band.integrations.acp.session_config import ACPConfigRequest
 from band.integrations.omp import (
     OMP_APPROVAL_FORM_TOOL_NAME,
     OMP_APPROVAL_MODE_ALWAYS_ASK,
@@ -36,14 +35,25 @@ from band.integrations.omp import (
     XD_MCP_PREFIX,
 )
 from band.testing import FakeAgentTools
+from tests.integrations.acp.acp_toolkit import launch_for
 from tests.integrations.acp.conftest import make_platform_message
 
 
-class TestOmpACPAdapterConstruction:
-    def test_model_is_selected_on_the_omp_command_line(self) -> None:
+def omp_in(
+    workspace_root: Path, config: OmpACPAdapterConfig | None = None
+) -> OmpACPAdapter:
+    """An OMP adapter whose room workspaces live under ``workspace_root``."""
+    return OmpACPAdapter(
+        config, workspace_for_room=lambda room_id: str(workspace_root / room_id)
+    )
+
+
+class TestOmpACPAdapterModel:
+    def test_model_is_an_omp_launch_flag_not_a_session_selection(self) -> None:
         adapter = OmpACPAdapter(OmpACPAdapterConfig(model="google/gemini-2.5-flash"))
 
-        assert "--model=google/gemini-2.5-flash" in adapter._command
+        assert "--model=google/gemini-2.5-flash" in adapter._spawn_command(None)
+        assert adapter.model_selection.is_empty
 
     def test_one_model_selects_the_flag_and_the_provider_key_env(self) -> None:
         adapter = OmpACPAdapter(
@@ -54,8 +64,8 @@ class TestOmpACPAdapterConstruction:
             )
         )
 
-        assert "--model=anthropic/claude-haiku-4-5" in adapter._command
-        assert adapter._env == {
+        assert "--model=anthropic/claude-haiku-4-5" in adapter._spawn_command(None)
+        assert adapter._spawn_env() == {
             "PI_CODING_AGENT_DIR": "/agent-home",
             "ANTHROPIC_API_KEY": "secret",
         }
@@ -69,80 +79,94 @@ class TestOmpACPAdapterConstruction:
 
         assert "secret" not in repr(config)
 
-    def test_default_command_gets_final_always_ask(self) -> None:
-        adapter = OmpACPAdapter()
-        assert adapter._command[-2:] == [
-            OMP_APPROVAL_MODE_FLAG,
-            OMP_APPROVAL_MODE_ALWAYS_ASK,
-        ]
 
-    def test_explicit_yolo_is_effective_approval_mode_for_room_spawn(self) -> None:
-        adapter = OmpACPAdapter(OmpACPAdapterConfig(approval_mode="yolo"))
-
-        assert adapter._spawn_command("/rooms/room-a")[-2:] == [
-            OMP_APPROVAL_MODE_FLAG,
-            "yolo",
-        ]
-
-    def test_yolo_does_not_allow_unsafe_command_flags(self) -> None:
-        with pytest.raises(ValueError, match="Unsafe OMP"):
-            OmpACPAdapter(
-                OmpACPAdapterConfig(
-                    command=("omp", "acp", OMP_YOLO_FLAG),
-                    approval_mode="yolo",
-                )
-            )
-
-    def test_unknown_approval_mode_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="approval mode"):
-            OmpACPAdapter(OmpACPAdapterConfig(approval_mode="write"))  # type: ignore[arg-type]
-
-    def test_rejects_unsafe_command_in_config(self) -> None:
-        with pytest.raises(ValueError):
-            OmpACPAdapter(OmpACPAdapterConfig(command=("omp", "acp", OMP_YOLO_FLAG)))
-
-    def test_unsafe_approval_mode_in_command_is_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            OmpACPAdapter(
-                OmpACPAdapterConfig(
-                    command=(
-                        "omp",
-                        "acp",
-                        "--config",
-                        "unsafe.json",
-                        OMP_APPROVAL_MODE_FLAG,
-                        OMP_APPROVAL_MODE_WRITE,
-                    )
-                )
-            )
-
-    def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
-        adapter = OmpACPAdapter(OmpACPAdapterConfig(cwd=str(tmp_path)))
-
-        assert adapter._workspace("room-a") == str(tmp_path / "room-a")
-
-    def test_cwd_and_workspace_for_room_together_is_rejected(
-        self, tmp_path: Path
+class TestOmpACPAdapterConfig:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            ("omp", "acp", OMP_YOLO_FLAG),
+            (
+                "omp",
+                "acp",
+                "--config",
+                "unsafe.json",
+                OMP_APPROVAL_MODE_FLAG,
+                OMP_APPROVAL_MODE_WRITE,
+            ),
+        ],
+        ids=["yolo-flag", "write-approval-mode"],
+    )
+    def test_unsafe_approval_flags_in_the_command_are_rejected(
+        self, command: tuple[str, ...]
     ) -> None:
+        # Even yolo, the one full-access mode, is only reachable via approval_mode.
+        with pytest.raises(ValueError, match="Unsafe OMP"):
+            OmpACPAdapterConfig(command=command, approval_mode="yolo")
+
+    @pytest.mark.parametrize(
+        "settings",
+        [{"approval_mode": "write"}, {"use_unstable_protocol": False}],
+        ids=["unknown-approval-mode", "stable-protocol-without-approval-forms"],
+    )
+    def test_settings_omp_cannot_run_with_are_rejected(
+        self, settings: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValueError, match=next(iter(settings))):
+            OmpACPAdapterConfig.model_validate(settings)
+
+    def test_cwd_and_a_workspace_resolver_are_exclusive(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not both"):
             OmpACPAdapter(
-                OmpACPAdapterConfig(
-                    cwd=str(tmp_path), workspace_for_room=lambda room_id: room_id
-                )
+                OmpACPAdapterConfig(cwd=str(tmp_path)),
+                workspace_for_room=lambda room_id: room_id,
             )
 
-    def test_finalize_appends_trailing_always_ask(self) -> None:
-        adapter = OmpACPAdapter(
-            OmpACPAdapterConfig(command=("omp", "acp", "--config", "safe.json"))
+    def test_a_custom_spawn_is_rejected_for_room_process_isolation(self) -> None:
+        async def custom_spawn(*_args, **_kwargs):
+            raise AssertionError("not called in this construction test")
+
+        with pytest.raises(ValueError, match="room process isolation"):
+            OmpACPAdapter(spawn_process=custom_spawn)
+
+
+class TestOmpACPAdapterLaunch:
+    @pytest.mark.asyncio
+    async def test_the_command_ends_with_the_selected_approval_mode(
+        self, tmp_path: Path
+    ) -> None:
+        config = OmpACPAdapterConfig(
+            command=("omp", "acp", "--config", "safe.json"), approval_mode="yolo"
         )
-        assert adapter._command[-2:] == [
+
+        launch = await launch_for(omp_in(tmp_path, config))
+
+        assert launch.command[-2:] == (OMP_APPROVAL_MODE_FLAG, "yolo")
+
+    @pytest.mark.asyncio
+    async def test_defaults_to_always_ask(self, tmp_path: Path) -> None:
+        launch = await launch_for(omp_in(tmp_path))
+
+        assert launch.command[-2:] == (
             OMP_APPROVAL_MODE_FLAG,
             OMP_APPROVAL_MODE_ALWAYS_ASK,
-        ]
+        )
 
-    def test_client_capabilities_are_form_elicitation_only(self) -> None:
-        adapter = OmpACPAdapter()
-        caps = adapter._client_capabilities
+    @pytest.mark.asyncio
+    async def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(cwd=str(tmp_path)))
+
+        launch = await launch_for(adapter, "room-a")
+
+        assert f"--cwd={tmp_path / 'room-a'}" in launch.command
+
+    @pytest.mark.asyncio
+    async def test_asks_for_form_elicitation_over_the_unstable_protocol(
+        self, tmp_path: Path
+    ) -> None:
+        launch = await launch_for(omp_in(tmp_path))
+
+        caps = launch.client_capabilities
+        assert launch.use_unstable_protocol is True
         assert isinstance(caps, ClientCapabilities)
         assert caps.elicitation is not None
         assert caps.elicitation.form is not None
@@ -150,50 +174,16 @@ class TestOmpACPAdapterConstruction:
         assert caps.fs.write_text_file is False
         assert caps.terminal is False
 
-    def test_uses_unstable_protocol_for_builtin_spawn(self) -> None:
-        adapter = OmpACPAdapter()
-        assert adapter._use_unstable_protocol is True
-        assert adapter._pass_builtin_transport_options is True
-
-    def test_custom_spawn_is_rejected_for_room_process_isolation(self) -> None:
-        async def custom_spawn(*_args, **_kwargs):
-            raise AssertionError("not called in this construction test")
-
-        with pytest.raises(ValueError, match="room process isolation"):
-            OmpACPAdapter(
-                OmpACPAdapterConfig(),
-                spawn_process=custom_spawn,  # type: ignore[arg-type]
-            )
-
-    def test_session_config_and_permission_resolvers_forwarded(self) -> None:
-        async def resolver(_request: ACPConfigRequest) -> dict[str, str]:
-            return {}
-
-        async def permission(_request: ACPPermissionRequest) -> str | None:
-            return None
-
-        adapter = OmpACPAdapter(
-            OmpACPAdapterConfig(
-                resolve_session_config=resolver,
-                resolve_permission=permission,
-            )
-        )
-        assert adapter._resolve_session_config is resolver
-        assert adapter._resolve_permission is permission
-
-    def test_custom_tools_and_mcp_forwarded(self) -> None:
+    def test_custom_tools_are_registered(self) -> None:
         class EchoInput(BaseModel):
             text: str
 
         def _echo(text: str) -> str:
             return text
 
-        adapter = OmpACPAdapter(
-            OmpACPAdapterConfig(mcp_servers=[{"name": "peer"}]),
-            additional_tools=[(EchoInput, _echo)],
-        )
-        assert adapter._custom_tools
-        assert adapter._mcp_servers == [{"name": "peer"}]
+        adapter = OmpACPAdapter(additional_tools=[(EchoInput, _echo)])
+
+        assert "echo" in adapter._own_tool_names
 
     def test_runtime_client_factory_is_omp_collecting_client(self) -> None:
         adapter = OmpACPAdapter()
@@ -217,14 +207,14 @@ class TestOmpWorkspaceSpawn:
             "omp",
             "acp",
             "--cwd=/rooms/room-a",
-            *adapter._command[2:],
+            *adapter._spawn_command(None)[2:],
         ]
         assert adapter._spawn_cwd("/rooms/room-a") is None
 
     def test_no_workspace_leaves_the_command_untouched(self) -> None:
         adapter = OmpACPAdapter()
 
-        assert adapter._spawn_command(None) == adapter._command
+        assert "--cwd" not in " ".join(adapter._spawn_command(None))
         assert adapter._spawn_cwd(None) is None
 
     def test_runtime_omits_subprocess_cwd_but_keeps_the_omp_cwd_flag(
@@ -438,8 +428,7 @@ class TestOmpElicitationHandlerWiring:
     @pytest.mark.asyncio
     async def test_elicitation_handler_wired_on_message(self) -> None:
         """``on_message`` must register the OMP form elicitation handler."""
-        adapter = OmpACPAdapter()
-        adapter._inject_band_tools = False
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(inject_band_tools=False))
         runtime = await adapter._runtime_for("room-123")
         runtime._conn = AsyncMock()
         mock_session = MagicMock()

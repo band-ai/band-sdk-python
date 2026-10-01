@@ -23,11 +23,21 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, Protocol, runtime_checkable
+from enum import StrEnum
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from band_sdk_core import AgentFailure
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import Unpack
 
 from band.converters.crewai_flow import (
@@ -47,6 +57,7 @@ from band.converters.crewai_flow import (
     CrewAIFlowTextOnlyBehavior,
     normalize_participant_key,
 )
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.exceptions import BandConfigError, BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -1486,9 +1497,53 @@ class CrewAIFlowSubCrewReporter:
 # ---------------------------------------------------------------------------
 
 
-_VALID_JOIN_POLICIES = {"all", "first"}
-_VALID_TEXT_ONLY = {"error_event", "fallback_send"}
-_VALID_TAGGED_PEER = {"require_delegation_before_final", "off"}
+class CrewAIFlowTaggedPeerPolicy(StrEnum):
+    """Whether peers @-tagged in the request must be delegated to before the
+    flow may post a final answer."""
+
+    REQUIRE_DELEGATION_BEFORE_FINAL = "require_delegation_before_final"
+    OFF = "off"
+
+
+class CrewAIFlowAdapterConfig(BaseAdapterConfig):
+    """Orchestration policy for :class:`CrewAIFlowAdapter`.
+
+    Attributes:
+        join_policy: When a parallel delegation round counts as answered.
+        metadata_namespace: Task-event metadata key holding this adapter's
+            state; ``None`` derives ``crewai_flow:<agent_id>`` at start-up.
+        max_delegation_rounds: Delegation rounds a run may take, 1 to 20.
+        max_run_age: How long an unfinished run stays resumable.
+        text_only_behavior: What happens when the flow returns bare text
+            instead of a decision.
+        tagged_peer_policy: Whether tagged peers must be delegated to before
+            a final answer.
+        sequential_chains: Upstream peer -> downstream peer; once the
+            upstream peer replies, synthesis waits until the downstream peer
+            has been delegated to.
+        accept_agent_initiated: Whether messages from other agents may start
+            a new run.
+    """
+
+    join_policy: CrewAIFlowJoinPolicy = CrewAIFlowJoinPolicy.ALL
+    metadata_namespace: Annotated[str, Field(min_length=1)] | None = None
+    max_delegation_rounds: Annotated[StrictInt, Field(ge=1, le=20)] = 4
+    max_run_age: timedelta = timedelta(days=7)
+    text_only_behavior: CrewAIFlowTextOnlyBehavior = (
+        CrewAIFlowTextOnlyBehavior.ERROR_EVENT
+    )
+    tagged_peer_policy: CrewAIFlowTaggedPeerPolicy = (
+        CrewAIFlowTaggedPeerPolicy.REQUIRE_DELEGATION_BEFORE_FINAL
+    )
+    sequential_chains: dict[str, str] = Field(default_factory=dict)
+    accept_agent_initiated: StrictBool = False
+
+    @field_validator("max_run_age")
+    @classmethod
+    def _check_max_run_age_positive(cls, value: timedelta) -> timedelta:
+        if value <= timedelta(0):
+            raise ValueError("max_run_age must be positive")
+        return value
 
 
 class AmbiguousReply:
@@ -1519,27 +1574,34 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
 
     def __init__(
         self,
+        config: CrewAIFlowAdapterConfig | None = None,
         *,
-        flow_factory: Callable[[], Any],
-        state_source: CrewAIFlowStateSource | None = None,
-        join_policy: Literal["all", "first"] = "all",
-        metadata_namespace: str | None = None,
-        max_delegation_rounds: int = 4,
-        max_run_age: timedelta = timedelta(days=7),
-        text_only_behavior: Literal["error_event", "fallback_send"] = "error_event",
-        tagged_peer_policy: Literal[
-            "require_delegation_before_final", "off"
-        ] = "require_delegation_before_final",
-        sequential_chains: Mapping[str, str] | None = None,
-        accept_agent_initiated: bool = False,
         history_converter: CrewAIFlowStateConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
+        flow_factory: Callable[[], Any],
+        state_source: CrewAIFlowStateSource | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
+        """Initialize the adapter.
+
+        Args:
+            config: Orchestration policy; defaults to
+                ``CrewAIFlowAdapterConfig()``.
+            history_converter: Converter rebuilding session state from
+                history; defaults to a ``CrewAIFlowStateConverter`` honoring
+                ``config.max_run_age``.
+            additional_tools: Custom tools as ``(InputModel, callable)``
+                tuples.
+            flow_factory: Builds a fresh CrewAI Flow for each turn. Not
+                called until the first turn.
+            state_source: Where durable task events are loaded from;
+                defaults to ``RestCrewAIFlowStateSource()``.
+        """
+        config = config or CrewAIFlowAdapterConfig()
+
         # ---- flow_factory -------------------------------------------------
         if not callable(flow_factory):
             raise BandConfigError("flow_factory must be callable")
-        # Constructor never calls flow_factory(); the first turn validates it.
 
         # ---- state_source -------------------------------------------------
         if state_source is None:
@@ -1570,60 +1632,6 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                 "room_id, metadata_namespace, tools, and history"
             )
 
-        # ---- join_policy --------------------------------------------------
-        if join_policy not in _VALID_JOIN_POLICIES:
-            raise BandConfigError(
-                f"join_policy must be one of {sorted(_VALID_JOIN_POLICIES)}"
-            )
-
-        # ---- metadata_namespace -------------------------------------------
-        if metadata_namespace is not None and (
-            not isinstance(metadata_namespace, str) or not metadata_namespace
-        ):
-            raise BandConfigError(
-                "metadata_namespace must be a non-empty string or None"
-            )
-
-        # ---- max_delegation_rounds ----------------------------------------
-        if not isinstance(max_delegation_rounds, int) or isinstance(
-            max_delegation_rounds, bool
-        ):
-            raise BandConfigError("max_delegation_rounds must be an int")
-        if not (1 <= max_delegation_rounds <= 20):
-            raise BandConfigError("max_delegation_rounds must be in [1, 20]")
-
-        # ---- max_run_age --------------------------------------------------
-        if not isinstance(max_run_age, timedelta):
-            raise BandConfigError("max_run_age must be a timedelta")
-        if max_run_age <= timedelta(0):
-            raise BandConfigError("max_run_age must be positive")
-
-        # ---- text_only_behavior -------------------------------------------
-        if text_only_behavior not in _VALID_TEXT_ONLY:
-            raise BandConfigError(
-                f"text_only_behavior must be one of {sorted(_VALID_TEXT_ONLY)}"
-            )
-
-        # ---- tagged_peer_policy -------------------------------------------
-        if tagged_peer_policy not in _VALID_TAGGED_PEER:
-            raise BandConfigError(
-                f"tagged_peer_policy must be one of {sorted(_VALID_TAGGED_PEER)}"
-            )
-
-        # ---- sequential_chains --------------------------------------------
-        if sequential_chains is not None:
-            if not isinstance(sequential_chains, Mapping):
-                raise BandConfigError("sequential_chains must be a Mapping[str, str]")
-            for k, v in sequential_chains.items():
-                if not isinstance(k, str) or not isinstance(v, str):
-                    raise BandConfigError(
-                        "sequential_chains keys and values must be strings"
-                    )
-
-        # ---- accept_agent_initiated ----------------------------------------
-        if not isinstance(accept_agent_initiated, bool):
-            raise BandConfigError("accept_agent_initiated must be a bool")
-
         # ---- additional_tools ----------------------------------------------
         custom_tools_by_name: dict[str, CustomToolDef] = {}
         for tool in additional_tools or []:
@@ -1649,24 +1657,15 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         # Default converter picks up max_run_age and the namespace once
         # on_started resolves the namespace.
         converter = history_converter or CrewAIFlowStateConverter(
-            max_run_age=max_run_age
+            max_run_age=config.max_run_age
         )
 
         super().__init__(history_converter=converter, **features)
 
+        self.config = config
         self._flow_factory = flow_factory
         self._state_source = state_source
-        self._join_policy: CrewAIFlowJoinPolicy = CrewAIFlowJoinPolicy(join_policy)
-        self._configured_metadata_namespace = metadata_namespace
-        self.metadata_namespace: str = metadata_namespace or ""
-        self._max_delegation_rounds = max_delegation_rounds
-        self._max_run_age = max_run_age
-        self._text_only_behavior: CrewAIFlowTextOnlyBehavior = (
-            CrewAIFlowTextOnlyBehavior(text_only_behavior)
-        )
-        self._tagged_peer_policy = tagged_peer_policy
-        self._sequential_chains: dict[str, str] = dict(sequential_chains or {})
-        self._accept_agent_initiated = accept_agent_initiated
+        self.metadata_namespace: str = config.metadata_namespace or ""
         self._custom_tools = custom_tools_by_name
 
         self._tool_loop: asyncio.AbstractEventLoop | None = None
@@ -1682,11 +1681,11 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
-        if self._configured_metadata_namespace is None:
+        if self.config.metadata_namespace is None:
             agent_id = self.platform.agent_id if self.platform else agent_name
             self.metadata_namespace = f"crewai_flow:{agent_id}"
         else:
-            self.metadata_namespace = self._configured_metadata_namespace
+            self.metadata_namespace = self.config.metadata_namespace
         # Propagate namespace to the converter so it filters by it.
         if isinstance(self.history_converter, CrewAIFlowStateConverter):
             self.history_converter.metadata_namespace = self.metadata_namespace
@@ -1788,8 +1787,8 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             run_id=run_id,
             parent_message_id=msg.id,
             metadata_namespace=self.metadata_namespace,
-            join_policy=self._join_policy,
-            text_only_behavior=self._text_only_behavior,
+            join_policy=self.config.join_policy,
+            text_only_behavior=self.config.text_only_behavior,
         )
 
         # Load durable state via the configured state source.
@@ -1827,7 +1826,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         if not isinstance(converter, CrewAIFlowStateConverter):
             converter = CrewAIFlowStateConverter(
                 metadata_namespace=self.metadata_namespace,
-                max_run_age=self._max_run_age,
+                max_run_age=self.config.max_run_age,
             )
         state = converter.convert(raw_events)
 
@@ -1873,9 +1872,9 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                 join_policy=(
                     state.runs[matched.run_id].join_policy
                     if matched.run_id in state.runs
-                    else self._join_policy
+                    else self.config.join_policy
                 ),
-                text_only_behavior=self._text_only_behavior,
+                text_only_behavior=self.config.text_only_behavior,
             )
             ambiguous_run = state.runs.get(matched.run_id)
             if ambiguous_run is not None:
@@ -1898,7 +1897,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                 parent_message_id=run_meta.parent_message_id,
                 metadata_namespace=self.metadata_namespace,
                 join_policy=run_meta.join_policy,
-                text_only_behavior=self._text_only_behavior,
+                text_only_behavior=self.config.text_only_behavior,
                 tagged_peer_keys=run_meta.tagged_peer_keys,
                 delegation_rounds=run_meta.delegation_rounds,
             )
@@ -1933,7 +1932,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         if (
             sender_type == "Agent"
             and matched is None
-            and not self._accept_agent_initiated
+            and not self.config.accept_agent_initiated
         ):
             logger.debug(
                 "Agent-typed sender %s did not match a pending delegation; discarding",
@@ -2065,13 +2064,13 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         elif isinstance(decision, DelegateDecision):
             run = state.runs.get(executor.run_id)
             current_rounds = run.delegation_rounds if run is not None else 0
-            if current_rounds >= self._max_delegation_rounds:
+            if current_rounds >= self.config.max_delegation_rounds:
                 await executor.record_failed(
                     CrewAIFlowError(
                         code="max_delegation_rounds_exceeded",
                         message=(
                             f"Run exceeded max_delegation_rounds="
-                            f"{self._max_delegation_rounds}"
+                            f"{self.config.max_delegation_rounds}"
                         ),
                     )
                 )
@@ -2123,7 +2122,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                 elif d.status == CrewAIFlowDelegationStatus.REPLIED:
                     replied_count += 1
 
-        join_policy = run.join_policy if run is not None else self._join_policy
+        join_policy = run.join_policy if run is not None else self.config.join_policy
         join_satisfied = (
             run is None
             or (join_policy == CrewAIFlowJoinPolicy.FIRST and replied_count >= 1)
@@ -2132,7 +2131,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
 
         # Tagged-peer gate.
         tagged_blocked: list[str] = []
-        if self._tagged_peer_policy == "require_delegation_before_final":
+        if (
+            self.config.tagged_peer_policy
+            == CrewAIFlowTaggedPeerPolicy.REQUIRE_DELEGATION_BEFORE_FINAL
+        ):
             tagged_keys = (
                 run.tagged_peer_keys if run is not None else executor._tagged_peer_keys
             )
@@ -2146,7 +2148,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         # Sequential-chain gate: if any upstream key has a reply but the
         # mapped downstream key has no delegation, block.
         sequential_blocked: list[str] = []
-        if run is not None and self._sequential_chains:
+        if run is not None and self.config.sequential_chains:
             replied_keys = {
                 d.target.normalized_key
                 for d in run.delegations
@@ -2157,7 +2159,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                 {"id": p.participant_id, "handle": p.handle, "name": p.handle}
                 for p in participants
             ]
-            for upstream_raw, downstream_raw in self._sequential_chains.items():
+            for upstream_raw, downstream_raw in self.config.sequential_chains.items():
                 upstream_key = normalize_participant_key(
                     upstream_raw,
                     participants=participant_dicts,
@@ -2242,7 +2244,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         participants: list[CrewAIFlowParticipantSnapshot],
     ) -> None:
         if (
-            self._text_only_behavior == CrewAIFlowTextOnlyBehavior.FALLBACK_SEND
+            self.config.text_only_behavior == CrewAIFlowTextOnlyBehavior.FALLBACK_SEND
             and isinstance(raw, str)
         ):
             run = state.runs.get(executor.run_id)
@@ -2489,11 +2491,13 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
 
 __all__ = [
     "CrewAIFlowAdapter",
+    "CrewAIFlowAdapterConfig",
     "CrewAIFlowRuntimeTools",
     "CrewAIFlowSessionState",
     "CrewAIFlowStateConverter",
     "CrewAIFlowStateSource",
     "CrewAIFlowSubCrewReporter",
+    "CrewAIFlowTaggedPeerPolicy",
     "DelegateDecision",
     "DelegateItem",
     "DirectResponseDecision",

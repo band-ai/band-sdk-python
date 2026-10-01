@@ -15,7 +15,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, LogSettings
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.types import Capability, Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
@@ -69,8 +69,10 @@ async def main() -> None:
     identity = Identity()
     config = PMConfig()
     adapter = ClaudeSDKAdapter(
-        model=config.model,
-        custom_section=build_persona(config.architect_name),
+        ClaudeSDKAdapterConfig(
+            model=config.model,
+            custom_section=build_persona(config.architect_name),
+        ),
         # Surface the meeting's mechanics live in the room: tool_call/tool_result
         # for every Band tool (the peer lookup + add-participant handoff) and the
         # agent's reasoning, but not usage events. Memory tools are opt-in so

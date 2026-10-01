@@ -25,7 +25,11 @@ from band_rest.types import (
 )
 
 from band import Agent
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import (
+    ClaudeApprovalOptions,
+    ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
+)
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
 from tests.integration.conftest import (
     get_api_key,
@@ -183,9 +187,11 @@ class TestClaudeSDKApprovalIntegration:
 
         # Create adapter with manual approval mode
         adapter = ClaudeSDKAdapter(
-            model="claude-sonnet-4-5-20250929",
-            approval_mode="manual",
-            custom_section="You are a test bot. Be concise.",
+            ClaudeSDKAdapterConfig(
+                model="claude-sonnet-4-5-20250929",
+                custom_section="You are a test bot. Be concise.",
+                approvals=ClaudeApprovalOptions(mode="manual"),
+            )
         )
 
         # Create agent
@@ -314,13 +320,16 @@ class TestClaudeSDKApprovalIntegration:
         logger.info("=== Test: auto_accept notification (room %s) ===", room_id)
 
         adapter = ClaudeSDKAdapter(
-            model="claude-sonnet-4-5-20250929",
-            approval_mode="auto_accept",
-            approval_text_notifications=True,
-            custom_section=(
-                "You are a coding assistant. When asked to do something, "
-                "always use the Bash tool to run a command first."
-            ),
+            ClaudeSDKAdapterConfig(
+                model="claude-sonnet-4-5-20250929",
+                custom_section=(
+                    "You are a coding assistant. When asked to do something, "
+                    "always use the Bash tool to run a command first."
+                ),
+                approvals=ClaudeApprovalOptions(
+                    mode="auto_accept", text_notifications=True
+                ),
+            )
         )
 
         agent = Agent.create(

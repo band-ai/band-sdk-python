@@ -89,6 +89,11 @@ BAND_MCP_SERVER_NAME = "band"
 LEGACY_SEND_MESSAGE_TOOL = "create_agent_chat_message"
 
 
+def mcp_tool_spelling(server: str, tool: str) -> str:
+    """``tool`` of MCP ``server`` in the hyphen-joined spelling the resolver reads."""
+    return f"{server}-{tool}"
+
+
 def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None:
     """The member of ``names`` behind ``tool_name``'s MCP spelling, if any.
 
@@ -99,13 +104,12 @@ def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None
     ``band-create_agent_chat_message``). Anchored to ``BAND_MCP_SERVER_NAME``
     specifically -- not any prefix before a hyphen -- so an unrelated MCP
     server's own tool (e.g. ``other-band_send_message``) never resolves as a
-    Band tool. Other spellings (``mcp__server__tool``, ``server.tool``) are
-    not matched either -- no wired backend uses them. Extend here when such a
-    backend is added.
+    Band tool. A backend that reports the server and tool separately joins
+    them with ``mcp_tool_spelling`` first.
     """
     if tool_name in names:
         return tool_name
-    prefix = f"{BAND_MCP_SERVER_NAME}-"
+    prefix = mcp_tool_spelling(BAND_MCP_SERVER_NAME, "")
     suffix = tool_name.removeprefix(prefix)
     return suffix if suffix != tool_name and suffix in names else None
 

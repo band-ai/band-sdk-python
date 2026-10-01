@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 ACP Client with rich streaming - Thoughts, tool calls, and plans.
@@ -35,7 +35,7 @@ Prerequisites:
        - BAND_WS_URL: WebSocket URL
        - BAND_REST_URL: REST API URL
        - ACP_AGENT_COMMAND: Command to spawn
-         (default: "npx @zed-industries/codex-acp")
+         (default: "npx @agentclientprotocol/codex-acp")
 
     2. Have the remote ACP agent installed and available in PATH
 
@@ -52,8 +52,8 @@ import shlex
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging, create_room_workspace_resolver
-from band.adapters import ACPClientAdapter
+from band import Agent, configure_logging
+from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
 from band.config import load_agent_config
 
 configure_logging(
@@ -72,7 +72,7 @@ class Settings(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    acp_agent_command: str = "npx @zed-industries/codex-acp"
+    acp_agent_command: str = "npx @agentclientprotocol/codex-acp"
     acp_agent_cwd: str = "."
 
 
@@ -88,8 +88,7 @@ async def main() -> None:
 
     # Create an adapter that starts the local ACP agent per Band room.
     adapter = ACPClientAdapter(
-        command=acp_command,
-        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
+        ACPClientAdapterConfig(command=acp_command, cwd=settings.acp_agent_cwd),
     )
 
     logger.info("Starting ACP client bridge with rich streaming...")

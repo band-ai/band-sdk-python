@@ -45,6 +45,7 @@ from band.integrations.slack.adapter import (
     SLACK_CONTEXT_NOTE,
     SLACK_SEND_MESSAGE_TOOL_NAME,
     SlackAdapter,
+    SlackAdapterConfig,
     SlackTeeingTools,
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
@@ -149,7 +150,8 @@ def _make_adapter(
     apps: list[SlackApp] | None = None,
     room_ids: list[str] | None = None,
     bridge_agent_id: str = "bridge-uuid",
-    **adapter_kwargs: Any,
+    mirror_slack_context: bool = True,
+    **features: Any,
 ) -> tuple[
     SlackAdapter,
     _SlackReplyBrain | SimpleAdapter[Any],
@@ -196,11 +198,11 @@ def _make_adapter(
 
     rest = _make_rest_mock(room_ids)
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=tuple(apps), mirror_slack_context=mirror_slack_context),
         inner=inner,
-        apps=apps,
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
-        **adapter_kwargs,
+        **features,
     )
     adapter.platform = platform_connection_stub(agent_id=bridge_agent_id)
     return adapter, inner, web_mocks, rest
@@ -269,7 +271,7 @@ async def test_on_started_propagates_to_inner_and_sets_agent_id():
 @pytest.mark.asyncio
 async def test_on_started_requires_platform_when_no_rest_client_injected():
     inner = _SlackReplyBrain()
-    adapter = SlackAdapter(inner=inner, apps=[_slack_app()])
+    adapter = SlackAdapter(SlackAdapterConfig(apps=(_slack_app(),)), inner=inner)
     with pytest.raises(RuntimeError, match="platform connection"):
         await adapter.on_started("MyBot", "")
 
@@ -375,7 +377,7 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
         room_ids=["room-1"],
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     response = await _post_slack_event(
         adapter,
@@ -444,7 +446,7 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
 async def test_second_event_in_same_thread_reuses_room():
     adapter, inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="first")
@@ -507,7 +509,7 @@ async def test_concurrent_events_same_thread_create_one_room():
     """
     adapter, _inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     gate = asyncio.Event()
     create_calls = {"n": 0}
@@ -552,7 +554,7 @@ async def test_concurrent_events_same_thread_create_one_room():
 async def test_dm_event_creates_room_and_invokes_brain():
     adapter, inner, _, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -581,7 +583,7 @@ async def test_dm_event_creates_room_and_invokes_brain():
 async def test_bot_authored_messages_are_ignored():
     adapter, inner, _, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -609,7 +611,7 @@ async def test_bot_authored_messages_are_ignored():
 async def test_unsupported_event_type_is_ignored():
     adapter, inner, _, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     response = await _post_slack_event(
         adapter,
@@ -674,7 +676,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
     """When a peer messages in a Slack-bound room, brain gets the tee + note."""
     adapter, inner, web_mocks, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Seed a Slack-bound room.
     await _post_slack_event(
@@ -723,7 +725,7 @@ async def test_on_message_merges_existing_participants_msg_with_context_note():
     """Caller-provided participants_msg is preserved when we inject our note."""
     adapter, inner, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="hi")
@@ -766,7 +768,7 @@ async def test_on_message_merges_existing_participants_msg_with_context_note():
 async def test_on_cleanup_drops_binding_and_calls_inner():
     adapter, inner, _, _ = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(adapter, app, _mention_event(channel="C1", ts="100.0"))
     await adapter.wait_idle()
@@ -804,7 +806,7 @@ async def test_ack_returns_before_brain_finishes():
     brain = _SlowBrain()
     adapter, _, _, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     start = time.monotonic()
     response = await _post_slack_event(
@@ -841,7 +843,7 @@ async def test_brain_exception_does_not_break_subsequent_events():
 
     adapter, _, _, _ = _make_adapter(inner=_CrashingBrain(), room_ids=["r1", "r2"])
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="first")
@@ -991,7 +993,7 @@ async def test_channel_top_level_mention_does_not_fetch_thread_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1011,7 +1013,7 @@ async def test_channel_mention_in_existing_thread_pulls_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Slack returns the full thread when we ask. Includes a human-only
     # exchange that happened before the trigger plus the trigger itself
@@ -1065,7 +1067,7 @@ async def test_subsequent_mention_in_same_thread_refetches_history():
         room_ids=["room-1", "room-2"],
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1116,7 +1118,7 @@ async def test_bot_replies_in_thread_history_become_assistant_role():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1173,7 +1175,7 @@ async def test_bridge_progress_blocks_excluded_from_thread_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1235,7 +1237,7 @@ async def test_foreign_bot_replies_are_external_not_assistant():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1282,7 +1284,7 @@ async def test_fresh_dm_does_not_fetch_thread_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1312,7 +1314,7 @@ async def test_thread_history_fetch_failure_falls_back_to_empty_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         side_effect=RuntimeError("missing_scope: channels:history")
@@ -1485,7 +1487,7 @@ async def test_rehydration_then_slack_event_reuses_room_without_new_chat():
         inner=_SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter()),
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Simulate restart: WS delivers a bootstrap message in an existing
     # Slack-bridged room. Rehydration restores the binding.
@@ -1573,7 +1575,7 @@ async def test_context_event_metadata_includes_slack_room_id():
     can recover the binding from history alone."""
     adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1614,7 +1616,7 @@ async def test_user_turn_mirrored_as_thought_with_thread_id():
     Slack thread id, and no real Band message is posted (no peer loop)."""
     adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1656,7 +1658,7 @@ async def test_mirroring_disabled_emits_no_thought():
         mirror_slack_context=False,
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="<@BOT> hi")
@@ -1692,7 +1694,7 @@ async def test_mirror_failure_does_not_break_reply():
         side_effect=fail_only_thought
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="<@BOT> hi")

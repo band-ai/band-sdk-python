@@ -115,7 +115,7 @@ def make_started_adapter(
         # used to -- so a test only pays the streaming-mock cost when it
         # explicitly opts into an emit kind.
         features.setdefault("emit", ())
-        adapter = AgnoAdapter(agent, **features)
+        adapter = AgnoAdapter(agent=agent, **features)
         await adapter.on_started("TestBot", "desc")
         return adapter, agent
 
@@ -144,7 +144,7 @@ def run_real_agent() -> Callable[..., Awaitable[CapturingModel]]:
         # (the non-streaming path) unless a test explicitly opts into an emit
         # kind that needs the streaming path.
         features.setdefault("emit", ())
-        adapter = AgnoAdapter(agno, **features)
+        adapter = AgnoAdapter(agent=agno, **features)
         await adapter.on_started("Bot", "desc")
         await adapter.on_message(
             msg,

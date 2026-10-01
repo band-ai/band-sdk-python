@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[parlant,logging]>=1.2.0"]
+# dependencies = ["band-sdk[parlant,logging]>=4.0.0"]
 # ///
 """
 Jerry the mouse agent using Parlant.
@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_jerry_prompt
 
 from band import Agent, configure_logging
-from band.adapters import ParlantAdapter
+from band.adapters import ParlantAdapter, ParlantAdapterConfig
 
 configure_logging(
     logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
@@ -44,8 +44,7 @@ async def main() -> None:
     # Adapter owns the Parlant server (fresh ports each run, so Tom and Jerry
     # can run side by side). Band tools attach to the guideline by default.
     adapter = ParlantAdapter(
-        name="Jerry",
-        description=generate_jerry_prompt("Jerry"),
+        ParlantAdapterConfig(name="Jerry", description=generate_jerry_prompt("Jerry")),
         nlp_service=p.NLPServices.openai,
     )
     adapter.add_guideline(

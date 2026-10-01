@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=1.2.0",
+#   "band-sdk[anthropic]>=4.0.0",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 #   "pydantic>=2",
@@ -35,7 +35,7 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
-from band.adapters.anthropic import AnthropicAdapter
+from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
@@ -76,9 +76,11 @@ def _build_adapter(settings: Settings) -> AnthropicAdapter:
     """Like the sibling's, plus ``additional_tools`` wiring the custom tool."""
     emit = Emit.TOOL_CALLS if settings.emit_execution else ()
     return AnthropicAdapter(
-        model=settings.anthropic_model,
-        provider_key=settings.anthropic_api_key,
-        prompt=settings.system_prompt or None,
+        AnthropicAdapterConfig(
+            model=settings.anthropic_model,
+            provider_key=settings.anthropic_api_key,
+            custom_section=settings.system_prompt,
+        ),
         emit=emit,
         additional_tools=[(WeatherInput, get_weather)],
     )

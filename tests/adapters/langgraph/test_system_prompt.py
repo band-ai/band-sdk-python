@@ -8,7 +8,7 @@ from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 
-from band.adapters.langgraph import LangGraphAdapter
+from band.adapters.langgraph import LangGraphAdapter, LangGraphAdapterConfig
 
 from .helpers import make_capture_graph
 
@@ -115,7 +115,9 @@ class TestSystemPromptCrossTurn:
         builder.add_edge("echo", END)
         graph = builder.compile(checkpointer=checkpointer)
 
-        adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=True), graph=graph
+        )
         await adapter.on_started("TestBot", "Test bot")
 
         with patch(

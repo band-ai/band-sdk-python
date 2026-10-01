@@ -9,13 +9,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from band.adapters.claude_sdk import (
+    ClaudeApprovalOptions,
     ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
 )
 from band.converters.claude_sdk import (
     SESSION_ID_METADATA_KEY,
     ClaudeSDKSessionState,
 )
-from band.core.types import MessageType, PlatformMessage
+from band.core.types import ApprovalMode, MessageType, PlatformMessage
 from band.runtime.tools import MCP_TOOL_PREFIX, missing_reply_error
 from band.testing import FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude
@@ -28,6 +30,13 @@ SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
+
+
+def with_approvals(
+    mode: ApprovalMode = "manual", **options: Any
+) -> ClaudeSDKAdapterConfig:
+    """An adapter config with chat-based approvals on."""
+    return ClaudeSDKAdapterConfig(approvals=ClaudeApprovalOptions(mode=mode, **options))
 
 
 APPROVER = {"id": "u1", "name": "Bob", "handle": "@bob"}

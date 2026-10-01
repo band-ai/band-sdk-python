@@ -1486,7 +1486,7 @@ class ExecutionContext:
             # Mark as processing on server BEFORE we start. If this fails, do not
             # invoke the adapter; otherwise the platform will keep returning the
             # same message and the agent may replay side effects.
-            if not await self.link.mark_processing(self.room_id, msg_id):
+            if not await self._claim(msg_id):
                 logger.warning(
                     "ExecutionContext %s: Could not claim backlog message %s",
                     self.room_id,
@@ -1839,6 +1839,14 @@ class ExecutionContext:
         finally:
             self._active_cycle_task = None
 
+    async def _claim(self, msg_id: str) -> bool:
+        """Mark ``msg_id`` processing on the platform; a refused claim never
+        ran the handler, so it gives back the attempt already charged."""
+        if await self.link.mark_processing(self.room_id, msg_id):
+            return True
+        self._retry_tracker.discard_attempt(msg_id)
+        return False
+
     async def _abort_cycle(self, kind: ControlMode, msg_id: str | None) -> bool:
         """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
 
@@ -2103,7 +2111,7 @@ class ExecutionContext:
                 self._cycle_armed = True
 
                 # For messages: mark as processing on server
-                if not await self.link.mark_processing(self.room_id, msg_id):
+                if not await self._claim(msg_id):
                     logger.warning(
                         "ExecutionContext %s: Could not claim message %s",
                         self.room_id,

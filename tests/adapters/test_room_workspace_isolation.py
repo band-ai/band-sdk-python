@@ -16,7 +16,10 @@ from band.adapters.codex import (
     CodexSessionState,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import (
+    ACPClientAdapter,
+    ACPClientAdapterConfig,
+)
 from band.integrations.codex import CodexRequestMethod
 from band.testing import FakeAgentTools
 from band.workspaces import is_host_absolute, resolve_room_workspace
@@ -77,7 +80,8 @@ async def test_adapters_refuse_a_relative_workspace(
         CodexAdapterConfig(workspace_for_room=lambda _room_id: "workspace")
     )
     acp = ACPClientAdapter(
-        command="codex", workspace_for_room=lambda _room_id: "workspace"
+        ACPClientAdapterConfig(command="codex"),
+        workspace_for_room=lambda _room_id: "workspace",
     )
 
     with pytest.raises(ValueError, match="must return an absolute path"):
@@ -97,7 +101,9 @@ async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
         return workspace
 
     codex = CodexAdapter(CodexAdapterConfig(workspace_for_room=resolver))
-    acp = ACPClientAdapter(command="codex", workspace_for_room=resolver)
+    acp = ACPClientAdapter(
+        ACPClientAdapterConfig(command="codex"), workspace_for_room=resolver
+    )
 
     codex._room_client("room-a")
     await acp._runtime_for("room-a")

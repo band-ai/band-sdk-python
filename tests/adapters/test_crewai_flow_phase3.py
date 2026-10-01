@@ -52,6 +52,7 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
 
 from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
+    CrewAIFlowAdapterConfig,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
     get_current_flow_runtime,
@@ -251,9 +252,9 @@ class TestFailedAndMalformed:
             ]
         )
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(text_only_behavior="fallback_send"),
             flow_factory=lambda: _make_flow_returning("partial answer"),
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
-            text_only_behavior="fallback_send",
         )
         await adapter.on_started("agent-1", "")
         tools = FakeAgentTools()

@@ -10,7 +10,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 
-from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD, LangGraphAdapter
+from band.adapters.langgraph import (
+    _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
+    LangGraphAdapter,
+    LangGraphAdapterConfig,
+)
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import PlatformMessage
 
@@ -68,6 +72,11 @@ class TestInitialization:
         with pytest.raises(ValueError, match="Must provide either llm"):
             LangGraphAdapter()
 
+    @pytest.mark.parametrize("recursion_limit", [0, -1])
+    def test_config_rejects_non_positive_recursion_limit(self, recursion_limit: int):
+        with pytest.raises(ValueError, match="greater than 0"):
+            LangGraphAdapterConfig(recursion_limit=recursion_limit)
+
 
 class TestOnStarted:
     """Tests for on_started() method."""
@@ -89,9 +98,9 @@ class TestOnStarted:
     async def test_includes_custom_section(self, mock_llm, mock_checkpointer):
         """Should include custom_section in system prompt."""
         adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(custom_section="Always be concise."),
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            custom_section="Always be concise.",
         )
 
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
@@ -232,7 +241,9 @@ class TestOnCleanup:
         builder.add_edge("capture", END)
         graph = builder.compile(checkpointer=checkpointer)
 
-        first_adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        first_adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=True), graph=graph
+        )
         await first_adapter.on_started("TestBot", "Test bot")
         await first_adapter.on_message(
             msg=PlatformMessage(
@@ -254,7 +265,9 @@ class TestOnCleanup:
             room_id="room-123",
         )
 
-        restarted_adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        restarted_adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=True), graph=graph
+        )
         await restarted_adapter.on_started("TestBot", "Test bot")
         await restarted_adapter.on_message(
             msg=PlatformMessage(
@@ -282,7 +295,9 @@ class TestOnCleanup:
 
     @pytest.mark.asyncio
     async def test_empty_checkpointer_state_still_allows_bootstrap_hydration(self):
-        adapter = LangGraphAdapter(graph=MagicMock(), inject_system_prompt=True)
+        adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=True), graph=MagicMock()
+        )
 
         assert (
             await adapter._checkpointer_has_messages(InMemorySaver(), "room-123")

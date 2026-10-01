@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
+# dependencies = ["band-sdk[agno]>=4.0.0", "anthropic>=0.75.0"]
 # ///
 """
 Agno-owned conversation history with a database.
@@ -79,7 +79,7 @@ async def main() -> None:
     )
 
     adapter = AgnoAdapter(
-        agno_agent,
+        agent=agno_agent,
         # AgnoAdapter passes session_id on each run. This keeps the example tied
         # to the Agno session configured above instead of defaulting to room_id.
         session_id_factory=lambda _room_id: session_id,

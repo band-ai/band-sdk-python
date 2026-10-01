@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from band.adapters.langgraph import LangGraphAdapter
+from band.adapters.langgraph import LangGraphAdapter, LangGraphAdapterConfig
 from band.core.types import Capability, Emit, PlatformMessage
 
 from .helpers import make_capture_graph
@@ -58,9 +58,9 @@ class TestOnMessage:
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
         adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(recursion_limit=17),
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            recursion_limit=17,
         )
         await adapter.on_started("TestBot", "Test bot")
 
@@ -138,8 +138,8 @@ class TestOnMessage:
     ):
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=True),
             graph_factory=MagicMock(return_value=mock_graph),
-            inject_system_prompt=True,
         )
         await adapter.on_started("TestBot", "Test bot")
 
@@ -156,6 +156,32 @@ class TestOnMessage:
         messages = captured_inputs[0]["messages"]
         assert messages[0] == ("system", adapter._system_prompt)
         assert "TestBot" in messages[0][1]
+
+    @pytest.mark.asyncio
+    async def test_simple_pattern_can_opt_out_of_bootstrap_system_prompt(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=False),
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
+        await adapter.on_started("TestBot", "Test bot")
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
+        adapter.graph_factory = MagicMock(return_value=mock_graph)
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        messages = captured_inputs[0]["messages"]
+        assert all(not (isinstance(m, tuple) and m[0] == "system") for m in messages)
 
     @pytest.mark.asyncio
     async def test_graph_factory_rebinds_tools_per_room(self, sample_message):
@@ -363,7 +389,9 @@ class TestOnMessage:
         builder.add_edge("capture_prompt", END)
         graph = builder.compile()
 
-        adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        adapter = LangGraphAdapter(
+            LangGraphAdapterConfig(inject_system_prompt=True), graph=graph
+        )
         await adapter.on_started("TestBot", "Test bot")
 
         await adapter.on_message(

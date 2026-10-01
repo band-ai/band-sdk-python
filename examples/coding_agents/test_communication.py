@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk>=1.2.0", "pydantic-settings>=2.0.0"]
+# dependencies = ["band-sdk>=4.0.0", "pydantic-settings>=2.0.0"]
 # ///
 """Test inter-agent communication between planner and reviewer.
 

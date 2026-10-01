@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import pytest
 
-from band.integrations.a2a import A2AAdapter
-from band.integrations.a2a.gateway import A2AGatewayAdapter
+from band.integrations.a2a import A2AAdapter, A2AAdapterConfig
+from band.integrations.a2a.gateway import (
+    A2AGatewayAdapter,
+    A2AGatewayAdapterConfig,
+)
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
@@ -55,11 +58,13 @@ async def test_band_to_band_round_trip_over_real_a2a(
     """Band Agent A relays a room message through a live A2A gateway to Band
     Agent B (a real Anthropic turn) and posts B's reply back into A's room."""
     port = reserve_port()
-    gateway = A2AGatewayAdapter(gateway_url=f"http://127.0.0.1:{port}", port=port)
+    gateway = A2AGatewayAdapter(
+        A2AGatewayAdapterConfig(gateway_url=f"http://127.0.0.1:{port}", port=port)
+    )
 
     async with running_provisioned_agent(gateway, resource_manager, label="a2a-gw"):
         caller = A2AAdapter(
-            remote_url=f"http://127.0.0.1:{port}/agents/{agent.id}", streaming=True
+            A2AAdapterConfig(remote_url=f"http://127.0.0.1:{port}/agents/{agent.id}")
         )
         async with running_provisioned_agent(
             caller, resource_manager, label="a2a-caller"

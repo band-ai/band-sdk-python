@@ -53,29 +53,41 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
-    """The showcase's base ``CopilotSDKAdapterConfig`` (BYOK on Anthropic).
+def _copilot_adapter(
+    settings: BaselineSettings,
+    *,
+    client: Any | None = None,
+    ask_user: Any | None = None,
+    **config_overrides: Any,
+) -> CopilotSDKAdapter:
+    """The showcase's base ``CopilotSDKAdapter`` (BYOK on Anthropic).
 
     Mirrors the registry builder's shape (``toolkit/builders.py``) so these
-    bespoke tests don't re-derive it; ``overrides`` layers the one knob each
-    test actually cares about (``ask_user=``, ``base_directory=``).
+    bespoke tests don't re-derive it; ``ask_user`` and ``config_overrides``
+    layer the one knob each test actually cares about (``ask_user=``,
+    ``base_directory=``).
     """
     from copilot import (  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
         ProviderConfig,
     )
 
-    return CopilotSDKAdapterConfig(
+    config = CopilotSDKAdapterConfig(
         model=settings.llm_models.anthropic_model,
+        use_logged_in_user=False,
+        custom_section=config_overrides.pop(
+            "custom_section", "Keep responses short and concise."
+        ),
+        **config_overrides,
+    )
+    return CopilotSDKAdapter(
+        config,
+        client=client,
         provider=ProviderConfig(
             type="anthropic",
             base_url="https://api.anthropic.com",
             api_key=settings.llm_credentials.anthropic_api_key,
         ),
-        use_logged_in_user=False,
-        custom_section=overrides.pop(
-            "custom_section", "Keep responses short and concise."
-        ),
-        **overrides,
+        ask_user=ask_user,
     )
 
 
@@ -112,16 +124,14 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
         asked.append(dict(request))
         return {"answer": operator_channel, "wasFreeform": True}
 
-    adapter = CopilotSDKAdapter(
-        _copilot_config(
-            baseline_settings,
-            ask_user=fake_operator,
-            custom_section=(
-                "Keep responses short and concise. A human operator is "
-                "available through the ask_user tool for decisions you "
-                "cannot make alone."
-            ),
-        )
+    adapter = _copilot_adapter(
+        baseline_settings,
+        ask_user=fake_operator,
+        custom_section=(
+            "Keep responses short and concise. A human operator is "
+            "available through the ask_user tool for decisions you "
+            "cannot make alone."
+        ),
     )
 
     async with running_provisioned_agent(
@@ -171,15 +181,13 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
     """
 
     secret_channel = f"channel-{uuid.uuid4().hex[:6]}"
-    adapter = CopilotSDKAdapter(
-        _copilot_config(
-            baseline_settings,
-            ask_user=ASK_USER_ROOM,
-            custom_section=(
-                "Keep responses short and concise. Never invent answers to "
-                "questions you asked — wait for the user."
-            ),
-        )
+    adapter = _copilot_adapter(
+        baseline_settings,
+        ask_user=ASK_USER_ROOM,
+        custom_section=(
+            "Keep responses short and concise. Never invent answers to "
+            "questions you asked — wait for the user."
+        ),
     )
 
     async with running_provisioned_agent(
@@ -256,9 +264,7 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     def make_adapter(phase: str) -> CopilotSDKAdapter:
         # A fresh base_directory per phase: phase 2 has no on-disk session
         # state, so Copilot's native resume cannot help.
-        return CopilotSDKAdapter(
-            _copilot_config(baseline_settings, base_directory=str(tmp_path / phase))
-        )
+        return _copilot_adapter(baseline_settings, base_directory=str(tmp_path / phase))
 
     identity = await resource_manager.provision_agent("copilot-resume-miss")
     room_id = await resource_manager.provision_room(
@@ -361,7 +367,7 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
         replies.assert_present(what="a copilot_sdk[shared-client] reply")
 
     def make_shared_adapter(client: Any) -> CopilotSDKAdapter:
-        return CopilotSDKAdapter(_copilot_config(baseline_settings), client=client)
+        return _copilot_adapter(baseline_settings, client=client)
 
     # The test owns the client; adapters only borrow it.
     client = CopilotClient(use_logged_in_user=False)

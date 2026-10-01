@@ -36,6 +36,7 @@ from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     Reply,
     acp_adapter,
+    fake_agent_config,
     select_option,
     started_acp_adapter,
 )
@@ -557,9 +558,7 @@ class TestTypedModelSelection:
             ]
         ).will_say("Configured")
         adapter = ThinkingIdAdapter(
-            command="fake-agent",
-            inject_band_tools=False,
-            model_selection=ModelSelection(model="large", reasoning_effort="high"),
+            fake_agent_config(model="large", reasoning_effort="high")
         )
 
         async with started_acp_adapter(adapter, agent) as session:
@@ -651,9 +650,7 @@ class TestTypedModelSelection:
     ) -> None:
         agent = FakeACPAgent().will_say("unreachable")
 
-        async with acp_adapter(
-            agent, model_selection=ModelSelection(model="large")
-        ) as session:
+        async with acp_adapter(agent, fake_agent_config(model="large")) as session:
             reply = await session.send("Hello")
 
         assert reply.errors == [

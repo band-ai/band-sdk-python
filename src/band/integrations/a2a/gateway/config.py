@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import PositiveFloat
+
+from band.core.adapterconfig import BaseAdapterConfig
 
 
-@dataclass
-class A2AGatewayAdapterConfig:
-    """Runtime policy for the A2A Gateway adapter."""
+class A2AGatewayAdapterConfig(BaseAdapterConfig):
+    """Settings for the A2A Gateway adapter.
 
-    response_timeout_s: float | None = 300.0
+    Attributes:
+        gateway_url: Base URL for A2A endpoints exposed by this gateway (what
+            remote clients see in agent cards). ``None`` derives
+            ``http://localhost:{port}``; set it when the gateway is reachable
+            at a different public address.
+        port: Port for the HTTP server to listen on.
+        response_timeout_s: Seconds to wait for a peer's reply before failing
+            the A2A task; ``None`` waits indefinitely.
+    """
 
-    def __post_init__(self) -> None:
-        if self.response_timeout_s is not None and self.response_timeout_s <= 0:
-            raise ValueError("response_timeout_s must be positive or None")
+    gateway_url: str | None = None
+    port: int = 10000
+    response_timeout_s: PositiveFloat | None = 300.0
+
+    @property
+    def public_url(self) -> str:
+        """The base URL advertised in agent cards."""
+        return self.gateway_url or f"http://localhost:{self.port}"

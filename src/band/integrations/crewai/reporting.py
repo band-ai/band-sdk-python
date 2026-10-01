@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from band.core.protocols import AgentToolsProtocol
@@ -27,10 +27,13 @@ class ReplyTracker:
 
     ``replied`` flips once ``band_send_message`` succeeds; ``tool_executed`` flips
     once any terminal tool succeeds; ``any_tool_ran`` flips on any tool call at
-    all, success or failure, terminal or not.
+    all, success or failure, terminal or not. ``posts`` keeps what each
+    successful ``band_send_message`` said: CrewAI's final answer does not, so
+    without it the agent forgets its own messages by the next turn.
     """
 
     replied: bool = False
+    posts: list[str] = field(default_factory=list)
     tool_executed: bool = False
     any_tool_ran: bool = False
 
