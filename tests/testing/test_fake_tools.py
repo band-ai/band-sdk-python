@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -1194,3 +1195,31 @@ class TestUsageInAdapterTests:
         assert len(tools.tool_calls) == 2
         assert tools.tool_calls[0]["tool_name"] == "band_send_message"
         assert tools.tool_calls[1]["tool_name"] == "band_add_participant"
+
+
+async def superseded_task(tools: FakeAgentTools, ref: str) -> dict[str, Any]:
+    """Supersede ``ref`` and return the task it replaced."""
+    new_task = await tools.create_task(subject="Again", supersedes_id=ref)
+    return next(t for t in tools.tasks if t.get("superseded_by_id") == new_task["id"])
+
+
+TASK_LOOKUPS: dict[str, Callable[[FakeAgentTools, str], Awaitable[dict[str, Any]]]] = {
+    "get": lambda tools, ref: tools.get_task(ref),
+    "update": lambda tools, ref: tools.update_task(ref, comment="noted"),
+    "supersede": superseded_task,
+}
+
+
+@pytest.mark.parametrize("lookup", TASK_LOOKUPS.values(), ids=TASK_LOOKUPS)
+@pytest.mark.parametrize("ref", ["#2", "2"])
+async def test_a_board_number_finds_its_own_task(
+    lookup: Callable[[FakeAgentTools, str], Awaitable[dict[str, Any]]], ref: str
+) -> None:
+    """The fake resolves "#N" the way the real tools do, as the tool text writes it."""
+    tools = FakeAgentTools()
+    await tools.create_task(subject="First")
+    await tools.create_task(subject="Second")
+
+    task = await lookup(tools, ref)
+
+    assert task["subject"] == "Second"

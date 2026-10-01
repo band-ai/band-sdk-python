@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import pytest
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from band.adapters.opencode.approvals import (
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import Capability
 from band.integrations.opencode import (
+    ApprovalReply,
     OpencodeClientProtocol,
 )
 from band.integrations.opencode.types import (
@@ -94,9 +95,11 @@ class BlockingReplyClient(FakeOpencodeClient):
         gate.started.set()
         await gate.release.wait()
 
-    async def reply_permission(self, *args: Any, **kwargs: Any) -> None:
+    async def reply_permission(
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
+    ) -> None:
         await self._block("permission")
-        await super().reply_permission(*args, **kwargs)
+        await super().reply_permission(permission_id, reply=reply, message=message)
 
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]
@@ -110,7 +113,9 @@ class BlockingReplyClient(FakeOpencodeClient):
 
 
 class FailingReplyClient(FakeOpencodeClient):
-    async def reply_permission(self, *args: Any, **kwargs: Any) -> None:
+    async def reply_permission(
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
+    ) -> None:
         raise RuntimeError("permission reply failed")
 
     async def reject_question(self, request_id: str) -> None:
@@ -188,7 +193,7 @@ DECLINED = {
             id="auto-decline",
         ),
         pytest.param(
-            OpencodeAdapterConfig(approval_wait_timeout_s=1.0),
+            OpencodeAdapterConfig(approval_wait_timeout_s=ASK_DEADLINE_S),
             None,
             DECLINED,
             id="timeout",
@@ -209,7 +214,7 @@ async def test_every_decline_tells_the_model_why(
     await approvals.on_permission_asked(asks.permission("req-1"))
     if room_reply is not None:
         assert await approvals.try_handle_reply(room_reply, "user-1")
-    await asyncio.sleep(2)
+    await time_passes(ASK_DEADLINE_S + 1)
 
     assert client.permission_replies == [sent]
 

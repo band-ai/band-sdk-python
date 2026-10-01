@@ -20,6 +20,7 @@ from band.core.types import (
     PlatformMessage,
 )
 from band.integrations.opencode import (
+    ApprovalReply,
     OpencodePermissionRequest,
     OpencodeQuestionRequest,
 )
@@ -335,7 +336,7 @@ class FakeOpencodeClient:
                 await self._queue.put(event)
 
     async def reply_permission(
-        self, permission_id: str, *, reply: str, message: str | None = None
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
     ) -> None:
         recorded = {"permission_id": permission_id, "reply": reply}
         if message:

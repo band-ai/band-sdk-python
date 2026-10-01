@@ -414,6 +414,12 @@ async def sent_requests() -> AsyncIterator[tuple[AgentTools, list[httpx.Request]
         yield AgentTools("room-123", rest), requests
 
 
+def addressed_task(request: httpx.Request) -> str:
+    """The task id a request's path addresses; empty for the task collection."""
+    _, _, task_path = request.url.path.partition("/tasks/")
+    return task_path.split("/")[0]
+
+
 TASK_READS_AND_WRITES: dict[str, Callable[[AgentTools, str], Awaitable[object]]] = {
     "get": lambda tools, id: tools.get_task(id),
     "update": lambda tools, id: tools.update_task(
@@ -438,8 +444,7 @@ async def test_a_board_number_addresses_its_own_task(
 
     await call(tools, id)
 
-    path = requests[0].url.path.removesuffix("/history")
-    assert path.endswith("/chats/room-123/tasks/1")
+    assert addressed_task(requests[0]) == "1"
 
 
 async def test_a_board_number_supersedes_its_own_task(

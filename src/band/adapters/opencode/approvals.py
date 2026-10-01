@@ -21,9 +21,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeVar
 
-from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
+from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import (
+    ApprovalReply,
     OpencodeClientProtocol,
     OpencodePermissionRequest,
     OpencodeQuestion,

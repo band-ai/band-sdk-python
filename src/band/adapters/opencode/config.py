@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.types import ApprovalMode
-from band.integrations.opencode.client import ApprovalReply
+from band.integrations.opencode import ApprovalReply
 
 QuestionMode = Literal["manual", "auto_reject"]
 
