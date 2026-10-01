@@ -59,3 +59,13 @@ class TaskAssignmentStatus(StrEnum):
     IN_REVIEW = "in_review"
     FAILED = "failed"
     COMPLETED = "completed"
+
+
+def task_path_id(id: str) -> str:
+    """A task UUID or board number ready for a URL path segment.
+
+    The tool text names board numbers "#N", and the REST client puts the id
+    in the path unescaped, where ``#`` would start a URL fragment and turn an
+    update into a POST to the create endpoint.
+    """
+    return id.removeprefix("#")

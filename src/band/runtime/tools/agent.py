@@ -47,6 +47,7 @@ from band.core.task_types import (
     TaskIncludeOption,
     TaskLifecycleState,
     TaskListState,
+    task_path_id,
     validate_include,
 )
 from band.core.tool_filter import sanitize_tool_schema
@@ -1522,7 +1523,7 @@ class AgentTools(AgentToolsProtocol):
         validate_include(include)
         response = await self.rest.agent_api_chat_tasks.get_chat_task(
             chat_id=self.room_id,
-            id=id,
+            id=task_path_id(id),
             include=include,
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
@@ -1585,7 +1586,7 @@ class AgentTools(AgentToolsProtocol):
             kwargs["state"] = state
         response = await self.rest.agent_api_chat_tasks.update_chat_task(
             chat_id=self.room_id,
-            id=id,
+            id=task_path_id(id),
             request_options=DEFAULT_REQUEST_OPTIONS,
             **kwargs,
         )
@@ -1613,7 +1614,7 @@ class AgentTools(AgentToolsProtocol):
         )
         response = await self.rest.agent_api_chat_tasks.get_chat_task_history(
             chat_id=self.room_id,
-            id=id,
+            id=task_path_id(id),
             cursor=cursor,
             limit=limit,
             request_options=DEFAULT_REQUEST_OPTIONS,

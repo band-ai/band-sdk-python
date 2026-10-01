@@ -9,11 +9,13 @@ parameter, rather than passing silently against a hand-rolled fake.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.runtime.tools import AgentTools
 
@@ -386,3 +388,63 @@ class TestSetBoard:
 
         with pytest.raises(RuntimeError, match="Failed to set board"):
             await tools.set_board(goal_title="Ship v2")
+
+
+TASK = {
+    "id": "task-uuid",
+    "number": 2,
+    "chat_room_id": "room-123",
+    "subject": "Look it up",
+    "detail": "",
+    "state": "active",
+    "overall_status": "completed",
+    "assignments": [],
+    "created_by": {"id": "agent-1", "name": "Coordinator", "type": "Agent"},
+    "inserted_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+}
+
+
+@pytest.fixture
+async def requested_paths() -> AsyncIterator[tuple[AgentTools, list[str]]]:
+    """AgentTools on the real REST client, recording each request's path."""
+    paths: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/history"):
+            return httpx.Response(
+                200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
+            )
+        return httpx.Response(200, json={"data": TASK})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
+        rest = AsyncRestClient(
+            api_key="test", base_url="https://example.test", httpx_client=http
+        )
+        yield AgentTools("room-123", rest), paths
+
+
+TASK_READS_AND_WRITES: dict[str, Callable[[AgentTools, str], Awaitable[object]]] = {
+    "get": lambda tools, id: tools.get_task(id),
+    "update": lambda tools, id: tools.update_task(id, status="completed"),
+    "history": lambda tools, id: tools.get_task_history(id),
+}
+
+
+@pytest.mark.parametrize(
+    "call", TASK_READS_AND_WRITES.values(), ids=TASK_READS_AND_WRITES
+)
+@pytest.mark.parametrize("id", ["#2", "2"])
+async def test_a_board_number_addresses_its_own_task(
+    requested_paths: tuple[AgentTools, list[str]],
+    call: Callable[[AgentTools, str], Awaitable[object]],
+    id: str,
+) -> None:
+    """A "#N" board number, as the tool text writes it, must reach the task's
+    own path rather than truncating to the room's task collection."""
+    tools, paths = requested_paths
+
+    await call(tools, id)
+
+    assert paths[0].removesuffix("/history").endswith("/chats/room-123/tasks/2")
