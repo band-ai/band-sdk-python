@@ -10,6 +10,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from band.integrations.codex.types import CodexRequestMethod
+
 logger = logging.getLogger(__name__)
 
 JsonRpcId = int | str
@@ -117,7 +119,7 @@ class BaseJsonRpcClient:
             capabilities["optOutNotificationMethods"] = opt_out_notification_methods
 
         result = await self.request(
-            "initialize",
+            CodexRequestMethod.INITIALIZE,
             {
                 "clientInfo": {
                     "name": client_name,

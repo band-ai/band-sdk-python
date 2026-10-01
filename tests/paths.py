@@ -27,3 +27,9 @@ BUG_HUNTING_SCRIPTS = (
     REPO_ROOT / ".claude" / "skills" / "bug-hunting-via-example" / "scripts"
 )
 CI_SCRIPTS = REPO_ROOT / ".github" / "scripts"
+
+
+def host_absolute_path(*parts: str) -> str:
+    """A path that ``band.workspaces.is_host_absolute`` accepts on the running
+    OS, rooted at the current drive."""
+    return str(Path(Path.cwd().anchor).joinpath(*parts))

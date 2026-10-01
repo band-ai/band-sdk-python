@@ -12,7 +12,7 @@ from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import FeatureKwargs, PlatformMessage
+from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPPermissionRequest,
@@ -53,7 +53,6 @@ from band.workspaces import WorkspaceResolver, workspace_resolver_for
 logger = logging.getLogger(__name__)
 
 DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
-ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
