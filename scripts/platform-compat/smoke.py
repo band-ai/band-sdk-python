@@ -72,6 +72,8 @@ class RoundtripAdapter(SimpleAdapter[str]):
         super().__init__()
         self.token = token
         self.received = asyncio.Event()
+        self.reply_id: str | None = None
+        self.expected_content: str | None = None
 
     async def on_message(
         self,
@@ -85,7 +87,10 @@ class RoundtripAdapter(SimpleAdapter[str]):
         room_id: str,
     ) -> None:
         if self.token in msg.content:
-            await tools.send_message(self.token, mentions=[msg.sender_id])
+            response = await tools.send_message(self.token, mentions=[msg.sender_id])
+            self.reply_id = response.data.id
+            # The platform prepends a UUID placeholder for an implicit mention.
+            self.expected_content = f"@[[{msg.sender_id}]] {self.token}"
             self.received.set()
 
 
@@ -122,8 +127,26 @@ async def scenario(settings: Settings, row: dict[str, object]) -> None:
             )
             await adapter.received.wait()
             messages = await user.list_messages(room_id)
+            row["reply_observation"] = {
+                "message_count": len(messages),
+                "reply_id_present": any(
+                    message.id == adapter.reply_id for message in messages
+                ),
+                "sender_matches": any(
+                    message.id == adapter.reply_id
+                    and message.sender_id == settings.test_agent_id
+                    for message in messages
+                ),
+                "content_matches": any(
+                    message.id == adapter.reply_id
+                    and message.content == adapter.expected_content
+                    for message in messages
+                ),
+            }
             if not any(
-                message.sender_id == settings.test_agent_id and message.content == token
+                message.id == adapter.reply_id
+                and message.sender_id == settings.test_agent_id
+                and message.content == adapter.expected_content
                 for message in messages
             ):
                 raise AssertionError("Agent reply was not persisted in the room")

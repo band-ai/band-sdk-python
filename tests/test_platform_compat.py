@@ -80,6 +80,8 @@ class PlatformCompatTests(unittest.TestCase):
         self,
         *,
         wrong_sender: bool = False,
+        wrong_content: bool = False,
+        wrong_id: bool = False,
         setup_failure: bool = False,
         cleanup_failure: bool = False,
     ) -> dict[str, Any]:
@@ -99,11 +101,16 @@ class PlatformCompatTests(unittest.TestCase):
 
         def build_agent(**kwargs: Any) -> SimpleNamespace:
             adapter = kwargs["adapter"]
+            adapter.reply_id = "agent-reply"
+            adapter.expected_content = f"@[[seeded-user]] {adapter.token}"
             adapter.received.set()
             user.list_messages.return_value = [
                 SimpleNamespace(
                     sender_id="wrong-agent" if wrong_sender else "seeded-agent",
-                    content=adapter.token,
+                    id="other-message" if wrong_id else adapter.reply_id,
+                    content=adapter.token
+                    if wrong_content
+                    else adapter.expected_content,
                 )
             ]
             return agent
@@ -112,7 +119,7 @@ class PlatformCompatTests(unittest.TestCase):
             patch.object(self.smoke.Agent, "create", side_effect=build_agent),
             patch.object(self.smoke, "UserOps", return_value=user),
         ):
-            if setup_failure or wrong_sender:
+            if setup_failure or wrong_sender or wrong_content or wrong_id:
                 with self.assertRaises((RuntimeError, AssertionError)):
                     asyncio.run(self.smoke.scenario(self.settings(), row))
             else:
@@ -123,6 +130,35 @@ class PlatformCompatTests(unittest.TestCase):
 
     def test_roundtrip_checks_persisted_sender(self) -> None:
         self.exercise(wrong_sender=True)
+
+    def test_roundtrip_checks_exact_mention_content(self) -> None:
+        self.exercise(wrong_content=True)
+
+    def test_roundtrip_checks_returned_message_id(self) -> None:
+        self.exercise(wrong_id=True)
+
+    def test_adapter_records_message_id_and_mention_placeholder(self) -> None:
+        adapter = self.smoke.RoundtripAdapter("unique-probe")
+        tools = SimpleNamespace(
+            send_message=AsyncMock(
+                return_value=SimpleNamespace(data=SimpleNamespace(id="sent-message"))
+            )
+        )
+        asyncio.run(
+            adapter.on_message(
+                SimpleNamespace(content="unique-probe", sender_id="test-user"),
+                tools,
+                [],
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="test-room",
+            )
+        )
+        self.assertEqual(
+            (adapter.reply_id, adapter.expected_content, adapter.received.is_set()),
+            ("sent-message", "@[[test-user]] unique-probe", True),
+        )
 
     def test_setup_failure_still_cleans_room(self) -> None:
         self.exercise(setup_failure=True)
