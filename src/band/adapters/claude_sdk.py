@@ -28,6 +28,7 @@ try:
         ClaudeAgentOptions,
         ClaudeSDKClient,
         ResultMessage,
+        SystemMessage,
         TextBlock,
         ThinkingBlock,
         ToolResultBlock,
@@ -44,8 +45,10 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
+        SdkPluginConfig,
         ToolPermissionContext,
     )
 
@@ -54,6 +57,7 @@ except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
 from band_sdk_core import AgentFailure, is_authorized_sender
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import Unpack
 
 from band.converters.claude_sdk import (
@@ -70,6 +74,7 @@ from band.core.protocols import (
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
+    ApprovalMode,
     Capability,
     Emit,
     FeatureKwargs,
@@ -145,41 +150,101 @@ CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
 
-# CLI flags the adapter itself sets to wire Band's MCP server, tool
-# allowlist, prompt, model, permissions, and session stream. ``extra_args``
-# may not carry them, or a passthrough could silently unhook the Band tools.
-_RESERVED_CLI_FLAGS: frozenset[str] = frozenset(
+# Flags the SDK emits from the options the adapter builds (pinned against the
+# SDK's real command by test_cli_options.py).
+SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
     {
-        "mcp-config",
-        "strict-mcp-config",
+        "add-dir",
         "allowedTools",
+        "append-system-prompt",
+        "effort",
+        "fallback-model",
+        "input-format",
+        "max-thinking-tokens",
+        "mcp-config",
+        "model",
+        "output-format",
+        "permission-mode",
+        "permission-prompt-tool",
+        "plugin-dir",
+        "resume",
+        "setting-sources",
+        "verbose",
+    }
+)
+# Flags the adapter never sets that would still unhook the Band tools, bypass
+# its permission gating or host-config isolation, or break per-room sessions.
+BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
+    {
         "allowed-tools",
         "disallowedTools",
         "disallowed-tools",
         "tools",
-        "permission-mode",
-        "permission-prompt-tool",
-        "setting-sources",
+        "strict-mcp-config",
         "system-prompt",
         "system-prompt-file",
-        "append-system-prompt",
-        "model",
-        "fallback-model",
-        "input-format",
-        "output-format",
-        "resume",
+        "settings",
+        "agents",
+        "bare",
+        "dangerously-skip-permissions",
+        "allow-dangerously-skip-permissions",
         "continue",
         "fork-session",
         "session-id",
         "print",
     }
 )
+RESERVED_CLI_FLAGS: frozenset[str] = SDK_OWNED_CLI_FLAGS | BAND_UNSAFE_CLI_FLAGS
 
 
-def _reserved_extra_args(extra_args: dict[str, str | None]) -> list[str]:
-    return sorted(
-        flag for flag in extra_args if flag.lstrip("-") in _RESERVED_CLI_FLAGS
-    )
+class ClaudeCLIOptions(BaseModel):
+    """How the Claude CLI process is launched; never how Band is wired into it.
+
+    Attributes:
+        cli_path: ``claude`` executable to launch instead of the one bundled
+            with ``claude-agent-sdk``.
+        plugin_dirs: Local Claude Code plugin folders to load; their skills
+            load without changing ``cwd`` or ``setting_sources``.
+        add_dirs: Additional directories Claude may access (``--add-dir``).
+        env: Extra environment variables for the CLI process only; the host's
+            ``os.environ`` is left untouched.
+        extra_args: Additional CLI flags by bare name, ``{"flag": "value"}``
+            or ``{"flag": None}`` for a bare flag. Flags in
+            ``RESERVED_CLI_FLAGS`` are rejected.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    cli_path: str | None = None
+    plugin_dirs: tuple[str, ...] = ()
+    add_dirs: tuple[str, ...] = ()
+    env: dict[str, str] = Field(default_factory=dict)
+    extra_args: dict[str, str | None] = Field(default_factory=dict)
+
+    @field_validator("extra_args")
+    @classmethod
+    def _reject_unsafe_flags(
+        cls, extra_args: dict[str, str | None]
+    ) -> dict[str, str | None]:
+        if dashed := sorted(flag for flag in extra_args if flag.startswith("-")):
+            raise ValueError(f"extra_args keys are bare flag names: {dashed}")
+        if reserved := sorted(RESERVED_CLI_FLAGS.intersection(extra_args)):
+            raise ValueError(
+                f"extra_args may not set adapter-owned CLI flags: {reserved}"
+            )
+        return extra_args
+
+    def sdk_fields(self) -> dict[str, Any]:
+        """The ``ClaudeAgentOptions`` fields these options own."""
+        return {
+            "cli_path": self.cli_path,
+            "plugins": [
+                SdkPluginConfig(type="local", path=path) for path in self.plugin_dirs
+            ],
+            "add_dirs": list(self.add_dirs),
+            "env": dict(self.env),
+            "extra_args": dict(self.extra_args),
+        }
 
 
 # Upper bound on draining the interrupted turn's final result after a
@@ -187,9 +252,14 @@ def _reserved_extra_args(extra_args: dict[str, str | None]) -> list[str]:
 _TIMEOUT_DRAIN_SECONDS = 10.0
 
 
-# Approval flow types (mirrors Codex adapter patterns)
-ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
+
+# dontAsk denies every prompt without calling can_use_tool, so no approval_mode
+# ever gets to decide.
+DONT_ASK_PERMISSION_MODE: PermissionMode = "dontAsk"
+# The mode the CLI starts in when the account or model can't run "auto".
+AUTO_PERMISSION_MODE: PermissionMode = "auto"
+AUTO_FALLBACK_PERMISSION_MODE: PermissionMode = "default"
 
 # Chat-facing approval prompt/resolution text (mirrors
 # band.adapters.opencode.approvals's constant style) -- named so callers
@@ -348,10 +418,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await agent.run()
     """
 
-    PermissionMode = Literal[
-        "default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"
-    ]
-
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
@@ -371,11 +437,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
         setting_sources: list[str] | None = None,
-        plugin_dirs: list[str] | None = None,
-        cli_path: str | None = None,
-        env: dict[str, str] | None = None,
-        add_dirs: list[str] | None = None,
-        extra_args: dict[str, str | None] | None = None,
+        cli: ClaudeCLIOptions | None = None,
         turn_timeout_s: float | None = None,
         # Chat-based approval flow (opt-in)
         approval_mode: ApprovalMode | None = None,
@@ -404,26 +466,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             effort: Response effort level. ``None`` uses the model default.
-            permission_mode: SDK permission mode. ``"dontAsk"`` never prompts
-                and denies any tool not pre-approved by allow rules;
-                ``"auto"`` lets a model classifier approve or deny each tool
-                call and depends on the Claude account and model. A mode the
-                CLI rejects fails the turn; there is no fallback.
+            permission_mode: Claude Code permission mode, forwarded to the CLI
+                (https://code.claude.com/docs/en/permission-modes; how each
+                mode meets ``approval_mode`` is in docs/adapters/claude_sdk.md).
+                ``"dontAsk"`` with any ``approval_mode`` raises ``ValueError``.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
             cwd: Working directory for Claude Code sessions. If set, Claude Code
                 will operate in this directory (e.g., a mounted git repo).
-            plugin_dirs: Local Claude Code plugin folders to load (each maps
-                to ``{"type": "local", "path": ...}``); their skills load
-                without changing ``cwd`` or ``setting_sources``.
-            cli_path: Path to the ``claude`` executable to launch instead of
-                the one bundled with ``claude-agent-sdk``.
-            env: Extra environment variables for the Claude CLI process only;
-                the host's own ``os.environ`` is left untouched.
-            add_dirs: Additional directories Claude may access (``--add-dir``).
-            extra_args: Additional CLI flags, ``{"flag": "value"}`` or
-                ``{"flag": None}`` for a bare flag.
+            cli: How the Claude CLI process is launched (executable, plugins,
+                extra directories, env, extra flags); see ``ClaudeCLIOptions``.
             turn_timeout_s: Seconds a turn may run before it is interrupted and
                 a timeout failure is posted to the room. ``None`` (default)
                 leaves turns unbounded. A manual approval wait counts toward
@@ -469,19 +522,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
         self.effort = effort
-        self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
+        if permission_mode == DONT_ASK_PERMISSION_MODE and approval_mode is not None:
+            raise ValueError(
+                f"permission_mode={DONT_ASK_PERMISSION_MODE!r} denies tool calls "
+                f"without consulting approval_mode={approval_mode!r}; "
+                "set approval_mode=None"
+            )
+        self.permission_mode: PermissionMode = permission_mode
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
-        self.plugin_dirs: list[str] = list(plugin_dirs or [])
-        self.cli_path = cli_path
-        self.env: dict[str, str] = dict(env or {})
-        self.add_dirs: list[str] = list(add_dirs or [])
-        self.extra_args: dict[str, str | None] = dict(extra_args or {})
-        if reserved := _reserved_extra_args(self.extra_args):
-            raise ValueError(
-                f"extra_args may not set adapter-owned CLI flags: {reserved}"
-            )
+        self.cli = cli or ClaudeCLIOptions()
         if turn_timeout_s is not None and turn_timeout_s <= 0:
             raise ValueError("turn_timeout_s must be > 0 when set")
         self.turn_timeout_s = turn_timeout_s
@@ -607,6 +658,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # cast: the public param is list[str]; the SDK types it as a list of the
             # "user"/"project"/"local" literals. The CLI validates the values.
             setting_sources=cast("Any", self.setting_sources),
+            **self.cli.sdk_fields(),
         )
 
         # Add extended thinking if configured
@@ -616,8 +668,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # Set working directory if configured
         if self.cwd:
             sdk_options.cwd = self.cwd
-
-        self._apply_cli_passthrough(sdk_options)
 
         # When approval_mode is set, add a PreToolUse hook that returns
         # "ask" for native tools so the SDK delegates to can_use_tool instead
@@ -671,21 +721,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
         return backend
-
-    def _apply_cli_passthrough(self, sdk_options: ClaudeAgentOptions) -> None:
-        """Map the host's CLI passthrough options; omitted ones stay SDK defaults."""
-        if self.plugin_dirs:
-            sdk_options.plugins = [
-                {"type": "local", "path": path} for path in self.plugin_dirs
-            ]
-        if self.cli_path:
-            sdk_options.cli_path = self.cli_path
-        if self.env:
-            sdk_options.env = dict(self.env)
-        if self.add_dirs:
-            sdk_options.add_dirs = list(self.add_dirs)
-        if self.extra_args:
-            sdk_options.extra_args = dict(self.extra_args)
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
@@ -1094,6 +1129,22 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 case UserMessage():
                     replied_this_turn |= await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
+                    )
+                # The CLI announces every mode change in a status message; only
+                # the "auto" fallback is unexpected, since plan-mode tools
+                # switch modes on purpose.
+                case SystemMessage(
+                    subtype="status", data={"permissionMode": str() as mode}
+                ) if (
+                    self.permission_mode == AUTO_PERMISSION_MODE
+                    and mode == AUTO_FALLBACK_PERMISSION_MODE
+                ):
+                    logger.warning(
+                        "Room %s: Claude CLI runs permission mode %s instead of "
+                        "the requested %s",
+                        room_id,
+                        mode,
+                        self.permission_mode,
                     )
                 case ResultMessage():
                     await self._on_turn_complete(

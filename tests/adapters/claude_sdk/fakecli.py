@@ -96,6 +96,9 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # Modes the account or model can't run; the CLI falls back to
+        # "default" instead of failing.
+        self.unavailable_modes: set[str] = set()
         # A wedged CLI: interrupt requests are acknowledged but the turn
         # neither stops nor ends.
         self.ignore_interrupt = False
@@ -136,6 +139,7 @@ class FakeCLISession(Transport):
     def __init__(self, claude: FakeClaude, options: ClaudeAgentOptions) -> None:
         self.claude = claude
         self.options = options
+        self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
         self._outbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._awaiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -221,6 +225,16 @@ class FakeCLISession(Transport):
         ending = EndTurn()
         try:
             self._emit(type="system", subtype="init", session_id=self.session_id)
+            if self.permission_mode in self.claude.unavailable_modes:
+                # The real CLI announces the fallback once, in a status message.
+                self.permission_mode = "default"
+                self._emit(
+                    type="system",
+                    subtype="status",
+                    status=None,
+                    permissionMode=self.permission_mode,
+                    session_id=self.session_id,
+                )
             for step in turn:
                 match step:
                     case ModelDecision():
@@ -348,7 +362,7 @@ class FakeCLISession(Transport):
         )
 
     def _auto_approved(self, tool_name: str) -> bool:
-        match self.options.permission_mode:
+        match self.permission_mode:
             case "bypassPermissions":
                 return True
             case "acceptEdits" if tool_name in EDIT_TOOLS:
@@ -358,10 +372,7 @@ class FakeCLISession(Transport):
         )
 
     async def _can_use_tool(self, tool_use_id: str, call: ToolCall) -> dict[str, Any]:
-        if (
-            self.options.can_use_tool is None
-            or self.options.permission_mode == "dontAsk"
-        ):
+        if self.options.can_use_tool is None or self.permission_mode == "dontAsk":
             return {"behavior": "deny", "message": "Permission denied"}
         response = await self._ask_sdk(
             subtype="can_use_tool",
