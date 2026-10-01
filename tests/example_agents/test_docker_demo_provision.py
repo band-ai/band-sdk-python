@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from band_rest import AsyncRestClient
+from band_rest.types import BulkDeletionItemStatus, BulkDeletionJobStatus
 from pytest_httpx import HTTPXMock
 
 from tests.loaders import load_script_module
@@ -86,3 +87,13 @@ async def test_a_room_left_undeleted_keeps_the_ledger_for_a_retry(
         await provision.delete_rooms(client())
 
     assert ledger.read_text(encoding="utf-8").split() == ["room-1"]
+
+
+def literal_values(alias: object) -> set[object]:
+    """The values of a generated ``Literal[...] | Any`` status alias."""
+    return {value for arm in get_args(alias) for value in get_args(arm)}
+
+
+def test_status_constants_are_values_the_client_declares() -> None:
+    assert provision.FINISHED_JOB_STATUSES <= literal_values(BulkDeletionJobStatus)
+    assert provision.DELETED_ITEM_STATUS in literal_values(BulkDeletionItemStatus)
