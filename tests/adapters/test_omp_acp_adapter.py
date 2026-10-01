@@ -40,6 +40,35 @@ from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestOmpACPAdapterConstruction:
+    def test_model_is_selected_on_the_omp_command_line(self) -> None:
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(model="google/gemini-2.5-flash"))
+
+        assert "--model=google/gemini-2.5-flash" in adapter._command
+
+    def test_one_model_selects_the_flag_and_the_provider_key_env(self) -> None:
+        adapter = OmpACPAdapter(
+            OmpACPAdapterConfig(
+                model="anthropic/claude-haiku-4-5",
+                api_key="secret",
+                env={"PI_CODING_AGENT_DIR": "/agent-home"},
+            )
+        )
+
+        assert "--model=anthropic/claude-haiku-4-5" in adapter._command
+        assert adapter._env == {
+            "PI_CODING_AGENT_DIR": "/agent-home",
+            "ANTHROPIC_API_KEY": "secret",
+        }
+
+    def test_api_key_without_model_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="api_key needs model"):
+            OmpACPAdapterConfig(api_key="secret")
+
+    def test_api_key_stays_out_of_the_config_repr(self) -> None:
+        config = OmpACPAdapterConfig(model="openai/gpt-5.4-mini", api_key="secret")
+
+        assert "secret" not in repr(config)
+
     def test_default_command_gets_final_always_ask(self) -> None:
         adapter = OmpACPAdapter()
         assert adapter._command[-2:] == [

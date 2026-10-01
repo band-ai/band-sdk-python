@@ -223,7 +223,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
-- `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline reader is the single Copilot-hosted auth smoke (`test_copilot_hosted_auth_replies`, skips when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline readers are the Copilot-hosted smokes (`test_copilot_hosted_auth_replies`, `test_copilot_switches_model_and_effort_in_a_live_room`, and the `hosted-effort` cell of `test_copilot_turn_fails_loudly_on_an_unadvertised_selection`, which skip when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which older Haiku models do not support)
@@ -376,6 +376,13 @@ install` it and exercise the real call in this repo's venv.
   If writing the assertion requires re-deriving *how* the code decided
   something, the test is checking the wrong thing — assert the decision
   itself.
+- **Tests run on Ubuntu and Windows CI — test across OSes, don't skip one.**
+  Build host paths with `tmp_path` or `tests.paths.host_absolute_path`, never a
+  hard-coded `"/opt/..."` (no drive, so relative on Windows); check absoluteness
+  with `band.workspaces.is_host_absolute`. Where behavior differs per OS, write
+  one parametrize table that runs everywhere, each row naming the `os.name`
+  values that accept it. `skipif(os.name ...)` is only for a boundary that
+  cannot run on that OS, never for a path or separator assumption.
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a

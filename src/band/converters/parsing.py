@@ -94,13 +94,17 @@ def parse_tool_call(content: str) -> ParsedToolCall | None:
     )
 
 
-def parse_tool_result(content: str) -> ParsedToolResult | None:
+def parse_tool_result(
+    content: str, *, require_call_id: bool = True
+) -> ParsedToolResult | None:
     """Parse a tool_result event from JSON content.
 
     Expected format: {"name": "...", "output": "...", "tool_call_id": "...", "is_error": bool}
 
     Args:
         content: JSON string containing tool result data
+        require_call_id: Reject uncorrelated results for conversation conversion;
+            observation-only readers can inspect their content without an ID.
 
     Returns:
         ParsedToolResult if successful, None if parsing fails or required fields missing
@@ -120,12 +124,14 @@ def parse_tool_result(content: str) -> ParsedToolResult | None:
     tool_call_id = event.get(ToolEventKey.TOOL_CALL_ID)
     tool_name = event.get(ToolEventKey.NAME)
 
-    if not isinstance(tool_call_id, str) or not tool_call_id:
+    if require_call_id and (not isinstance(tool_call_id, str) or not tool_call_id):
         logger.warning(
             "Skipping tool_result with missing tool_call_id: %s",
             repr(content[:100]),
         )
         return None
+    if not isinstance(tool_call_id, str):
+        tool_call_id = ""
 
     if not isinstance(tool_name, str) or not tool_name:
         logger.warning(

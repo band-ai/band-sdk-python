@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     )
     from band.adapters.agno import AgnoAdapter as AgnoAdapter
     from band.adapters.anthropic import AnthropicAdapter as AnthropicAdapter
+    from band.adapters.claude_sdk import ClaudeCLIOptions as ClaudeCLIOptions
     from band.adapters.claude_sdk import ClaudeSDKAdapter as ClaudeSDKAdapter
     from band.adapters.codex import (
         CodexAdapter as CodexAdapter,
@@ -115,7 +116,7 @@ __all__, __getattr__ = lazy_exports(
     langgraph=["LangGraphAdapter"],
     anthropic=["AnthropicAdapter"],
     pydantic_ai=["PydanticAIAdapter"],
-    claude_sdk=["ClaudeSDKAdapter"],
+    claude_sdk=["ClaudeCLIOptions", "ClaudeSDKAdapter"],
     copilot_sdk=["CopilotSDKAdapter", "CopilotSDKAdapterConfig"],
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
     cursor_acp=["CursorACPAdapter", "CursorACPAdapterConfig"],

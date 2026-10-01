@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band.integrations.omp import DEFAULT_OMP_MODEL
 from tests.paths import ENV_TEST_FILE
 
 # Load .env.test into os.environ (idempotent, non-overriding) — the single
@@ -57,10 +58,10 @@ class BandCredentials(BaseSettings):
         env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
     )
 
-    api_key: str = ""  # BAND_API_KEY (agent / app key)
-    api_key_user: str = ""  # BAND_API_KEY_USER (the test-user / driver key)
+    api_key: str = Field(default="", repr=False)  # BAND_API_KEY (agent / app key)
+    api_key_user: str = Field(default="", repr=False)  # BAND_API_KEY_USER
     # Optional second human user, for smokes exercising two-user interaction.
-    api_key_user_2: str = ""  # BAND_API_KEY_USER_2
+    api_key_user_2: str = Field(default="", repr=False)  # BAND_API_KEY_USER_2
 
 
 class BaselineRun(BaseSettings):
@@ -90,6 +91,8 @@ class BaselineRun(BaseSettings):
     # to this path at session end. Empty = don't emit (the local default). CI sets one
     # path per lane; a final job merges them (see scorecard.py).
     scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
+    # Emit content-free approval phase records in focused first-attempt runs.
+    first_attempt_diagnostics: bool = False  # BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS
 
 
 class LLMCredentials(BaseSettings):
@@ -99,10 +102,10 @@ class LLMCredentials(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    openai_api_key: str = ""  # OPENAI_API_KEY
-    anthropic_api_key: str = ""  # ANTHROPIC_API_KEY
-    google_api_key: str = ""  # GOOGLE_API_KEY (Gemini Developer API)
-    gemini_api_key: str = ""  # GEMINI_API_KEY (alternative Gemini key var)
+    openai_api_key: str = Field(default="", repr=False)  # OPENAI_API_KEY
+    anthropic_api_key: str = Field(default="", repr=False)  # ANTHROPIC_API_KEY
+    google_api_key: str = Field(default="", repr=False)  # GOOGLE_API_KEY
+    gemini_api_key: str = Field(default="", repr=False)  # GEMINI_API_KEY
     # Vertex AI config (an alternative to a Gemini Developer key).
     google_genai_use_vertexai: str = ""  # GOOGLE_GENAI_USE_VERTEXAI ("true"/"")
     google_cloud_project: str = ""  # GOOGLE_CLOUD_PROJECT
@@ -149,7 +152,7 @@ class Backends(BaseSettings):
     # (advertised to the dockerized Letta via LETTA_MCP_ADVERTISED_HOST); setting
     # MCP_SERVER_URL switches the builder to an external band-mcp instead.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
-    letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
+    letta_api_key: str = Field(default="", repr=False)  # LETTA_API_KEY
     letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
     # Letta's docker server requires an embedding model on agent create.
     letta_embedding: str = "openai/text-embedding-3-small"  # LETTA_EMBEDDING
@@ -167,22 +170,21 @@ class Backends(BaseSettings):
     # Cursor CLI over ACP. Cursor's API key is passed only to its subprocess;
     # command overrides preserve local installations outside PATH.
     cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
-    cursor_api_key: str = ""  # CURSOR_API_KEY
+    cursor_api_key: str = Field(default="", repr=False)  # CURSOR_API_KEY
 
     # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
-    # provider-qualified OMP_MODEL; override the binary + args via OMP_COMMAND.
+    # provider-qualified OMP_MODEL (passed as --model); override binary/args via OMP_COMMAND.
     omp_command: str = ""  # OMP_COMMAND
-    omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
+    omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
-    # Copilot-hosted auth for the single non-BYOK smoke
-    # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix
-    # cells never read it. The smoke skips when unset.
-    github_token: str = ""  # GITHUB_TOKEN
-    # Pins that same smoke's model instead of leaving it to Copilot's `auto`
-    # picker, which can land on an expensive reasoning-tier model (observed:
-    # gpt-5.6-terra). gpt-5.6-luna is the cheapest model in the GPT-5.6 family
-    # while still agentic/tool-calling, so the one billed reply turn stays
-    # cheap and deterministic across runs.
+    # Copilot-hosted auth for the non-BYOK smokes in test_copilot_acp.py; the
+    # BYOK matrix cells never read it. Those smokes skip when unset.
+    github_token: str = Field(default="", repr=False)  # GITHUB_TOKEN
+    # Those smokes' typed model (see hermetic_copilot_config) rather than
+    # Copilot's own pick, which can be an expensive reasoning-tier model
+    # (observed: gpt-5.6-terra). gpt-5.6-luna is the cheapest model in the
+    # GPT-5.6 family while still agentic/tool-calling, so their billed turns
+    # stay cheap and deterministic across runs.
     copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
 
