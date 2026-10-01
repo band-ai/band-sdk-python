@@ -23,12 +23,12 @@ from a2a.types import (
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.protocols import FAILURE_CODE_TIMEOUT
+from band.core.redaction import redact_credentials
 from band.core.types import PlatformMessage
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.adapter import (
     BandAgentExecutor,
     GatewayRequest,
-    _redact_credentials,
 )
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
@@ -389,7 +389,7 @@ class TestGatewayExecution:
     def test_redact_credentials_full_value_scheme_prefixed(self) -> None:
         """A scheme-prefixed credential value (a space between the key and
         the secret) must be redacted in full, not just up to that space."""
-        redacted = _redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
+        redacted = redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
         assert "sk-live-abcdef123456" not in redacted
         assert redacted == "Authorization=[REDACTED]"
 
@@ -405,7 +405,7 @@ class TestGatewayExecution:
         """token/authorization/api_key aren't the only credential-shaped
         keywords a peer's error text can embed -- password, secret (and its
         client_secret compound), and access_key must be redacted too."""
-        redacted = _redact_credentials(text)
+        redacted = redact_credentials(text)
         secret_value = text.split("=", 1)[1]
         assert secret_value not in redacted
 
@@ -699,10 +699,7 @@ class TestGatewayResponses:
     async def test_relayed_peer_failure_redacts_nested_credentials_in_detail(
         self,
     ) -> None:
-        """A peer's AgentFailure.detail can nest a credential-bearing string
-        inside a dict/list (e.g. Codex's own codex_additional_details) --
-        _redact_credentials_deep must recurse into it, not just the flat
-        message string."""
+        """Nested detail credentials are redacted before relay."""
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
@@ -713,6 +710,8 @@ class TestGatewayResponses:
             "detail": {
                 "codex_additional_details": {
                     "raw": ["upstream said: token=sk-live-nested-secret"],
+                    "token=sk-live-key-secret": "diagnostic value",
+                    "clientSecret": "sk-live-bare-secret",
                 },
             },
         }
@@ -730,6 +729,8 @@ class TestGatewayResponses:
         assert event.status.state == TaskState.TASK_STATE_FAILED
         detail = event.metadata["failure"]["detail"]
         assert "sk-live-nested-secret" not in str(detail)
+        assert "sk-live-key-secret" not in str(detail)
+        assert detail["codex_additional_details"]["clientSecret"] == "[REDACTED]"
 
     @pytest.mark.asyncio
     async def test_drops_non_dict_peer_failure_metadata(self) -> None:
