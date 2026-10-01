@@ -697,7 +697,7 @@ class RoomApprovals:
 
     @asynccontextmanager
     async def _reply_guard(self, action: str, request_id: str) -> AsyncIterator[None]:
-        """Shared failure handling for the two reply context managers below."""
+        """Failure handling for a reply sent through ``_client_reply``."""
         try:
             yield
         except Exception as error:

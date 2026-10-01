@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from band.integrations.opencode import ApprovalReply
 from band.integrations.opencode.client import HttpOpencodeClient
 
 
@@ -279,21 +280,25 @@ async def test_prompt_async_sends_all_optional_fields_when_given(
 
 
 @pytest.mark.parametrize(
-    ("message", "body"),
+    ("reply", "message", "body"),
     [
-        (None, {"reply": "once"}),
+        ("once", None, {"reply": "once"}),
         (
+            "reject",
             "Declined in the room.",
             {"reply": "reject", "message": "Declined in the room."},
         ),
     ],
 )
 async def test_reply_permission_posts_the_reply_and_optional_message(
-    fake_server: FakeOpencodeServer, message: str | None, body: dict[str, str]
+    fake_server: FakeOpencodeServer,
+    reply: ApprovalReply,
+    message: str | None,
+    body: dict[str, str],
 ) -> None:
     client = make_client(fake_server)
     try:
-        await client.reply_permission("perm-1", reply=body["reply"], message=message)
+        await client.reply_permission("perm-1", reply=reply, message=message)
         request = fake_server.requests[-1]
         assert request["path"] == "/permission/perm-1/reply"
         assert request["body"] == body

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import UTC, datetime
 
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
@@ -20,35 +18,18 @@ logger = logging.getLogger(__name__)
 
 # The runtime and execution loggers decide what a control signal does to a room.
 SDK_CONTROL_LOGGER = "band.runtime"
-SDK_LOG_TAIL_LINES = 60
-
-
-class LogTail(logging.Handler):
-    """The last lines a logger tree emitted, kept for a failure message."""
-
-    def __init__(self) -> None:
-        super().__init__(logging.DEBUG)
-        self.lines: deque[str] = deque(maxlen=SDK_LOG_TAIL_LINES)
-
-    def emit(self, record: logging.LogRecord) -> None:
-        stamp = datetime.fromtimestamp(record.created, tz=UTC).strftime("%H:%M:%S.%f")[
-            :-3
-        ]
-        self.lines.append(f"{stamp} {record.name} {record.getMessage()}")
 
 
 @contextmanager
-def sdk_log_tail() -> Iterator[LogTail]:
-    """Record the SDK's control-path logs at DEBUG for the block's duration."""
-    tail = LogTail()
+def sdk_control_logs_at_debug() -> Iterator[None]:
+    """Let the SDK's control-path DEBUG lines reach pytest's captured log, which
+    a failing control test prints; they are otherwise filtered at the logger."""
     sdk_logger = logging.getLogger(SDK_CONTROL_LOGGER)
     previous_level = sdk_logger.level
-    sdk_logger.addHandler(tail)
     sdk_logger.setLevel(logging.DEBUG)
     try:
-        yield tail
+        yield
     finally:
-        sdk_logger.removeHandler(tail)
         sdk_logger.setLevel(previous_level)
 
 
@@ -59,8 +40,7 @@ class ControlRuntime:
     replayed work completes. This makes STOP -> PLAY observable without an LLM.
     """
 
-    def __init__(self, *, log_tail: LogTail, block_cycles: int = 1) -> None:
-        self._log_tail = log_tail
+    def __init__(self, *, block_cycles: int = 1) -> None:
         self._block_cycles = block_cycles
         self._invocations = 0
         self.started = asyncio.Event()
@@ -92,11 +72,9 @@ class ControlRuntime:
     def diagnostics(self) -> str:
         """What the SDK saw and did, for a control test's failure message."""
         modes = [mode.value for mode in self.received_control_modes]
-        log = "\n".join(self._log_tail.lines) or "(none)"
         return (
             f"SDK received modes: {modes}; "
-            f"handler completed messages: {self.completed_message_ids}; "
-            f"SDK log tail:\n{log}"
+            f"handler completed messages: {self.completed_message_ids}"
         )
 
     async def wait_for_start(self, *, deadline_s: float) -> None:
@@ -120,8 +98,8 @@ async def running_control_runtime(
         ws_url=settings.endpoints.ws_url,
         rest_url=settings.endpoints.rest_url,
     )
-    with sdk_log_tail() as log_tail:
-        control = ControlRuntime(log_tail=log_tail)
+    with sdk_control_logs_at_debug():
+        control = ControlRuntime()
         runtime = AgentRuntime(
             link=link, agent_id=agent.id, on_execute=control.on_execute
         )
