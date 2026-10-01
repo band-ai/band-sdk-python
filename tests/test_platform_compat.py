@@ -15,6 +15,10 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 from xml.etree import ElementTree
 
+import httpx
+from band_rest import AsyncRestClient
+
+from band.runtime.tools.agent import AgentTools
 from tests.paths import REPO_ROOT
 
 SCRIPTS = REPO_ROOT / "scripts" / "platform-compat"
@@ -139,26 +143,79 @@ class PlatformCompatTests(unittest.TestCase):
 
     def test_adapter_records_message_id_and_mention_placeholder(self) -> None:
         adapter = self.smoke.RoundtripAdapter("unique-probe")
-        tools = SimpleNamespace(
-            send_message=AsyncMock(
-                return_value=SimpleNamespace(data=SimpleNamespace(id="sent-message"))
+
+        async def roundtrip() -> None:
+            transport = httpx.MockTransport(
+                lambda request: httpx.Response(
+                    201,
+                    json={
+                        "data": {
+                            "id": "sent-message",
+                            "success": True,
+                            "recipients": [],
+                        }
+                    },
+                )
             )
-        )
-        asyncio.run(
-            adapter.on_message(
-                SimpleNamespace(content="unique-probe", sender_id="test-user"),
-                tools,
-                [],
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="test-room",
-            )
-        )
+            async with httpx.AsyncClient(transport=transport) as client:
+                rest = AsyncRestClient(
+                    base_url="http://localhost",
+                    api_key="fake-agent",
+                    httpx_client=client,
+                )
+                tools = AgentTools(
+                    room_id="test-room",
+                    rest=rest,
+                    participants=[{"id": "test-user", "handle": "test-user"}],
+                )
+                await adapter.on_message(
+                    SimpleNamespace(content="unique-probe", sender_id="test-user"),
+                    tools,
+                    [],
+                    None,
+                    None,
+                    is_session_bootstrap=False,
+                    room_id="test-room",
+                )
+
+        asyncio.run(roundtrip())
         self.assertEqual(
             (adapter.reply_id, adapter.expected_content, adapter.received.is_set()),
             ("sent-message", "@[[test-user]] unique-probe", True),
         )
+
+    def test_callback_failures_wake_waiter_without_exposing_exception_body(
+        self,
+    ) -> None:
+        for result, error, reason in (
+            (None, None, "SDK send_message returned no reply"),
+            (
+                None,
+                RuntimeError("secret-api-body"),
+                "SDK reply callback failed (RuntimeError)",
+            ),
+        ):
+            with self.subTest(reason=reason):
+                adapter = self.smoke.RoundtripAdapter("probe")
+                tools = SimpleNamespace(
+                    send_message=AsyncMock(return_value=result, side_effect=error)
+                )
+
+                async def exercise_failure(adapter: Any, tools: Any) -> None:
+                    with self.assertRaises(RuntimeError):
+                        await adapter.on_message(
+                            SimpleNamespace(content="probe", sender_id="test-user"),
+                            tools,
+                            [],
+                            None,
+                            None,
+                            is_session_bootstrap=False,
+                            room_id="test-room",
+                        )
+                    await asyncio.wait_for(adapter.received.wait(), timeout=0.1)
+
+                asyncio.run(exercise_failure(adapter, tools))
+                self.assertEqual(adapter.failure_reason, reason)
 
     def test_setup_failure_still_cleans_room(self) -> None:
         self.exercise(setup_failure=True)

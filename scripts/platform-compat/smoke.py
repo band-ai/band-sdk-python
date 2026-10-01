@@ -67,6 +67,10 @@ class Settings(ReportSettings):
                 )
 
 
+class ReplyError(RuntimeError):
+    """A fixed, credential-free diagnostic from the reply callback."""
+
+
 class RoundtripAdapter(SimpleAdapter[str]):
     def __init__(self, token: str) -> None:
         super().__init__()
@@ -74,6 +78,7 @@ class RoundtripAdapter(SimpleAdapter[str]):
         self.received = asyncio.Event()
         self.reply_id: str | None = None
         self.expected_content: str | None = None
+        self.failure_reason: str | None = None
 
     async def on_message(
         self,
@@ -87,11 +92,25 @@ class RoundtripAdapter(SimpleAdapter[str]):
         room_id: str,
     ) -> None:
         if self.token in msg.content:
-            response = await tools.send_message(self.token, mentions=[msg.sender_id])
-            self.reply_id = response.data.id
-            # The platform prepends a UUID placeholder for an implicit mention.
-            self.expected_content = f"@[[{msg.sender_id}]] {self.token}"
-            self.received.set()
+            try:
+                response = await tools.send_message(
+                    self.token, mentions=[msg.sender_id]
+                )
+                if response is None:
+                    raise ReplyError("SDK send_message returned no reply")
+                self.reply_id = response.id
+                # The platform prepends a UUID placeholder for an implicit mention.
+                self.expected_content = f"@[[{msg.sender_id}]] {self.token}"
+            except ReplyError as error:
+                self.failure_reason = str(error)
+                raise
+            except Exception as error:
+                self.failure_reason = (
+                    f"SDK reply callback failed ({type(error).__name__})"
+                )
+                raise
+            finally:
+                self.received.set()
 
 
 async def scenario(settings: Settings, row: dict[str, object]) -> None:
@@ -126,6 +145,8 @@ async def scenario(settings: Settings, row: dict[str, object]) -> None:
                 mention_name="smoke-agent",
             )
             await adapter.received.wait()
+            if adapter.failure_reason is not None:
+                raise ReplyError(adapter.failure_reason)
             messages = await user.list_messages(room_id)
             row["reply_observation"] = {
                 "message_count": len(messages),
@@ -194,6 +215,8 @@ def main() -> int:
         row.update(outcome="incomplete", reason="Invalid harness configuration")
     except TimeoutError:
         row.update(outcome="incomplete", reason="Scenario exceeded its deadline")
+    except ReplyError as error:
+        row.update(outcome="fail", reason=str(error))
     except Exception as error:  # noqa: BLE001 - report without exposing API error bodies
         row.update(
             outcome="fail" if row["category"] == "runtime" else "incomplete",
