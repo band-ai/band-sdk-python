@@ -41,11 +41,7 @@ class OpencodeClientProtocol(Protocol):
     ) -> None: ...
 
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: str, message: str | None = None
     ) -> None: ...
 
     async def reply_question(
@@ -166,18 +162,19 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         response.raise_for_status()
 
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: str, message: str | None = None
     ) -> None:
-        resp = await self._client.post(
-            f"/session/{session_id}/permissions/{permission_id}",
+        # Only this route carries ``message``. OpenCode ends the turn on a bare
+        # reject but hands a reject with a message back to the model.
+        payload: dict[str, str] = {"reply": reply}
+        if message:
+            payload["message"] = message
+        response = await self._client.post(
+            f"/permission/{permission_id}/reply",
             params=self._query_params(),
-            json={"response": response},
+            json=payload,
         )
-        resp.raise_for_status()
+        response.raise_for_status()
 
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]

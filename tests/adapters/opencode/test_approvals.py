@@ -12,7 +12,11 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.adapters.opencode.approvals import (
+    REJECTED_PERMISSION_FEEDBACK,
+    ApprovalPorts,
+    RoomApprovals,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import Capability
 from band.integrations.opencode import (
@@ -91,14 +95,10 @@ class BlockingReplyClient(FakeOpencodeClient):
         await gate.release.wait()
 
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: str, message: str | None = None
     ) -> None:
         await self._block("permission")
-        await super().reply_permission(session_id, permission_id, response=response)
+        await super().reply_permission(permission_id, reply=reply, message=message)
 
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]
@@ -113,11 +113,7 @@ class BlockingReplyClient(FakeOpencodeClient):
 
 class FailingReplyClient(FakeOpencodeClient):
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: str, message: str | None = None
     ) -> None:
         raise RuntimeError("permission reply failed")
 
@@ -166,11 +162,67 @@ async def test_manual_permission_reply_preserves_mixed_case_request_id(
     assert await approvals.try_handle_reply("APPROVE Req-AbC-123", "user-1")
     assert client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "Req-AbC-123",
-            "response": "once",
+            "reply": "once",
         }
     ]
+
+
+DECLINED = {
+    "permission_id": "req-1",
+    "reply": "reject",
+    "message": REJECTED_PERMISSION_FEEDBACK,
+}
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize(
+    ("config", "room_reply", "sent"),
+    [
+        pytest.param(
+            OpencodeAdapterConfig(),
+            "approve req-1",
+            {"permission_id": "req-1", "reply": "once"},
+            id="approve",
+        ),
+        pytest.param(
+            OpencodeAdapterConfig(),
+            "always req-1",
+            {"permission_id": "req-1", "reply": "always"},
+            id="always",
+        ),
+        pytest.param(OpencodeAdapterConfig(), "reject req-1", DECLINED, id="reject"),
+        pytest.param(
+            OpencodeAdapterConfig(approval_mode="auto_decline"),
+            None,
+            DECLINED,
+            id="auto-decline",
+        ),
+        pytest.param(
+            OpencodeAdapterConfig(approval_wait_timeout_s=1.0),
+            None,
+            DECLINED,
+            id="timeout",
+        ),
+    ],
+)
+async def test_every_decline_tells_the_model_why(
+    asks: AskFactory,
+    config: OpencodeAdapterConfig,
+    room_reply: str | None,
+    sent: dict[str, str],
+) -> None:
+    """OpenCode ends the turn on a bare reject, so every decline carries the
+    feedback that hands the turn back to the model to answer the user."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(client, config=config)
+
+    await approvals.on_permission_asked(asks.permission("req-1"))
+    if room_reply is not None:
+        assert await approvals.try_handle_reply(room_reply, "user-1")
+    await asyncio.sleep(2)
+
+    assert client.permission_replies == [sent]
 
 
 async def test_mentioned_permission_reply_is_recognized(asks: AskFactory) -> None:
@@ -188,9 +240,8 @@ async def test_mentioned_permission_reply_is_recognized(asks: AskFactory) -> Non
     )
     assert client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "Req-AbC-123",
-            "response": "once",
+            "reply": "once",
         }
     ]
 
@@ -209,8 +260,7 @@ async def test_concurrent_permission_asks_are_both_answerable(asks: AskFactory) 
     assert await approvals.try_handle_reply("approve req-2", "user-1")
     assert await approvals.try_handle_reply("reject req-1", "user-1")
     assert [
-        (reply["permission_id"], reply["response"])
-        for reply in client.permission_replies
+        (reply["permission_id"], reply["reply"]) for reply in client.permission_replies
     ] == [("req-2", "once"), ("req-1", "reject")]
     # Both asks resolved, so the turn watcher is no longer parked on a human.
     assert not approvals.awaiting_human()
@@ -529,8 +579,7 @@ async def test_room_traffic_while_a_permission_reply_is_in_flight(
     assert approval is not None and approval.result()
     assert await approvals.try_handle_reply("reject req-2", "user-1")
     assert [
-        (reply["permission_id"], reply["response"])
-        for reply in client.permission_replies
+        (reply["permission_id"], reply["reply"]) for reply in client.permission_replies
     ] == [("req-1", "once"), ("req-2", "reject")]
     assert client.question_rejections == ["q-1"]
     assert not approvals.awaiting_human()
@@ -595,7 +644,7 @@ async def test_a_redelivered_ask_waits_out_its_own_deadline(asks: AskFactory) ->
     assert client.permission_replies == client.question_rejections == []
     assert await approvals.try_handle_reply("approve req-1", "user-1")
     assert await approvals.try_handle_reply("Alice", "user-1")
-    assert [reply["response"] for reply in client.permission_replies] == ["once"]
+    assert [reply["reply"] for reply in client.permission_replies] == ["once"]
     assert client.question_replies == [{"request_id": "q-1", "answers": [["Alice"]]}]
 
 
@@ -683,7 +732,7 @@ async def test_manual_permission_reply_from_follow_up_message(
     )
 
     assert fake_client.permission_replies == [
-        {"session_id": "sess-1", "permission_id": "req-1", "response": "once"}
+        {"permission_id": "req-1", "reply": "once"}
     ]
     assert any(msg["content"] == "Approved and done" for msg in tools.messages_sent)
     handled_with = next(
@@ -795,7 +844,7 @@ async def test_auto_accept_approval_mode() -> None:
     )
 
     assert fake_client.permission_replies == [
-        {"session_id": "sess-1", "permission_id": "perm-1", "response": "once"}
+        {"permission_id": "perm-1", "reply": "once"}
     ]
     # No approval prompt sent to user in auto_accept mode
     assert not any(
@@ -828,7 +877,11 @@ async def test_auto_decline_approval_mode() -> None:
     )
 
     assert fake_client.permission_replies == [
-        {"session_id": "sess-1", "permission_id": "perm-1", "response": "reject"}
+        {
+            "permission_id": "perm-1",
+            "reply": "reject",
+            "message": REJECTED_PERMISSION_FEEDBACK,
+        }
     ]
 
 
@@ -898,7 +951,7 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
     )
     await tools.until(lambda: len(events_of_type(tools, "error")) == 2)
 
-    assert [reply["response"] for reply in fake_client.permission_replies] == ["reject"]
+    assert [reply["reply"] for reply in fake_client.permission_replies] == ["reject"]
     assert fake_client.question_rejections == ["q-1"]
     notices = events_of_type(tools, "error")
     assert all("timed out" in notice["content"].lower() for notice in notices)
@@ -921,7 +974,7 @@ EXPIRY_CASES = {
     "permission": ExpiryCase(
         operation="permission",
         raise_ask=lambda room, asks: room.on_permission_asked(asks.permission("ask-1")),
-        sent=lambda client: [r["response"] for r in client.permission_replies],
+        sent=lambda client: [r["reply"] for r in client.permission_replies],
         expired_reply="reject",
     ),
     "question": ExpiryCase(
@@ -1234,9 +1287,8 @@ async def test_always_permission_reply_from_follow_up_message(
 
     assert fake_client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "req-always",
-            "response": "always",
+            "reply": "always",
         }
     ]
 
@@ -1269,9 +1321,8 @@ async def test_band_tool_permission_auto_approved_in_manual_mode(
 
     assert fake_client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "perm-band",
-            "response": "always",
+            "reply": "always",
         }
     ]
     assert not any(
@@ -1318,9 +1369,8 @@ async def test_band_tool_permission_matches_server_prefixed_custom_tool(
 
     assert fake_client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "perm-echo",
-            "response": "always",
+            "reply": "always",
         }
     ]
 
@@ -1346,9 +1396,8 @@ async def test_band_tool_permission_bypasses_auto_decline() -> None:
 
     assert fake_client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "perm-mem",
-            "response": "always",
+            "reply": "always",
         }
     ]
 
@@ -1375,9 +1424,8 @@ async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode(
 
     assert fake_client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "perm-loop",
-            "response": "once",
+            "reply": "once",
         }
     ]
     assert not any(
@@ -1443,8 +1491,7 @@ async def test_doom_loop_permission_still_relayed_in_manual_mode(
 
     assert fake_client.permission_replies == [
         {
-            "session_id": "sess-1",
             "permission_id": "perm-loop",
-            "response": "once",
+            "reply": "once",
         }
     ]

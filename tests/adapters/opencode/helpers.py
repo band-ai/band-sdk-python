@@ -335,19 +335,12 @@ class FakeOpencodeClient:
                 await self._queue.put(event)
 
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: str, message: str | None = None
     ) -> None:
-        self.permission_replies.append(
-            {
-                "session_id": session_id,
-                "permission_id": permission_id,
-                "response": response,
-            }
-        )
+        recorded = {"permission_id": permission_id, "reply": reply}
+        if message:
+            recorded["message"] = message
+        self.permission_replies.append(recorded)
         for event in self._reply_permission_events.get(permission_id, []):
             await self._queue.put(event)
 

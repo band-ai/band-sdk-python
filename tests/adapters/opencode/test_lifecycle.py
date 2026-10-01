@@ -167,9 +167,7 @@ async def test_orphaned_turns_pending_permission_replies_against_its_own_client(
     )
 
     assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
-    assert client_a.permission_replies == [
-        {"session_id": "sess-a", "permission_id": "perm-1", "response": "once"}
-    ]
+    assert client_a.permission_replies == [{"permission_id": "perm-1", "reply": "once"}]
     assert client_b.permission_replies == []
 
 

@@ -143,6 +143,10 @@ APPROVAL_HANDLED_TEMPLATE = "OpenCode approval `{request_id}` handled with `{rep
 APPROVAL_TIMED_OUT_TEMPLATE = (
     "OpenCode approval `{request_id}` timed out and was handled with `{reply}`."
 )
+REJECTED_PERMISSION_FEEDBACK = (
+    "The user declined this request in the Band room. Do not retry it or try "
+    "another way to do the same thing; reply to the user instead."
+)
 APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
     "OpenCode approval `{request_id}` is no longer pending."
 )
@@ -605,11 +609,8 @@ class RoomApprovals:
         try:
             async with self._permission_reply(
                 "auto-approve permission", request_id
-            ) as (
-                client,
-                session_id,
-            ):
-                await client.reply_permission(session_id, request_id, response="always")
+            ) as client:
+                await client.reply_permission(request_id, reply="always")
         except ApprovalReplyError:
             return
 
@@ -618,11 +619,14 @@ class RoomApprovals:
     ) -> bool:
         """Perform the reply I/O for an already-claimed permission."""
         try:
-            async with self._permission_reply("reply to permission", entry.token) as (
-                client,
-                session_id,
-            ):
-                await client.reply_permission(session_id, entry.token, response=reply)
+            async with self._permission_reply(
+                "reply to permission", entry.token
+            ) as client:
+                await client.reply_permission(
+                    entry.token,
+                    reply=reply,
+                    message=REJECTED_PERMISSION_FEEDBACK if reply == "reject" else None,
+                )
         except ApprovalReplyError:
             return False
         logger.info(
@@ -705,14 +709,13 @@ class RoomApprovals:
     @asynccontextmanager
     async def _permission_reply(
         self, action: str, request_id: str
-    ) -> AsyncIterator[tuple[OpencodeClientProtocol, str]]:
+    ) -> AsyncIterator[OpencodeClientProtocol]:
         client = self._ports.client()
-        session_id = self._ports.session_id()
-        if client is None or not session_id:
+        if client is None or not self._ports.session_id():
             await self._fail_request(action, request_id)
             raise ApprovalReplyError
         async with self._reply_guard(action, request_id):
-            yield client, session_id
+            yield client
 
     @asynccontextmanager
     async def _question_reply(

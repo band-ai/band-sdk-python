@@ -40,7 +40,7 @@ class FakeOpencodeServer:
                     methods=["POST"],
                 ),
                 Route(
-                    "/session/{session_id}/permissions/{permission_id}",
+                    "/permission/{permission_id}/reply",
                     self._reply_permission,
                     methods=["POST"],
                 ),
@@ -278,15 +278,25 @@ async def test_prompt_async_sends_all_optional_fields_when_given(
         await client.close()
 
 
-async def test_reply_permission_posts_response_to_permission_path(
-    fake_server: FakeOpencodeServer,
+@pytest.mark.parametrize(
+    ("message", "body"),
+    [
+        (None, {"reply": "once"}),
+        (
+            "Declined in the room.",
+            {"reply": "reject", "message": "Declined in the room."},
+        ),
+    ],
+)
+async def test_reply_permission_posts_the_reply_and_optional_message(
+    fake_server: FakeOpencodeServer, message: str | None, body: dict[str, str]
 ) -> None:
     client = make_client(fake_server)
     try:
-        await client.reply_permission("sess-existing", "perm-1", response="once")
+        await client.reply_permission("perm-1", reply=body["reply"], message=message)
         request = fake_server.requests[-1]
-        assert request["path"] == "/session/sess-existing/permissions/perm-1"
-        assert request["body"] == {"response": "once"}
+        assert request["path"] == "/permission/perm-1/reply"
+        assert request["body"] == body
     finally:
         await client.close()
 
