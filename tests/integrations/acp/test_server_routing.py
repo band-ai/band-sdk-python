@@ -33,7 +33,11 @@ from acp.schema import (
 
 from band.integrations.acp.server import ACPServer, run_acp_server
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from tests.integrations.acp.conftest import has_pending_prompt, wait_for_pending_prompt
+from tests.integrations.acp.conftest import (
+    has_pending_prompt,
+    wait_for_pending_prompt,
+    wait_for_prompt_post,
+)
 
 # Substituted with the live session id at dispatch time.
 SESSION = "<session>"
@@ -112,7 +116,9 @@ class WireEditor:
     blocks until the peer replies.
     """
 
-    def __init__(self, server: ACPServer, adapter: BandACPServerAdapter) -> None:
+    def __init__(
+        self, server: ACPServer, adapter: BandACPServerAdapter, rest: MagicMock
+    ) -> None:
         # Hardcoded rather than routed through run_acp_server(): this class
         # tests ACPServer's handler contract directly. run_acp_server()'s own
         # wiring (that it passes use_unstable_protocol=True to run_agent) is
@@ -121,6 +127,7 @@ class WireEditor:
             cast(Agent, server), use_unstable_protocol=True
         )
         self.adapter = adapter
+        self.sent = rest.agent_api_messages.create_agent_chat_message
 
     async def request(self, method: str, payload: dict[str, Any]) -> Any:
         return await self.router(method, payload, False)
@@ -147,6 +154,7 @@ class WireEditor:
         await asyncio.wait_for(
             wait_for_pending_prompt(self.adapter, room_id), timeout=0.5
         )
+        await wait_for_prompt_post(self.sent)
         try:
             yield room_id
         finally:
@@ -168,8 +176,10 @@ def server(adapter: BandACPServerAdapter) -> ACPServer:
 
 
 @pytest.fixture
-def editor(server: ACPServer, adapter: BandACPServerAdapter) -> WireEditor:
-    return WireEditor(server, adapter)
+def editor(
+    server: ACPServer, adapter: BandACPServerAdapter, mock_rest_client: MagicMock
+) -> WireEditor:
+    return WireEditor(server, adapter, mock_rest_client)
 
 
 @pytest.fixture

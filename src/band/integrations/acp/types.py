@@ -8,7 +8,28 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, cast
 
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, JsonValue
+
+
+class ACPStopReason(StrEnum):
+    """Terminal stop reasons the Band ACP server can return."""
+
+    END_TURN = "end_turn"
+    CANCELLED = "cancelled"
+
+
+class ACPServerUpdate(StrEnum):
+    """ACP session update kinds constructed directly by this server."""
+
+    AGENT_MESSAGE_CHUNK = "agent_message_chunk"
+
+
+PromptOutcome = ACPStopReason | AgentFailure
+
+
+class ConcurrentPromptError(ValueError):
+    """A room already has an active ACP prompt."""
 
 
 class ToolCallRoomEvent(BaseModel):
@@ -194,12 +215,29 @@ class PendingACPPrompt:
 
     Attributes:
         session_id: The ACP session identifier.
-        done_event: Signals when the prompt has been fully answered.
-        terminal_message_seen: Tracks whether a terminal room message has arrived.
+        done_event: Signals when the prompt has ended.
+        outcome: The first terminal result, once settled.
         completion_task: Debounced completion task for multi-message replies.
+        posted: True once the room accepted this prompt's post.
+        reply_started: True once a text reply has opened the grace window.
     """
 
     session_id: str
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
-    terminal_message_seen: bool = False
+    outcome: PromptOutcome | None = None
     completion_task: asyncio.Task[None] | None = None
+    posted: bool = False
+    reply_started: bool = False
+
+    def finish(self, outcome: PromptOutcome | None) -> None:
+        """Stop the grace timer and mark the prompt as ended."""
+        completion_task = self.completion_task
+        self.completion_task = None
+        if (
+            completion_task is not None
+            and completion_task is not asyncio.current_task()
+        ):
+            completion_task.cancel()
+        if outcome is not None:
+            self.outcome = outcome
+        self.done_event.set()

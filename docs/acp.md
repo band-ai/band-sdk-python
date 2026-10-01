@@ -1,8 +1,8 @@
 # ACP (Agent Client Protocol) Integration
 
-Facts about `ACPClientAdapter` (Band room → room-owned ACP subprocess) that span
-modules or that the code cannot say for itself. The server side is
-`ACPServer` + `BandACPServerAdapter`.
+Facts about the ACP integration that span modules or that the code cannot say for
+itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
+the server side is `ACPServer` + `BandACPServerAdapter`.
 
 ## Turn delivery
 
@@ -51,3 +51,21 @@ failure fails that room turn visibly instead of falling back.
   Its plan/agent mode is selected from each session's advertised catalog before the first
   prompt. In the live `backends` lane, CI passes `E2E_CURSOR_API_KEY` as `CURSOR_API_KEY`
   only to the baseline step; local runs may use a stored `agent login`.
+
+## Server prompt outcomes
+
+`ACPServer.prompt` settles on the first terminal outcome for its room:
+
+- Completed text returns `end_turn`; `session/cancel` returns `cancelled`. A Band `error`
+  rejects the prompt with JSON-RPC `internal_error`, the Core failure projection in
+  `error.data`; room cleanup and agent shutdown also fail it. A second prompt while one is
+  pending in that room is rejected with `invalid_params`.
+- Room events bind to a prompt only once its Band post returns, so a previous turn's
+  late event stays unsolicited and cannot settle the prompt or drop the send. A terminal
+  outcome releases the prompt even while its Band REST send is still pending. One
+  timeout bounds the send and the reply together.
+- Error updates carry the same projection on the agent-message chunk's `_meta`, unsolicited
+  errors in mapped rooms included. Their text and projected keys and values are
+  credential-redacted; values under credential-named fields are redacted in full.
+- The ACP Python client drains queued update handlers before surfacing a prompt error, so
+  a slow client handler can still delay its own `prompt()`.
