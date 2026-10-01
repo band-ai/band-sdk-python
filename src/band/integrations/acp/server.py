@@ -75,17 +75,16 @@ class ACPServer:
             adapter: The Band ACP server adapter for platform interaction.
         """
         self._adapter = adapter
-        self._conn: Client | None = None
 
     def on_connect(self, conn: Client) -> None:
-        """Store client reference for sending session_update notifications.
+        """Forward the connected ACP client to the adapter for session_update.
 
-        Called by the ACP SDK when a client connects.
+        Called by the ACP SDK when a client connects. The adapter is the
+        single source of truth for outbound session_update.
 
         Args:
             conn: The connected ACP client interface.
         """
-        self._conn = conn
         self._adapter.set_acp_client(conn)
 
     def _auth_method(self, **kwargs: Any) -> AuthMethodAgent:

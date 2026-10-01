@@ -184,17 +184,15 @@ class TestACPServerCancel:
 class TestACPServerOnConnect:
     """Tests for ACPServer.on_connect()."""
 
-    def test_on_connect_stores_client(self) -> None:
-        """Should store client reference and pass to adapter."""
+    def test_on_connect_forwards_client_to_adapter(self) -> None:
+        """Should forward the SDK client to the adapter for session_update."""
         adapter = BandACPServerAdapter()
-        adapter.set_acp_client = MagicMock()
         server = ACPServer(adapter)
-
         mock_client = MagicMock()
+
         server.on_connect(mock_client)
 
-        assert server._conn is mock_client
-        adapter.set_acp_client.assert_called_once_with(mock_client)
+        assert adapter.get_acp_client() is mock_client
 
 
 class TestACPServerExtractText:
