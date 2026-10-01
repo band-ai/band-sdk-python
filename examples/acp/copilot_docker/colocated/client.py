@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[acp]>=1.2.0",
+#   "band-sdk[acp]>=4.0.0",
 #   "pydantic-settings>=2.0.0",
 #   "python-dotenv>=1.2.2",
 # ]

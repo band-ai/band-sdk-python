@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 ACP Bridge Architecture example.
@@ -26,11 +26,11 @@ Relation to A2A:
     - ACP outbound can spawn a local ACP subprocess and manage its lifecycle.
 
 Prerequisites:
-    1. Set BAND_API_KEY in your environment.
+    1. An 'acp_client_agent' entry in agent_config.yaml.
     2. Install an ACP-capable runtime (default command uses codex-acp).
 
 Optional environment variables:
-    - ACP_AGENT_COMMAND (default: "npx @zed-industries/codex-acp")
+    - ACP_AGENT_COMMAND (default: "npx @agentclientprotocol/codex-acp")
     - ACP_AGENT_CWD (default: ".")
     - ACP_AUTH_METHOD (example: "cursor_login")
     - ACP_INJECT_BAND_TOOLS (default: true)
@@ -48,7 +48,7 @@ import shlex
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging, create_room_workspace_resolver
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
 from band.integrations.acp.client_profiles import resolve_acp_client_profile
 
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    acp_agent_command: str = "npx @zed-industries/codex-acp"
+    acp_agent_command: str = "npx @agentclientprotocol/codex-acp"
     acp_agent_cwd: str = "."
     acp_auth_method: str = ""
     acp_inject_band_tools: bool = True
@@ -89,8 +89,8 @@ async def main() -> None:
             command=command,
             inject_band_tools=inject_band_tools,
             auth_method=auth_method,
+            cwd=settings.acp_agent_cwd,
         ),
-        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
         profile=profile,
     )
 

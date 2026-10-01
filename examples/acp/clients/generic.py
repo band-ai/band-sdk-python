@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 ACP Client example - Use a remote ACP agent from Band.
@@ -23,7 +23,7 @@ Prerequisites:
        - BAND_WS_URL: WebSocket URL
        - BAND_REST_URL: REST API URL
        - ACP_AGENT_COMMAND: Command to spawn the ACP agent
-         (default: "npx @zed-industries/codex-acp")
+         (default: "npx @agentclientprotocol/codex-acp")
        - ACP_MODEL: An advertised model id to select for each new session
        - ACP_REASONING_EFFORT: An advertised reasoning effort to select when
          ACP_MODEL is unset
@@ -50,7 +50,7 @@ from acp.schema import SessionConfigOptionSelect
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging, create_room_workspace_resolver
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter, ACPClientAdapterConfig, ACPConfigRequest
 from band.config import load_agent_config
 from band.integrations.acp.session_config import flatten_select_options
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    acp_agent_command: str = "npx @zed-industries/codex-acp"
+    acp_agent_command: str = "npx @agentclientprotocol/codex-acp"
     acp_agent_cwd: str = "."
     acp_model: str = ""
     acp_reasoning_effort: str = ""
@@ -141,8 +141,7 @@ async def main() -> None:
 
     # Create an adapter that starts the local ACP agent per Band room.
     adapter = ACPClientAdapter(
-        ACPClientAdapterConfig(command=acp_command),
-        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
+        ACPClientAdapterConfig(command=acp_command, cwd=settings.acp_agent_cwd),
         resolve_session_config=partial(
             choose_session_config,
             preferences=settings.session_config_preferences,

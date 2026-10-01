@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 GitHub Copilot CLI ACP Client - Use GitHub Copilot from Band.
@@ -26,12 +26,11 @@ Prerequisites:
     1. GitHub Copilot CLI installed and on PATH:
        https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli
 
-    2. A Copilot-entitled GitHub token in the environment (Copilot checks
-       COPILOT_GITHUB_TOKEN, then GH_TOKEN, then GITHUB_TOKEN):
+    2. A Copilot-entitled GitHub token, passed to the CLI as GITHUB_TOKEN
+       (or leave it unset to use a stored `copilot login`):
        export GITHUB_TOKEN=...
 
-    3. Set environment variables:
-       - BAND_API_KEY: Your Band API key (required for tool injection)
+    3. A 'copilot_acp_agent' entry in agent_config.yaml.
 
     4. Optionally configure:
        - ACP_AGENT_CWD: Working directory for Copilot sessions (default: .)
