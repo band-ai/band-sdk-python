@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import sys
 from collections.abc import Awaitable
@@ -35,6 +36,7 @@ from band.runtime.tools.types import TurnEffect
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import (
+    APPROVAL_LOG_LEVEL,
     TERMINAL_POLL_INTERVAL_S,
     ApprovalRoom,
 )
@@ -67,6 +69,8 @@ if TYPE_CHECKING:
         SessionConfigResolver,
     )
 
+logger = logging.getLogger(__name__)
+
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 WORKFLOW_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
 RECOVERY_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=4)
@@ -79,6 +83,8 @@ SOURCE_FILE = "calculator.py"
 TEST_FILE = "test_calculator.py"
 BACKUP_FILE = "backup.txt"
 NOTE_FILE = "note.txt"
+# Operands and expected sum once calculator.py is repaired.
+REPAIRED_TOTAL = (2, 3, 5)
 PROJECT_WRITE_PROMPT = "Use a shell tool for project writes. Keep replies short."
 PLAN_REQUEST = template_pattern(PLAN_REQUESTED_TEMPLATE)
 T = TypeVar("T")
@@ -150,11 +156,15 @@ async def _until_closed(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> None:
 async def _next_request_or_close(
     room: ApprovalRoom, checkpoint: TurnCheckpoint
 ) -> re.Match[str] | None:
-    while not (pending := room.unanswered_requests(since=checkpoint.cursor)):
+    while True:
+        if pending := room.unanswered_requests(since=checkpoint.cursor):
+            return pending[0]
         if await _turn_closed(room, checkpoint):
+            # A permission can land while we were checking for close.
+            if pending := room.unanswered_requests(since=checkpoint.cursor):
+                return pending[0]
             return None
         await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
-    return pending[0]
 
 
 def _cursor_room(
@@ -181,6 +191,7 @@ def _agent_setup(workdir: Path, budget: SlowTurnBudget) -> AgentSetup:
 
 
 def _project(root: Path) -> Path:
+    left, right, expected = REPAIRED_TOTAL
     source = root / SOURCE_FILE
     source.write_text("def total(a: int, b: int) -> int:\n    return a - b\n")
     (root / TEST_FILE).write_text(
@@ -188,7 +199,7 @@ def _project(root: Path) -> Path:
         f"from {source.stem} import total\n\n"
         "class CalculatorTest(unittest.TestCase):\n"
         "    def test_total(self) -> None:\n"
-        "        self.assertEqual(total(2, 3), 5)\n"
+        f"        self.assertEqual(total({left}, {right}), {expected})\n"
     )
     return source
 
@@ -242,15 +253,33 @@ async def _project_tests(root: Path) -> tuple[int, str]:
 
 
 async def _assert_repaired_project(root: Path) -> None:
+    left, right, expected = REPAIRED_TOTAL
     result, output = await _run_project_command(
         root,
         "-c",
-        f"from {Path(SOURCE_FILE).stem} import total; actual = total(2, 3); "
-        "assert actual == 5, f'{actual} != 5'",
+        f"from {Path(SOURCE_FILE).stem} import total; "
+        f"actual = total({left}, {right}); "
+        f"assert actual == {expected}, f'{{actual}} != {expected}'",
     )
     assert result == 0, output
     result, output = await _project_tests(root)
     assert result == 0, output
+
+
+def _normalized_plan(plan: str) -> str:
+    return " ".join(plan.split())
+
+
+def _assert_revised_scoped_plan(accepted: str, rejected: str) -> None:
+    """Accepted plan must revise the rejected one and stay on the project files."""
+    assert _normalized_plan(accepted) != _normalized_plan(rejected), (
+        "Accepted plan is only whitespace-different from the rejected plan: "
+        f"{accepted!r}"
+    )
+    assert SOURCE_FILE in accepted and TEST_FILE in accepted, (
+        f"Accepted plan did not keep the repair scoped to {SOURCE_FILE} and "
+        f"{TEST_FILE}: {accepted!r}"
+    )
 
 
 def _select_mode(mode: str) -> SessionConfigResolver:
@@ -298,6 +327,13 @@ async def _decide_plan(
     request = await _plan_request(room, checkpoint)
     token = request["token"]
     after_decision = await room.say(f"{ROOM_COMMAND} {word} {token}")
+    logger.log(
+        APPROVAL_LOG_LEVEL,
+        "Plan decision adapter=%s request=%s outcome=%s",
+        room.adapter_id,
+        token,
+        word,
+    )
     notice = DECISION_RESOLVED_TEMPLATE.format(kind="plan", token=token)
     await _within_turn(
         room,
@@ -550,7 +586,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
             word=CursorCommandWord.ACCEPT,
             reply_marker=accepted_reply,
         )
-        assert accepted_plan != rejected_plan
+        _assert_revised_scoped_plan(accepted_plan, rejected_plan)
         assert _project_state(root) == original_state
 
     agent_adapter = cursor_test_adapter(
@@ -566,9 +602,9 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
         checkpoint = await _start_turn(
             room,
-            "Implement the accepted calculator repair, run its unittest in "
-            "the same shell tool call, and report the result with "
-            f"{implementation_reply}.",
+            "Implement the accepted calculator repair plan below, run its "
+            "unittest in the same shell tool call, and report the result with "
+            f"{implementation_reply}.\n\nAccepted plan:\n{accepted_plan}",
         )
         request = await _permission_request(room, checkpoint)
         # Nothing may change while the human gate is pending.

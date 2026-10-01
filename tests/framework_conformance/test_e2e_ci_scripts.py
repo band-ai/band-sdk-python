@@ -12,12 +12,14 @@ file rather than on a re-implementation of it.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -188,19 +190,50 @@ def test_mentions_reader_emits_at_handles_for_a_real_roster(tmp_path: Path) -> N
     assert (tmp_path / "out.txt").read_text().strip() == "mentions=@alice @bob"
 
 
-def _fake_cli(directory: Path, name: str, body: str) -> None:
-    cli = directory / name
-    cli.write_text(f"#!/bin/sh\n{body}\n")
-    cli.chmod(0o755)
+def _fake_cli(
+    directory: Path,
+    name: str,
+    *,
+    stdout: str = "",
+    exit_code: int = 0,
+    sleep_s: float = 0,
+) -> None:
+    """Install a host-runnable CLI stub that works on POSIX and Windows."""
+    script = directory / f"_{name}_impl.py"
+    script.write_text(
+        "from __future__ import annotations\n"
+        "import sys\n"
+        "import time\n"
+        f"time.sleep({sleep_s})\n"
+        + (f"print({stdout!r})\n" if stdout else "")
+        + f"raise SystemExit({exit_code})\n"
+    )
+    if sys.platform == "win32":
+        (directory / f"{name}.cmd").write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n'
+        )
+        return
+    launcher = directory / name
+    launcher.write_text(f"#!/bin/sh\nexec '{sys.executable}' '{script}' \"$@\"\n")
+    launcher.chmod(0o755)
 
 
-@posix_shell_only
+def _load_record_backends_environment() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "record_backends_environment", _RECORD_BACKENDS_ENVIRONMENT
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_environment_record_reports_each_cli_version_probe(tmp_path: Path) -> None:
     """The scorecard evidence names each CLI's version, or why it has none."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _fake_cli(bin_dir, "fake-cursor", "echo 2026.01.01-abc123")
-    _fake_cli(bin_dir, "copilot", "exit 3")
+    _fake_cli(bin_dir, "fake-cursor", stdout="2026.01.01-abc123")
+    _fake_cli(bin_dir, "copilot", exit_code=3)
 
     result = subprocess.run(
         [sys.executable, str(_RECORD_BACKENDS_ENVIRONMENT)],
@@ -208,7 +241,8 @@ def test_environment_record_reports_each_cli_version_probe(tmp_path: Path) -> No
         cwd=tmp_path,
         env={
             **os.environ,
-            "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+            # Only the stubs — host CLIs must not satisfy these probes.
+            "PATH": str(bin_dir),
             "PYTHONPATH": str(REPO_ROOT),
             "CURSOR_COMMAND": "fake-cursor acp",
         },
@@ -221,3 +255,18 @@ def test_environment_record_reports_each_cli_version_probe(tmp_path: Path) -> No
     environment = json.loads(record.read_text())
     assert environment["cursor_cli"] == "2026.01.01-abc123"
     assert environment["copilot_cli"] == "exited 3"
+
+
+def test_cli_version_reports_not_found_and_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing or hung binary is recorded as the probe outcome, not raised."""
+    module = _load_record_backends_environment()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_cli(bin_dir, "slow-cli", stdout="never-seen", sleep_s=2)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(module, "VERSION_TIMEOUT_S", 0.2)
+
+    assert module.cli_version("missing-cli") == "not found"
+    assert module.cli_version("slow-cli") == "timed out after 0.2s"
