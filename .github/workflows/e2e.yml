@@ -245,6 +245,15 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
 
+    # The install directory is named by the pinned version, so the script's hash
+    # changes the key exactly when the version does.
+    - name: Cache the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cursor-agent-*
+        key: cursor-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/setup-cursor.sh') }}
+
     # cursor_acp drives `agent acp`; auth is the backends-only CURSOR_API_KEY on
     # the baseline step below.
     - name: Install the Cursor CLI (cursor_acp)

@@ -81,7 +81,10 @@ from band.runtime.formatters import strip_leading_mentions
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
-from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
+from tests.e2e.baseline.toolkit.builders import (
+    codex_config_kwargs,
+    cursor_config_kwargs,
+)
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
@@ -433,11 +436,8 @@ def cursor_test_adapter(
     )
 
     config_kwargs: dict[str, Any] = {
-        "api_key": settings.backends.cursor_api_key,
-        "custom_section": custom_section,
+        **cursor_config_kwargs(settings, prompt=custom_section),
         "approval_mode": approval_mode,
-        # Questions resolve automatically; tests configure permission and plan decisions.
-        "question_mode": "auto_first",
         "plan_mode": plan_mode,
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
@@ -448,8 +448,6 @@ def cursor_test_adapter(
         config_kwargs["cwd"] = str(setup.workdir)
     else:
         config_kwargs["workspace_for_room"] = workspace_for_room
-    if settings.backends.cursor_command.strip():
-        config_kwargs["command"] = tuple(settings.backends.cursor_command.split())
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         capabilities=capabilities,

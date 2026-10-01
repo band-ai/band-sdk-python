@@ -12,6 +12,7 @@ import platform
 import shutil
 import subprocess
 
+from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.deps import cli_binary
 
@@ -23,14 +24,12 @@ VERSION_TIMEOUT_S = 30
 def cli_version(binary: str) -> str:
     if (cli := shutil.which(binary)) is None:
         return "unavailable"
-    command: str | list[str] = [cli, "--version"]
-    # Windows batch shims need cmd.exe to launch.
-    if pathlib.Path(cli).suffix.lower() in {".cmd", ".bat"}:
-        command = f'"{cli}" --version'
+    # A resolved local path plus a literal flag, so shell=True carries no
+    # injection risk; it lets Windows .cmd shims launch through cmd.exe.
     try:
         completed = subprocess.run(
-            command,
-            shell=isinstance(command, str),
+            f'"{cli}" --version',
+            shell=True,
             capture_output=True,
             text=True,
             check=False,
@@ -46,7 +45,7 @@ def main() -> None:
     metadata = {
         "copilot_cli": cli_version("copilot"),
         "cursor_cli": cli_version(
-            cli_binary(settings.backends.cursor_command, "agent")
+            cli_binary(settings.backends.cursor_command, CURSOR_CLI_BINARY)
         ),
         "os": platform.platform(),
         "copilot_auth": {

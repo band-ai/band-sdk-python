@@ -31,11 +31,13 @@ from band.integrations.acp.client_runtime import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import (
+    CURSOR_CLI_BINARY,
     DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
     DECISION_TIMED_OUT_TEMPLATE,
     DECISION_UNAUTHORIZED_MESSAGE,
     PERMISSION_REQUESTED_TEMPLATE,
+    PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
 )
@@ -52,7 +54,7 @@ from band.workspaces import WorkspaceResolver, workspace_resolver_for
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
+DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = (CURSOR_CLI_BINARY, "acp")
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
@@ -421,10 +423,10 @@ class CursorACPAdapter(ACPClientAdapter):
                 result = await self._wait_for_decision(
                     kind="plan",
                     turn=turn,
-                    prompt=(
-                        f"{description} needs approval. Reply "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
+                    prompt=PLAN_REQUESTED_TEMPLATE.format(
+                        plan=description,
+                        # _wait_for_decision fills the token in once it's minted.
+                        token="{token}",
                     ),
                 )
                 return (

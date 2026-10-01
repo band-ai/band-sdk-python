@@ -37,6 +37,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
+from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.omp_credentials import (
@@ -279,10 +280,10 @@ def _cursor_cli_available(settings: BaselineSettings) -> bool:
     """The Cursor CLI is on PATH and authenticated: ``CURSOR_API_KEY`` (CI) or a
     stored ``agent login`` (local). Cursor has no provider-key BYOK to fall back on."""
     command = settings.backends.cursor_command
-    if not _cli_on_path(command, "agent"):
+    if not _cli_on_path(command, CURSOR_CLI_BINARY):
         return False
     return bool(settings.backends.cursor_api_key) or _cursor_logged_in(
-        cli_binary(command, "agent")
+        cli_binary(command, CURSOR_CLI_BINARY)
     )
 
 

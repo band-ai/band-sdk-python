@@ -18,25 +18,33 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-rm -rf "$install_dir"
-mkdir -p "$install_dir"
+# A cache restore leaves a complete install; only a miss downloads.
 case "$(uname -s)" in
   Linux* | Darwin*)
-    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    curl -fsSL "$package_url/$os/$arch/agent-cli-package.tar.gz" \
-      | tar --strip-components=1 -xzf - -C "$install_dir"
-    ln -s "$install_dir/cursor-agent" "$install_dir/agent"
     agent_dir="$install_dir"
+    if [[ ! -x "$agent_dir/agent" ]]; then
+      rm -rf "$install_dir"
+      mkdir -p "$install_dir"
+      os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+      curl -fsSL "$package_url/$os/$arch/agent-cli-package.tar.gz" \
+        | tar --strip-components=1 -xzf - -C "$install_dir"
+      ln -s "$install_dir/cursor-agent" "$agent_dir/agent"
+    fi
     ;;
   MINGW* | MSYS*)
-    archive="$install_dir/agent-cli-package.zip"
-    curl -fsSL "$package_url/windows/$arch/agent-cli-package.zip" -o "$archive"
-    powershell.exe -NoProfile -Command \
-      "Expand-Archive -LiteralPath '$(cygpath -w "$archive")' -DestinationPath '$(cygpath -w "$install_dir")'"
-    agent_dir="$install_dir/dist-package"
-    # The launcher runs the bundled node.exe beside it; `agent` is the CLI's name.
-    cp "$agent_dir/cursor-agent.cmd" "$agent_dir/agent.cmd"
-    agent_dir="$(cygpath -w "$agent_dir")"
+    package_dir="$install_dir/dist-package"
+    if [[ ! -f "$package_dir/agent.cmd" ]]; then
+      rm -rf "$install_dir"
+      mkdir -p "$install_dir"
+      archive="$install_dir/agent-cli-package.zip"
+      curl -fsSL "$package_url/windows/$arch/agent-cli-package.zip" -o "$archive"
+      powershell.exe -NoProfile -Command \
+        "Expand-Archive -LiteralPath '$(cygpath -w "$archive")' -DestinationPath '$(cygpath -w "$install_dir")'"
+      rm "$archive"
+      # The launcher runs the bundled node.exe beside it; `agent` is the CLI's name.
+      cp "$package_dir/cursor-agent.cmd" "$package_dir/agent.cmd"
+    fi
+    agent_dir="$(cygpath -w "$package_dir")"
     if [[ -n "${GITHUB_ENV:-}" ]]; then
       printf 'CURSOR_COMMAND=%s\\agent.cmd acp\n' "$agent_dir" >> "$GITHUB_ENV"
     fi

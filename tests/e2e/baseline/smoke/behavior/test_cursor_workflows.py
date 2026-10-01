@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, NoReturn
 import pytest
 from band_rest import ChatMessage
 
-from band.client.streaming import DeliveryStatus
+from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
@@ -23,6 +24,7 @@ from band.core.memory_types import (
 from band.core.types import Capability
 from band.integrations.acp.cursor import (
     DECISION_RESOLVED_TEMPLATE,
+    PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
 )
@@ -31,19 +33,24 @@ from band.runtime.tools.effects import turn_effect
 from band.runtime.tools.types import TurnEffect
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
+from tests.e2e.baseline.smoke.samples.approvalroom import (
+    TERMINAL_POLL_INTERVAL_S,
+    ApprovalRoom,
+)
 from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
     AgentSetup,
     Outcome,
     cursor_test_adapter,
+    template_pattern,
 )
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
-from tests.e2e.baseline.timeouts import slow_turn_budget
+from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 from tests.e2e.baseline.toolkit.observations.memories import Memories
+from tests.e2e.baseline.toolkit.observations.tool_calls import MemoryTool
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
@@ -58,19 +65,14 @@ if TYPE_CHECKING:
         SessionConfigResolver,
     )
 
-REPAIR_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=6)
-PLAN_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=6)
-RECOVERY_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=4)
+TURN_BUDGET_S = BaselineSettings().e2e_timeout
+WORKFLOW_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
+RECOVERY_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=4)
 CURSOR_MODE_OPTION_ID = "mode"
 MAX_PERMISSION_REQUESTS = 8
 PROJECT_TEST_TIMEOUT_S = 30
-TURN_POLL_INTERVAL_S = 0.5
 BACKUP_FILE_NAME = "backup.txt"
-PLAN_REQUEST = re.compile(
-    rf"(?P<plan>.*) needs approval\. Reply .*?"
-    rf"{re.escape(ROOM_COMMAND)} {CursorCommandWord.ACCEPT} (?P<token>[\w-]+)",
-    re.DOTALL,
-)
+PLAN_REQUEST = template_pattern(PLAN_REQUESTED_TEMPLATE)
 
 
 @dataclass(frozen=True)
@@ -124,12 +126,30 @@ async def _turn_closed(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> bool:
 async def _wait_for_turn_close(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> None:
     async def wait() -> None:
         while not await _turn_closed(room, checkpoint):
-            await asyncio.sleep(TURN_POLL_INTERVAL_S)
+            await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
 
     try:
         await asyncio.wait_for(wait(), timeout=room.budget.deadline_s)
     except TimeoutError:
         await _turn_failure(room, checkpoint, "Cursor turn did not close")
+
+
+def _cursor_room(
+    agent: ProvisionedAgent,
+    room_id: str,
+    capture: ReplyCapture,
+    user_ops: UserOps,
+    budget: SlowTurnBudget,
+) -> ApprovalRoom:
+    return ApprovalRoom(
+        agent,
+        Adapter.CURSOR_ACP,
+        room_id,
+        capture,
+        DIALECTS[Adapter.CURSOR_ACP],
+        user_ops,
+        budget,
+    )
 
 
 def _project(root: Path) -> Path:
@@ -147,7 +167,7 @@ def _project(root: Path) -> Path:
 
 def _store_completion_memory(marker: str) -> str:
     return (
-        "After the work succeeds, call band_store_memory exactly once with "
+        f"After the work succeeds, call {MemoryTool.STORE.value} exactly once with "
         f"content including {marker}, system={MemorySystem.LONG_TERM.value}, "
         f"type={MemoryType.SEMANTIC.value}, segment={MemorySegment.USER.value}, "
         f"scope={MemoryStoreScope.AGENT.value}."
@@ -207,88 +227,76 @@ async def _assert_repaired_project(root: Path) -> None:
 def _select_mode(mode: str) -> SessionConfigResolver:
     async def resolve(request: ACPConfigRequest) -> dict[str, str]:
         # The ACP extra is absent from the crewai and parlant collection venvs.
-        from acp.schema import SessionConfigOptionSelect  # noqa: PLC0415
-
         from band.integrations.acp.session_config import (  # noqa: PLC0415
-            flatten_select_options,
+            find_select,
+            select_values,
         )
 
-        option = next(
-            (
-                item
-                for item in request.config_options
-                if item.id == CURSOR_MODE_OPTION_ID
-            ),
-            None,
-        )
-        assert isinstance(option, SessionConfigOptionSelect), (
+        option = find_select(request.config_options, CURSOR_MODE_OPTION_ID)
+        assert option is not None, (
             f"Cursor did not advertise a selectable {CURSOR_MODE_OPTION_ID} mode: "
             f"{request.config_options}"
         )
-        offered = {item.value for item in flatten_select_options(option.options)}
+        offered = select_values(option)
         assert mode in offered, f"Cursor did not advertise {mode}: {offered}"
         return {CURSOR_MODE_OPTION_ID: mode}
 
     return resolve
 
 
+def _plan_requests(messages: Sequence[MessageCreatedPayload]) -> list[re.Match[str]]:
+    return [
+        match for item in messages if (match := PLAN_REQUEST.search(item.content or ""))
+    ]
+
+
 async def _plan_request(
     room: ApprovalRoom, checkpoint: TurnCheckpoint
-) -> tuple[str, str]:
-    def find_request() -> tuple[str, str] | None:
-        for message in room.capture.messages.since(checkpoint.cursor):
-            if match := PLAN_REQUEST.search(message.content or ""):
-                return match["token"], match["plan"]
-        return None
-
+) -> re.Match[str]:
     try:
-        await room.capture.wait_until(
-            lambda _messages: find_request() is not None,
+        messages = await room.capture.wait_until(
+            lambda items: bool(_plan_requests(items[checkpoint.cursor :])),
             deadline_s=room.budget.deadline_s,
         )
     except TimeoutError:
         await _turn_failure(
             room, checkpoint, "Cursor did not send cursor/create_plan in plan mode"
         )
-    request = find_request()
-    assert request is not None
-    return request
+    return _plan_requests(messages[checkpoint.cursor :])[0]
 
 
 async def _decide_plan(
     room: ApprovalRoom,
     *,
     checkpoint: TurnCheckpoint,
-    accept: bool,
+    word: CursorCommandWord,
     reply_marker: str,
 ) -> str:
-    token, plan = await _plan_request(room, checkpoint)
-    word = CursorCommandWord.ACCEPT if accept else CursorCommandWord.REJECT
+    request = await _plan_request(room, checkpoint)
+    token = request["token"]
     after_decision = await room.say(f"{ROOM_COMMAND} {word} {token}")
     notice = DECISION_RESOLVED_TEMPLATE.format(kind="plan", token=token)
     await room.shown(notice, since=after_decision)
     try:
         messages = await room.capture.wait_until(
-            lambda items: any(
-                PLAN_REQUEST.search(item.content or "")
-                or reply_marker in (item.content or "")
-                for item in items[after_decision:]
+            lambda items: (
+                bool(_plan_requests(items[after_decision:]))
+                or any(
+                    reply_marker in (item.content or "")
+                    for item in items[after_decision:]
+                )
             ),
             deadline_s=room.budget.deadline_s,
         )
     except TimeoutError:
         await _turn_failure(room, checkpoint, "Cursor did not finish the plan decision")
     # A repeated request would hold the turn open on a new manual decision.
-    repeated = [
-        match["token"]
-        for item in messages[after_decision:]
-        if (match := PLAN_REQUEST.search(item.content or ""))
-    ]
+    repeated = [match["token"] for match in _plan_requests(messages[after_decision:])]
     assert not repeated, (
         f"Cursor requested another plan without separate human review: {repeated}"
     )
     await _wait_for_turn_close(room, checkpoint)
-    return plan
+    return request["plan"]
 
 
 async def _decide_permissions_until_reply(
@@ -297,18 +305,15 @@ async def _decide_permissions_until_reply(
     checkpoint: TurnCheckpoint,
     reply_marker: str,
     deny_first_tool: str | None = None,
-) -> int:
+) -> None:
     [request] = await room.requests(1, since=checkpoint.cursor)
-    denied = 0
-    for _ in range(MAX_PERMISSION_REQUESTS):
-        if deny_first_tool is not None and denied == 0:
+    for attempt in range(MAX_PERMISSION_REQUESTS):
+        outcome = Outcome.APPROVE
+        if deny_first_tool is not None and attempt == 0:
             assert deny_first_tool in request["tool"], (
                 f"Cursor did not request the expected project action: {request['tool']}"
             )
             outcome = Outcome.DECLINE
-        else:
-            outcome = Outcome.APPROVE
-        denied += outcome is Outcome.DECLINE
         after_decision = await room.decide(outcome, request)
         await room.shown(
             room.dialect.notice(outcome, request).text, since=after_decision
@@ -330,7 +335,7 @@ async def _decide_permissions_until_reply(
         pending = room.unanswered_requests(since=checkpoint.cursor)
         if not pending:
             await _wait_for_turn_close(room, checkpoint)
-            return denied
+            return
         requested_tool = pending[0]["tool"].partition(":")[0]
         if (
             deny_first_tool is not None
@@ -348,7 +353,7 @@ async def _decide_permissions_until_reply(
 
 
 @per_adapter(Adapter.CURSOR_ACP)
-@pytest.mark.timeout(extra=REPAIR_BUDGET.extra_s)
+@pytest.mark.timeout(extra=WORKFLOW_BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_repairs_a_failing_project_after_a_human_gate(
     cell: AdapterCell,
@@ -361,38 +366,27 @@ async def test_repairs_a_failing_project_after_a_human_gate(
     initial_exit, initial_output = await _project_tests(root)
     assert initial_exit != 0, initial_output
     original = source.read_text()
-    original_tests = (root / "test_calculator.py").read_bytes()
     original_state = _project_state(root)
     marker = unique_marker("cursor-repair-event")
     report = unique_marker("cursor-repair-report")
     denied_reply = unique_marker("cursor-repair-denied")
-    setup = AgentSetup(root, REPAIR_BUDGET.deadline_s * 2)
+    setup = AgentSetup(root, WORKFLOW_BUDGET.deadline_s * 2)
     agent = await cell.provision(label="cursor-repair")
     room_id = await cell.resources.provision_room(
         title="e2e-cursor-repair", participants=[agent.id]
     )
 
-    def adapter() -> CursorACPAdapter:
-        return cursor_test_adapter(
-            cell.settings,
-            setup,
-            custom_section="Use a shell tool for project writes. Keep replies short.",
-            capabilities={Capability.MEMORY},
-        )
-
+    repair_adapter = cursor_test_adapter(
+        cell.settings,
+        setup,
+        custom_section="Use a shell tool for project writes. Keep replies short.",
+        capabilities={Capability.MEMORY},
+    )
     async with (
-        running_agent(agent, adapter(), cell.settings),
+        running_agent(agent, repair_adapter, cell.settings),
         reply_capture(room_id) as capture,
     ):
-        room = ApprovalRoom(
-            agent,
-            Adapter.CURSOR_ACP,
-            room_id,
-            capture,
-            DIALECTS[Adapter.CURSOR_ACP],
-            user_ops,
-            REPAIR_BUDGET,
-        )
+        room = _cursor_room(agent, room_id, capture, user_ops, WORKFLOW_BUDGET)
         checkpoint = await _start_turn(
             room,
             "Before reading or changing any project file, use one shell command "
@@ -401,13 +395,12 @@ async def test_repairs_a_failing_project_after_a_human_gate(
             f"succeeds, {_store_completion_memory(marker)} If I "
             f"deny the copy, do not retry; reply with {denied_reply}.",
         )
-        denied = await _decide_permissions_until_reply(
+        await _decide_permissions_until_reply(
             room,
             checkpoint=checkpoint,
             reply_marker=denied_reply,
             deny_first_tool=BACKUP_FILE_NAME,
         )
-        assert denied >= 1
         assert _project_state(root) == original_state
         assert len(await _stored_memories(capture, agent)) == 0
 
@@ -426,7 +419,9 @@ async def test_repairs_a_failing_project_after_a_human_gate(
             reply_marker=report,
         )
         assert source.read_text() != original
-        assert (root / "test_calculator.py").read_bytes() == original_tests
+        assert (root / "test_calculator.py").read_bytes() == original_state[
+            "test_calculator.py"
+        ]
         await _assert_repaired_project(root)
         stored = await _stored_memories(capture, agent)
         assert len(stored) == 1
@@ -434,7 +429,7 @@ async def test_repairs_a_failing_project_after_a_human_gate(
 
 
 @per_adapter(Adapter.CURSOR_ACP)
-@pytest.mark.timeout(extra=PLAN_BUDGET.extra_s)
+@pytest.mark.timeout(extra=WORKFLOW_BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rejected_plan_stays_read_only_until_separately_approved(
     cell: AdapterCell,
@@ -449,7 +444,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
     rejected_reply = unique_marker("cursor-plan-rejected")
     accepted_reply = unique_marker("cursor-plan-accepted")
     implementation_reply = unique_marker("cursor-plan-implemented")
-    setup = AgentSetup(root, PLAN_BUDGET.deadline_s * 2)
+    setup = AgentSetup(root, WORKFLOW_BUDGET.deadline_s * 2)
     identity = await cell.provision(label="cursor-plan")
     room_id = await cell.resources.provision_room(
         title="e2e-cursor-plan", participants=[identity.id]
@@ -468,15 +463,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         running_agent(identity, plan_adapter(), cell.settings),
         reply_capture(room_id) as capture,
     ):
-        room = ApprovalRoom(
-            identity,
-            Adapter.CURSOR_ACP,
-            room_id,
-            capture,
-            DIALECTS[Adapter.CURSOR_ACP],
-            user_ops,
-            PLAN_BUDGET,
-        )
+        room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
         checkpoint = await _start_turn(
             room,
             "Read calculator.py and test_calculator.py in this workspace. "
@@ -488,7 +475,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         rejected_plan = await _decide_plan(
             room,
             checkpoint=checkpoint,
-            accept=False,
+            word=CursorCommandWord.REJECT,
             reply_marker=rejected_reply,
         )
         assert _project_state(root) == original_state
@@ -497,15 +484,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         running_agent(identity, plan_adapter(), cell.settings),
         reply_capture(room_id) as capture,
     ):
-        room = ApprovalRoom(
-            identity,
-            Adapter.CURSOR_ACP,
-            room_id,
-            capture,
-            DIALECTS[Adapter.CURSOR_ACP],
-            user_ops,
-            PLAN_BUDGET,
-        )
+        room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
         checkpoint = await _start_turn(
             room,
             "Revise the plan to keep the change limited to calculator.py and "
@@ -515,7 +494,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         accepted_plan = await _decide_plan(
             room,
             checkpoint=checkpoint,
-            accept=True,
+            word=CursorCommandWord.ACCEPT,
             reply_marker=accepted_reply,
         )
         assert accepted_plan != rejected_plan
@@ -532,15 +511,7 @@ async def test_rejected_plan_stays_read_only_until_separately_approved(
         running_agent(identity, agent_adapter, cell.settings),
         reply_capture(room_id) as capture,
     ):
-        room = ApprovalRoom(
-            identity,
-            Adapter.CURSOR_ACP,
-            room_id,
-            capture,
-            DIALECTS[Adapter.CURSOR_ACP],
-            user_ops,
-            PLAN_BUDGET,
-        )
+        room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
         checkpoint = await _start_turn(
             room,
             "Implement the accepted calculator repair, run its unittest in "
