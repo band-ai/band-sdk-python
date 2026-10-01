@@ -21,7 +21,7 @@ real work into a background asyncio task.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from band.integrations.slack.dedup import SeenEvents
@@ -64,7 +64,7 @@ class SlackSocketListener:
 
 async def start_socket_listeners(
     *,
-    apps: list[SlackApp],
+    apps: Sequence[SlackApp],
     web_client_factory: Callable[[SlackApp], AsyncWebClient],
     dispatcher: SocketDispatcher,
     client_factory: (

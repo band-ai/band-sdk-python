@@ -37,7 +37,7 @@ def setup_logging(
         log_file_level="DEBUG",
         log_max_bytes=5 * 1024 * 1024,
         log_backups=3,
-    )
+    ).for_application()
     settings.configure(
         extra_loggers=dict.fromkeys(_ARENA_FRAMEWORK_LOGGERS, "DEBUG"),
     )

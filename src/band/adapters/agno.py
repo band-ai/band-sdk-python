@@ -16,6 +16,7 @@ from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -137,6 +138,10 @@ def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
         _current_tools.reset(token)
 
 
+class AgnoAdapterConfig(BaseAdapterConfig):
+    """Settings for :class:`AgnoAdapter`; the Agno agent owns model and prompt."""
+
+
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """Bridge a user-built Agno agent to Band.
 
@@ -164,9 +169,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
     def __init__(
         self,
-        agent: AgnoAgent,
+        config: AgnoAdapterConfig | None = None,
         *,
         history_converter: AgnoHistoryConverter | None = None,
+        agent: AgnoAgent,
         session_id_factory: Callable[[str], str] = lambda room_id: room_id,
         **features: Unpack[FeatureKwargs],
     ) -> None:
@@ -179,6 +185,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         therefore takes ownership of the agent; do not reuse it elsewhere.
 
         Args:
+            config: Adapter settings; see :class:`AgnoAdapterConfig`.
             agent: A fully configured Agno agent to bridge to Band.
             session_id_factory: Maps a Band ``room_id`` to the Agno
                 ``session_id`` used for that room's runs. Defaults to using the
@@ -193,6 +200,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             history_converter=history_converter or AgnoHistoryConverter(),
             **features,
         )
+        self.config = config or AgnoAdapterConfig()
 
         # The caller's agent is used directly. It becomes the runtime agent
         # (self._agent) in on_started, where the agent-dependent Band

@@ -138,8 +138,8 @@ def _denying_omp_adapter(settings: BaselineSettings, sandbox: str) -> OmpACPAdap
             custom_section="Keep replies short.",
             cwd=sandbox,
             env=omp_acp_env(settings, omp_agent_home_dir(sandbox)),
-            resolve_permission=deny,
-        )
+        ),
+        resolve_permission=deny,
     )
 
 

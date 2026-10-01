@@ -49,11 +49,18 @@ class ApprovalRoom:
 
     async def say(self, text: str, *, sender: UserOps | None = None) -> int:
         """Post ``text`` to the agent; return a cursor at what came before it."""
+        cursor, _message_id = await self.post(text, sender=sender)
+        return cursor
+
+    async def post(
+        self, text: str, *, sender: UserOps | None = None
+    ) -> tuple[int, str]:
+        """``say``, also returning the posted message's id for delivery barriers."""
         cursor = self.capture.messages.snapshot()
-        await (sender or self.user_ops).send_message(
+        message_id = await (sender or self.user_ops).send_message(
             self.room_id, text, mention_id=self.agent.id, mention_name=self.agent.name
         )
-        return cursor
+        return cursor, message_id
 
     async def decide(self, outcome: Outcome, request: re.Match[str]) -> int:
         """Answer one request as the room owner."""

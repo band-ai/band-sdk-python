@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]>=1.2.0"]
+# dependencies = ["band-sdk[anthropic]>=4.0.0"]
 # ///
 """
 Contact management example using the Anthropic adapter.
@@ -21,7 +21,8 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
+from band.core.types import Capability
 from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -46,12 +47,15 @@ async def main() -> None:
     load_dotenv()
 
     adapter = AnthropicAdapter(
-        model="claude-sonnet-4-5-20250929",
-        prompt=(
-            "You are a helpful assistant with contact management capabilities.\n"
-            "You can list, add, and remove contacts, and manage contact requests.\n"
-            "Incoming contact requests are auto-approved."
+        AnthropicAdapterConfig(
+            model="claude-sonnet-4-5-20250929",
+            custom_section=(
+                "You are a helpful assistant with contact management capabilities.\n"
+                "You can list, add, and remove contacts, and manage contact requests.\n"
+                "Incoming contact requests are auto-approved."
+            ),
         ),
+        capabilities=Capability.CONTACTS,
     )
 
     contact_config = ContactEventConfig(

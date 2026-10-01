@@ -20,8 +20,9 @@ import logging
 import uuid
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
+from pydantic import Field, model_validator
 from typing_extensions import Unpack
 
 from band.client.rest import (
@@ -31,6 +32,7 @@ from band.client.rest import (
     ChatRoomRequest,
 )
 from band.converters.slack import SlackHistoryConverter
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -308,24 +310,83 @@ class SlackTeeingTools(AgentTools):
         return outcome.value
 
 
+class SlackAdapterConfig(BaseAdapterConfig):
+    """Settings for the Slack bridge.
+
+    Attributes:
+        apps: The Slack apps served by the bridge; at least one, with unique
+            slugs.
+        transport: ``"http"`` (default) serves events via a mountable
+            Starlette router; the developer points their Slack app's Event
+            Subscriptions URL at the bridge. ``"socket"`` opens a Socket Mode
+            websocket to Slack per app — no public URL or signing secret is
+            needed; each ``SlackApp`` must supply ``app_token`` (``xapp-...``).
+        write_tool_names: Tool names rendered as writes in Slack tool
+            progress.
+        show_tool_progress: Render the brain's tool calls as a live plan in
+            the Slack thread.
+        mirror_slack_context: Mirror each inbound Slack user turn into the
+            bound Band room as a context-only ``thought`` event, so the Band
+            UI audit timeline reflects the Slack-side conversation. These
+            events are tagged ``slack_mirror`` and never loop back into the
+            brain's history or trigger peer replies. ``False`` leaves bridged
+            rooms holding only the bootstrap context event.
+    """
+
+    apps: tuple[SlackApp, ...] = Field(min_length=1)
+    transport: SlackTransport = "http"
+    write_tool_names: frozenset[str] = DEFAULT_WRITE_TOOL_NAMES
+    show_tool_progress: bool = True
+    mirror_slack_context: bool = True
+
+    @model_validator(mode="after")
+    def _app_slugs_are_unique(self) -> Self:
+        slugs = [app.slug for app in self.apps]
+        duplicates = sorted({slug for slug in slugs if slugs.count(slug) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate SlackApp slug: {', '.join(duplicates)}")
+        return self
+
+    @model_validator(mode="after")
+    def _apps_carry_transport_tokens(self) -> Self:
+        token = "signing_secret" if self.transport == "http" else "app_token"
+        missing = [
+            app.slug
+            for app in self.apps
+            if not getattr(app, token) or not app.bot_token
+        ]
+        if missing:
+            raise ValueError(
+                f"transport={self.transport!r} requires {token} and bot_token "
+                f"on every SlackApp; missing for: {', '.join(missing)}"
+            )
+        return self
+
+
 class SlackAdapter(SimpleAdapter[Any]):
     """Wraps an inner framework adapter and adds Slack I/O.
 
     Example:
         from band import Agent
-        from band.adapters import AnthropicAdapter
-        from band.integrations.slack import SlackAdapter, SlackApp
+        from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
+        from band.integrations.slack import (
+            SlackAdapter,
+            SlackAdapterConfig,
+            SlackApp,
+        )
 
-        brain = AnthropicAdapter(model="claude-sonnet-4-6")
+        brain = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-6"))
         slack = SlackAdapter(
-            inner=brain,
-            apps=[
-                SlackApp(
-                    slug="dev",
-                    signing_secret="...",
-                    bot_token="xoxb-...",
+            SlackAdapterConfig(
+                apps=(
+                    SlackApp(
+                        slug="dev",
+                        signing_secret="...",
+                        bot_token="xoxb-...",
+                    ),
                 ),
-            ],
+            ),
+            inner=brain,
         )
         agent = Agent.create(adapter=slack, agent_id="...", api_key="...")
         # mount slack.router into your ASGI app on the side, e.g.:
@@ -338,31 +399,20 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     def __init__(
         self,
+        config: SlackAdapterConfig,
         *,
         inner: SimpleAdapter[Any],
-        apps: list[SlackApp],
-        port: int = 3000,
-        transport: SlackTransport = "http",
         web_client_factory: WebClientFactory | None = None,
         rest_client: AsyncRestClient | None = None,
-        write_tool_names: frozenset[str] | set[str] | None = None,
-        show_tool_progress: bool = True,
-        mirror_slack_context: bool = True,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize the Slack adapter.
 
         Args:
+            config: Slack apps, transport, and presentation settings — see
+                :class:`SlackAdapterConfig`.
             inner: The framework adapter that does the actual reasoning
                 (e.g. ``AnthropicAdapter``, ``LangGraphAdapter``).
-            apps: One or more ``SlackApp`` configurations.
-            port: TCP port for the HTTP server.
-            transport: ``"http"`` (default) serves events via a mountable
-                Starlette router; the developer points their Slack app's
-                Event Subscriptions URL at the bridge. ``"socket"`` opens
-                a Socket Mode websocket to Slack per app — no public URL
-                or signing secret is needed; each ``SlackApp`` must supply
-                ``app_token`` (``xapp-...``).
             web_client_factory: Optional factory for injecting mock
                 ``AsyncWebClient`` instances in tests.
             rest_client: Optional ``AsyncRestClient`` injection seam.
@@ -371,19 +421,9 @@ class SlackAdapter(SimpleAdapter[Any]):
                 bridge adopts the inner adapter's features verbatim so the
                 brain's capabilities flow through unchanged; passing any
                 feature kwarg here replaces that wholesale.
-            mirror_slack_context: When ``True`` (default), each inbound
-                Slack user turn is mirrored into the bound Band room
-                as a context-only ``thought`` event so the Band UI
-                audit timeline reflects the Slack-side conversation.
-                These events are tagged ``slack_mirror`` and never loop
-                back into the brain's history or trigger peer replies.
-                Set ``False`` to leave bridged rooms holding only the
-                bootstrap context event.
 
         Raises:
             ImportError: If ``slack-sdk`` is not installed.
-            ValueError: If ``apps`` is empty, or a per-app token required
-                by the chosen transport is missing.
         """
         try:
             import slack_sdk  # noqa: F401, PLC0415
@@ -392,30 +432,6 @@ class SlackAdapter(SimpleAdapter[Any]):
                 "slack-sdk is required for SlackAdapter. "
                 "Install with: uv add band-sdk[slack]"
             ) from exc
-
-        if not apps:
-            raise ValueError("SlackAdapter requires at least one SlackApp config")
-
-        if transport == "http":
-            missing = [a.slug for a in apps if not a.signing_secret or not a.bot_token]
-            if missing:
-                raise ValueError(
-                    "SlackAdapter(transport='http') requires signing_secret "
-                    "and bot_token on every SlackApp; missing for: "
-                    f"{', '.join(missing)}"
-                )
-        elif transport == "socket":
-            missing = [a.slug for a in apps if not a.app_token or not a.bot_token]
-            if missing:
-                raise ValueError(
-                    "SlackAdapter(transport='socket') requires app_token "
-                    "(xapp-...) and bot_token on every SlackApp; missing "
-                    f"for: {', '.join(missing)}"
-                )
-        else:
-            raise ValueError(
-                f"Unknown transport={transport!r}; expected 'http' or 'socket'"
-            )
 
         # Mirror the inner adapter's declared support *before* super().__init__
         # runs its construction-time validation, so a feature kwarg the brain
@@ -432,9 +448,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             history_converter=inner.history_converter or SlackHistoryConverter(),
             **features,
         )
-        self.apps = apps
-        self._port = port
-        self._transport: SlackTransport = transport
+        self.config = config
         self._router: Router | None = None
         self._socket_listeners: list[SlackSocketListener] = []
         self._web_client_factory: WebClientFactory = (
@@ -442,17 +456,10 @@ class SlackAdapter(SimpleAdapter[Any]):
         )
         self._web_clients: dict[str, AsyncWebClient] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
-        self._write_tool_names: frozenset[str] = (
-            frozenset(write_tool_names)
-            if write_tool_names is not None
-            else DEFAULT_WRITE_TOOL_NAMES
-        )
-        self._show_tool_progress = show_tool_progress
-        self._mirror_slack_context = mirror_slack_context
 
         # Band-side state.
         self._rest: AsyncRestClient | None = rest_client
-        self._apps_by_slug: dict[str, SlackApp] = {a.slug: a for a in apps}
+        self._apps_by_slug: dict[str, SlackApp] = {a.slug: a for a in config.apps}
         self._thread_to_room: dict[str, str] = {}
         self._room_to_binding: dict[str, SlackRoomBinding] = {}
         # Per-thread locks serialise room creation so two concurrent Slack
@@ -548,7 +555,7 @@ class SlackAdapter(SimpleAdapter[Any]):
     @property
     def transport(self) -> SlackTransport:
         """Which inbound transport this adapter was configured with."""
-        return self._transport
+        return self.config.transport
 
     @property
     def router(self) -> Router:
@@ -558,13 +565,15 @@ class SlackAdapter(SimpleAdapter[Any]):
         bridge has no HTTP surface to mount, so accessing ``router`` is
         almost certainly a misconfiguration.
         """
-        if self._transport != "http":
+        if self.config.transport != "http":
             raise RuntimeError(
                 "SlackAdapter.router is only available for transport='http'; "
-                f"this adapter is using transport={self._transport!r}."
+                f"this adapter is using transport={self.config.transport!r}."
             )
         if self._router is None:
-            self._router = build_router(self.apps, dispatcher=self._dispatch_event)
+            self._router = build_router(
+                self.config.apps, dispatcher=self._dispatch_event
+            )
         return self._router
 
     @property
@@ -600,7 +609,7 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         await self._inner.on_started(agent_name, agent_description)
 
-        if self._transport == "socket":
+        if self.config.transport == "socket":
             # Lazy import so HTTP-only installs don't pay the aiohttp /
             # Socket Mode import cost.
             from band.integrations.slack.socket import (  # noqa: PLC0415
@@ -608,7 +617,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             )
 
             self._socket_listeners = await start_socket_listeners(
-                apps=self.apps,
+                apps=self.config.apps,
                 web_client_factory=self._get_client,
                 dispatcher=self._dispatch_event,
             )
@@ -616,8 +625,8 @@ class SlackAdapter(SimpleAdapter[Any]):
         logger.info(
             "Slack adapter started: %s (apps=%d, transport=%s)",
             agent_name,
-            len(self.apps),
-            self._transport,
+            len(self.config.apps),
+            self.config.transport,
         )
 
     async def close(self) -> None:
@@ -706,8 +715,8 @@ class SlackAdapter(SimpleAdapter[Any]):
                     wrap=tools,
                     slack=slack_client,
                     binding=binding,
-                    write_tool_names=self._write_tool_names,
-                    show_tool_progress=self._show_tool_progress,
+                    write_tool_names=self.config.write_tool_names,
+                    show_tool_progress=self.config.show_tool_progress,
                 )
             else:
                 logger.warning(
@@ -830,7 +839,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         # Mirror the user turn into the Band room for audit visibility.
         # Best-effort and tagged context-only; happens before the brain
         # runs so the timeline ordering matches reality.
-        if self._mirror_slack_context:
+        if self.config.mirror_slack_context:
             await self._mirror_user_turn_to_room(
                 room_id=room_id,
                 app=app,
@@ -847,8 +856,8 @@ class SlackAdapter(SimpleAdapter[Any]):
             wrap=real_tools,
             slack=slack_client,
             binding=binding,
-            write_tool_names=self._write_tool_names,
-            show_tool_progress=self._show_tool_progress,
+            write_tool_names=self.config.write_tool_names,
+            show_tool_progress=self.config.show_tool_progress,
         )
 
         # Pull thread context from Slack on every event that lands inside

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]>=1.2.0"]
+# dependencies = ["band-sdk[claude_sdk]>=4.0.0"]
 # ///
 """
 Extended Thinking Claude SDK Agent Example.
@@ -41,7 +41,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from band import Agent, configure_logging
-from band.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.types import Emit
 
 configure_logging(
@@ -62,15 +62,17 @@ async def main() -> None:
     # family alias resolved by the npm `claude` binary at runtime — always
     # the latest Opus on the installed CLI, no version pinning.
     adapter = ClaudeSDKAdapter(
-        model="opus",
-        fallback_model="sonnet",
-        custom_section="""You are a thoughtful AI assistant that excels at
+        ClaudeSDKAdapterConfig(
+            model="opus",
+            fallback_model="sonnet",
+            custom_section="""You are a thoughtful AI assistant that excels at
 complex problem-solving. When faced with challenging questions:
 1. Break down the problem into smaller parts
 2. Consider multiple approaches
 3. Evaluate trade-offs
 4. Provide clear, well-reasoned answers""",
-        max_thinking_tokens=10000,  # Enable extended thinking
+            max_thinking_tokens=10000,  # Enable extended thinking
+        ),
         emit=Emit.TOOL_CALLS
         | Emit.THOUGHTS,  # Report tool calls and thinking as events
     )

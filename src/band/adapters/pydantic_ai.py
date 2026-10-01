@@ -35,13 +35,14 @@ from pydantic_ai.messages import (
     ThinkingPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import Model, ModelRequestContext
 from typing_extensions import Unpack
 
 from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
 )
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -208,6 +209,24 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
+class PydanticAIAdapterConfig(BaseAdapterConfig):
+    """Settings for a Pydantic AI agent.
+
+    Attributes:
+        model: Pydantic AI model string (e.g. ``"openai:gpt-5.4"``,
+            ``"anthropic:claude-sonnet-4-5"``). Since pydantic-ai 2.0 the bare
+            ``openai:`` prefix routes to OpenAI's Responses API; use
+            ``openai-chat:`` for Chat Completions. Leave it ``None`` only when
+            the adapter is given a live ``llm``.
+        system_prompt: Replaces the rendered Band system prompt entirely.
+        custom_section: Extra instructions appended to the rendered prompt.
+    """
+
+    model: str | None = None
+    system_prompt: str | None = None
+    custom_section: str | None = None
+
+
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
@@ -217,8 +236,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     Example:
         adapter = PydanticAIAdapter(
-            model="openai:gpt-5.4",
-            custom_section="You are a helpful assistant.",
+            PydanticAIAdapterConfig(
+                model="openai:gpt-5.4",
+                custom_section="You are a helpful assistant.",
+            )
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
@@ -231,11 +252,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     def __init__(
         self,
-        model: str,
-        system_prompt: str | None = None,
-        custom_section: str | None = None,
+        config: PydanticAIAdapterConfig | None = None,
+        *,
         history_converter: PydanticAIHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
+        llm: Model | None = None,
         instrument: bool | InstrumentationSettings | None = None,
         **features: Unpack[FeatureKwargs],
     ):
@@ -243,12 +264,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         Initialize the Pydantic AI adapter.
 
         Args:
-            model: Pydantic AI model string (e.g., "openai:gpt-5.4",
-                "anthropic:claude-3-5-sonnet-latest"). Since pydantic-ai 2.0 the bare
-                ``openai:`` prefix routes to OpenAI's Responses API; use
-                ``openai-chat:`` for Chat Completions.
-            system_prompt: Optional custom system prompt (overrides default)
-            custom_section: Optional custom section added to default system prompt
+            config: Model name and prompt settings; see
+                :class:`PydanticAIAdapterConfig`.
             history_converter: Optional custom history converter
             additional_tools: Optional list of PydanticAI-compatible tool functions
                 and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
@@ -257,6 +274,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 and is registered via agent.tool() alongside platform tools. A
                 context-free callable (no leading ``RunContext``) goes to
                 agent.tool_plain() instead — pydantic-ai rejects it on the other path.
+            llm: A constructed pydantic-ai ``Model``, used instead of
+                ``config.model``. Exactly one of the two must be set.
             instrument: OpenTelemetry instrumentation for the pydantic-ai agent.
                 ``None`` (default) inherits whatever ``Agent.instrument_all()`` the
                 host set, ``False`` opts this agent out of it, ``True`` enables
@@ -272,10 +291,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             **features,
         )
 
-        self.model = model
-        self.system_prompt = system_prompt
-        self.custom_section = custom_section
-        self.instrument = instrument
+        self.config = config or PydanticAIAdapterConfig()
+        model = llm or self.config.model
+        if model is None or (llm is not None and self.config.model is not None):
+            raise ValueError("Set exactly one of config.model or llm")
+        self._model: Model | str = model
+        self._instrument = instrument
         self._system_prompt: str | None = None
 
         self._agent: Agent[AgentToolsProtocol, str | None] | None = None
@@ -304,16 +325,16 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     def _create_agent(self) -> Agent[AgentToolsProtocol, str | None]:
         """Create the Pydantic AI Agent: prompt, run policy, and tools."""
-        system = self.system_prompt or render_system_prompt(
+        system = self.config.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
             agent_description=self.agent_description or "An AI assistant",
-            custom_section=self.custom_section or "",
+            custom_section=self.config.custom_section or "",
             features=self.features,
         )
         self._system_prompt = system
 
         agent: Agent[AgentToolsProtocol, str | None] = Agent(
-            self.model,
+            self._model,
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
             # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
             # only on the first request, after which it ages into buried history;
@@ -361,7 +382,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # assigned rather than passed. Always assigned: the tri-state is meaningful
         # end to end — None is pydantic-ai's own "inherit Agent.instrument_all()",
         # which is exactly what a caller who passed nothing wants.
-        agent.instrument = self.instrument
+        agent.instrument = self._instrument
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on
         # the path their signature calls for — pydantic-ai keeps the two apart.

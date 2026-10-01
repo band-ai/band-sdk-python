@@ -73,8 +73,6 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with real REST client credentials
         adapter = A2AGatewayAdapter(
-            gateway_url="http://localhost:10000",
-            port=10000,
             rest_client=AsyncRestClient(
                 base_url=integration_settings.band_base_url,
                 api_key=integration_settings.band_api_key,
@@ -161,8 +159,6 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with both peers
         adapter = A2AGatewayAdapter(
-            gateway_url="http://localhost:10000",
-            port=10000,
             rest_client=AsyncRestClient(
                 base_url=integration_settings.band_base_url,
                 api_key=integration_settings.band_api_key,

@@ -18,10 +18,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import probe
 import root  # noqa: F401  (bootstraps sys.path as a side effect)
-import state
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# isort: split
+# `probe` and `state` resolve only after `root` has extended sys.path.
+import probe
+import state
 
 # No basicConfig call here: importing `probe` above already configured the
 # root logger (stderr, "%(asctime)s %(levelname)s %(name)s: %(message)s") —

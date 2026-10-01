@@ -73,6 +73,12 @@ class TestContactEventConfigValidation:
 
         assert config.hub_task_id == task_uuid
 
+    def test_a_hub_task_id_that_is_not_a_uuid_fails_before_the_agent_runs(self):
+        with pytest.raises(ValueError, match="hub_task_id must be a UUID"):
+            ContactEventConfig(
+                strategy=ContactEventStrategy.HUB_ROOM, hub_task_id="contacts-hub"
+            )
+
 
 class TestContactEventConfigComposability:
     """Tests for broadcast_changes composability with all strategies."""

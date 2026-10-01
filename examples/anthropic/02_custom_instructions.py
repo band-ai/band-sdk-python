@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]>=1.2.0"]
+# dependencies = ["band-sdk[anthropic]>=4.0.0"]
 # ///
 """
 Agent with custom system prompt instructions.
@@ -20,7 +20,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_anthropic_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -48,8 +48,9 @@ async def main() -> None:
     # Custom instructions; the adapter's default emit already shows tool
     # calls in the chat.
     adapter = AnthropicAdapter(
-        model="claude-sonnet-4-5-20250929",
-        prompt=CUSTOM_PROMPT,
+        AnthropicAdapterConfig(
+            model="claude-sonnet-4-5-20250929", custom_section=CUSTOM_PROMPT
+        )
     )
 
     logger.info("Starting support agent...")

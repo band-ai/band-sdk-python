@@ -244,7 +244,7 @@ async def get_weather(args: WeatherInput) -> str:
 
 
 return AnthropicAdapter(
-    ...,
+    AnthropicAdapterConfig(...),
     additional_tools=[(WeatherInput, get_weather)],
 )
 ```

@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.core.types import Capability
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import ClaudeRoom, with_approvals
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -41,7 +41,7 @@ async def test_custom_tools_run_through_the_band_server_without_approval(
     """Custom tools are named from their input model, served beside the Band
     tools, and pre-approved: even under manual approval nothing waits on the
     room."""
-    room = await claude_room(additional_tools=CUSTOM_TOOLS, approval_mode="manual")
+    room = await claude_room(with_approvals(), additional_tools=CUSTOM_TOOLS)
     room.claude.script(
         [
             room.model_call("echo", message="ping"),

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]>=1.2.0"]
+# dependencies = ["band-sdk[anthropic]>=4.0.0"]
 # ///
 """
 Basic Anthropic SDK agent example.
@@ -20,7 +20,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_anthropic_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -31,8 +31,10 @@ async def main() -> None:
 
     # Create adapter with framework-specific settings
     adapter = AnthropicAdapter(
-        model="claude-sonnet-4-5-20250929",
-        prompt="You are a helpful assistant. Be concise and friendly.",
+        AnthropicAdapterConfig(
+            model="claude-sonnet-4-5-20250929",
+            custom_section="You are a helpful assistant. Be concise and friendly.",
+        )
     )
 
     logger.info("Starting Anthropic agent...")

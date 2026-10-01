@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.fakecli import FakeClaude
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -39,8 +39,13 @@ async def claude_room(
     at the end, cancelling whatever its turns still wait on."""
     adapters: list[ClaudeSDKAdapter] = []
 
-    async def open_room(room_id: str = "room-1", **adapter_config: Any) -> ClaudeRoom:
-        adapter = ClaudeSDKAdapter(**adapter_config)
+    async def open_room(
+        config: ClaudeSDKAdapterConfig | None = None,
+        *,
+        room_id: str = "room-1",
+        **adapter_kwargs: Any,
+    ) -> ClaudeRoom:
+        adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
         await adapter.on_started("Test Agent", "An agent under test")
         adapters.append(adapter)
         return ClaudeRoom(adapter, claude, room_id)

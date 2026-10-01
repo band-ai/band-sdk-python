@@ -27,6 +27,7 @@ from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
+from band.core.adapterconfig import EnvAdapterConfig
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_reply,
@@ -397,7 +398,7 @@ class _WithoutCwdBinding(PydanticBaseSettingsSource):
         return values
 
 
-class CodexAdapterConfig(BaseSettings):
+class CodexAdapterConfig(EnvAdapterConfig):
     """Runtime configuration for Codex adapter sessions.
 
     Every field can be set explicitly (highest priority) or via a
@@ -421,16 +422,10 @@ class CodexAdapterConfig(BaseSettings):
         when its extra metadata is desired.
     """
 
-    # extra="forbid" (not the usual settings "ignore"): this config is
-    # commonly built with many explicit kwargs, so a typo'd field name
-    # must fail construction instead of silently vanishing.
     # populate_by_name: an aliased field stays constructible by its field name
     # and keeps its prefix-derived environment variable.
     model_config = SettingsConfigDict(
         env_prefix="CODEX_",
-        case_sensitive=False,
-        extra="forbid",
-        env_ignore_empty=True,
         populate_by_name=True,
         arbitrary_types_allowed=True,
     )

@@ -1,17 +1,17 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0", "pydantic-settings>=2.0.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0", "pydantic-settings>=2.0.0"]
 # ///
 """
 Host-side Band SDK client for the Copilot Docker Compose example.
 
-Connects over TCP to the Copilot ACP server published by the compose stack
-(localhost:8080) and tells Copilot to reach Band tools at the band-mcp service's
-SSE endpoint (band-mcp:3000/sse). Because Copilot is remote, Band tools are NOT
-injected via the SDK's localhost MCP server (`inject_band_tools=False`); the URL
-is resolved by Copilot inside the compose network, not by this host process.
+For every Band room the SDK starts its own `copilot --acp` inside the running
+`copilot` service (`docker compose exec -T`) and speaks ACP over that process's
+stdio. Copilot calls Band tools on the separate band-mcp service
+(band-mcp:3000/sse, resolved over the compose network), so the SDK's own loopback
+MCP server is not injected (`inject_band_tools=False`).
 
-Run (after `docker compose up`):
+Run (after `docker compose up -d`):
     uv run examples/acp/copilot_docker/compose/client.py
 """
 
@@ -35,11 +35,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_ENV_FILE = Path(__file__).resolve().parent / ".env"
+_EXAMPLE_DIR = Path(__file__).resolve().parent
+_ENV_FILE = _EXAMPLE_DIR / ".env"
+_COMPOSE_FILE = _EXAMPLE_DIR / "docker-compose.yml"
 
 
 class Settings(BaseSettings):
-    """Host client + band-mcp shared settings (field name == env var)."""
+    """Host client + compose shared settings (field name == env var)."""
 
     model_config = SettingsConfigDict(
         # Layered like the old load_dotenv() walk-up: a cwd .env (e.g. repo
@@ -56,10 +58,8 @@ class Settings(BaseSettings):
     # Resolved as process env over .env, matching how compose interpolates
     # ${BAND_AGENT_KEY} for the band-mcp service, so both see one value.
     band_agent_key: str
-    copilot_acp_host: str = "localhost"
-    copilot_acp_port: int = 8080
-    # Path inside the Copilot container (not on the host).
-    copilot_acp_cwd: str = "/"
+    # The directory compose mounts into the copilot service at the same path.
+    copilot_workspaces: Path
     # SSE URL as reachable BY COPILOT (compose DNS), not by this host process.
     band_mcp_sse_url: str = "http://band-mcp:3000/sse"
 
@@ -73,12 +73,29 @@ async def main() -> None:
         raise ValueError(
             "BAND_AGENT_KEY must match copilot_acp_agent in agent_config.yaml"
         )
+    workspaces = settings.copilot_workspaces
+    if workspaces.resolve() != workspaces:
+        # The SDK resolves room paths; compose mounts this one verbatim.
+        raise ValueError(
+            f"COPILOT_WORKSPACES must be absolute and symlink-free: "
+            f"use {workspaces.resolve()}"
+        )
 
     config = CopilotACPAdapterConfig(
-        host=settings.copilot_acp_host,
-        port=settings.copilot_acp_port,
-        cwd=settings.copilot_acp_cwd,
-        inject_band_tools=False,  # Copilot is remote; it can't reach our loopback MCP
+        command=(
+            "docker",
+            "compose",
+            "-f",
+            str(_COMPOSE_FILE),
+            "exec",
+            "-T",
+            "copilot",
+            "copilot",
+            "--acp",
+            "--allow-all-tools",
+        ),
+        cwd=str(workspaces),
+        inject_band_tools=False,  # Copilot's container can't reach our loopback
         mcp_servers=[
             {
                 "type": "sse",
@@ -90,11 +107,7 @@ async def main() -> None:
     )
     adapter = CopilotACPAdapter(config)
 
-    logger.info(
-        "Connecting to Copilot ACP server at %s:%s over TCP...",
-        settings.copilot_acp_host,
-        settings.copilot_acp_port,
-    )
+    logger.info("One copilot --acp per room via docker compose exec over stdio")
     logger.info("Copilot will call Band tools at %s", settings.band_mcp_sse_url)
     async with Agent.from_config(
         "copilot_acp_agent",

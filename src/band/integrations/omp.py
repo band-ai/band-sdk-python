@@ -7,7 +7,11 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from uuid import uuid4
 
-from band.runtime.tools import BAND_MCP_SERVER_NAME, canonicalize_mcp_tool_name
+from band.runtime.tools import (
+    BAND_MCP_SERVER_NAME,
+    canonicalize_mcp_tool_name,
+    mcp_tool_spelling,
+)
 
 OMP_APPROVAL_MODE_FLAG = "--approval-mode"
 OMP_APPROVAL_MODE_ALWAYS_ASK = "always-ask"
@@ -217,12 +221,14 @@ def _omp_mcp_wire_candidates(remainder: str) -> list[str]:
     if "__" in remainder:
         server, tool = remainder.split("__", 1)
         if server and tool:
-            return [f"{server}-{tool}"]
+            return [mcp_tool_spelling(server, tool)]
         return []
     candidates = [remainder]
     prefix = f"{BAND_MCP_SERVER_NAME}_"
     if remainder.startswith(prefix) and remainder != prefix:
-        candidates.append(f"{BAND_MCP_SERVER_NAME}-{remainder.removeprefix(prefix)}")
+        candidates.append(
+            mcp_tool_spelling(BAND_MCP_SERVER_NAME, remainder.removeprefix(prefix))
+        )
     return candidates
 
 

@@ -78,6 +78,7 @@ def _execute_tool(
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
+    arguments: Mapping[str, Any],
     custom_effects: Mapping[str, TurnEffect] | None = None,
 ) -> str:
     """Execute a tool with common error handling and reporting.
@@ -121,6 +122,7 @@ def _execute_tool(
             context.reply_tracker,
             tool_name,
             result,
+            arguments,
             custom_effects=custom_effects,
         )
     return result
@@ -130,6 +132,7 @@ def _mark_productive_work(
     tracker: ReplyTracker,
     tool_name: str,
     result: str,
+    arguments: Mapping[str, Any],
     *,
     custom_effects: Mapping[str, TurnEffect] | None,
 ) -> None:
@@ -153,6 +156,14 @@ def _mark_productive_work(
         tracker.tool_executed = True
     if tool_name == BandTool.SEND_MESSAGE:
         tracker.replied = True
+        tracker.posts.append(_describe_post(arguments))
+
+
+def _describe_post(arguments: Mapping[str, Any]) -> str:
+    content = arguments.get("content", "")
+    if mentions := " ".join(arguments.get("mentions") or []):
+        return f"(to {mentions}) {content}"
+    return content
 
 
 # --- Tool factory ---
@@ -191,6 +202,7 @@ def _platform_tool(
                 get_context=get_context,
                 reporter=reporter,
                 fallback_loop=fallback_loop,
+                arguments=kwargs,
             )
 
     return PlatformTool()
@@ -233,6 +245,7 @@ def _custom_tool(
                 get_context=get_context,
                 reporter=reporter,
                 fallback_loop=fallback_loop,
+                arguments=kwargs,
                 custom_effects=effects,
             )
 

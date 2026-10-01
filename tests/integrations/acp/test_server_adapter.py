@@ -9,6 +9,8 @@ import pytest
 from band_sdk_core import AgentFailure
 
 from band.core.content import BLANK_CONTENT_ERROR
+from band.core.exceptions import BandConfigError
+from band.core.types import Emit
 from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.router import AgentRouter
 from band.integrations.acp.server_adapter import BandACPServerAdapter
@@ -46,6 +48,10 @@ class TestBandACPServerAdapterInit:
         adapter = BandACPServerAdapter()
 
         assert adapter.history_converter is not None
+
+    def test_feature_requests_are_checked_against_what_it_supports(self) -> None:
+        with pytest.raises(BandConfigError, match="tool_calls"):
+            BandACPServerAdapter(emit=Emit.TOOL_CALLS)
 
 
 class TestBandACPServerAdapterOnStarted:

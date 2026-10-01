@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a]>=1.2.0"]
+# dependencies = ["band-sdk[a2a]>=4.0.0"]
 # ///
 """
 A2A adapter with authentication example.
@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import A2AAdapter
+from band.adapters import A2AAdapter, A2AAdapterConfig
 from band.integrations.a2a import A2AAuth
 
 configure_logging(logging.INFO)
@@ -71,11 +71,7 @@ async def main() -> None:
         )
 
     # Create adapter with auth
-    adapter = A2AAdapter(
-        remote_url=a2a_url,
-        auth=auth,
-        streaming=True,
-    )
+    adapter = A2AAdapter(A2AAdapterConfig(remote_url=a2a_url, auth=auth))
 
     logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
     async with Agent.from_config(
