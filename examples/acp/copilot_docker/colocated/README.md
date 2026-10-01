@@ -1,26 +1,27 @@
-# Copilot over ACP — colocated (single container)
+# Copilot over ACP — colocated (one container per room)
 
-GitHub Copilot **and** `band-mcp` in one image, driven by the Band SDK over
-**TCP**. Copilot reaches Band tools over the container's own loopback; only the
-ACP port is published. This is the self-contained "just run this container" unit —
-simplest networking, one image, no cross-service DNS.
+GitHub Copilot **and** `band-mcp` in one image. The Band SDK starts one container
+per Band room with `docker run -i --rm` and speaks ACP over that container's
+stdio. Copilot reaches Band tools over the container's own loopback; nothing is
+published. This is the self-contained "just run this image" unit.
 
 ```
- host: client.py (Band SDK)  ──TCP──▶  container:8080  (published)
- ┌─ container ────────────────────────────────────────┐
- │  socat 0.0.0.0:8080  ──stdio──▶  copilot --acp      │
- │  copilot             ──SSE────▶  127.0.0.1:3000     │
- │                                   (band-mcp)         │
- └──────────────────────────────────────────────────── ┘
+ host: client.py (Band SDK)
+   room A ──stdio──▶ docker run -i --rm copilot-band-acp ─┐
+   room B ──stdio──▶ docker run -i --rm copilot-band-acp  │ one container each
+ ┌─ container (per room) ───────────────────────────────┐ │
+ │  copilot --acp   ──SSE──▶  127.0.0.1:3000 (band-mcp)  │◀┘
+ │  /…/workspaces/<room-id>   (bind-mounted, same path)   │
+ └──────────────────────────────────────────────────────┘
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Node (Copilot CLI) + Python venv (`band-mcp`) + `socat`, one image |
-| `entrypoint.sh` | Starts band-mcp on loopback, then fronts `copilot --acp` on TCP `0.0.0.0:8080` |
-| `client.py` | Host-side Band agent: TCP to Copilot, `inject_band_tools=False`, loopback MCP URL |
+| `Dockerfile` | Node (Copilot CLI) + Python venv (`band-mcp`), one image |
+| `entrypoint.sh` | Starts band-mcp on loopback, then runs `copilot --acp` on stdio |
+| `client.py` | Host-side Band agent: one `docker run -i` per room, `inject_band_tools=False`, loopback MCP URL |
 | `.env.example` | Required secrets/endpoints |
 
 ## Prerequisites
@@ -38,62 +39,54 @@ cd examples/acp/copilot_docker/colocated
 cp .env.example .env
 # Fill GITHUB_TOKEN and BAND_AGENT_KEY (= copilot_acp_agent api_key from agent_config.yaml)
 docker build -t copilot-band-acp .
-docker run --rm --env-file .env -p 127.0.0.1:8080:8080 copilot-band-acp
 
-# in another shell, from the repo root:
+# from the repo root:
 uv run examples/acp/copilot_docker/colocated/client.py
 ```
 
-`client.py` uses `/` as Copilot's working directory by default because the ACP
-server runs in a container. Set `COPILOT_ACP_CWD` to another path only when it
-exists inside the Copilot container.
-
-Then message the `copilot_acp_agent` from a Band room.
+Then message the `copilot_acp_agent` from a Band room. The first message in a
+room starts its container; it stops when the client does.
 
 ## Design notes / gotchas (verified against the shipped tools)
 
-- **Why socat, not `copilot --acp --port`.** `copilot --acp --port <N>` binds
-  `127.0.0.1` only (no host-bind flag), unreachable through Docker port publishing.
-  `socat TCP-LISTEN:8080,fork EXEC:"copilot --acp"` fronts the documented stdio ACP
-  server on a routable port — the endpoint `CopilotACPAdapterConfig(host=…, port=…)` dials.
-- **Fresh process per connection.** `,fork` execs a new `copilot --acp` for each TCP
-  connection, so a reconnect (e.g. an `ACPRuntime` respawn) lands on a process with no
-  prior in-memory sessions. The SDK uses ACP's session-load capability before trusting
-  a persisted ID; unsupported or unavailable sessions get a fresh session before the
-  prompt is sent. Earlier Copilot in-memory state is not resumed after a reconnect;
-  instead the SDK replays the Band room's transcript into the fresh session's first
-  prompt, so conversation context survives the restart.
-- **Bind loopback.** The `docker run -p 127.0.0.1:8080:8080` above keeps the ACP port
-  on the host loopback. Copilot here is unauthenticated and runs `--allow-all-tools`,
-  so expose it off-host only behind your own auth.
+- **One container per room, over stdio.** The SDK gives every room its own ACP
+  process, so a room's turns never share Copilot's memory or tool state with
+  another room's. `docker run -i` (no `-t`) keeps stdin open with raw pipes —
+  byte-clean for ACP's newline-delimited JSON.
+- **stdout is the ACP channel.** Anything else the container prints to stdout
+  corrupts the protocol, so `entrypoint.sh` sends band-mcp's output to stderr.
+- **Workspaces.** The SDK creates `<COPILOT_WORKSPACES>/<room-id>` on the host and
+  uses it as the session cwd; `client.py` bind-mounts the root at the same path,
+  so the directory exists inside every room's container. Defaults to
+  `workspaces/` next to `client.py`.
 - **band-mcp uses SSE, not streamable HTTP** (`/sse`); the adapter's `mcp_servers`
-  entry is `{"type": "sse", …}`.
-- **`mcp<2` pin.** The image installs `band-mcp>=1.3.2` with `mcp>=1.23.0,<2`
-  because band-mcp 1.3.2 imports `mcp.server.fastmcp`, which mcp 2.0 removed.
+  entry is `{"type": "sse", …}`. Copilot connects to it while creating the session,
+  so `entrypoint.sh` waits for band-mcp to listen before starting Copilot.
+- **band-mcp version.** The image installs `band-mcp>=2.2.2`; earlier 2.x releases
+  on PyPI do not install or import cleanly. Pin another release with
+  `--build-arg BAND_MCP_SPEC=…`.
 - **DNS-rebinding protection.** band-mcp 421s SSE requests whose `Host` isn't
   allow-listed. `entrypoint.sh` sets `ALLOWED_HOSTS='["localhost:*","127.0.0.1:*"]'`
   for the in-container loopback caller.
 - **Auth model.** band-mcp holds one Band identity (`BAND_AGENT_KEY`); MCP
   clients present no credentials. That key must be the same agent as host
-  `client.py` (`copilot_acp_agent` in `agent_config.yaml`). Colocation keeps
-  band-mcp bound to loopback and never published.
+  `client.py` (`copilot_acp_agent` in `agent_config.yaml`), which checks it.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a stored `copilot login`. A container
   has no stored login, so set a token env (v2 fine-grained PAT with "Copilot
   Requests", or a Copilot/`gh` OAuth token — classic `ghp_` / Actions `ghs_`
   tokens are rejected).
 - **Tool approval.** `entrypoint.sh` runs `copilot --acp --allow-all-tools` so
-  built-in tools run unattended in this isolated container (Band/MCP tools are
-  auto-approved via the ACP handler). Drop the flag to gate built-in tools.
-- **Room routing.** band-mcp chat/message tools take a `chat_id` argument per call.
+  built-in tools run unattended in the throwaway container (Band/MCP tools are
+  approved through ACP). Drop the flag to gate built-in tools.
 - **Platform base URL.** band-mcp (`BAND_BASE_URL`) defaults to `https://app.band.ai`;
-  `entrypoint.sh` points it at `BAND_REST_URL` (same default) via that variable.
+  `entrypoint.sh` points it at `BAND_REST_URL` (same default).
 
 ## Compose vs colocated
 
-Use **this** single-container image for the simplest "one unit" deployment. Use
-[`../compose/`](../compose/) when Copilot and
-band-mcp should be independent, separately scalable services on a shared network.
+Use **this** image for the simplest unit: each room gets a fresh container. Use
+[`../compose/`](../compose/) when Copilot and band-mcp should be long-running,
+separately scalable services.
 
 > This example is a deployment template — it needs Docker, live Band credentials,
 > and a Copilot-entitled token, so it is not run in CI.

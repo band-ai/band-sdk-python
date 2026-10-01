@@ -9,13 +9,13 @@
 """
 Host-side Band SDK client for the colocated Copilot Docker example.
 
-Connects over TCP to the Copilot ACP server published by the single container
-(localhost:8080) and tells Copilot to reach Band tools at the band-mcp server
-running on the container's own loopback (127.0.0.1:3000/sse). Band tools are NOT
-injected via the SDK's localhost MCP server (`inject_band_tools=False`); the URL
-is resolved by Copilot inside its container.
+Every Band room gets its own container: the SDK spawns `docker run -i --rm` of the
+example image per room and speaks ACP over that process's stdio. Inside, Copilot
+calls Band tools on the band-mcp server sharing its container
+(127.0.0.1:3000/sse), so the SDK's own loopback MCP server is not injected
+(`inject_band_tools=False`).
 
-Run (after the container is up — see README):
+Run (after building the image — see README):
     uv run examples/acp/copilot_docker/colocated/client.py
 """
 
@@ -39,7 +39,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_ENV_FILE = Path(__file__).resolve().parent / ".env"
+_EXAMPLE_DIR = Path(__file__).resolve().parent
+_ENV_FILE = _EXAMPLE_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -56,11 +57,11 @@ class Settings(BaseSettings):
 
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    copilot_acp_host: str = "localhost"
-    copilot_acp_port: int = 8080
-    # Path inside the Copilot container (not on the host).
-    copilot_acp_cwd: str = "/"
-    # SSE URL as reachable BY COPILOT (container loopback).
+    copilot_image: str = "copilot-band-acp"
+    # Host directory holding one workspace per room; mounted at the same path in
+    # each room's container, so the session cwd exists on both sides.
+    copilot_workspaces: Path = _EXAMPLE_DIR / "workspaces"
+    # SSE URL as reachable BY COPILOT (its container's loopback).
     band_mcp_sse_url: str = "http://127.0.0.1:3000/sse"
 
 
@@ -69,7 +70,7 @@ async def main() -> None:
     settings = Settings()
 
     _, api_key = load_agent_config("copilot_acp_agent")
-    # Check the .env file itself: `docker run --env-file .env` gave band-mcp
+    # Check the .env file itself: `docker run --env-file .env` gives band-mcp
     # exactly that file, so a shell-exported BAND_AGENT_KEY must not satisfy
     # the shared-identity check on the container's behalf.
     container_key = dotenv_values(_ENV_FILE).get("BAND_AGENT_KEY")
@@ -78,11 +79,21 @@ async def main() -> None:
             "BAND_AGENT_KEY in .env must match copilot_acp_agent in agent_config.yaml"
         )
 
+    workspaces = settings.copilot_workspaces.resolve()
     config = CopilotACPAdapterConfig(
-        host=settings.copilot_acp_host,
-        port=settings.copilot_acp_port,
-        cwd=settings.copilot_acp_cwd,
-        inject_band_tools=False,  # Copilot is remote; it can't reach our loopback MCP
+        command=(
+            "docker",
+            "run",
+            "-i",
+            "--rm",
+            "--env-file",
+            str(_ENV_FILE),
+            "-v",
+            f"{workspaces}:{workspaces}",
+            settings.copilot_image,
+        ),
+        cwd=str(workspaces),
+        inject_band_tools=False,  # Copilot's container can't reach our loopback
         mcp_servers=[
             {
                 "type": "sse",
@@ -95,11 +106,10 @@ async def main() -> None:
     adapter = CopilotACPAdapter(config)
 
     logger.info(
-        "Connecting to Copilot ACP server at %s:%s over TCP...",
-        settings.copilot_acp_host,
-        settings.copilot_acp_port,
+        "One %s container per room over stdio; workspaces under %s",
+        settings.copilot_image,
+        workspaces,
     )
-    logger.info("Copilot will call Band tools at %s", settings.band_mcp_sse_url)
     async with Agent.from_config(
         "copilot_acp_agent",
         adapter=adapter,

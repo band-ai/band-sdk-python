@@ -7,6 +7,7 @@ Those must be the same agent — documented in README / ``.env.example``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,8 +96,9 @@ def test_compose_passes_agent_key_to_band_mcp() -> None:
 
 
 def test_colocated_launch_passes_agent_key_to_entrypoint() -> None:
-    readme = flattened_markdown(ROOT / "colocated" / "README.md")
+    client = (ROOT / "colocated" / "client.py").read_text(encoding="utf-8")
     entrypoint = (ROOT / "colocated" / "entrypoint.sh").read_text(encoding="utf-8")
 
-    assert "docker run --rm --env-file .env" in readme
+    # Each room's `docker run` gets the very .env the identity check reads.
+    assert re.search(r'"--env-file",\s*str\(_ENV_FILE\)', client)
     assert ': "${BAND_AGENT_KEY:?' in entrypoint
