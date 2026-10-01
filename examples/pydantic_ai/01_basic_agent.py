@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai]>=1.2.0"]
+# dependencies = ["band-sdk[pydantic-ai]>=4.0.0"]
 # ///
 """
 Basic Pydantic AI agent example.

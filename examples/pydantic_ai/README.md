@@ -47,7 +47,9 @@ await agent.run()
 | File | Description |
 |------|-------------|
 | `01_basic_agent.py` | **Minimal setup** - Simple agent with PydanticAIAdapter. |
-| `02_custom_instructions.py` | **Custom behavior** - Agent with custom system prompt. |
+| `02_custom_instructions.py` | **Custom behavior** - Agent with custom system prompt (Anthropic model). |
+| `03_tom_agent.py` | Tom the cat character agent for multi-agent room demos. |
+| `04_jerry_agent.py` | Jerry the mouse, Tom's paired character agent. |
 
 ---
 
@@ -63,6 +65,14 @@ pydantic_agent:
 support_agent:
   agent_id: "your-support-agent-id"
   api_key: "your-support-api-key"
+
+tom_agent:
+  agent_id: "your-tom-agent-id"
+  api_key: "your-tom-api-key"
+
+jerry_agent:
+  agent_id: "your-jerry-agent-id"
+  api_key: "your-jerry-api-key"
 ```
 
 Set environment variables:
@@ -80,6 +90,8 @@ export ANTHROPIC_API_KEY="your-anthropic-key"  # for Anthropic models
 ```bash
 uv run python examples/pydantic_ai/01_basic_agent.py
 uv run python examples/pydantic_ai/02_custom_instructions.py
+uv run python examples/pydantic_ai/03_tom_agent.py
+uv run python examples/pydantic_ai/04_jerry_agent.py
 ```
 
 ---
@@ -89,9 +101,9 @@ uv run python examples/pydantic_ai/02_custom_instructions.py
 Pydantic AI uses model strings in the format `provider:model-name`:
 
 - `openai:gpt-5.4-mini`
-- `openai:gpt-5.4-mini`
-- `anthropic:claude-3-5-sonnet-latest`
-- `anthropic:claude-3-5-haiku-latest`
+- `openai:gpt-5.5`
+- `anthropic:claude-sonnet-4-6`
+- `anthropic:claude-haiku-4-5`
 - `google:gemini-2.5-pro`
 
 See [Pydantic AI documentation](https://ai.pydantic.dev/) for more model options.
@@ -115,7 +127,7 @@ This is a [known issue in Pydantic AI](https://github.com/pydantic/pydantic-ai/i
 1. **Use Anthropic instead** (recommended for production):
    ```python
    adapter = PydanticAIAdapter(
-       PydanticAIAdapterConfig(model="anthropic:claude-3-5-sonnet-latest")
+       PydanticAIAdapterConfig(model="anthropic:claude-sonnet-4-6")
    )
    ```
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai,anthropic]>=1.2.0"]
+# dependencies = ["band-sdk[pydantic-ai,anthropic]>=4.0.0"]
 # ///
 """
 Agent with custom system prompt instructions.
@@ -47,7 +47,7 @@ async def main() -> None:
     # Create adapter with custom instructions
     adapter = PydanticAIAdapter(
         PydanticAIAdapterConfig(
-            model="anthropic:claude-3-5-sonnet-latest", custom_section=CUSTOM_PROMPT
+            model="anthropic:claude-sonnet-4-6", custom_section=CUSTOM_PROMPT
         )
     )
 
