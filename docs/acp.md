@@ -21,6 +21,16 @@ adapter = ACPClientAdapter(config)
 assert adapter.config.command == ("codex-acp",)
 ```
 
+## Band tools
+
+- **Injected tools are bound to the room.** With `inject_band_tools` on (the
+  default), the adapter hosts one loopback `LocalMCPServer` and gives each room's
+  session that room's endpoint (`/rooms/<room>/mcp`, or `/sse`), so the tools take no
+  `chat_id` and the prompt never states one. A reloaded session gets the same endpoint.
+- **An external Band MCP server takes the room as an argument.** With
+  `inject_band_tools=False` (a remote `band-mcp`), the session's first prompt states
+  `Current chat_id` for its tools to use.
+
 ## Turn delivery
 
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to

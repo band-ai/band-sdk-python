@@ -13,7 +13,7 @@ from mcp.types import Tool
 
 from band.integrations.mcp import (
     BandMCPBackend,
-    BandMCPBackendKind,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
 from band.integrations.mcp.local_server import (
@@ -32,13 +32,13 @@ STORE_MEMORY_ARGS: dict[str, Any] = {
     "scope": "organization",
 }
 
-_TRANSPORT_PATHS: dict[BandMCPBackendKind, str] = {
+_TRANSPORT_PATHS: dict[BandMCPTransport, str] = {
     "http": LOCAL_MCP_HTTP_PATH,
     "sse": LOCAL_MCP_SSE_PATH,
 }
 
 
-def room_endpoint_path(room_id: str, transport: BandMCPBackendKind = "http") -> str:
+def room_endpoint_path(room_id: str, transport: BandMCPTransport = "http") -> str:
     """The URL path a room-bound Band MCP server serves ``room_id`` on."""
     return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{_TRANSPORT_PATHS[transport]}"
 
@@ -49,7 +49,7 @@ async def started_backend(
 ) -> AsyncIterator[BandMCPBackend]:
     """A Band MCP backend on an OS-assigned port, always stopped on exit."""
     backend = await create_band_mcp_backend(
-        kind="http", room_bound=room_bound, port_min=0, port_max=0, **settings
+        room_bound=room_bound, port_min=0, port_max=0, **settings
     )
     try:
         yield backend
@@ -59,7 +59,7 @@ async def started_backend(
 
 @asynccontextmanager
 async def mcp_session(
-    url: str, transport: BandMCPBackendKind = "http"
+    url: str, transport: BandMCPTransport = "http"
 ) -> AsyncIterator[ClientSession]:
     """An initialized MCP client session to ``url``, closed on exit."""
     streams: AbstractAsyncContextManager[tuple[Any, ...]]

@@ -295,7 +295,6 @@ class LettaMCPBridge:
         # back across a network proxy (docker host-gateway), and re-binding a
         # just-freed scanned port can leave that hop stalled on stale state.
         backend = await create_band_mcp_backend(
-            kind="sse" if self._config.transport == "sse" else "http",
             tool_definitions=self._tool_definitions,
             get_tools=self._get_tools,
             host=self._config.bind_host,

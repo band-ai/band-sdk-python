@@ -705,7 +705,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return self._mcp_backend
 
         backend = await create_band_mcp_backend(
-            kind="sse",
             tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,
             additional_tools=self._custom_tools or None,

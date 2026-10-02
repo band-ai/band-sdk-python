@@ -411,7 +411,6 @@ class FakeMCPBackend:
         stop_started: asyncio.Event | None = None,
         stop_release: asyncio.Event | None = None,
     ) -> None:
-        self.kind = "sse"
         self.allowed_tools: list[str] = []
         self._sse_url = sse_url
         self.stop_calls = 0

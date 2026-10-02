@@ -17,20 +17,16 @@ from band.integrations.mcp.local_server import (
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
-BandMCPBackendKind = TypeAliasType(
-    "BandMCPBackendKind",
+BandMCPTransport = TypeAliasType(
+    "BandMCPTransport",
     Literal["http", "sse"],
 )
 
 
 @dataclass
 class BandMCPBackend:
-    """A running Band MCP server and the tool names it exposes.
+    """A running Band MCP server (both transports) and the tool names it exposes."""
 
-    ``kind`` is the transport the consumer dials; the server serves both.
-    """
-
-    kind: BandMCPBackendKind
     allowed_tools: list[str]
     local_server: LocalMCPServer
 
@@ -39,7 +35,7 @@ class BandMCPBackend:
         """False once the backing local server has crashed or stopped."""
         return self.local_server.is_running
 
-    def endpoint(self, transport: BandMCPBackendKind, room_id: str | None) -> str:
+    def endpoint(self, transport: BandMCPTransport, room_id: str | None) -> str:
         """Return the URL a consumer dials: its room's, or the multi-room one.
 
         Raises ``ValueError`` when ``room_id`` doesn't match how the backend
@@ -77,7 +73,6 @@ def _build_allowed_tools(
 
 async def create_band_mcp_backend(
     *,
-    kind: BandMCPBackendKind,
     tool_definitions: list[ToolDefinition],
     get_tools: Any,
     additional_tools: list[CustomToolDef] | None = None,
@@ -86,7 +81,7 @@ async def create_band_mcp_backend(
     port_min: int = LOCAL_MCP_PORT_MIN,
     port_max: int = LOCAL_MCP_PORT_MAX,
 ) -> BandMCPBackend:
-    """Start a shared Band MCP server for the requested transport.
+    """Start a shared Band MCP server, serving both transports.
 
     A ``room_bound`` backend serves one endpoint per room
     (``endpoint(transport, room_id)``) whose tools take their room from the
@@ -112,7 +107,6 @@ async def create_band_mcp_backend(
     )
     await local_server.start()
     return BandMCPBackend(
-        kind=kind,
         allowed_tools=_build_allowed_tools(tool_definitions, resolved_tools),
         local_server=local_server,
     )

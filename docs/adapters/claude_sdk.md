@@ -14,6 +14,10 @@ CLI launch options and chat approvals are nested groups:
 - **Two credentials.** `Agent.create(api_key=...)` is the Band key only. Claude
   Code authenticates itself (`claude auth login` or `ANTHROPIC_API_KEY`); the
   adapter never hands it a key.
+- **Band tools are bound to the room.** The adapter hosts one loopback
+  `LocalMCPServer` and gives each room's session that room's endpoint
+  (`/rooms/<room>/mcp`), so the tools take no `chat_id` and the prompt never
+  states one.
 - **Assistant text is never posted.** The adapter only debug-logs it. A reply
   reaches the room through the `band_send_message` tool, and a turn that ends
   with no successful reply or action tool call is reported to the room as an

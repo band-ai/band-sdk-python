@@ -12,7 +12,7 @@ from mcp.types import TextContent
 from pydantic import BaseModel
 
 from band.core.types import ALL_CAPABILITIES
-from band.integrations.mcp import BandMCPBackendKind
+from band.integrations.mcp import BandMCPTransport
 from band.integrations.mcp.engine import (
     EngineSpec,
     build_engine,
@@ -30,7 +30,7 @@ from tests.mcpclient import (
 
 ROOM_A = "room-a"
 ROOM_B = "room-b"
-TRANSPORTS: list[BandMCPBackendKind] = ["http", "sse"]
+TRANSPORTS: list[BandMCPTransport] = ["http", "sse"]
 
 
 class LookupInput(BaseModel):
@@ -64,7 +64,7 @@ def room_backend(rooms: dict[str, FakeAgentTools], *, room_bound: bool):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", TRANSPORTS)
 async def test_room_endpoint_advertises_no_chat_id(
-    rooms: dict[str, FakeAgentTools], transport: BandMCPBackendKind
+    rooms: dict[str, FakeAgentTools], transport: BandMCPTransport
 ) -> None:
     async with (
         room_backend(rooms, room_bound=True) as backend,
@@ -83,7 +83,7 @@ async def test_room_endpoint_advertises_no_chat_id(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", TRANSPORTS)
 async def test_call_lands_in_its_endpoints_room(
-    rooms: dict[str, FakeAgentTools], transport: BandMCPBackendKind
+    rooms: dict[str, FakeAgentTools], transport: BandMCPTransport
 ) -> None:
     async with (
         room_backend(rooms, room_bound=True) as backend,

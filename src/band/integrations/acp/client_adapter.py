@@ -61,7 +61,6 @@ from band.integrations.acp.client_runtime import (
     ACPRuntime,
     ElicitationHandler,
     ElicitationNarrator,
-    MCPTransportKind,
     PermissionHandler,
     PermissionNarrator,
     allow_permission,
@@ -93,7 +92,7 @@ from band.integrations.acp.session_config import (
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp.backends import (
     BandMCPBackend,
-    BandMCPBackendKind,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
 from band.runtime.custom_tools import (
@@ -155,7 +154,6 @@ class ACPTurnTimeoutError(TimeoutError):
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 # What ACP's session/new takes; YAML/JSON entries validate into these.
 SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
-DEFAULT_BAND_MCP_BACKEND_KIND: BandMCPBackendKind = "http"
 
 # Prefixes the change-triggered roster/contacts updates injected into a
 # prompt, so the model reads them as platform state, not as the requester
@@ -963,7 +961,7 @@ class ACPClientAdapter(
         return f"[System Context]\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
-        self, backend: BandMCPBackend, transport: MCPTransportKind, room_id: str
+        self, backend: BandMCPBackend, transport: BandMCPTransport, room_id: str
     ) -> LocalMcpServerConfig:
         url = backend.endpoint(transport, room_id)
         if transport == "sse":
@@ -1018,7 +1016,6 @@ class ACPClientAdapter(
                 self._band_mcp_backend = None
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
-                    kind=DEFAULT_BAND_MCP_BACKEND_KIND,
                     tool_definitions=self._tool_definitions,
                     get_tools=self._room_tools.get,
                     additional_tools=self._custom_tools,

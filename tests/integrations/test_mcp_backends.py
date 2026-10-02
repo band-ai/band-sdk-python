@@ -14,13 +14,11 @@ class TestBandMcpBackends:
         tools = FakeAgentTools()
 
         backend = await create_band_mcp_backend(
-            kind="http",
             tool_definitions=tool_definitions,
             get_tools=lambda room_id: tools if room_id == "room-123" else None,
         )
 
         try:
-            assert backend.kind == "http"
             assert backend.allowed_tools == [f"mcp__band__{tool_definitions[0].name}"]
             assert backend.local_server.http_url.startswith("http://127.0.0.1:")
             assert backend.is_running

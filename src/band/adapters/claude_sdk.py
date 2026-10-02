@@ -736,7 +736,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             iter_tool_definitions(capabilities=self.features.capabilities)
         )
         backend = await create_band_mcp_backend(
-            kind="http",
             tool_definitions=tool_definitions,
             get_tools=self._mcp_room_tools.get,
             additional_tools=self._custom_tools,
