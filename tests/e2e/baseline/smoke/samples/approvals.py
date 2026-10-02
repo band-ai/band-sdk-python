@@ -465,15 +465,14 @@ def cursor_test_adapter(
         "plan_mode": plan_mode,
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
-        "resolve_session_config": resolve_session_config,
         "inject_band_tools": inject_band_tools,
     }
     if workspace_for_room is None:
         config_kwargs["cwd"] = str(setup.workdir)
-    else:
-        config_kwargs["workspace_for_room"] = workspace_for_room
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
+        resolve_session_config=resolve_session_config,
         capabilities=capabilities,
     )
 
