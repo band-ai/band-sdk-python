@@ -7,10 +7,8 @@ The tools themselves are served by the shared Band MCP backend
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable
 from typing import Any
 
-from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import BASE_TOOL_NAMES, CHAT_TOOL_NAMES, mcp_tool_names
 
 # Tool names as constants (MCP naming convention: mcp__{server}__{tool})
@@ -18,10 +16,6 @@ BAND_CHAT_TOOLS: list[str] = mcp_tool_names(CHAT_TOOL_NAMES)
 BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_CHAT_TOOLS
-
-ToolResolver = Callable[[str], AgentToolsProtocol | None]
-ParticipantHandlesResolver = Callable[[str], list[str]]
-ToolResultHook = Callable[[str, str, Any], Awaitable[None] | None]
 
 
 def __getattr__(name: str) -> Any:
