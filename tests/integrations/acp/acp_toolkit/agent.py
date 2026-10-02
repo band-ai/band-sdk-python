@@ -433,7 +433,7 @@ class FakeACPAgent:
 
         if result.isError:
             raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
-        return result.structuredContent or result.content
+        return result.content
 
     async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
         """The tools a session's MCP server lists."""

@@ -106,9 +106,6 @@ class MCPToolRegistration:
     description: str
     input_model: type[BaseModel]
     execute: MCPToolExecutor
-    # False only for band_read_room_file: its image branch returns MCP content
-    # blocks, which the schema FastMCP infers from ``-> str`` would reject.
-    structured_output: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -532,7 +529,6 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
-        structured_output=False if is_read_room_file else None,
     )
 
 
@@ -783,18 +779,20 @@ def _build_mcp_tool(registration: MCPToolRegistration) -> Tool:
     same helper ``AgentTools.get_tool_schemas`` already applies) keeps this
     engine's wire schema consistent with every other schema surface the SDK
     exposes, instead of teaching a second, parallel normalization to whatever
-    reads this schema downstream. ``structured_output`` still has to pass
-    through here too (not just via a separate ``add_tool`` call) -- the
-    ``FastMCP(tools=...)`` constructor path is the only one used, and
-    ``ToolManager.add_tool`` silently keeps the first registration on a name
-    collision, so a second registration would never actually apply it.
+    reads this schema downstream.
+
+    Every tool is unstructured: ``execute`` already returns the JSON text (or
+    image blocks), and FastMCP's inferred ``-> str`` output schema would only
+    wrap that text in ``{"result": "<json>"}`` structured content, which
+    clients that prefer structured content (the Claude CLI) show the model
+    double-encoded.
     """
     handler = _make_dispatch_function(registration)
     tool = Tool.from_function(
         handler,
         name=registration.name,
         description=registration.description,
-        structured_output=registration.structured_output,
+        structured_output=False,
     )
     tool.parameters = sanitize_tool_schema(tool.parameters)
     return tool

@@ -48,8 +48,7 @@ async def _list_tool(session: ClientSession, name: str) -> Any:
 
 async def _call(session: ClientSession, name: str, **arguments: object) -> Any:
     """Call a tool and parse its text content -- the engine's real wire shape
-    (row 15: every registration returns a JSON *string*, matching how a real
-    MCP client / LiveHarness reads it, not FastMCP's structuredContent wrapper)."""
+    (row 15: every registration returns a JSON *string*, its only content)."""
     result = await session.call_tool(name, arguments)
     assert not result.isError, result.content
     text = result.content[0].text if result.content else None
@@ -333,6 +332,22 @@ async def test_embedded_style_uniform_wrap_room_bound_dispatch(
 
         room_id = await _call(session, "band_create_chatroom", chat_id="room-1")
         assert room_id.startswith("room-")
+
+
+async def test_tool_results_are_plain_json_text_without_a_structured_wrapper(
+    agent_session_factory,
+) -> None:
+    """No output schema and no ``{"result": "<json>"}`` structured content: a
+    client that prefers structured content would show it double-encoded."""
+    mcp = await agent_session_factory(FakeAgentTools(room_id="room-1"))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        tool = await _list_tool(session, "band_lookup_peers")
+        result = await session.call_tool("band_lookup_peers", {"chat_id": "room-1"})
+
+    assert tool.outputSchema is None
+    assert result.structuredContent is None
+    assert json.loads(result.content[0].text)["data"] == []
 
 
 async def test_embedded_send_message_round_trip_and_participant_refresh(
