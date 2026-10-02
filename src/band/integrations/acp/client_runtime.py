@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Protocol, cast
 
 from acp import connect_to_agent, spawn_agent_process, text_block
 from acp.exceptions import RequestError
@@ -36,6 +36,7 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
+from band.integrations.mcp.backends import BandMCPBackendKind
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ PermissionNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ElicitationHandler = Callable[..., Awaitable[object]]
 ElicitationNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
-MCPTransportKind = Literal["http", "sse"]
+MCPTransportKind = BandMCPBackendKind
 
 # ACP grants a tool-call permission by *selecting one of the options the agent
 # offered* (each carries an ``optionId`` and a ``kind``); the on-wire response is

@@ -49,6 +49,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     launch_for,
 )
 from tests.integrations.acp.conftest import make_platform_message
+from tests.mcpclient import room_endpoint_path
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
@@ -58,7 +59,7 @@ def mock_band_backend() -> MagicMock:
     """A mocked ``BandMCPBackend`` that serves every room an endpoint."""
     backend = MagicMock()
     backend.endpoint.side_effect = lambda transport, room_id: (
-        f"http://127.0.0.1:1/rooms/{room_id}/{transport}"
+        f"http://127.0.0.1:1{room_endpoint_path(room_id, transport)}"
     )
     return backend
 
@@ -296,7 +297,7 @@ class TestACPClientAdapterLocalMcpConfig:
             await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert urlsplit(server.url).path == "/rooms/room-1/mcp"
+        assert urlsplit(server.url).path == room_endpoint_path("room-1")
         assert server.headers == []
         assert server.type == "http"
 
@@ -316,7 +317,7 @@ class TestACPClientAdapterLocalMcpConfig:
             await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert urlsplit(server.url).path == "/rooms/room-1/sse"
+        assert urlsplit(server.url).path == room_endpoint_path("room-1", "sse")
         assert server.headers == []
         assert server.type == "sse"
 

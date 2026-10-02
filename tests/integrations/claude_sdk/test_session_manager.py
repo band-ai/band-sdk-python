@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from band.runtime.tools import BAND_MCP_SERVER_NAME
 
 if _HAS_CLAUDE_SDK:
     from claude_agent_sdk import ClaudeAgentOptions
@@ -196,22 +198,15 @@ class TestBuildOptions:
         self, real_options: ClaudeAgentOptions
     ) -> None:
         """_build_options should give each room the factory's MCP servers."""
-        manager = ClaudeSessionManager(
-            real_options,
-            mcp_servers_factory=lambda room_id: {
-                "band": {
-                    "type": "http",
-                    "url": f"http://127.0.0.1:1/rooms/{room_id}/mcp",
-                }
-            },
-        )
+
+        def room_servers(room_id: str) -> dict[str, Any]:
+            return {BAND_MCP_SERVER_NAME: {"type": "http", "url": room_id}}
+
+        manager = ClaudeSessionManager(real_options, mcp_servers_factory=room_servers)
 
         servers = [manager._build_options(room).mcp_servers for room in ("a", "b")]
 
-        assert servers == [
-            {"band": {"type": "http", "url": "http://127.0.0.1:1/rooms/a/mcp"}},
-            {"band": {"type": "http", "url": "http://127.0.0.1:1/rooms/b/mcp"}},
-        ]
+        assert servers == [room_servers("a"), room_servers("b")]
 
     def test_does_not_mutate_base_options(
         self, real_options: ClaudeAgentOptions

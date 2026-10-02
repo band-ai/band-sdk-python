@@ -104,28 +104,20 @@ class _StubReadRoomFileTools:
 
 async def _probe_claude_sdk() -> bool:
     """claude_sdk's tools are its room-bound Band MCP backend, dialed over HTTP."""
-    from band.integrations.mcp import (  # noqa: PLC0415 -- claude_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
-        create_band_mcp_backend,
-    )
     from tests.mcpclient import (  # noqa: PLC0415 -- imports mcp, a claude_sdk extra absent from the standard dev-crewai/dev-parlant lane venvs
         mcp_session,
+        started_backend,
     )
 
-    backend = await create_band_mcp_backend(
-        kind="http",
-        tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
-        get_tools={"room-1": _StubReadRoomFileTools()}.get,
-        room_bound=True,
-        port_min=0,
-        port_max=0,
-    )
-    try:
-        async with mcp_session(backend.endpoint("http", "room-1")) as session:
-            result = await session.call_tool(
-                BandTool.READ_ROOM_FILE, {"file_id": "file-1"}
-            )
-    finally:
-        await backend.stop()
+    async with (
+        started_backend(
+            room_bound=True,
+            tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
+            get_tools={"room-1": _StubReadRoomFileTools()}.get,
+        ) as backend,
+        mcp_session(backend.endpoint("http", "room-1")) as session,
+    ):
+        result = await session.call_tool(BandTool.READ_ROOM_FILE, {"file_id": "file-1"})
 
     blocks = [block.model_dump(exclude_none=True) for block in result.content]
     return not result.isError and {"content": blocks} == _IMAGE_RESULT

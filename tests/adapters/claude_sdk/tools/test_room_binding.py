@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
-from tests.mcpclient import advertised_arguments, mcp_session
+from tests.mcpclient import advertised_arguments, mcp_session, room_endpoint_path
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -34,7 +34,10 @@ async def test_rooms_dial_their_own_band_endpoint_on_one_server(
     urls = [urlsplit(endpoint) for endpoint in endpoints]
 
     assert len({url.netloc for url in urls}) == 1
-    assert [url.path for url in urls] == ["/rooms/room-1/mcp", "/rooms/room-2/mcp"]
+    assert [url.path for url in urls] == [
+        room_endpoint_path("room-1"),
+        room_endpoint_path("room-2"),
+    ]
     assert "chat_id" not in advertised
     assert room.chat == ["for room one"]
     assert other_room.chat == ["for room two"]

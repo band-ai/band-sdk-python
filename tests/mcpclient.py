@@ -1,9 +1,9 @@
-"""Real MCP client sessions for tests that dial a running Band MCP server."""
+"""Real Band MCP servers and client sessions for tests that dial them."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 from mcp import ClientSession
@@ -11,7 +11,16 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import Tool
 
-from band.integrations.mcp import BandMCPBackendKind
+from band.integrations.mcp import (
+    BandMCPBackend,
+    BandMCPBackendKind,
+    create_band_mcp_backend,
+)
+from band.integrations.mcp.local_server import (
+    LOCAL_MCP_HTTP_PATH,
+    LOCAL_MCP_ROOMS_PATH,
+    LOCAL_MCP_SSE_PATH,
+)
 
 # A valid band_store_memory call, minus any room.
 STORE_MEMORY_ARGS: dict[str, Any] = {
@@ -23,27 +32,48 @@ STORE_MEMORY_ARGS: dict[str, Any] = {
     "scope": "organization",
 }
 
+_TRANSPORT_PATHS: dict[BandMCPBackendKind, str] = {
+    "http": LOCAL_MCP_HTTP_PATH,
+    "sse": LOCAL_MCP_SSE_PATH,
+}
+
+
+def room_endpoint_path(room_id: str, transport: BandMCPBackendKind = "http") -> str:
+    """The URL path a room-bound Band MCP server serves ``room_id`` on."""
+    return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{_TRANSPORT_PATHS[transport]}"
+
+
+@asynccontextmanager
+async def started_backend(
+    *, room_bound: bool, **settings: Any
+) -> AsyncIterator[BandMCPBackend]:
+    """A Band MCP backend on an OS-assigned port, always stopped on exit."""
+    backend = await create_band_mcp_backend(
+        kind="http", room_bound=room_bound, port_min=0, port_max=0, **settings
+    )
+    try:
+        yield backend
+    finally:
+        await backend.stop()
+
 
 @asynccontextmanager
 async def mcp_session(
     url: str, transport: BandMCPBackendKind = "http"
 ) -> AsyncIterator[ClientSession]:
     """An initialized MCP client session to ``url``, closed on exit."""
+    streams: AbstractAsyncContextManager[tuple[Any, ...]]
     match transport:
         case "http":
-            async with (
-                streamable_http_client(url) as (read_stream, write_stream, _),
-                ClientSession(read_stream, write_stream) as session,
-            ):
-                await session.initialize()
-                yield session
+            streams = streamable_http_client(url)
         case "sse":
-            async with (
-                sse_client(url) as (read_stream, write_stream),
-                ClientSession(read_stream, write_stream) as session,
-            ):
-                await session.initialize()
-                yield session
+            streams = sse_client(url)
+    async with (
+        streams as (read_stream, write_stream, *_),
+        ClientSession(read_stream, write_stream) as session,
+    ):
+        await session.initialize()
+        yield session
 
 
 def tool_arguments(tools: Sequence[Tool], tool_name: str) -> set[str]:

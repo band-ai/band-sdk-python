@@ -936,16 +936,13 @@ class ACPClientAdapter(
 
         # Injected Band tools are bound to this room by their endpoint; only
         # an external Band MCP server still takes the room as an argument.
-        takes_room_argument = not self.config.inject_band_tools
-        room_line = (
-            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n" if takes_room_argument else ""
-        )
-        room_hint = (
-            f" When a tool needs the current room, use the Current "
-            f"{CHAT_ID_FIELD_NAME} value above."
-            if takes_room_argument
-            else ""
-        )
+        room_line, room_hint = "", ""
+        if not self.config.inject_band_tools:
+            room_line = f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
+            room_hint = (
+                f" When a tool needs the current room, use the Current "
+                f"{CHAT_ID_FIELD_NAME} value above."
+            )
         room_context = (
             f"\n## Room Context\n"
             f"You are connected to Band using the Band tools.\n"

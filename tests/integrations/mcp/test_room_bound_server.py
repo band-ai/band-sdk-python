@@ -6,20 +6,13 @@ request, which only a real server carries.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import TextContent
 from pydantic import BaseModel
 
 from band.core.types import ALL_CAPABILITIES
-from band.integrations.mcp import (
-    BandMCPBackend,
-    BandMCPBackendKind,
-    create_band_mcp_backend,
-)
+from band.integrations.mcp import BandMCPBackendKind
 from band.integrations.mcp.engine import (
     EngineSpec,
     build_engine,
@@ -27,7 +20,13 @@ from band.integrations.mcp.engine import (
 )
 from band.runtime.tools import BandTool, iter_tool_definitions
 from band.testing import FakeAgentTools
-from tests.mcpclient import STORE_MEMORY_ARGS, advertised_arguments, mcp_session
+from tests.mcpclient import (
+    STORE_MEMORY_ARGS,
+    advertised_arguments,
+    mcp_session,
+    started_backend,
+    tool_arguments,
+)
 
 ROOM_A = "room-a"
 ROOM_B = "room-b"
@@ -52,23 +51,13 @@ def rooms() -> dict[str, FakeAgentTools]:
     }
 
 
-@asynccontextmanager
-async def started_backend(
-    rooms: dict[str, FakeAgentTools], *, room_bound: bool
-) -> AsyncIterator[BandMCPBackend]:
-    backend = await create_band_mcp_backend(
-        kind="http",
+def room_backend(rooms: dict[str, FakeAgentTools], *, room_bound: bool):
+    return started_backend(
+        room_bound=room_bound,
         tool_definitions=list(iter_tool_definitions(capabilities=ALL_CAPABILITIES)),
         get_tools=rooms.get,
         additional_tools=[(LookupInput, lookup)],
-        room_bound=room_bound,
-        port_min=0,
-        port_max=0,
     )
-    try:
-        yield backend
-    finally:
-        await backend.stop()
 
 
 @pytest.mark.timeout(90)
@@ -78,13 +67,16 @@ async def test_room_endpoint_advertises_no_chat_id(
     rooms: dict[str, FakeAgentTools], transport: BandMCPBackendKind
 ) -> None:
     async with (
-        started_backend(rooms, room_bound=True) as backend,
+        room_backend(rooms, room_bound=True) as backend,
         mcp_session(backend.endpoint(transport, ROOM_A), transport) as session,
     ):
-        assert await advertised_arguments(session, BandTool.STORE_MEMORY) == set(
-            STORE_MEMORY_ARGS
-        ) | {"subject_id", "metadata"}
-        assert await advertised_arguments(session, "lookup") == {"query"}
+        tools = (await session.list_tools()).tools
+
+    assert tool_arguments(tools, BandTool.STORE_MEMORY) == set(STORE_MEMORY_ARGS) | {
+        "subject_id",
+        "metadata",
+    }
+    assert tool_arguments(tools, "lookup") == {"query"}
 
 
 @pytest.mark.timeout(90)
@@ -94,7 +86,7 @@ async def test_call_lands_in_its_endpoints_room(
     rooms: dict[str, FakeAgentTools], transport: BandMCPBackendKind
 ) -> None:
     async with (
-        started_backend(rooms, room_bound=True) as backend,
+        room_backend(rooms, room_bound=True) as backend,
         mcp_session(backend.endpoint(transport, ROOM_A), transport) as session,
     ):
         await session.call_tool(BandTool.STORE_MEMORY, STORE_MEMORY_ARGS)
@@ -111,7 +103,7 @@ async def test_call_lands_in_its_endpoints_room(
 async def test_rooms_share_one_server_without_crossing(
     rooms: dict[str, FakeAgentTools],
 ) -> None:
-    async with started_backend(rooms, room_bound=True) as backend:
+    async with room_backend(rooms, room_bound=True) as backend:
         for room_id in (ROOM_A, ROOM_B, ROOM_B):
             async with mcp_session(backend.endpoint("http", room_id)) as session:
                 await session.call_tool(BandTool.STORE_MEMORY, STORE_MEMORY_ARGS)
@@ -125,7 +117,7 @@ async def test_multi_room_endpoint_routes_by_chat_id(
     rooms: dict[str, FakeAgentTools],
 ) -> None:
     async with (
-        started_backend(rooms, room_bound=False) as backend,
+        room_backend(rooms, room_bound=False) as backend,
         mcp_session(backend.endpoint("http", None)) as session,
     ):
         assert "chat_id" in await advertised_arguments(session, BandTool.STORE_MEMORY)
@@ -143,7 +135,7 @@ async def test_endpoint_of_the_other_kind_raises(
     rooms: dict[str, FakeAgentTools], room_bound: bool
 ) -> None:
     other_kind_room = None if room_bound else ROOM_A
-    async with started_backend(rooms, room_bound=room_bound) as backend:
+    async with room_backend(rooms, room_bound=room_bound) as backend:
         for transport in TRANSPORTS:
             with pytest.raises(ValueError, match="room-bound|multi-room"):
                 backend.endpoint(transport, other_kind_room)

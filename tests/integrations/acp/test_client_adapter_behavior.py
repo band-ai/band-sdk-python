@@ -30,13 +30,14 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
+from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
     fake_agent_config,
     live_line,
 )
-from tests.mcpclient import STORE_MEMORY_ARGS, tool_arguments
+from tests.mcpclient import STORE_MEMORY_ARGS, room_endpoint_path, tool_arguments
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -520,7 +521,7 @@ async def test_two_rooms_get_isolated_sessions(fake_agent) -> None:
 
 
 def band_mcp_url(agent: FakeACPAgent, session_id: str) -> str:
-    return agent.mcp_server(session_id, "band").url
+    return agent.mcp_server(session_id, BAND_MCP_SERVER_NAME).url
 
 
 @pytest.mark.asyncio
@@ -540,7 +541,10 @@ async def test_rooms_get_their_own_band_mcp_endpoint_on_one_server(
         ]
 
     assert len({url.netloc for url in urls}) == 1
-    assert [url.path for url in urls] == ["/rooms/room-1/mcp", "/rooms/room-2/mcp"]
+    assert [url.path for url in urls] == [
+        room_endpoint_path("room-1"),
+        room_endpoint_path("room-2"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -554,7 +558,7 @@ async def test_injected_band_tools_advertise_no_chat_id(fake_agent) -> None:
     ) as session:
         await session.send("hi", room="room-1")
         tools = await fake_agent.list_mcp_tools(
-            session_id=session.session_id("room-1"), server="band"
+            session_id=session.session_id("room-1"), server=BAND_MCP_SERVER_NAME
         )
 
     assert "chat_id" not in tool_arguments(tools, "band_store_memory")
@@ -595,7 +599,9 @@ async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
         )
 
     assert agent.session_load_requests == ["persisted"]
-    assert urlsplit(band_mcp_url(agent, "persisted")).path == "/rooms/room-1/mcp"
+    assert urlsplit(band_mcp_url(agent, "persisted")).path == room_endpoint_path(
+        "room-1"
+    )
 
 
 # --- Band-history replay when the remote session cannot be restored ------------
