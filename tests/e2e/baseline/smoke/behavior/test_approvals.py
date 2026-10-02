@@ -30,7 +30,7 @@ import asyncio
 import logging
 import re
 import tempfile
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +55,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     Outcome,
     UnattendedPolicy,
     appending_command,
+    closes_with,
     command_request,
     commands_request,
     marker_command,
@@ -161,7 +162,14 @@ class ApprovalRoom:
             lambda msgs: len(self.dialect.find_requests(msgs[since:])) >= count,
             deadline_s=self.budget.deadline_s,
         )
-        return self.dialect.find_requests(asked[since:])[:count]
+        requests = self.dialect.find_requests(asked[since:])[:count]
+        logger.log(
+            APPROVAL_LOG_LEVEL,
+            "Approval requests captured adapter=%s requests=%s",
+            self.adapter_id,
+            [request["token"] for request in requests],
+        )
+        return requests
 
     async def shown(self, text: str, *, since: int) -> None:
         """Wait until an agent message after ``since`` shows ``text``."""
@@ -179,83 +187,20 @@ class ApprovalRoom:
     ) -> None:
         """Decline extra requests and wait for the decided turn to close."""
         expected_notices = list(notices)
-        unexpected_requests: list[str] = []
-        known_followups = 0
-        async with asyncio.timeout(self.budget.deadline_s):
-            while True:
-                await self._wait_for_reply_or_request(
-                    since, expected_notices, closing_reply
+        try:
+            async with asyncio.timeout(self.budget.deadline_s):
+                await self._settle(
+                    since, expected_notices, closing_reply, allowed_followup_commands
                 )
-                pending = self._unhandled_requests(self.capture.messages.since(since))
-                if not pending and self.dialect.settled(
-                    self.capture.messages.since(since),
-                    *expected_notices,
-                    closing_reply=closing_reply,
-                ):
-                    if self.adapter_id is Adapter.CURSOR_ACP:
-                        break
-                    # These adapters persist usage only after their model turn ends.
-                    if not await self.capture.usage(sender_id=self.agent.id):
-                        await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
-                        continue
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Approval terminal usage adapter=%s requests=%s",
-                        self.adapter_id,
-                        sorted(self.handled_requests),
-                    )
-                    durable = [
-                        message
-                        for message in await self.user_ops.list_messages(
-                            self.room_id, message_type=MessageType.TEXT
-                        )
-                        if message.sender_id == self.agent.id
-                    ]
-                    pending = self._unhandled_requests(durable)
-                    if not pending and self.dialect.settled(
-                        durable, *expected_notices, closing_reply=closing_reply
-                    ):
-                        break
-                    if not pending:
-                        await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
-                        continue
-                for request in pending:
-                    readback = (
-                        self.dialect.shell_command(request) in allowed_followup_commands
-                        and known_followups == 0
-                    )
-                    if readback:
-                        known_followups += 1
-                    else:
-                        unexpected_requests.append(request["token"])
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Declining follow-up approval adapter=%s request=%s permission=%s",
-                        self.adapter_id,
-                        request["token"],
-                        request.groupdict().get("permission", ""),
-                    )
-                    await self.decide(Outcome.DECLINE, request)
-                    expected_notices.append(
-                        self.dialect.notice(Outcome.DECLINE, request)
-                    )
-                if unexpected_requests:
-                    pytest.fail(
-                        f"Unexpected follow-up approvals: {unexpected_requests}"
-                    )
-                if self._opencode_missing_text_reply(since):
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Approval no-text fallback adapter=%s requests=%s",
-                        self.adapter_id,
-                        sorted(self.handled_requests),
-                    )
-                    pytest.fail("OpenCode ended the approval turn without a text reply")
+        except TimeoutError:
+            raise TimeoutError(
+                await self._stall_report(since, expected_notices, closing_reply)
+            ) from None
         logger.log(
             APPROVAL_LOG_LEVEL,
             "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
             self.adapter_id,
-            sorted(self.handled_requests),
+            self.decided,
             len(self.said_since(since)[-1]),
         )
         for notice in expected_notices:
@@ -287,12 +232,153 @@ class ApprovalRoom:
                     len(result.output),
                 )
 
+    async def _settle(
+        self,
+        since: int,
+        expected_notices: list[Notice],
+        closing_reply: str,
+        allowed_followup_commands: frozenset[str],
+    ) -> None:
+        """Decline follow-up requests until the turn settles, durably."""
+        unexpected_requests: list[str] = []
+        known_followups = 0
+        while True:
+            await self._wait_for_reply_or_request(
+                since, expected_notices, closing_reply
+            )
+            pending = self._unhandled_requests(self._streamed(since))
+            if not pending and self._closes(
+                self._streamed(since), expected_notices, closing_reply
+            ):
+                if self.adapter_id is Adapter.CURSOR_ACP:
+                    break
+                pending = await self._durable_pending(expected_notices, closing_reply)
+                if not pending:
+                    break
+            for request in pending:
+                readback = (
+                    self.dialect.shell_command(request) in allowed_followup_commands
+                    and known_followups == 0
+                )
+                if readback:
+                    known_followups += 1
+                else:
+                    unexpected_requests.append(request["token"])
+                logger.log(
+                    APPROVAL_LOG_LEVEL,
+                    "Declining follow-up approval adapter=%s request=%s permission=%s",
+                    self.adapter_id,
+                    request["token"],
+                    request.groupdict().get("permission", ""),
+                )
+                await self.decide(Outcome.DECLINE, request)
+                expected_notices.append(self.dialect.notice(Outcome.DECLINE, request))
+            if unexpected_requests:
+                pytest.fail(f"Unexpected follow-up approvals: {unexpected_requests}")
+            if self._opencode_missing_text_reply(since):
+                logger.log(
+                    APPROVAL_LOG_LEVEL,
+                    "Approval no-text fallback adapter=%s requests=%s",
+                    self.adapter_id,
+                    self.decided,
+                )
+                pytest.fail("OpenCode ended the approval turn without a text reply")
+
+    async def _durable_pending(
+        self, notices: list[Notice], closing_reply: str
+    ) -> list[re.Match[str]]:
+        """After the streamed turn settles, wait for its durable copy: return the
+        follow-up requests it holds, or none once it closes too."""
+        logger.log(
+            APPROVAL_LOG_LEVEL,
+            "Approval stream settled adapter=%s requests=%s",
+            self.adapter_id,
+            self.decided,
+        )
+        # These adapters persist usage only after their model turn ends.
+        while not await self.capture.usage(sender_id=self.agent.id):
+            await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
+        logger.log(
+            APPROVAL_LOG_LEVEL,
+            "Approval terminal usage adapter=%s requests=%s",
+            self.adapter_id,
+            self.decided,
+        )
+        while True:
+            durable = await self._durable_agent_messages()
+            if pending := self._unhandled_requests(durable):
+                return pending
+            if self._closes(durable, notices, closing_reply):
+                return []
+            await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
+
+    async def _durable_agent_messages(self) -> list[ChatMessage]:
+        return [
+            message
+            for message in await self.user_ops.list_messages(
+                self.room_id, message_type=MessageType.TEXT
+            )
+            if message.sender_id == self.agent.id
+        ]
+
+    async def _stall_report(
+        self, since: int, notices: list[Notice], closing_reply: str
+    ) -> str:
+        """Why the decided turn did not close, without message contents.
+
+        Streamed and durable outlines side by side separate a silent agent (both
+        stop short) from a frame the capture missed (only the durable one closes).
+        """
+        streamed = self._streamed(since)
+        durable = await self._durable_agent_messages()
+        return (
+            f"{self.adapter_id} approval turn did not close within "
+            f"{self.budget.deadline_s:.0f}s in room {self.room_id}; "
+            f"decided requests {self.decided}, closing reply {closing_reply!r}.\n"
+            f"Streamed since the decision: "
+            f"{self._outline(streamed, notices, closing_reply)}\n"
+            f"Durable agent messages: {self._outline(durable, notices, closing_reply)} "
+            f"(closed={self._closes(durable, notices, closing_reply)})"
+        )
+
+    def _outline(
+        self,
+        messages: Sequence[MessageCreatedPayload | ChatMessage],
+        notices: list[Notice],
+        closing_reply: str,
+    ) -> list[str]:
+        """Each message's role in the approval flow, in order."""
+        return [self._role(m.content or "", notices, closing_reply) for m in messages]
+
+    def _role(self, content: str, notices: list[Notice], closing_reply: str) -> str:
+        request = self.dialect.request.search(content)
+        notice = next((n for n in notices if n.text in content), None)
+        match request, notice:
+            case re.Match(), _:
+                return f"request {request['token']}"
+            case None, Notice():
+                return f"notice {notice.text!r}"
+            case _ if closes_with(content, closing_reply):
+                return "closing reply"
+            case _:
+                return f"text ({len(content)} chars)"
+
+    def _closes(
+        self,
+        messages: Sequence[MessageCreatedPayload | ChatMessage],
+        notices: list[Notice],
+        closing_reply: str,
+    ) -> bool:
+        return self.dialect.settled(
+            list(messages), *notices, closing_reply=closing_reply
+        )
+
     def _unhandled_requests(
-        self, messages: list[MessageCreatedPayload | ChatMessage]
+        self, messages: Sequence[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:
         return [
             request
-            for request in self.dialect.find_requests(messages)
+            for request in self.dialect.find_requests(list(messages))
             if request["token"] not in self.handled_requests
         ]
 
@@ -301,12 +387,8 @@ class ApprovalRoom:
     ) -> None:
         await self.capture.wait_until(
             lambda _msgs: (
-                self.dialect.settled(
-                    self.capture.messages.since(since),
-                    *notices,
-                    closing_reply=closing_reply,
-                )
-                or bool(self._unhandled_requests(self.capture.messages.since(since)))
+                self._closes(self._streamed(since), notices, closing_reply)
+                or bool(self._unhandled_requests(self._streamed(since)))
                 or self._opencode_missing_text_reply(since)
             ),
             deadline_s=self.budget.deadline_s,
@@ -317,8 +399,16 @@ class ApprovalRoom:
             NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
         )
 
+    @property
+    def decided(self) -> list[str]:
+        """The tokens of every request answered or left to expire, for logs."""
+        return sorted(self.handled_requests)
+
+    def _streamed(self, since: int) -> list[MessageCreatedPayload]:
+        return self.capture.messages.since(since)
+
     def said_since(self, since: int) -> list[str]:
-        return [m.content or "" for m in self.capture.messages.since(since)]
+        return [m.content or "" for m in self._streamed(since)]
 
 
 @asynccontextmanager
