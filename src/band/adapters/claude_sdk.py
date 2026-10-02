@@ -778,7 +778,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         - Store tools for MCP server access
         - Get or create ClaudeSDKClient for this room
-        - Include chat_id in the message so Claude can pass it to tools
         - Stream response and log events (tools execute via MCP)
         """
         logger.debug("Handling message %s in room %s", msg.id, room_id)
