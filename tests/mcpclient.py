@@ -16,11 +16,14 @@ from band.integrations.mcp import (
     BandMCPTransport,
     create_band_mcp_backend,
 )
+from band.integrations.mcp.engine import RoomToolResolver
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
 )
+from band.runtime.custom_tools import CustomToolDef
+from band.runtime.tools import ToolDefinition
 
 # A valid band_store_memory call, minus any room.
 STORE_MEMORY_ARGS: dict[str, Any] = {
@@ -45,11 +48,20 @@ def room_endpoint_path(room_id: str, transport: BandMCPTransport = "http") -> st
 
 @asynccontextmanager
 async def started_backend(
-    *, room_bound: bool, **settings: Any
+    *,
+    room_bound: bool,
+    tool_definitions: Sequence[ToolDefinition],
+    get_tools: RoomToolResolver,
+    additional_tools: list[CustomToolDef] | None = None,
 ) -> AsyncIterator[BandMCPBackend]:
     """A Band MCP backend on an OS-assigned port, always stopped on exit."""
     backend = await create_band_mcp_backend(
-        room_bound=room_bound, port_min=0, port_max=0, **settings
+        tool_definitions=tool_definitions,
+        get_tools=get_tools,
+        additional_tools=additional_tools,
+        room_bound=room_bound,
+        port_min=0,
+        port_max=0,
     )
     try:
         yield backend

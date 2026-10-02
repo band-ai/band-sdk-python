@@ -74,7 +74,7 @@ MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 ROOM_PATH_PARAM = "room_id"
 
 
-def connection_room_id() -> str:
+def _connection_room_id() -> str:
     """Return the room of the endpoint the current MCP request arrived on.
 
     Read per request, never cached per MCP session: the room belongs to the
@@ -499,9 +499,9 @@ def build_tool_registration(
       method parameter there).
     - ``pinned_room_id``: inject-and-override ``chat_id`` before validation
       when set (the CLI's ``--room-id``).
-    - ``room_from_connection``: inject-and-override ``chat_id`` from
-      :func:`connection_room_id` on every call (a room-bound
-      ``LocalMCPServer`` endpoint).
+    - ``room_from_connection``: inject-and-override ``chat_id`` with the room
+      of the endpoint each call arrives on (a room-bound ``LocalMCPServer``,
+      whose path carries it under ``ROOM_PATH_PARAM``).
     """
     if pinned_room_id is not None and room_from_connection:
         raise ValueError("pinned_room_id and room_from_connection are exclusive")
@@ -510,7 +510,7 @@ def build_tool_registration(
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
-        room_id = connection_room_id() if room_from_connection else pinned_room_id
+        room_id = _connection_room_id() if room_from_connection else pinned_room_id
         if room_id is not None:
             kwargs[CHAT_ID_FIELD_NAME] = room_id
         validated = validate_tool_arguments(definition.name, input_model, kwargs)
@@ -535,31 +535,23 @@ def build_tool_registration(
 def build_custom_tool_registration(
     spec: CustomToolSpec | CustomToolDef,
     *,
-    room_bound: bool = False,
-    room_from_connection: bool = False,
+    advertise_chat_id: bool = False,
 ) -> MCPToolRegistration:
     """Build a registration for a user-provided custom tool.
 
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
     Dispatches straight through ``execute_custom_tool`` -- there is no
     ``AgentTools``/``HumanTools`` method behind a custom tool, so no
-    resolver is involved. ``room_bound`` advertises the ``chat_id`` a
-    multi-room endpoint requires; ``room_from_connection`` hides it again
-    (the endpoint path carries the room). Either way the room is dropped
-    before the handler runs.
+    resolver is involved. ``advertise_chat_id`` adds the ``chat_id`` a
+    multi-room endpoint requires of every tool; the room is dropped before
+    the handler runs, since a custom tool never acts in one.
     """
     tool_def: CustomToolDef = (
         (spec.input_model, spec.handler) if isinstance(spec, CustomToolSpec) else spec
     )
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
-    model = input_model
-    if room_bound:
-        model = (
-            pin_existing_chat_id(input_model)
-            if room_from_connection
-            else extend_with_chat_id(input_model, None)
-        )
+    model = extend_with_chat_id(input_model, None) if advertise_chat_id else input_model
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
@@ -670,7 +662,7 @@ def build_resolved_band_mcp_tool_registrations(
     ]
     registrations.extend(
         build_custom_tool_registration(
-            tool_def, room_bound=True, room_from_connection=room_from_connection
+            tool_def, advertise_chat_id=not room_from_connection
         )
         for tool_def in additional_tools or []
     )

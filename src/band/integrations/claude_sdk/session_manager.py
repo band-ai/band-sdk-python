@@ -22,7 +22,10 @@ try:
         ClaudeAgentOptions,
         ClaudeSDKClient,
     )
-    from claude_agent_sdk.types import CanUseTool  # type: ignore[import-not-found]
+    from claude_agent_sdk.types import (  # type: ignore[import-not-found]
+        CanUseTool,
+        McpServerConfig,
+    )
 
     _CLAUDE_SDK_AVAILABLE = True
 except ImportError:
@@ -79,7 +82,7 @@ class ClaudeSessionManager:
         self,
         base_options: ClaudeAgentOptions,
         can_use_tool_factory: Callable[[str], CanUseTool] | None = None,
-        mcp_servers_factory: Callable[[str], dict[str, Any]] | None = None,
+        mcp_servers_factory: Callable[[str], dict[str, McpServerConfig]] | None = None,
     ):
         """
         Initialize session manager.

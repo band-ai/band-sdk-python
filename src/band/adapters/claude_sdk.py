@@ -45,6 +45,7 @@ try:
         HookJSONOutput,
         HookMatcher,
         McpHttpServerConfig,
+        McpServerConfig,
         PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
@@ -750,7 +751,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         return backend
 
-    def _room_mcp_servers(self, room_id: str) -> dict[str, McpHttpServerConfig]:
+    def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
         """A room session's MCP servers: the Band endpoint bound to that room."""
         if self._mcp_backend is None:
             raise RuntimeError("Band MCP backend is not started")

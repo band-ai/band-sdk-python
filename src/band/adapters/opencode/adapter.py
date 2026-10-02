@@ -725,7 +725,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             try:
                 backend = await self._ensure_mcp_backend()
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name, url=backend.endpoint("sse", None)
+                    name=self._mcp_server_name, url=backend.endpoint("sse")
                 )
             except Exception:
                 logger.exception(

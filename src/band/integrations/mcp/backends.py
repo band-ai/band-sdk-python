@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from typing_extensions import TypeAliasType
 
-from band.integrations.mcp.engine import build_resolved_band_mcp_tool_registrations
+from band.integrations.mcp.engine import (
+    RoomToolResolver,
+    build_resolved_band_mcp_tool_registrations,
+)
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     LOCAL_MCP_PORT_MAX,
@@ -23,7 +27,7 @@ BandMCPTransport = TypeAliasType(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class BandMCPBackend:
     """A running Band MCP server (both transports) and the tool names it exposes."""
 
@@ -35,11 +39,11 @@ class BandMCPBackend:
         """False once the backing local server has crashed or stopped."""
         return self.local_server.is_running
 
-    def endpoint(self, transport: BandMCPTransport, room_id: str | None) -> str:
+    def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:
         """Return the URL a consumer dials: its room's, or the multi-room one.
 
-        Raises ``ValueError`` when ``room_id`` doesn't match how the backend
-        was created (``room_bound``).
+        Raises ``ValueError`` when passing (or omitting) ``room_id`` doesn't
+        match how the backend was created (``room_bound``).
         """
         server = self.local_server
         match transport:
@@ -60,7 +64,7 @@ class BandMCPBackend:
 
 
 def _build_allowed_tools(
-    tool_definitions: list[ToolDefinition],
+    tool_definitions: Sequence[ToolDefinition],
     additional_tools: list[CustomToolDef],
 ) -> list[str]:
     allowed_tools = [f"mcp__band__{definition.name}" for definition in tool_definitions]
@@ -73,8 +77,8 @@ def _build_allowed_tools(
 
 async def create_band_mcp_backend(
     *,
-    tool_definitions: list[ToolDefinition],
-    get_tools: Any,
+    tool_definitions: Sequence[ToolDefinition],
+    get_tools: RoomToolResolver,
     additional_tools: list[CustomToolDef] | None = None,
     room_bound: bool = False,
     host: str = LOCAL_MCP_HOST,

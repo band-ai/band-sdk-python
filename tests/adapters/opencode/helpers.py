@@ -417,7 +417,7 @@ class FakeMCPBackend:
         self._stop_started = stop_started
         self._stop_release = stop_release
 
-    def endpoint(self, transport: str, room_id: str | None) -> str:
+    def endpoint(self, transport: str, room_id: str | None = None) -> str:
         if (transport, room_id) != ("sse", None):
             raise ValueError("OpenCode registers the multi-room SSE endpoint")
         return self._sse_url

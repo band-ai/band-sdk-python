@@ -184,9 +184,17 @@ class LocalMCPServer:
         return f"{self._origin}{LOCAL_MCP_ROOMS_PATH}/{quote(room_id, safe='')}"
 
     def _require_room_bound(self, expected: bool) -> None:
-        if self._room_bound != expected:
-            kind = "room-bound" if self._room_bound else "multi-room"
-            raise ValueError(f"Local MCP server {self._name} is {kind}")
+        if self._room_bound == expected:
+            return
+        if self._room_bound:
+            raise ValueError(
+                f"Local MCP server {self._name} is room-bound; "
+                "address it with room_http_url/room_sse_url"
+            )
+        raise ValueError(
+            f"Local MCP server {self._name} is multi-room; "
+            "address it with http_url/sse_url"
+        )
 
     @property
     def is_running(self) -> bool:

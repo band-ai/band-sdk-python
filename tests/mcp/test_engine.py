@@ -519,7 +519,7 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
 
     registration = build_custom_tool_registration(
         CustomToolSpec(input_model=EchoInput, handler=handler),
-        room_bound=True,
+        advertise_chat_id=True,
     )
     spec = EngineSpec(name="test-custom", tools=(registration,))
     mcp = build_engine(spec)
