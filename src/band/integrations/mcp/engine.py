@@ -69,8 +69,7 @@ logger = logging.getLogger(__name__)
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 
-# The path parameter a room-bound endpoint (``/rooms/{room_id}/...``) carries
-# its room in.
+# Server-path vocabulary for the room (not the model-facing chat_id field).
 ROOM_PATH_PARAM = "room_id"
 
 
@@ -302,19 +301,16 @@ def extend_with_chat_id(
 
 
 def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
-    """Return a subclass that re-annotates an existing ``chat_id`` as pinned.
+    """Return a subclass that hides ``chat_id`` from the advertised schema.
 
-    For human room-bound tools, whose input models already carry a plain
-    ``chat_id`` field (``HumanTools`` is not constructor-scoped, so it was
-    never missing one the way agent tools are). The advertised schema omits
-    the field; an inbound value is still accepted via alias so a client that
-    sends ``chat_id`` explicitly doesn't fail validation. The actual pinned
-    value is injected into the dispatched arguments before validation by
-    ``build_tool_registration``'s own ``pinned_room_id`` parameter, not by
-    this function -- it only reshapes the schema.
+    The field is still accepted on inbound payloads via alias so a client that
+    sends ``chat_id`` explicitly doesn't fail validation; the value that is
+    actually dispatched comes from ``build_tool_registration``'s
+    ``pinned_room_id`` or ``room_from_connection``, not from this helper.
 
-    A room-bound endpoint's agent tools use it too: their models have no
-    ``chat_id``, so this adds the hidden field the connection's room fills.
+    Used for human tools that already declare ``chat_id``, and for
+    room-bound agent tools whose models have none — in the latter case this
+    adds the hidden field the connection's room fills.
     """
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",

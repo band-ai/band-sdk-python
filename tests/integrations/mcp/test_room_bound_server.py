@@ -135,9 +135,10 @@ async def test_endpoint_of_the_other_kind_raises(
     rooms: dict[str, FakeAgentTools], room_bound: bool
 ) -> None:
     other_kind_room = None if room_bound else ROOM_A
+    expected = "room-bound" if room_bound else "multi-room"
     async with room_backend(rooms, room_bound=room_bound) as backend:
         for transport in TRANSPORTS:
-            with pytest.raises(ValueError, match="room-bound|multi-room"):
+            with pytest.raises(ValueError, match=expected):
                 backend.endpoint(transport, other_kind_room)
 
 
