@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from types import NoneType, UnionType
 from typing import Any, Self, TypeVar, Union, get_args, get_origin
 
@@ -66,8 +67,9 @@ def _unwrap_optional(annotation: Any) -> Any:
 
 def _hydrate_value(annotation: Any, value: Any) -> Any:
     """Hydrate one field's value per its declared type: a list constructs
-    each element, a nested model constructs recursively, anything else
-    (scalars, dicts with no model behind them) passes through untouched.
+    each element, a nested model constructs recursively, an enum becomes its
+    member, anything else (scalars, dicts with no model behind them) passes
+    through untouched.
     """
     if value is None:
         return None
@@ -79,5 +81,7 @@ def _hydrate_value(annotation: Any, value: Any) -> Any:
             return [_hydrate_value(item_type, item) for item in value]
         case None if isinstance(annotation, type) and issubclass(annotation, BaseModel):
             return _hydrate(annotation, value)
+        case None if isinstance(annotation, type) and issubclass(annotation, Enum):
+            return annotation(value)
         case _:
             return value

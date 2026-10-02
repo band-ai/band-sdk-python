@@ -256,9 +256,14 @@ class UserOps:
         """
         await self._post_control(f"/api/v1/me/chats/{room_id}/agents/stop")
 
-    async def play_agent(self, room_id: str) -> None:
-        """Resume agents in a user-owned room through the control endpoint."""
-        await self._post_control(f"/api/v1/me/chats/{room_id}/agents/play")
+    async def play_agent(self, room_id: str) -> str:
+        """Resume agents in a user-owned room through the control endpoint.
+
+        Returns the platform's response body, so a replay that never arrives
+        can be traced to the signal the platform says it sent.
+        """
+        response = await self._post_control(f"/api/v1/me/chats/{room_id}/agents/play")
+        return response.text
 
     async def interrupt_active_agent_execution(self, agent_id: str) -> None:
         """Interrupt one active execution of a user-owned agent.
@@ -284,8 +289,8 @@ class UserOps:
             f"/api/v1/me/agents/{agent_id}/executions/{execution['id']}/interrupt"
         )
 
-    async def _post_control(self, path: str) -> None:
-        await self._control_request("POST", path)
+    async def _post_control(self, path: str) -> httpx.Response:
+        return await self._control_request("POST", path)
 
     async def _control_request(self, method: str, path: str) -> httpx.Response:
         wrapper = self._client._client_wrapper
