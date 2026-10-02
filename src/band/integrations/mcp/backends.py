@@ -106,6 +106,7 @@ async def create_band_mcp_backend(
             get_tools=get_tools,
             additional_tools=resolved_tools,
             tool_definitions=tool_definitions,
+            tool_result_hook=tool_result_hook,
         ),
         host=host,
         port_min=port_min,

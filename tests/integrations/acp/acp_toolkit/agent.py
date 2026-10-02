@@ -315,12 +315,19 @@ class FakeACPAgent:
         *,
         arguments: dict[str, Any],
         server: str = "band",
+        title: str | None = None,
     ) -> FakeACPAgent:
-        """Call an advertised MCP tool between ACP call and result updates."""
+        """Call an advertised MCP tool between ACP call and result updates.
+
+        ``title`` is what the ACP ``tool_call`` update reports; it defaults to
+        the tool name, but a harness may write something else there (OMP uses
+        the model's intent phrase), so tests can model that divergence.
+        """
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
             await a.emit(
-                sid, start_tool_call(tool_call_id, tool_name, raw_input=arguments)
+                sid,
+                start_tool_call(tool_call_id, title or tool_name, raw_input=arguments),
             )
             result = await a.call_mcp_tool(
                 session_id=sid,
