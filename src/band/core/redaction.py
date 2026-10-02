@@ -6,8 +6,10 @@ import re
 from typing import Any
 
 _REDACTED = "[REDACTED]"
-# Never ``\s``, so a name cannot span a line.
-_NAME_SEPARATOR = r"[ \t_-]?"
+# Never ``\s``: no match may cross CR/LF into the next diagnostic line.
+_INLINE_SPACE = r"[ \t]"
+_SEPARATOR = rf"(?:{_INLINE_SPACE}|[_-])"
+_NAME_SEPARATOR = rf"{_SEPARATOR}?"
 # Names whose ``name: value`` in free text is a credential value.
 _CREDENTIAL_NAMES = (
     rf"token|authorization|api{_NAME_SEPARATOR}key|access{_NAME_SEPARATOR}key"
@@ -17,23 +19,23 @@ _CREDENTIAL_NAMES = (
 # In prose these usually introduce an explanation ("Invalid credentials: ..."),
 # so they are matched only as field names.
 _CREDENTIAL_FIELD_NAMES = rf"{_CREDENTIAL_NAMES}|auth|credential|cookie"
-_AUTH_SCHEME_VALUE_RE = re.compile(r"\b(Bearer|Basic)[ \t]+[^\s,;]+", re.IGNORECASE)
-# The value runs to the end of its line: credential values such as SigV4
-# headers contain spaces, commas and semicolons, so any shorter stop leaks a
-# suffix. The optional quote matches JSON and repr keys. Matching never crosses
-# CR/LF, so an empty label leaves the next diagnostic line intact.
+_AUTH_SCHEME_VALUE_RE = re.compile(
+    rf"\b(Bearer|Basic){_INLINE_SPACE}+[^\s,;]+", re.IGNORECASE
+)
+# The value runs to the end of its line: values such as SigV4 headers contain
+# spaces, commas and semicolons, so any shorter stop leaks a suffix.
 _CREDENTIAL_KV_RE = re.compile(
-    rf"({_CREDENTIAL_NAMES})[\"']?[ \t]*[:=][ \t]*[^\s][^\r\n]*",
+    rf"({_CREDENTIAL_NAMES})[\"']?{_INLINE_SPACE}*[:=]{_INLINE_SPACE}*\S[^\r\n]*",
     re.IGNORECASE,
 )
-# Matched against the key with separators removed, so ``apiKey``, ``api-key`` and
+# Matched against the key with separators removed, so ``apiKey``, ``api key`` and
 # ``OpenAIAPIKey`` all end in ``apikey``. End-anchored so a non-secret such as
 # ``token_count`` is left intact.
 _CREDENTIAL_FIELD_RE = re.compile(
     rf"(?:{_CREDENTIAL_FIELD_NAMES})s?(?:value)?$",
     re.IGNORECASE,
 )
-_KEY_SEPARATOR_RE = re.compile(r"[_-]")
+_KEY_SEPARATOR_RE = re.compile(_SEPARATOR)
 
 
 def redact_credentials(text: str) -> str:

@@ -1000,40 +1000,33 @@ class TestBandACPServerAdapterCreateSessionRollback:
             await adapter.create_session()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("error", "reported"),
+        [
+            pytest.param("send failed", "send failed", id="plain"),
+            pytest.param(
+                "Invalid API key: sk-live-secret, retry",
+                "Invalid API key=[REDACTED]",
+                id="credential-redacted",
+            ),
+        ],
+    )
     async def test_handle_prompt_cleans_up_pending_on_send_failure(
-        self, mock_rest_client: MagicMock
+        self, mock_rest_client: MagicMock, error: str, reported: str
     ) -> None:
-        """A failed message creation returns a failure and drops the pending prompt."""
+        """A failed message creation returns a redacted failure and drops the
+        pending prompt."""
         adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
         mock_rest_client.agent_api_messages.create_agent_chat_message = AsyncMock(
-            side_effect=RuntimeError("send failed")
+            side_effect=RuntimeError(error)
         )
 
         outcome = await adapter.handle_prompt("session-1", "Hello")
 
         assert (
             outcome.to_extension_data()
-            == AgentFailure("band", "send failed").to_extension_data()
+            == AgentFailure("band", reported).to_extension_data()
         )
         assert "room-123" not in adapter._pending_prompts
-
-    @pytest.mark.asyncio
-    async def test_handle_prompt_redacts_credentials_from_send_failure(
-        self, mock_rest_client: MagicMock
-    ) -> None:
-        """A send exception's credential never reaches the editor."""
-        adapter = BandACPServerAdapter()
-        adapter._rest = mock_rest_client
-        adapter._session_to_room["session-1"] = "room-123"
-        mock_rest_client.agent_api_messages.create_agent_chat_message = AsyncMock(
-            side_effect=RuntimeError("Invalid API key: sk-live-secret, retry")
-        )
-
-        outcome = await adapter.handle_prompt("session-1", "Hello")
-
-        assert (
-            outcome.to_extension_data()
-            == AgentFailure("band", "Invalid API key=[REDACTED]").to_extension_data()
-        )

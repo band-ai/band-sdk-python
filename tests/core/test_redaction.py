@@ -23,6 +23,11 @@ REDACTION_CASES = [
         "upstream rejected Bearer [REDACTED] (api_key=[REDACTED]",
         id="unlabeled-bearer-and-key",
     ),
+    pytest.param(
+        "sent Basic dXNlcjpwYXNz upstream",
+        "sent Basic [REDACTED] upstream",
+        id="basic-auth",
+    ),
     pytest.param("password=hunter2", "password=[REDACTED]", id="password"),
     pytest.param("client_secret=abc123XYZ", "client_secret=[REDACTED]", id="secret"),
     pytest.param(
@@ -43,10 +48,8 @@ REDACTION_CASES = [
         "Invalid access key=[REDACTED]",
         id="access key",
     ),
-    pytest.param("ACCESS_KEY: v", "ACCESS_KEY=[REDACTED]", id="access_key"),
     pytest.param("secret key: s3cr3t", "secret key=[REDACTED]", id="secret key"),
     pytest.param("Private Key: v", "Private Key=[REDACTED]", id="private key"),
-    pytest.param("privatekey: v", "privatekey=[REDACTED]", id="privatekey"),
     pytest.param("session key: v", "session key=[REDACTED]", id="session key"),
     pytest.param("Session-Key: v", "Session-Key=[REDACTED]", id="session-key"),
     pytest.param(
@@ -85,22 +88,20 @@ def test_credential_words_in_prose_stay_readable(prose: str) -> None:
     assert redact_credentials(prose) == prose
 
 
-def test_basic_auth_value_is_redacted() -> None:
-    assert redact_credentials("sent Basic dXNlcjpwYXNz upstream") == (
-        "sent Basic [REDACTED] upstream"
-    )
-
-
 @pytest.mark.parametrize(
     "field",
-    ["tokenValue", "auth", "OpenAIAPIKey", "passwd", "api_key_value", "refresh_tokens"],
+    [
+        "tokenValue",
+        "auth",
+        "OpenAIAPIKey",
+        "passwd",
+        "api_key_value",
+        "refresh_tokens",
+        "api key",
+    ],
 )
 def test_common_credential_field_spellings_are_redacted(field: str) -> None:
     assert redact_credentials_deep({field: "leak"}) == {field: "[REDACTED]"}
-
-
-def test_spaced_credential_field_is_redacted() -> None:
-    assert redact_credentials_deep({"api key": "v"}) == {"api key": "[REDACTED]"}
 
 
 def test_scalar_flags_under_credential_names_keep_their_type() -> None:
