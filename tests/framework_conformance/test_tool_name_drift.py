@@ -157,6 +157,11 @@ class TestClaudeSDKPromptsToolDrift:
             f"Add tool documentation to the system prompt in prompts.py."
         )
 
+    def test_prompt_omits_chat_id_routing_guidance(self):
+        """Room-bound MCP tools take no chat_id; the prompt must not ask for one."""
+        source = self._FILE.read_text()
+        assert "chat_id" not in source
+
 
 class TestLangGraphToolDrift:
     """LangGraph integration (integrations/langgraph/langchain_tools.py).

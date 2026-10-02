@@ -462,7 +462,14 @@ def _make_dispatch_function(
     signature = _build_handler_signature(registration.input_model)
 
     async def _dispatch(**kwargs: Any) -> str:
-        return await registration.execute(kwargs)
+        try:
+            return await registration.execute(kwargs)
+        except (ValueError, BandToolError):
+            raise
+        except Exception:
+            # FastMCP's Tool.run turns this into ToolError(str) with no log.
+            logger.exception("%s failed", registration.name)
+            raise
 
     _dispatch.__signature__ = signature  # type: ignore[attr-defined]
     _dispatch.__name__ = registration.name

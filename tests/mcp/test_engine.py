@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -543,6 +544,30 @@ async def test_custom_tool_accepts_bare_tuple_contract() -> None:
     async with create_connected_server_and_client_session(mcp) as session:
         result = await _call(session, "echo", message="hi")
         assert result == {"echo": "hi"}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_tool_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unexpected execute failures keep a stack in agent logs."""
+
+    async def handler(_input_data: EchoInput) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=handler)
+    )
+    mcp = build_engine(EngineSpec(name="test-fail-log", tools=(registration,)))
+
+    with caplog.at_level(logging.ERROR, logger="band.integrations.mcp.engine"):
+        async with create_connected_server_and_client_session(mcp) as session:
+            result = await session.call_tool("echo", {"message": "hi"})
+
+    assert result.isError
+    record = next(r for r in caplog.records if r.message == "echo failed")
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
 
 
 async def test_custom_tool_default_factory_field_advertised_as_optional() -> None:

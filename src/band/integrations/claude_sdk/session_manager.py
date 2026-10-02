@@ -94,8 +94,8 @@ class ClaudeSessionManager:
                 ``can_use_tool`` callback.  When set, each new session receives
                 its own callback bound to the room_id.
             mcp_servers_factory: Optional factory that returns a room's
-                ``mcp_servers``.  When set, it replaces ``base_options``'s
-                for each new session.
+                ``mcp_servers``.  When set, it replaces
+                ``base_options.mcp_servers`` for each new session.
         """
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
