@@ -6,9 +6,9 @@ import re
 from typing import Any
 
 _REDACTED = "[REDACTED]"
-# Never ``\s``: a match crosses at most the one line break before a value,
-# so later diagnostic lines survive.
-_INLINE_SPACE = r"[ \t]"
+# Any whitespace but CR/LF: a match crosses at most the one line break before
+# a value, so later diagnostic lines survive.
+_INLINE_SPACE = r"[^\S\r\n]"
 _VALUE_GAP = rf"{_INLINE_SPACE}*(?:(?:\r\n|\r|\n){_INLINE_SPACE}*)?"
 _SEPARATOR = rf"(?:{_INLINE_SPACE}|[_-])"
 _NAME_SEPARATOR = rf"{_SEPARATOR}?"
@@ -26,9 +26,10 @@ _AUTH_SCHEME_VALUE_RE = re.compile(
 )
 # The value runs to the end of its line: values such as SigV4 headers contain
 # spaces, commas and semicolons, so any shorter stop leaks a suffix. A value
-# may start on the next line.
+# may start on the next line. The optional quote, escaped or not, is a JSON or
+# repr key's closing quote.
 _CREDENTIAL_KV_RE = re.compile(
-    rf"({_CREDENTIAL_NAMES})[\"']?{_INLINE_SPACE}*[:=]{_VALUE_GAP}\S[^\r\n]*",
+    rf"({_CREDENTIAL_NAMES})(?:\\?[\"'])?{_INLINE_SPACE}*[:=]{_VALUE_GAP}\S[^\r\n]*",
     re.IGNORECASE,
 )
 # Matched against the key with separators removed, so ``apiKey``, ``api key`` and

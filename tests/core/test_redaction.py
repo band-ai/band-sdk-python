@@ -76,6 +76,15 @@ REDACTION_CASES = [
     ),
     pytest.param("Bearer\nabc\nnext", "Bearer [REDACTED]\nnext", id="bearer-next"),
     pytest.param("Bearerless: ok", "Bearerless: ok", id="bearer-prefix-word"),
+    pytest.param("password:\u00a0s3cr3t", "password=[REDACTED]", id="nbsp-after-delim"),
+    pytest.param("token\x0c: s3cr3t", "token=[REDACTED]", id="form-feed-before-delim"),
+    pytest.param("token:\u2028s3cr3t", "token=[REDACTED]", id="unicode-separator-gap"),
+    pytest.param("Bearer\u00a0s3cr3t", "Bearer [REDACTED]", id="nbsp-after-scheme"),
+    pytest.param(
+        'detail: {\\"api_key\\": \\"sk-abc\\"}',
+        'detail: {\\"api_key=[REDACTED]',
+        id="escaped-json-body",
+    ),
 ]
 
 
