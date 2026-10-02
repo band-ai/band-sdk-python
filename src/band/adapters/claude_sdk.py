@@ -106,6 +106,7 @@ from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_promp
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
 from band.runtime.custom_tools import (
@@ -757,7 +758,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             raise RuntimeError("Band MCP backend is not started")
         return {
             BAND_MCP_SERVER_NAME: McpHttpServerConfig(
-                type="http", url=self._mcp_backend.endpoint("http", room_id)
+                type="http",
+                url=self._mcp_backend.endpoint(BandMCPTransport.HTTP, room_id),
             )
         }
 

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
-
-from typing_extensions import TypeAliasType
+from enum import StrEnum
 
 from band.integrations.mcp.engine import (
     RoomToolResolver,
@@ -21,10 +19,12 @@ from band.integrations.mcp.local_server import (
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
-BandMCPTransport = TypeAliasType(
-    "BandMCPTransport",
-    Literal["http", "sse"],
-)
+
+class BandMCPTransport(StrEnum):
+    """The wire transports every Band MCP server serves."""
+
+    HTTP = "http"
+    SSE = "sse"
 
 
 @dataclass(frozen=True)
@@ -47,13 +47,13 @@ class BandMCPBackend:
         """
         server = self.local_server
         match transport:
-            case "http":
+            case BandMCPTransport.HTTP:
                 return (
                     server.http_url
                     if room_id is None
                     else server.room_http_url(room_id)
                 )
-            case "sse":
+            case BandMCPTransport.SSE:
                 return (
                     server.sse_url if room_id is None else server.room_sse_url(room_id)
                 )

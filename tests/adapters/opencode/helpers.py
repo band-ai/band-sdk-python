@@ -19,6 +19,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import (
     PlatformMessage,
 )
+from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodePermissionRequest,
@@ -417,8 +418,8 @@ class FakeMCPBackend:
         self._stop_started = stop_started
         self._stop_release = stop_release
 
-    def endpoint(self, transport: str, room_id: str | None = None) -> str:
-        if (transport, room_id) != ("sse", None):
+    def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:
+        if (transport, room_id) != (BandMCPTransport.SSE, None):
             raise ValueError("OpenCode registers the multi-room SSE endpoint")
         return self._sse_url
 

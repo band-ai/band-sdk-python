@@ -964,13 +964,15 @@ class ACPClientAdapter(
         self, backend: BandMCPBackend, transport: BandMCPTransport, room_id: str
     ) -> LocalMcpServerConfig:
         url = backend.endpoint(transport, room_id)
-        if transport == "sse":
-            return SseMcpServer(
-                type="sse", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
-            )
-        return HttpMcpServer(
-            type="http", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
-        )
+        match transport:
+            case BandMCPTransport.SSE:
+                return SseMcpServer(
+                    type="sse", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
+                )
+            case BandMCPTransport.HTTP:
+                return HttpMcpServer(
+                    type="http", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
+                )
 
     def _canonical_tool_name(self, name: str) -> str:
         """Strip an MCP server prefix off one of our own tools.

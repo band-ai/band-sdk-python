@@ -37,6 +37,7 @@ from band.core.types import (
 )
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
 from band.integrations.opencode import (
@@ -725,7 +726,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             try:
                 backend = await self._ensure_mcp_backend()
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name, url=backend.endpoint("sse")
+                    name=self._mcp_server_name,
+                    url=backend.endpoint(BandMCPTransport.SSE),
                 )
             except Exception:
                 logger.exception(

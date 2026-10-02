@@ -41,6 +41,7 @@ from band.integrations.acp.client_types import (
 )
 from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
+from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import (
@@ -306,7 +307,7 @@ class TestACPClientAdapterLocalMcpConfig:
         """Should expose shared SSE when the ACP agent only supports SSE MCP."""
         adapter = ACPClientAdapter(CODEX)
         runtime = adapter._build_runtime()
-        runtime._agent_mcp_transport = "sse"
+        runtime._agent_mcp_transport = BandMCPTransport.SSE
         adapter._runtimes["room-1"] = runtime
         adapter._room_workspaces["room-1"] = "/tmp/room-1"
         adapter._workspace_rooms["/tmp/room-1"] = "room-1"
@@ -317,7 +318,9 @@ class TestACPClientAdapterLocalMcpConfig:
             await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert urlsplit(server.url).path == room_endpoint_path("room-1", "sse")
+        assert urlsplit(server.url).path == room_endpoint_path(
+            "room-1", BandMCPTransport.SSE
+        )
         assert server.headers == []
         assert server.type == "sse"
 
@@ -629,7 +632,7 @@ class TestACPClientAdapterOnStarted:
         runtime = await adapter._runtime_for("room-1")
         await runtime.start()
 
-        assert runtime._agent_mcp_transport == "http"
+        assert runtime._agent_mcp_transport is BandMCPTransport.HTTP
 
     @pytest.mark.asyncio
     async def test_on_started_uses_sse_mcp_when_http_missing(
@@ -642,7 +645,7 @@ class TestACPClientAdapterOnStarted:
         runtime = await adapter._runtime_for("room-1")
         await runtime.start()
 
-        assert runtime._agent_mcp_transport == "sse"
+        assert runtime._agent_mcp_transport is BandMCPTransport.SSE
 
 
 class TestACPClientAdapterOnMessage:

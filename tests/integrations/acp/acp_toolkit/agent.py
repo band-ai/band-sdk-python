@@ -42,6 +42,7 @@ from band.integrations.acp.model_selection import (
     THOUGHT_LEVEL_CATEGORY,
 )
 from band.integrations.acp.session_config import SessionConfigOption, find_select
+from band.integrations.mcp import BandMCPTransport
 from tests.mcpclient import mcp_session
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
@@ -428,7 +429,7 @@ class FakeACPAgent:
     ) -> Any:
         """Call a tool on an MCP server advertised for this session."""
         config = self.mcp_server(session_id, server)
-        async with mcp_session(config.url, config.type) as client:
+        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
             result = await client.call_tool(tool_name, arguments)
 
         if result.isError:
@@ -438,7 +439,7 @@ class FakeACPAgent:
     async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
         """The tools a session's MCP server lists."""
         config = self.mcp_server(session_id, server)
-        async with mcp_session(config.url, config.type) as client:
+        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
             return (await client.list_tools()).tools
 
     # -- acp.Agent protocol ------------------------------------------------------

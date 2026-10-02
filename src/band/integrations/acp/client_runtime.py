@@ -847,7 +847,7 @@ class ACPRuntime:
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         ) = None
         self._stop_lock = asyncio.Lock()
-        self._agent_mcp_transport: BandMCPTransport = "http"
+        self._agent_mcp_transport = BandMCPTransport.HTTP
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
         self._config_lock = asyncio.Lock()
@@ -1152,11 +1152,11 @@ class ACPRuntime:
         mcp_capabilities = getattr(capabilities, "mcp_capabilities", None)
 
         if getattr(mcp_capabilities, "http", False):
-            return "http"
+            return BandMCPTransport.HTTP
         if getattr(mcp_capabilities, "sse", False):
-            return "sse"
+            return BandMCPTransport.SSE
 
-        return "http"
+        return BandMCPTransport.HTTP
 
     @staticmethod
     def _select_session_load(init_response: object) -> bool:

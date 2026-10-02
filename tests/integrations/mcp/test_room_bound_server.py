@@ -30,7 +30,7 @@ from tests.mcpclient import (
 
 ROOM_A = "room-a"
 ROOM_B = "room-b"
-TRANSPORTS: list[BandMCPTransport] = ["http", "sse"]
+TRANSPORTS = list(BandMCPTransport)
 
 
 class LookupInput(BaseModel):
@@ -105,7 +105,9 @@ async def test_rooms_share_one_server_without_crossing(
 ) -> None:
     async with room_backend(rooms, room_bound=True) as backend:
         for room_id in (ROOM_A, ROOM_B, ROOM_B):
-            async with mcp_session(backend.endpoint("http", room_id)) as session:
+            async with mcp_session(
+                backend.endpoint(BandMCPTransport.HTTP, room_id)
+            ) as session:
                 await session.call_tool(BandTool.STORE_MEMORY, STORE_MEMORY_ARGS)
 
     assert [len(rooms[ROOM_A].memories), len(rooms[ROOM_B].memories)] == [1, 2]
@@ -118,7 +120,7 @@ async def test_multi_room_endpoint_routes_by_chat_id(
 ) -> None:
     async with (
         room_backend(rooms, room_bound=False) as backend,
-        mcp_session(backend.endpoint("http", None)) as session,
+        mcp_session(backend.endpoint(BandMCPTransport.HTTP)) as session,
     ):
         assert "chat_id" in await advertised_arguments(session, BandTool.STORE_MEMORY)
         await session.call_tool(

@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.types import AdapterFeatures, Capability
+from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import TOOL_DEFINITIONS, BandTool, ToolCallOutcome
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
@@ -115,7 +116,7 @@ async def _probe_claude_sdk() -> bool:
             tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
             get_tools={"room-1": _StubReadRoomFileTools()}.get,
         ) as backend,
-        mcp_session(backend.endpoint("http", "room-1")) as session,
+        mcp_session(backend.endpoint(BandMCPTransport.HTTP, "room-1")) as session,
     ):
         result = await session.call_tool(BandTool.READ_ROOM_FILE, {"file_id": "file-1"})
 

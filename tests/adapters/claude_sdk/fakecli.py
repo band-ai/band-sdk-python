@@ -25,6 +25,7 @@ from claude_agent_sdk._internal.transport import Transport
 from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
+from band.integrations.mcp import BandMCPTransport
 from tests.baseline.decisions import ModelDecision, ToolCall
 from tests.mcpclient import mcp_session
 
@@ -430,7 +431,7 @@ class FakeCLISession(Transport):
         servers = self.options.mcp_servers
         assert isinstance(servers, dict), servers
         config = servers[server]
-        return mcp_session(config["url"], config["type"])
+        return mcp_session(config["url"], BandMCPTransport(config["type"]))
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:
         self._emit(

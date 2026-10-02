@@ -36,12 +36,14 @@ STORE_MEMORY_ARGS: dict[str, Any] = {
 }
 
 _TRANSPORT_PATHS: dict[BandMCPTransport, str] = {
-    "http": LOCAL_MCP_HTTP_PATH,
-    "sse": LOCAL_MCP_SSE_PATH,
+    BandMCPTransport.HTTP: LOCAL_MCP_HTTP_PATH,
+    BandMCPTransport.SSE: LOCAL_MCP_SSE_PATH,
 }
 
 
-def room_endpoint_path(room_id: str, transport: BandMCPTransport = "http") -> str:
+def room_endpoint_path(
+    room_id: str, transport: BandMCPTransport = BandMCPTransport.HTTP
+) -> str:
     """The URL path a room-bound Band MCP server serves ``room_id`` on."""
     return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{_TRANSPORT_PATHS[transport]}"
 
@@ -71,14 +73,14 @@ async def started_backend(
 
 @asynccontextmanager
 async def mcp_session(
-    url: str, transport: BandMCPTransport = "http"
+    url: str, transport: BandMCPTransport = BandMCPTransport.HTTP
 ) -> AsyncIterator[ClientSession]:
     """An initialized MCP client session to ``url``, closed on exit."""
     streams: AbstractAsyncContextManager[tuple[Any, ...]]
     match transport:
-        case "http":
+        case BandMCPTransport.HTTP:
             streams = streamable_http_client(url)
-        case "sse":
+        case BandMCPTransport.SSE:
             streams = sse_client(url)
     async with (
         streams as (read_stream, write_stream, *_),
