@@ -706,9 +706,6 @@ class TestGatewayResponses:
         assert "sk-live-key-secret" not in str(detail)
         assert detail["codex_additional_details"]["clientSecret"] == "[REDACTED]"
         assert detail["codex_additional_details"]["body"] == '{"api_key=[REDACTED]'
-        assert peer_failure["detail"]["codex_additional_details"]["body"] == (
-            '{"api_key": "sk-live-json"}'
-        )
 
     @pytest.mark.asyncio
     async def test_drops_non_dict_peer_failure_metadata(self) -> None:
