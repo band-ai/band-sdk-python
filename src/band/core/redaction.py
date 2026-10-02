@@ -6,8 +6,10 @@ import re
 from typing import Any
 
 _REDACTED = "[REDACTED]"
-# Never ``\s``: no match may cross CR/LF into the next diagnostic line.
+# Never ``\s``: a match crosses at most the one line break before a value,
+# so later diagnostic lines survive.
 _INLINE_SPACE = r"[ \t]"
+_VALUE_GAP = rf"{_INLINE_SPACE}*(?:(?:\r\n|\r|\n){_INLINE_SPACE}*)?"
 _SEPARATOR = rf"(?:{_INLINE_SPACE}|[_-])"
 _NAME_SEPARATOR = rf"{_SEPARATOR}?"
 # Names whose ``name: value`` in free text is a credential value.
@@ -20,12 +22,13 @@ _CREDENTIAL_NAMES = (
 # so they are matched only as field names.
 _CREDENTIAL_FIELD_NAMES = rf"{_CREDENTIAL_NAMES}|auth|credential|cookie"
 _AUTH_SCHEME_VALUE_RE = re.compile(
-    rf"\b(Bearer|Basic){_INLINE_SPACE}+[^\s,;]+", re.IGNORECASE
+    rf"\b(Bearer|Basic)(?=\s){_VALUE_GAP}[^\s,;]+", re.IGNORECASE
 )
 # The value runs to the end of its line: values such as SigV4 headers contain
-# spaces, commas and semicolons, so any shorter stop leaks a suffix.
+# spaces, commas and semicolons, so any shorter stop leaks a suffix. A value
+# may start on the next line.
 _CREDENTIAL_KV_RE = re.compile(
-    rf"({_CREDENTIAL_NAMES})[\"']?{_INLINE_SPACE}*[:=]{_INLINE_SPACE}*\S[^\r\n]*",
+    rf"({_CREDENTIAL_NAMES})[\"']?{_INLINE_SPACE}*[:=]{_VALUE_GAP}\S[^\r\n]*",
     re.IGNORECASE,
 )
 # Matched against the key with separators removed, so ``apiKey``, ``api key`` and

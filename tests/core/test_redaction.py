@@ -56,14 +56,26 @@ REDACTION_CASES = [
         '{"api_key": "sk-abc", "x": 1}', '{"api_key=[REDACTED]', id="json-body"
     ),
     pytest.param("{'token': 'abc'}", "{'token=[REDACTED]", id="dict-repr"),
-    pytest.param("password:\nnext line", "password:\nnext line", id="empty-lf"),
-    pytest.param("password: \r\nnext", "password: \r\nnext", id="blank-crlf"),
+    pytest.param("api_key:\n  sk-live-abc", "api_key=[REDACTED]", id="value-next-lf"),
+    pytest.param("password: \r\nnext", "password=[REDACTED]", id="value-next-crlf"),
+    pytest.param(
+        "token:\nabc\nretry later",
+        "token=[REDACTED]\nretry later",
+        id="value-next-keeps-later-lines",
+    ),
+    pytest.param("password:\n\nnext", "password:\n\nnext", id="blank-line-label"),
     pytest.param(
         "token: a\nretry later\r\napi key: b\ndone",
         "token=[REDACTED]\nretry later\r\napi key=[REDACTED]\ndone",
         id="multiline",
     ),
-    pytest.param("Bearer\nnext", "Bearer\nnext", id="bearer-at-line-end"),
+    pytest.param(
+        "Authorization: Bearer\n  abc123",
+        "Authorization=[REDACTED]",
+        id="bearer-value-next-line",
+    ),
+    pytest.param("Bearer\nabc\nnext", "Bearer [REDACTED]\nnext", id="bearer-next"),
+    pytest.param("Bearerless: ok", "Bearerless: ok", id="bearer-prefix-word"),
 ]
 
 
