@@ -6,18 +6,24 @@ import re
 from typing import Any
 
 _REDACTED = "[REDACTED]"
+# Never ``\s``, so a name cannot span a line.
+_NAME_SEPARATOR = r"[ \t_-]?"
 # Names whose ``name: value`` in free text is a credential value.
 _CREDENTIAL_NAMES = (
-    r"token|authorization|api[_-]?key|access[_-]?key|secret(?:[_-]?key)?"
-    r"|password|passwd|private[_-]?key|session[_-]?key"
+    rf"token|authorization|api{_NAME_SEPARATOR}key|access{_NAME_SEPARATOR}key"
+    rf"|secret(?:{_NAME_SEPARATOR}key)?|password|passwd"
+    rf"|private{_NAME_SEPARATOR}key|session{_NAME_SEPARATOR}key"
 )
 # In prose these usually introduce an explanation ("Invalid credentials: ..."),
 # so they are matched only as field names.
 _CREDENTIAL_FIELD_NAMES = rf"{_CREDENTIAL_NAMES}|auth|credential|cookie"
-_AUTH_SCHEME_VALUE_RE = re.compile(r"\b(Bearer|Basic)\s+[^\s,;]+", re.IGNORECASE)
-# Include spaces so a scheme-prefixed value is redacted in full.
+_AUTH_SCHEME_VALUE_RE = re.compile(r"\b(Bearer|Basic)[ \t]+[^\s,;]+", re.IGNORECASE)
+# The value runs to the end of its line: credential values such as SigV4
+# headers contain spaces, commas and semicolons, so any shorter stop leaks a
+# suffix. The optional quote matches JSON and repr keys. Matching never crosses
+# CR/LF, so an empty label leaves the next diagnostic line intact.
 _CREDENTIAL_KV_RE = re.compile(
-    rf"({_CREDENTIAL_NAMES})\s*[:=]\s*[^,;]+",
+    rf"({_CREDENTIAL_NAMES})[\"']?[ \t]*[:=][ \t]*[^\s][^\r\n]*",
     re.IGNORECASE,
 )
 # Matched against the key with separators removed, so ``apiKey``, ``api-key`` and

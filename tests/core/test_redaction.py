@@ -6,6 +6,73 @@ import pytest
 
 from band.core.redaction import redact_credentials, redact_credentials_deep
 
+REDACTION_CASES = [
+    pytest.param(
+        "Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/x, "
+        "SignedHeaders=host;x-amz-date, Signature=abcdef0123",
+        "Authorization=[REDACTED]",
+        id="sigv4-header",
+    ),
+    pytest.param(
+        "Authorization: ApiKey sk-live-abcdef123456",
+        "Authorization=[REDACTED]",
+        id="scheme-prefixed-value",
+    ),
+    pytest.param(
+        "upstream rejected Bearer abc123.def456 (api_key=sk-live-secret)",
+        "upstream rejected Bearer [REDACTED] (api_key=[REDACTED]",
+        id="unlabeled-bearer-and-key",
+    ),
+    pytest.param("password=hunter2", "password=[REDACTED]", id="password"),
+    pytest.param("client_secret=abc123XYZ", "client_secret=[REDACTED]", id="secret"),
+    pytest.param(
+        "AWS_SECRET_ACCESS_KEY=AKIAABCDEFGHIJKLMNOP",
+        "AWS_SECRET_ACCESS_KEY=[REDACTED]",
+        id="access-key-env",
+    ),
+    pytest.param(
+        "password: alpha,beta;gamma", "password=[REDACTED]", id="delimited-value"
+    ),
+    pytest.param(
+        "Invalid API key: sk-live-abc123", "Invalid API key=[REDACTED]", id="api key"
+    ),
+    pytest.param("apikey: v", "apikey=[REDACTED]", id="apikey"),
+    pytest.param("Api-Key: v", "Api-Key=[REDACTED]", id="api-key"),
+    pytest.param(
+        "Invalid access key: short-test-value",
+        "Invalid access key=[REDACTED]",
+        id="access key",
+    ),
+    pytest.param("ACCESS_KEY: v", "ACCESS_KEY=[REDACTED]", id="access_key"),
+    pytest.param("secret key: s3cr3t", "secret key=[REDACTED]", id="secret key"),
+    pytest.param("Private Key: v", "Private Key=[REDACTED]", id="private key"),
+    pytest.param("privatekey: v", "privatekey=[REDACTED]", id="privatekey"),
+    pytest.param("session key: v", "session key=[REDACTED]", id="session key"),
+    pytest.param("Session-Key: v", "Session-Key=[REDACTED]", id="session-key"),
+    pytest.param(
+        '{"api_key": "sk-abc", "x": 1}', '{"api_key=[REDACTED]', id="json-body"
+    ),
+    pytest.param("{'token': 'abc'}", "{'token=[REDACTED]", id="dict-repr"),
+    pytest.param("password:\nnext line", "password:\nnext line", id="empty-lf"),
+    pytest.param("password: \r\nnext", "password: \r\nnext", id="blank-crlf"),
+    pytest.param(
+        "token: a\nretry later\r\napi key: b\ndone",
+        "token=[REDACTED]\nretry later\r\napi key=[REDACTED]\ndone",
+        id="multiline",
+    ),
+    pytest.param("Bearer\nnext", "Bearer\nnext", id="bearer-at-line-end"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), REDACTION_CASES)
+def test_credentials_in_text_are_redacted(text: str, expected: str) -> None:
+    assert redact_credentials(text) == expected
+
+
+@pytest.mark.parametrize(("text", "expected"), REDACTION_CASES)
+def test_credentials_in_nested_text_are_redacted(text: str, expected: str) -> None:
+    assert redact_credentials_deep({"detail": [text]}) == {"detail": [expected]}
+
 
 @pytest.mark.parametrize(
     "prose",
@@ -30,6 +97,10 @@ def test_basic_auth_value_is_redacted() -> None:
 )
 def test_common_credential_field_spellings_are_redacted(field: str) -> None:
     assert redact_credentials_deep({field: "leak"}) == {field: "[REDACTED]"}
+
+
+def test_spaced_credential_field_is_redacted() -> None:
+    assert redact_credentials_deep({"api key": "v"}) == {"api key": "[REDACTED]"}
 
 
 def test_scalar_flags_under_credential_names_keep_their_type() -> None:
