@@ -35,14 +35,14 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp.types import Tool
 
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
 from band.integrations.acp.session_config import SessionConfigOption, find_select
+from tests.mcpclient import mcp_session
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
@@ -404,6 +404,20 @@ class FakeACPAgent:
         self.permission_responses.append(resp)
         return resp
 
+    def mcp_server(self, session_id: str, server: str) -> Any:
+        """The MCP server config named ``server`` advertised for this session."""
+        config = next(
+            (
+                config
+                for config in self._mcp_servers_by_session[session_id]
+                if getattr(config, "name", None) == server
+            ),
+            None,
+        )
+        if config is None:
+            raise ValueError(f"MCP server {server!r} was not advertised")
+        return config
+
     async def call_mcp_tool(
         self,
         *,
@@ -412,34 +426,20 @@ class FakeACPAgent:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        """Call a named streamable-HTTP MCP server advertised for this session."""
-        server_config = next(
-            (
-                config
-                for config in self._mcp_servers_by_session[session_id]
-                if getattr(config, "name", None) == server
-            ),
-            None,
-        )
-        if server_config is None:
-            raise ValueError(f"MCP server {server!r} was not advertised")
-        if getattr(server_config, "type", None) != "http":
-            raise ValueError(f"MCP server {server!r} does not use streamable HTTP")
-
-        async with (
-            streamable_http_client(server_config.url) as (
-                read_stream,
-                write_stream,
-                _,
-            ),
-            ClientSession(read_stream, write_stream) as client,
-        ):
-            await client.initialize()
+        """Call a tool on an MCP server advertised for this session."""
+        config = self.mcp_server(session_id, server)
+        async with mcp_session(config.url, config.type) as client:
             result = await client.call_tool(tool_name, arguments)
 
         if result.isError:
             raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
         return result.structuredContent or result.content
+
+    async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
+        """The tools a session's MCP server lists."""
+        config = self.mcp_server(session_id, server)
+        async with mcp_session(config.url, config.type) as client:
+            return (await client.list_tools()).tools
 
     # -- acp.Agent protocol ------------------------------------------------------
 
@@ -469,13 +469,14 @@ class FakeACPAgent:
     async def load_session(
         self, cwd: str, session_id: str, mcp_servers: Any = None, **kwargs: Any
     ) -> LoadSessionResponse:
-        del cwd, mcp_servers, kwargs
+        del cwd, kwargs
         self.session_load_requests.append(session_id)
         if self._session_load_error is not None:
             raise self._session_load_error
         if session_id not in self._persisted_sessions:
             raise RequestError.resource_not_found()
         self._conns_by_session[session_id] = self._current_conn
+        self._mcp_servers_by_session[session_id] = list(mcp_servers or [])
         return LoadSessionResponse(config_options=self._config_options)
 
     async def new_session(

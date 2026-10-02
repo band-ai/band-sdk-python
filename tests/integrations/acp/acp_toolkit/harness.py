@@ -204,6 +204,7 @@ class Reply:
     messages: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     transcript: list[RoomActivity] = field(default_factory=list)
+    memories: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def outline(self) -> list[str]:
@@ -308,6 +309,7 @@ class AcpSession:
             messages=self._last_tools.messages_sent,
             events=self._last_tools.events_sent,
             transcript=self._last_tools.transcript,
+            memories=self._last_tools.memories,
         )
 
     async def send(
@@ -347,6 +349,7 @@ class AcpSession:
             messages=tools.messages_sent,
             events=tools.events_sent,
             transcript=tools.transcript,
+            memories=tools.memories,
         )
 
     def session_id(self, room: str) -> str:

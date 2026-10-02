@@ -34,6 +34,7 @@ from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
+from mcp.server.lowlevel.server import request_ctx
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ImageContent
 from pydantic import AliasChoices, BaseModel, Field, create_model, field_validator
@@ -67,6 +68,29 @@ from band.runtime.tools.inputs.chat import require_visible_content
 logger = logging.getLogger(__name__)
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
+
+# The path parameter a room-bound endpoint (``/rooms/{room_id}/...``) carries
+# its room in.
+ROOM_PATH_PARAM = "room_id"
+
+
+def connection_room_id() -> str:
+    """Return the room of the endpoint the current MCP request arrived on.
+
+    Read per request, never cached per MCP session: the room belongs to the
+    request path, and stdio or in-memory sessions carry no HTTP request.
+    """
+    try:
+        request = request_ctx.get().request
+    except LookupError:
+        request = None
+    room_id = request.path_params.get(ROOM_PATH_PARAM) if request is not None else None
+    if not room_id:
+        raise ValueError(
+            "This Band tool takes its room from a room-bound MCP endpoint, "
+            "but the call did not arrive on one"
+        )
+    return room_id
 
 
 @dataclass(frozen=True)
@@ -150,9 +174,9 @@ class EmbeddedResolver:
         chat_id: str | None,
         arguments: dict[str, Any],
     ) -> Any:
-        # Embedded's uniform wrap (row 2) makes chat_id required on every
-        # agent tool's advertised schema, so validation already rejects a
-        # missing one before dispatch reaches here -- this is a defensive
+        # Embedded's uniform wrap (row 2) always yields a room: a required
+        # chat_id on a multi-room endpoint, or the endpoint path on a
+        # room-bound one (``room_from_connection``). This is a defensive
         # narrowing for the type checker and a clear error, not a real path.
         if chat_id is None:
             raise ValueError(f"{definition.name}: missing chat_id for room-bound tool")
@@ -291,6 +315,9 @@ def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
     value is injected into the dispatched arguments before validation by
     ``build_tool_registration``'s own ``pinned_room_id`` parameter, not by
     this function -- it only reshapes the schema.
+
+    A room-bound endpoint's agent tools use it too: their models have no
+    ``chat_id``, so this adds the hidden field the connection's room fills.
     """
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",
@@ -459,6 +486,7 @@ def build_tool_registration(
     resolver: ToolsResolver,
     strip_chat_id: bool,
     pinned_room_id: str | None = None,
+    room_from_connection: bool = False,
 ) -> MCPToolRegistration:
     """Build one registration for a built-in (agent/human) tool definition.
 
@@ -473,15 +501,21 @@ def build_tool_registration(
       one) vs. leave it in the dispatched arguments (human tools -- a normal
       method parameter there).
     - ``pinned_room_id``: inject-and-override ``chat_id`` before validation
-      when set (CLI-only feature; the embedded door never pins).
+      when set (the CLI's ``--room-id``).
+    - ``room_from_connection``: inject-and-override ``chat_id`` from
+      :func:`connection_room_id` on every call (a room-bound
+      ``LocalMCPServer`` endpoint).
     """
+    if pinned_room_id is not None and room_from_connection:
+        raise ValueError("pinned_room_id and room_from_connection are exclusive")
 
     is_read_room_file = definition.name == BandTool.READ_ROOM_FILE
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
-        if pinned_room_id is not None:
-            kwargs[CHAT_ID_FIELD_NAME] = pinned_room_id
+        room_id = connection_room_id() if room_from_connection else pinned_room_id
+        if room_id is not None:
+            kwargs[CHAT_ID_FIELD_NAME] = room_id
         validated = validate_tool_arguments(definition.name, input_model, kwargs)
         chat_id = (
             validated.pop(CHAT_ID_FIELD_NAME, None)
@@ -506,20 +540,30 @@ def build_custom_tool_registration(
     spec: CustomToolSpec | CustomToolDef,
     *,
     room_bound: bool = False,
+    room_from_connection: bool = False,
 ) -> MCPToolRegistration:
     """Build a registration for a user-provided custom tool.
 
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
     Dispatches straight through ``execute_custom_tool`` -- there is no
     ``AgentTools``/``HumanTools`` method behind a custom tool, so no
-    resolver is involved.
+    resolver is involved. ``room_bound`` advertises the ``chat_id`` a
+    multi-room endpoint requires; ``room_from_connection`` hides it again
+    (the endpoint path carries the room). Either way the room is dropped
+    before the handler runs.
     """
     tool_def: CustomToolDef = (
         (spec.input_model, spec.handler) if isinstance(spec, CustomToolSpec) else spec
     )
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
-    model = extend_with_chat_id(input_model, None) if room_bound else input_model
+    model = input_model
+    if room_bound:
+        model = (
+            pin_existing_chat_id(input_model)
+            if room_from_connection
+            else extend_with_chat_id(input_model, None)
+        )
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
@@ -582,9 +626,9 @@ def build_band_mcp_tool_registrations(
 ) -> list[MCPToolRegistration]:
     """Build MCP tool registrations bound to a single, already-live ``AgentTools``.
 
-    For a caller with exactly one room per server instance (e.g. an ACP
-    session) -- no room resolution needed, so every ``chat_id`` resolves to
-    the same ``agent_tools`` regardless of its value.
+    For a caller with exactly one ``AgentTools`` per server instance -- no
+    room resolution needed, so every ``chat_id`` resolves to the same
+    ``agent_tools`` regardless of its value.
     """
     return build_resolved_band_mcp_tool_registrations(
         get_tools=lambda _chat_id: agent_tools,
@@ -600,14 +644,17 @@ def build_resolved_band_mcp_tool_registrations(
     capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
+    room_from_connection: bool = False,
 ) -> list[MCPToolRegistration]:
     """Build MCP registrations that resolve room-scoped tools at call time.
 
-    Uniform room-wrap: every agent tool gets a ``chat_id`` field here,
-    regardless of the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES``
-    classification -- ``chat_id`` is this door's routing key for
-    ``AgentTools`` instance selection (e.g. opencode's ``_get_room_tools``),
-    so even a CLI-room-less tool like ``band_create_chatroom`` needs one here.
+    Uniform room-wrap: every agent tool routes by a room here, regardless of
+    the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES`` classification -- the room
+    is this door's key for ``AgentTools`` instance selection (e.g. opencode's
+    ``_get_room_tools``), so even a CLI-room-less tool like
+    ``band_create_chatroom`` needs one. A multi-room endpoint takes it from a
+    required ``chat_id`` argument; with ``room_from_connection`` the room
+    comes from the endpoint path instead and no tool advertises ``chat_id``.
     """
     definitions = _resolve_agent_definitions(
         capabilities=capabilities, tool_definitions=tool_definitions
@@ -616,14 +663,19 @@ def build_resolved_band_mcp_tool_registrations(
     registrations = [
         build_tool_registration(
             definition,
-            extend_with_chat_id(definition.input_model, None),
+            pin_existing_chat_id(definition.input_model)
+            if room_from_connection
+            else extend_with_chat_id(definition.input_model, None),
             resolver=resolver,
             strip_chat_id=True,
+            room_from_connection=room_from_connection,
         )
         for definition in definitions
     ]
     registrations.extend(
-        build_custom_tool_registration(tool_def, room_bound=True)
+        build_custom_tool_registration(
+            tool_def, room_bound=True, room_from_connection=room_from_connection
+        )
         for tool_def in additional_tools or []
     )
     validate_unique_tool_names(registrations)

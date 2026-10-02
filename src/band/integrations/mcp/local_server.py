@@ -18,15 +18,17 @@ import socket
 from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from typing import Self
+from urllib.parse import quote
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import BaseRoute, Mount, Route
 
 from band.integrations.mcp.engine import (
+    ROOM_PATH_PARAM,
     EngineSpec,
     MCPToolRegistration,
     build_engine,
@@ -47,6 +49,7 @@ LOCAL_MCP_SSE_PATH = "/sse"
 LOCAL_MCP_HTTP_PATH = "/mcp"
 LOCAL_MCP_MESSAGE_PATH = "/messages/"
 LOCAL_MCP_HEALTH_PATH = "/healthz"
+LOCAL_MCP_ROOMS_PATH = "/rooms"
 
 # The process-global sse_starlette shutdown-drain footgun (see
 # band.integrations.uvicorn_server's docstring) is disabled by importing
@@ -92,6 +95,11 @@ class LocalMCPServer:
     and reaches back over the docker bridge -- but it exposes the agent's
     tools to the local network, so only opt in on an isolated/trusted host.
 
+    A ``room_bound`` server serves its endpoints under
+    ``/rooms/{room_id}/`` instead of the root, for tool registrations that
+    take their room from the request path (``room_from_connection``);
+    address it with ``room_sse_url``/``room_http_url``.
+
     Lifecycle is an async context manager (``async with LocalMCPServer(...)
     as server:``); ``start()``/``stop()`` remain as the escape hatch for
     non-lexical lifetimes (``acp/client_adapter.py`` holds its server across
@@ -110,6 +118,7 @@ class LocalMCPServer:
         sse_path: str = LOCAL_MCP_SSE_PATH,
         http_path: str = LOCAL_MCP_HTTP_PATH,
         message_path: str = LOCAL_MCP_MESSAGE_PATH,
+        room_bound: bool = False,
     ) -> None:
         if port_min > port_max:
             raise ValueError("port_min must be less than or equal to port_max")
@@ -124,6 +133,7 @@ class LocalMCPServer:
         self._sse_path = sse_path
         self._http_path = http_path
         self._message_path = message_path
+        self._room_bound = room_bound
         self._tool_registrations = registrations
 
         self._lifecycle_lock = asyncio.Lock()
@@ -151,11 +161,32 @@ class LocalMCPServer:
 
     @property
     def sse_url(self) -> str:
-        return f"http://{self._host}:{self.port}{self._sse_path}"
+        self._require_room_bound(False)
+        return f"{self._origin}{self._sse_path}"
 
     @property
     def http_url(self) -> str:
-        return f"http://{self._host}:{self.port}{self._http_path}"
+        self._require_room_bound(False)
+        return f"{self._origin}{self._http_path}"
+
+    def room_sse_url(self, room_id: str) -> str:
+        return f"{self._room_origin(room_id)}{self._sse_path}"
+
+    def room_http_url(self, room_id: str) -> str:
+        return f"{self._room_origin(room_id)}{self._http_path}"
+
+    @property
+    def _origin(self) -> str:
+        return f"http://{self._host}:{self.port}"
+
+    def _room_origin(self, room_id: str) -> str:
+        self._require_room_bound(True)
+        return f"{self._origin}{LOCAL_MCP_ROOMS_PATH}/{quote(room_id, safe='')}"
+
+    def _require_room_bound(self, expected: bool) -> None:
+        if self._room_bound != expected:
+            kind = "room-bound" if self._room_bound else "multi-room"
+            raise ValueError(f"Local MCP server {self._name} is {kind}")
 
     @property
     def is_running(self) -> bool:
@@ -267,9 +298,24 @@ class LocalMCPServer:
         a mounted sub-app's lifespan is never invoked by the ASGI server --
         only the top-level app's is. So the host lifespan below enters
         ``session_manager.run()`` itself.
+
+        A room-bound server nests the engine's routes in one ``Mount`` whose
+        path parameter every request carries in ``path_params``. FastMCP's
+        own ``mount_path`` stays at its default: the SSE transport already
+        advertises its message endpoint under the request's ``root_path``,
+        so setting it too would double the prefix.
         """
-        sse_routes = list(mcp.sse_app().routes)
-        http_routes = list(mcp.streamable_http_app().routes)
+        engine_routes: list[BaseRoute] = [
+            *mcp.sse_app().routes,
+            *mcp.streamable_http_app().routes,
+        ]
+        if self._room_bound:
+            engine_routes = [
+                Mount(
+                    f"{LOCAL_MCP_ROOMS_PATH}/{{{ROOM_PATH_PARAM}}}",
+                    routes=engine_routes,
+                )
+            ]
 
         async def healthz(_: Request) -> PlainTextResponse:
             return PlainTextResponse("ok")
@@ -282,8 +328,7 @@ class LocalMCPServer:
         return Starlette(
             lifespan=lifespan,
             routes=[
-                *sse_routes,
-                *http_routes,
+                *engine_routes,
                 Route(LOCAL_MCP_HEALTH_PATH, endpoint=healthz, methods=["GET"]),
             ],
         )

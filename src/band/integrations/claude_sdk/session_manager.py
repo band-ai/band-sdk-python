@@ -79,6 +79,7 @@ class ClaudeSessionManager:
         self,
         base_options: ClaudeAgentOptions,
         can_use_tool_factory: Callable[[str], CanUseTool] | None = None,
+        mcp_servers_factory: Callable[[str], dict[str, Any]] | None = None,
     ):
         """
         Initialize session manager.
@@ -89,9 +90,13 @@ class ClaudeSessionManager:
             can_use_tool_factory: Optional factory that creates a room-specific
                 ``can_use_tool`` callback.  When set, each new session receives
                 its own callback bound to the room_id.
+            mcp_servers_factory: Optional factory that returns a room's
+                ``mcp_servers``.  When set, it replaces ``base_options``'s
+                for each new session.
         """
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
+        self._mcp_servers_factory = mcp_servers_factory
         self._sessions: dict[str, ClaudeSDKClient] = {}
         self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
@@ -196,6 +201,9 @@ class ClaudeSessionManager:
 
         if self._can_use_tool_factory:
             overrides["can_use_tool"] = self._can_use_tool_factory(room_id)
+
+        if self._mcp_servers_factory:
+            overrides["mcp_servers"] = self._mcp_servers_factory(room_id)
 
         return dataclasses.replace(self.base_options, **overrides)
 

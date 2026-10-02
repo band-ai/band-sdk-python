@@ -6,6 +6,7 @@ import asyncio
 import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 from acp.exceptions import RequestError
@@ -51,6 +52,15 @@ from tests.integrations.acp.conftest import make_platform_message
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
+
+
+def mock_band_backend() -> MagicMock:
+    """A mocked ``BandMCPBackend`` that serves every room an endpoint."""
+    backend = MagicMock()
+    backend.endpoint.side_effect = lambda transport, room_id: (
+        f"http://127.0.0.1:1/rooms/{room_id}/{transport}"
+    )
+    return backend
 
 
 def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
@@ -264,7 +274,7 @@ class TestACPClientAdapterShutdown:
 
         await adapter.on_started("Codex", "bridge")  # Agent.start() again
 
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend = mock_band_backend()
         with patch(
             "band.integrations.acp.client_adapter.create_band_mcp_backend",
             new=AsyncMock(return_value=backend),
@@ -277,23 +287,18 @@ class TestACPClientAdapterLocalMcpConfig:
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_http_config(self) -> None:
-        """Should expose a shared local HTTP MCP server for Band tools."""
+        """Should expose the room's endpoint on the shared HTTP MCP server."""
         adapter = ACPClientAdapter(CODEX)
-        mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
-        backend = MagicMock(local_server=mock_server)
 
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ):
+        try:
             server = await adapter._get_or_start_band_mcp_server("room-1")
+        finally:
+            await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert server.url == "http://127.0.0.1:50000/mcp"
+        assert urlsplit(server.url).path == "/rooms/room-1/mcp"
         assert server.headers == []
         assert server.type == "http"
-        assert adapter._band_mcp_backend is backend
-        assert adapter._band_mcp_backend.local_server is mock_server
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_sse_config(self) -> None:
@@ -304,28 +309,22 @@ class TestACPClientAdapterLocalMcpConfig:
         adapter._runtimes["room-1"] = runtime
         adapter._room_workspaces["room-1"] = "/tmp/room-1"
         adapter._workspace_rooms["/tmp/room-1"] = "room-1"
-        mock_server = MagicMock(sse_url="http://127.0.0.1:50000/sse")
-        backend = MagicMock(local_server=mock_server)
 
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ):
+        try:
             server = await adapter._get_or_start_band_mcp_server("room-1")
+        finally:
+            await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert server.url == "http://127.0.0.1:50000/sse"
+        assert urlsplit(server.url).path == "/rooms/room-1/sse"
         assert server.headers == []
         assert server.type == "sse"
-        assert adapter._band_mcp_backend is backend
-        assert adapter._band_mcp_backend.local_server is mock_server
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:
         """Should start the shared Band MCP server only once."""
         adapter = ACPClientAdapter(CODEX)
-        mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
-        backend = MagicMock(local_server=mock_server)
+        backend = mock_band_backend()
 
         with patch(
             "band.integrations.acp.client_adapter.create_band_mcp_backend",
@@ -342,7 +341,7 @@ class TestACPClientAdapterLocalMcpConfig:
         """Two rooms' concurrent first turns must not each start a backend —
         the loser would leak a running LocalMCPServer (started, never stopped)."""
         adapter = ACPClientAdapter(CODEX)
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend = mock_band_backend()
 
         async def slow_create(**kwargs: object) -> MagicMock:
             await asyncio.sleep(0)  # yield, so the second caller can interleave
@@ -364,7 +363,7 @@ class TestACPClientAdapterLocalMcpConfig:
         """A turn arriving after real shutdown must fail loudly, not leak a
         fresh LocalMCPServer nothing will ever stop again."""
         adapter = ACPClientAdapter(CODEX)
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend = mock_band_backend()
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
 
@@ -387,7 +386,7 @@ class TestACPClientAdapterLocalMcpConfig:
         turn, not to end the adapter -- a later turn on any room must still be
         able to self-heal by starting a fresh backend."""
         adapter = ACPClientAdapter(CODEX)
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend = mock_band_backend()
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
 
@@ -440,7 +439,7 @@ class TestACPClientAdapterLocalMcpConfig:
         sequenced after) while real shutdown holds it -- it must wake to a
         raise, never a backend that outlives shutdown unstopped."""
         adapter = ACPClientAdapter(CODEX)
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend = mock_band_backend()
 
         async def slow_stop() -> None:
             await asyncio.sleep(0)  # yield while holding the lock, so the
@@ -466,7 +465,7 @@ class TestACPClientAdapterLocalMcpConfig:
 
     async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
         """The tool names the adapter would hand to ``create_band_mcp_backend``."""
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend = mock_band_backend()
         with patch(
             "band.integrations.acp.client_adapter.create_band_mcp_backend",
             new=AsyncMock(return_value=backend),
@@ -519,7 +518,7 @@ class TestACPClientAdapterLocalMcpConfig:
         assert "do not post again" in system_context
         assert "reply exactly once" not in system_context
         assert "Never both" not in system_context
-        assert "Current chat_id: room-123" in system_context
+        assert "chat_id" not in system_context
         assert "Current requester name: Pat" in system_context
         assert "Use each MCP tool's schema" in system_context
 
@@ -535,6 +534,7 @@ class TestACPClientAdapterLocalMcpConfig:
         system_context = adapter._build_system_context("room-123", msg)
 
         assert "Use each MCP tool's schema" in system_context
+        assert "Current chat_id: room-123" in system_context
         assert "must include room_id" not in system_context
 
 

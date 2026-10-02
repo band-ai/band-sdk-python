@@ -192,6 +192,27 @@ class TestBuildOptions:
         factory.assert_called_once_with("room-1")
         assert result.can_use_tool is mock_callback
 
+    def test_applies_mcp_servers_factory(
+        self, real_options: ClaudeAgentOptions
+    ) -> None:
+        """_build_options should give each room the factory's MCP servers."""
+        manager = ClaudeSessionManager(
+            real_options,
+            mcp_servers_factory=lambda room_id: {
+                "band": {
+                    "type": "http",
+                    "url": f"http://127.0.0.1:1/rooms/{room_id}/mcp",
+                }
+            },
+        )
+
+        servers = [manager._build_options(room).mcp_servers for room in ("a", "b")]
+
+        assert servers == [
+            {"band": {"type": "http", "url": "http://127.0.0.1:1/rooms/a/mcp"}},
+            {"band": {"type": "http", "url": "http://127.0.0.1:1/rooms/b/mcp"}},
+        ]
+
     def test_does_not_mutate_base_options(
         self, real_options: ClaudeAgentOptions
     ) -> None:

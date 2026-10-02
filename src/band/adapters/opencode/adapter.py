@@ -725,14 +725,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
             try:
                 backend = await self._ensure_mcp_backend()
-                local_server = backend.local_server
-                if local_server is None:
-                    logger.warning(
-                        "MCP backend has no local server to register with OpenCode"
-                    )
-                    return
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name, url=local_server.sse_url
+                    name=self._mcp_server_name, url=backend.endpoint("sse", None)
                 )
             except Exception:
                 logger.exception(
