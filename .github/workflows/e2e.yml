@@ -262,10 +262,14 @@ jobs:
       run: bash .github/scripts/setup-cursor.sh
 
     # pwsh resolves both the Linux `agent` symlink and the Windows `agent.cmd`.
+    # The node check guards the later npm-based installs from Cursor's bundled node.
     - name: Verify Cursor CLI
       if: matrix.lane == 'backends'
       shell: pwsh
-      run: agent --version
+      run: |
+        agent --version
+        $node = (Get-Command node).Source
+        if ($node -like "*cursor-agent*") { throw "Cursor's bundled node shadows the runner's: $node" }
 
     # Saved as soon as the install verifies: the combined cache action saves only
     # when the whole job passes, so a red lane would re-download on every run.
