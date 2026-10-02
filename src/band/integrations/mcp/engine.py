@@ -114,6 +114,25 @@ class CustomToolSpec:
     handler: Callable[..., Any]
 
 
+# Observes one successful tool execution on the embedded door as
+# ``(tool_name, chat_id, result)``. It runs only after the call returned, so a
+# raised error never reaches it. An adapter that bridges an external harness
+# uses it to learn in-process which Band tools actually ran: the harness's own
+# stream may label a call by a model-written title instead of the tool's name,
+# and that is the only other record of the turn.
+ToolResultHook = Callable[[str, str | None, Any], Awaitable[None] | None]
+
+
+async def call_tool_result_hook(
+    hook: ToolResultHook | None, tool_name: str, chat_id: str | None, result: Any
+) -> None:
+    if hook is None:
+        return
+    outcome = hook(tool_name, chat_id, result)
+    if inspect.isawaitable(outcome):
+        await outcome
+
+
 class ToolsResolver(Protocol):
     """The one seam between a normalized registration and live tool state.
 
@@ -459,6 +478,7 @@ def build_tool_registration(
     resolver: ToolsResolver,
     strip_chat_id: bool,
     pinned_room_id: str | None = None,
+    tool_result_hook: ToolResultHook | None = None,
 ) -> MCPToolRegistration:
     """Build one registration for a built-in (agent/human) tool definition.
 
@@ -474,6 +494,8 @@ def build_tool_registration(
       method parameter there).
     - ``pinned_room_id``: inject-and-override ``chat_id`` before validation
       when set (CLI-only feature; the embedded door never pins).
+    - ``tool_result_hook``: observes each successful call (see
+      :data:`ToolResultHook`).
     """
 
     is_read_room_file = definition.name == BandTool.READ_ROOM_FILE
@@ -489,6 +511,7 @@ def build_tool_registration(
             else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
+        await call_tool_result_hook(tool_result_hook, definition.name, chat_id, result)
         if is_read_room_file and is_mcp_content_result(result):
             return _mcp_content_blocks(result)
         return _serialize(result)
@@ -506,6 +529,7 @@ def build_custom_tool_registration(
     spec: CustomToolSpec | CustomToolDef,
     *,
     room_bound: bool = False,
+    tool_result_hook: ToolResultHook | None = None,
 ) -> MCPToolRegistration:
     """Build a registration for a user-provided custom tool.
 
@@ -523,8 +547,9 @@ def build_custom_tool_registration(
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
-        kwargs.pop(CHAT_ID_FIELD_NAME, None)
+        chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
         result = await execute_custom_tool(tool_def, kwargs)
+        await call_tool_result_hook(tool_result_hook, tool_name, chat_id, result)
         return _serialize(result)
 
     return MCPToolRegistration(
@@ -579,6 +604,7 @@ def build_band_mcp_tool_registrations(
     capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
+    tool_result_hook: ToolResultHook | None = None,
 ) -> list[MCPToolRegistration]:
     """Build MCP tool registrations bound to a single, already-live ``AgentTools``.
 
@@ -591,6 +617,7 @@ def build_band_mcp_tool_registrations(
         capabilities=capabilities,
         additional_tools=additional_tools,
         tool_definitions=tool_definitions,
+        tool_result_hook=tool_result_hook,
     )
 
 
@@ -600,6 +627,7 @@ def build_resolved_band_mcp_tool_registrations(
     capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
+    tool_result_hook: ToolResultHook | None = None,
 ) -> list[MCPToolRegistration]:
     """Build MCP registrations that resolve room-scoped tools at call time.
 
@@ -619,11 +647,14 @@ def build_resolved_band_mcp_tool_registrations(
             extend_with_chat_id(definition.input_model, None),
             resolver=resolver,
             strip_chat_id=True,
+            tool_result_hook=tool_result_hook,
         )
         for definition in definitions
     ]
     registrations.extend(
-        build_custom_tool_registration(tool_def, room_bound=True)
+        build_custom_tool_registration(
+            tool_def, room_bound=True, tool_result_hook=tool_result_hook
+        )
         for tool_def in additional_tools or []
     )
     validate_unique_tool_names(registrations)

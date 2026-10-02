@@ -393,6 +393,79 @@ async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None
 
 
 @pytest.mark.asyncio
+async def test_intent_titled_no_reply_suppresses_closing_text(fake_agent) -> None:
+    """A real band_no_reply whose ACP title is the model's intent phrase still
+    settles the turn: the closing narration must not be relayed to the room.
+
+    OMP writes the model's ``i`` intent into the ACP ``tool_call`` title, so
+    the stream shows "Ending the turn silently", never ``band_no_reply``. In a
+    live room that relayed "I ended the turn without replying…" as a message to
+    the sender being answered, which started the sender's next turn — a loop.
+    The in-process server executed the tool, so the adapter knows regardless.
+    """
+    fake_agent.will_call_mcp_tool(
+        "tc-silent",
+        "band_no_reply",
+        title="Ending the turn silently",
+        arguments={"room_id": "room-1", "reason": "nothing asked of me"},
+    ).will_say("Huginn's message asks nothing new of me, so I ended the turn.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("fyi, no action needed", room="room-1")
+
+    assert reply.texts == []
+    assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+@pytest.mark.asyncio
+async def test_intent_titled_send_message_is_not_duplicated_by_text(
+    fake_agent,
+) -> None:
+    """A real band_send_message under an intent title posts exactly once; the
+    model's follow-up narration ("I told Huginn…") is not relayed as a second
+    message."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        title="Handing the commit to the architect",
+        arguments={
+            "room_id": "room-1",
+            "content": "Ready for review at a618975.",
+            "mentions": ["@pat"],
+        },
+    ).will_say("I told the architect the fix is ready for review.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("please hand off", room="room-1")
+
+    assert reply.texts == ["Ready for review at a618975."]
+    assert reply.outline == ["tool_call", "message", "tool_result", "task"]
+
+
+@pytest.mark.asyncio
+async def test_intent_titled_observing_tool_keeps_text_fallback(fake_agent) -> None:
+    """Only reply-settling tools mark the turn: an intent-titled read-only Band
+    tool executed in-process leaves the text reply flowing."""
+    fake_agent.will_call_mcp_tool(
+        "tc-roster",
+        "band_get_participants",
+        title="Checking who is in the room",
+        arguments={"room_id": "room-1"},
+    ).will_say("Pat and Rev are here.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("who is here?", room="room-1")
+
+    assert reply.texts == ["Pat and Rev are here."]
+
+
+@pytest.mark.asyncio
 async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None:
     """A room-visible Band event still gets real ACP tool_call/tool_result
     narration, straddling the event it posts — like any other tool call."""

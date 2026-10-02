@@ -26,15 +26,17 @@ def turn_replied_in_room(
     *,
     custom_effects: Mapping[str, TurnEffect] | None = None,
 ) -> bool:
-    """True when the turn already settled its reply.
+    """True when the ACP stream shows the turn settled its reply.
 
     A room post, band_no_reply, or a custom tool that declared either
-    (``custom_effects``) settles it. Unlike copilot_sdk / codex, which execute Band tools in-process and flip a flag
-    at execution time, ACP tool calls may run out-of-process (a remote band-mcp
-    server the SDK never sees execute). The ACP session-update stream is the one
-    record of the turn that covers both, so detection matches the collected
+    (``custom_effects``) settles it. ACP tool calls may run out-of-process (a
+    remote band-mcp server the SDK never sees execute), and for those the ACP
+    session-update stream is the only record, so detection matches the collected
     tool-call chunks by their reported title (ACP has no structured tool-name
-    field). A reply-settling call counts once it (or its result update) reports
+    field). A title is not always the tool's name — OMP writes the model's intent
+    phrase there — so the in-process local MCP server reports its own executions
+    too (``RoomTurnEmitter.mark_reply_settled``); the emitter honors either
+    signal. A reply-settling call counts once it (or its result update) reports
     ``completed`` — a failed post must not suppress the text fallback, or the turn
     goes silent.
     """
@@ -111,6 +113,20 @@ class RoomTurnEmitter:
         self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._chunks: list[CollectedChunk] = []
         self._pending_text: list[str] = []
+        self._reply_settled = False
+
+    def mark_reply_settled(self) -> None:
+        """Record that a reply-settling Band tool ran in-process this turn.
+
+        The stream-based detection (``turn_replied_in_room``) reads the tool
+        name off the ACP ``title``, and some harnesses (OMP) fill that title
+        with the model's own intent phrase — "Ending the turn silently" — so a
+        real ``band_no_reply`` or ``band_send_message`` is invisible there. The
+        adapter calls this from the local MCP server's result hook, where the
+        tool's canonical name is known, so the held text is never relayed on
+        top of a reply the tool already settled.
+        """
+        self._reply_settled = True
 
     async def emit(self, chunk: CollectedChunk) -> None:
         # Record every chunk regardless of the emit set: the tool-first
@@ -209,7 +225,10 @@ class RoomTurnEmitter:
         # Tool-first delivery (matches copilot_sdk / codex): if the turn already
         # settled its reply, relaying its plain text too would duplicate it (and
         # leak the agent's narration of the call).
-        if not turn_replied_in_room(self._chunks, custom_effects=self._custom_effects):
+        if not (
+            self._reply_settled
+            or turn_replied_in_room(self._chunks, custom_effects=self._custom_effects)
+        ):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
         # Posted regardless of the emit set: this is resume state read back by

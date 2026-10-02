@@ -518,6 +518,63 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
         assert seen == {"message": "hi"}
 
 
+async def test_tool_result_hook_sees_successful_builtin_and_custom_calls() -> None:
+    """The embedded door reports each completed call as (name, room, result),
+    for built-in and custom tools alike -- an adapter's only in-process record of
+    which Band tool really ran when the harness stream labels calls otherwise."""
+    observed: list[tuple[str, str | None, Any]] = []
+
+    def hook(tool_name: str, chat_id: str | None, result: Any) -> None:
+        observed.append((tool_name, chat_id, result))
+
+    tools = FakeAgentTools()
+    builtin = build_tool_registration(
+        TOOL_DEFINITIONS["band_no_reply"],
+        extend_with_chat_id(TOOL_DEFINITIONS["band_no_reply"].input_model, None),
+        resolver=_agent_resolver(tools),
+        strip_chat_id=True,
+        tool_result_hook=hook,
+    )
+    custom = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=_echo),
+        room_bound=True,
+        tool_result_hook=hook,
+    )
+    mcp = build_engine(EngineSpec(name="test-hook", tools=(builtin, custom)))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        await _call(session, "band_no_reply", chat_id="room-1", reason="fyi only")
+        await _call(session, "echo", message="hi", chat_id="room-2")
+
+    assert observed == [
+        ("band_no_reply", "room-1", {"status": "no_reply"}),
+        ("echo", "room-2", {"echo": "hi"}),
+    ]
+
+
+async def test_tool_result_hook_skipped_when_the_call_fails() -> None:
+    """A failed call must not be reported: an adapter that treats the report as
+    'the reply is settled' would otherwise silence a turn whose post never
+    happened."""
+    observed: list[str] = []
+
+    async def failing(input_data: EchoInput) -> dict[str, str]:
+        raise RuntimeError("downstream refused")
+
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=failing),
+        room_bound=True,
+        tool_result_hook=lambda name, _room, _result: observed.append(name),
+    )
+    mcp = build_engine(EngineSpec(name="test-hook-fail", tools=(registration,)))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        result = await session.call_tool("echo", {"message": "hi", "chat_id": "r"})
+
+    assert result.isError
+    assert observed == []
+
+
 async def test_custom_tool_accepts_bare_tuple_contract() -> None:
     """The bare (input_model, handler) tuple stays accepted -- the existing
     adapter contract, not deprecated by CustomToolSpec."""
