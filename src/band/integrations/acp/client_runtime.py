@@ -54,7 +54,8 @@ MCPTransportKind = Literal["http", "sse"]
 # ``{"outcome": {"outcome": "cancelled"}}`` (see ``acp.schema`` AllowedOutcome /
 # DeniedOutcome). There is no ``"allowed"`` literal — emitting one makes a
 # spec-strict agent (e.g. codex-acp) fail to parse the response and abort the turn.
-_ALLOW_OPTION_KINDS = ("allow_once", "allow_always")
+ALLOW_ALWAYS_KIND = "allow_always"
+_ALLOW_OPTION_KINDS = ("allow_once", ALLOW_ALWAYS_KIND)
 
 
 def _resolve_option_id(option: object) -> str | None:
@@ -90,6 +91,22 @@ def permission_option_ids(options: object) -> tuple[str, ...]:
     )
 
 
+def option_id_of_kind(options: object, kind: str) -> str | None:
+    """The ``optionId`` of the first offered option of ``kind``, else None."""
+    if not isinstance(options, (list, tuple)):
+        return None
+    for option in options:
+        option_kind = (
+            option.get("kind")
+            if isinstance(option, Mapping)
+            else getattr(option, "kind", None)
+        )
+        option_id = _resolve_option_id(option)
+        if option_kind == kind and option_id is not None:
+            return option_id
+    return None
+
+
 def select_allow_option_id(options: object) -> str | None:
     """The ``optionId`` of an allow option offered in a permission request, else None.
 
@@ -97,22 +114,9 @@ def select_allow_option_id(options: object) -> str | None:
     when the agent offered no allow option, so the caller cancels rather than
     guessing (selecting a reject option would silently deny).
     """
-    if not isinstance(options, (list, tuple)):
-        return None
-    candidates: list[tuple[object, str]] = []
-    for option in options:
-        kind = (
-            option.get("kind")
-            if isinstance(option, Mapping)
-            else getattr(option, "kind", None)
-        )
-        option_id = _resolve_option_id(option)
-        if option_id is not None:
-            candidates.append((kind, option_id))
-    for preferred in _ALLOW_OPTION_KINDS:
-        for kind, option_id in candidates:
-            if kind == preferred:
-                return option_id
+    for kind in _ALLOW_OPTION_KINDS:
+        if (option_id := option_id_of_kind(options, kind)) is not None:
+            return option_id
     return None
 
 

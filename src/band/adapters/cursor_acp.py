@@ -27,7 +27,9 @@ from band.integrations.acp.client_profiles import (
     parse_cursor_questions,
 )
 from band.integrations.acp.client_runtime import (
+    ALLOW_ALWAYS_KIND,
     ACPRuntime,
+    option_id_of_kind,
     permission_option_ids,
     select_allow_option_id,
 )
@@ -122,6 +124,11 @@ class CursorTurn:
     requester_id: str | None
     release: asyncio.Future[None]
     session_id: str | None = None
+    # Cursor sends parallel tool calls' permission requests together and does
+    # not apply an "allow always" to one already outstanding, so the room is
+    # asked one at a time and a granted tool settles its queued repeats.
+    permission_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    always_allowed: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -332,19 +339,33 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 turn = self._active_turn_for(request.room_id, request.session_id)
                 if turn is None:
                     return None
-                choices = {"permission": permission_option_ids(request.options)}
-                result = await self._wait_for_decision(
-                    kind="permission",
-                    turn=turn,
-                    choices=choices,
-                    prompt=PERMISSION_REQUESTED_TEMPLATE.format(
-                        tool=request.tool_call.name,
-                        # _wait_for_decision fills the token in once it's minted.
-                        token="{token}",
-                        options=", ".join(sorted(choices["permission"])) or "none",
-                    ),
-                )
-                return result if isinstance(result, str) else None
+                async with turn.permission_lock:
+                    return await self._ask_room_permission(turn, request)
+
+    async def _ask_room_permission(
+        self, turn: CursorTurn, request: ACPPermissionRequest
+    ) -> str | None:
+        tool = request.tool_call.name
+        always = option_id_of_kind(request.options, ALLOW_ALWAYS_KIND)
+        if tool in turn.always_allowed and always is not None:
+            return always
+        choices = {"permission": permission_option_ids(request.options)}
+        result = await self._wait_for_decision(
+            kind="permission",
+            turn=turn,
+            choices=choices,
+            prompt=PERMISSION_REQUESTED_TEMPLATE.format(
+                tool=tool,
+                # _wait_for_decision fills the token in once it's minted.
+                token="{token}",
+                options=", ".join(sorted(choices["permission"])) or "none",
+            ),
+        )
+        if not isinstance(result, str):
+            return None
+        if result == always:
+            turn.always_allowed.add(tool)
+        return result
 
     async def _resolve_extension_method(
         self, method: str, params: dict[str, object]

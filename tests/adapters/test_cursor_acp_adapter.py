@@ -600,6 +600,51 @@ class TestCursorACPAdapterDecisions:
         assert await pending == "allow-once"
 
     @pytest.mark.asyncio
+    async def test_an_always_grant_settles_a_parallel_repeat_without_asking(
+        self,
+    ) -> None:
+        tools = DecisionTools()
+        adapter = CursorACPAdapter()
+        adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
+
+        def request(call_id: str) -> ACPPermissionRequest:
+            return ACPPermissionRequest(
+                room_id="room-1",
+                session_id="session-1",
+                tool_call=ACPToolCall(call_id, "`echo x >> out.txt`", {}),
+                options=(
+                    PermissionOption(
+                        optionId="allow-once", name="Allow once", kind="allow_once"
+                    ),
+                    PermissionOption(
+                        optionId="allow-always",
+                        name="Allow always",
+                        kind="allow_always",
+                    ),
+                ),
+            )
+
+        first = asyncio.create_task(adapter._resolve_cursor_permission(request("a")))
+        repeat = asyncio.create_task(adapter._resolve_cursor_permission(request("b")))
+        await tools.prompt_sent.wait()
+        [token] = adapter._pending_decisions
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=f"/cursor select {token} allow-always", sender_id="user-1"
+                ),
+            ),
+            tools,
+            "room-1",
+        )
+
+        assert await asyncio.gather(first, repeat) == ["allow-always"] * 2
+        asks = [message for message in tools.messages if "needs permission" in message]
+        assert len(asks) == 1
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("plan_mode", "outcome"),
         [("auto_accept", "accepted"), ("auto_decline", "rejected")],
