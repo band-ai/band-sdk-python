@@ -414,6 +414,7 @@ class FakeMCPBackend:
     ) -> None:
         self.allowed_tools: list[str] = []
         self._sse_url = sse_url
+        self.is_running = True
         self.stop_calls = 0
         self._stop_started = stop_started
         self._stop_release = stop_release
@@ -429,6 +430,9 @@ class FakeMCPBackend:
             self._stop_started.set()
         if self._stop_release is not None:
             await self._stop_release.wait()
+
+    async def restart(self) -> None:
+        self.is_running = True
 
 
 def make_fake_mcp_backend_factory(

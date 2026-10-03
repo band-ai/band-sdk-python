@@ -18,7 +18,9 @@ Four invariants are easy to break and expensive to rediscover:
   registrations globally by name. Each agent registers under a name derived from
   its Band identity, and every prompt scopes tool visibility to that
   registration (deny the shared namespace, then re-allow its own — OpenCode
-  applies the last matching rule).
+  applies the last matching rule). If the adapter's Band MCP server dies, the
+  next turn restarts it on a new port and re-registers it under the same name,
+  which OpenCode treats as a replacement and reconnects.
 - **The model is told the current `chat_id` every turn.** The band MCP tools'
   schemas require it, so without the per-turn Room Context block the platform
   tools are uncallable.

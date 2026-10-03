@@ -695,14 +695,24 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         await self._register_mcp_backend(client)
 
     async def _ensure_mcp_backend(self) -> BandMCPBackend:
-        """Create the shared Band MCP backend (LocalMCPServer with SSE).
+        """The shared Band MCP backend (LocalMCPServer with SSE), started on
+        first use and restarted in place if its serve task died.
 
         Only ever called while holding ``_mcp_lifecycle_lock`` (from
         ``_register_mcp_backend``), the same lock ``_shutdown_client`` needs
         to read or clear ``self._mcp_backend`` -- so no concurrent shutdown
-        can race the ``await`` below.
+        can race the ``await`` below. A restart under that lock never waits on
+        an open SSE read: the serve task it stops has already ended.
         """
         if self._mcp_backend is not None:
+            if not self._mcp_backend.is_running:
+                logger.warning(
+                    "Band MCP backend crashed; restarting for %s", self.agent_name
+                )
+                # OpenCode's registration names the dead URL; clearing it first
+                # means a failed restart can't leave it looking current.
+                self._registered_client = None
+                await self._mcp_backend.restart()
             return self._mcp_backend
 
         backend = await create_band_mcp_backend(
@@ -721,10 +731,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _register_mcp_backend(self, client: OpencodeClientProtocol) -> None:
         """Start the shared MCP backend and register it with OpenCode."""
         async with self._mcp_lifecycle_lock:
+            backend = await self._ensure_mcp_backend()
             if self._registered_client is client:
                 return
             try:
-                backend = await self._ensure_mcp_backend()
                 result = await client.register_mcp_server(
                     name=self._mcp_server_name,
                     url=backend.endpoint(BandMCPTransport.SSE),
