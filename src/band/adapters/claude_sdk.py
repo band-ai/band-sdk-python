@@ -585,6 +585,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # Session manager and MCP backend (created after start)
         self._session_manager: ClaudeSessionManager | None = None
         self._mcp_backend: BandMCPBackend | None = None
+        # Guards restarting the backend against cleanup_all detaching it.
+        self._mcp_backend_lock = asyncio.Lock()
 
         # Per-room tools: the adapter's own sends use them directly, while the
         # MCP server's tool calls go through _mcp_room_tools (see _bind_mcp_tools).
@@ -752,6 +754,25 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         return backend
 
+    async def _ensure_mcp_backend(self) -> None:
+        """Restart the Band MCP backend if its serve task died.
+
+        The serve task can crash on its own, and nothing else notices: every
+        later session would get a URL on a dead port. ``None`` means
+        ``cleanup_all`` ran, so a message parked on the lock through shutdown
+        fails rather than starting a server nothing would stop.
+        """
+        async with self._mcp_backend_lock:
+            if self._mcp_backend is None:
+                raise RuntimeError(
+                    "ClaudeSDKAdapter is stopped; cannot restart the Band MCP backend"
+                )
+            if not self._mcp_backend.is_running:
+                logger.warning(
+                    "Band MCP backend crashed; restarting for %s", self.agent_name
+                )
+                await self._mcp_backend.restart()
+
     def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
         """A room session's MCP servers: the Band endpoint bound to that room."""
         if self._mcp_backend is None:
@@ -831,6 +852,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 mentions=[msg.sender_id] if msg.sender_id else None,
             )
             return
+
+        await self._ensure_mcp_backend()
 
         # The manager only resumes when it has to create the client: on
         # bootstrap, or after a retired client (see _retire_client).
@@ -1615,9 +1638,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             await self._cancel_turn(room_id)
         if self._session_manager:
             await self._session_manager.stop()
-        if self._mcp_backend:
-            await self._mcp_backend.stop()
-            self._mcp_backend = None
+        async with self._mcp_backend_lock:
+            backend, self._mcp_backend = self._mcp_backend, None
+            if backend is not None:
+                await backend.stop()
         self._room_tools.clear()
         self._mcp_room_tools.clear()
         self._session_context.clear()

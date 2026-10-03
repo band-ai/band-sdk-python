@@ -137,8 +137,23 @@ class ClaudeSessionManager:
                 pass
             self._task = None
 
+        self._fail_pending_commands()
         self._started = False
         logger.info("ClaudeSessionManager background task stopped")
+
+    def _fail_pending_commands(self) -> None:
+        """Fail every command queued behind ``stop``.
+
+        Until ``stop()`` clears ``_started``, a caller still sees the manager
+        running and enqueues work the exited loop will never read; without
+        this its future would wait forever.
+        """
+        while not self._command_queue.empty():
+            cmd = self._command_queue.get_nowait()
+            if cmd.result_future and not cmd.result_future.done():
+                cmd.result_future.set_exception(
+                    RuntimeError("ClaudeSessionManager stopped")
+                )
 
     async def _run_session_loop(self) -> None:
         """Background task that processes all session commands."""
@@ -217,6 +232,12 @@ class ClaudeSessionManager:
         if not room_id:
             raise ValueError("room_id is required")
 
+        if (client := self._sessions.get(room_id)) is not None and not (
+            self._is_current(room_id, client)
+        ):
+            logger.info("MCP servers changed; recycling session for room %s", room_id)
+            await self._do_cleanup_session(room_id)
+
         if room_id not in self._sessions:
             if resume_session_id:
                 logger.info(
@@ -247,6 +268,12 @@ class ClaudeSessionManager:
             logger.debug("Reusing existing session for room: %s", room_id)
 
         return self._sessions[room_id]
+
+    def _is_current(self, room_id: str, client: ClaudeSDKClient) -> bool:
+        """Whether ``client`` still dials the MCP servers the room has now."""
+        if self._mcp_servers_factory is None:
+            return True
+        return client.options.mcp_servers == self._mcp_servers_factory(room_id)
 
     def _do_invalidate_session(self, room_id: str | None) -> None:
         """Evict a dead session without calling disconnect() (runs in background task).
@@ -303,8 +330,9 @@ class ClaudeSessionManager:
         """
         Get existing ClaudeSDKClient for room or create new one.
 
-        This method is idempotent - calling it multiple times for the same
-        room_id returns the same client instance.
+        Calls for the same room_id return the same client instance while its
+        MCP servers are current; once they change (a restarted Band MCP
+        server), the client is replaced, resuming ``resume_session_id``.
 
         Args:
             room_id: Band chat room ID (UUID)

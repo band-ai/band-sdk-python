@@ -380,7 +380,4 @@ class LocalMCPServer:
         span = self._port_max - self._port_min + 1
         start = random.randrange(span)
         ports = [self._port_min + (start + offset) % span for offset in range(span)]
-        if self._previous_port in ports:
-            ports.remove(self._previous_port)
-            ports.append(self._previous_port)
-        return ports
+        return sorted(ports, key=lambda port: port == self._previous_port)

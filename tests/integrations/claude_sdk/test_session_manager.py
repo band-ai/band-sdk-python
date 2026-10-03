@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -147,6 +148,25 @@ class TestInvalidateSession:
         assert manager._sessions["room-b"] is client_b
 
         await manager.stop()
+
+
+async def test_a_session_requested_while_stopping_fails_instead_of_hanging(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    """A request queued behind ``stop`` lands after the loop exits; it must
+    fail rather than wait forever on a future nothing will resolve."""
+    manager = ClaudeSessionManager(mock_options)
+    await manager.start()
+
+    async with asyncio.timeout(1):
+        stopped, created = await asyncio.gather(
+            manager.stop(),
+            manager.get_or_create_session("room-1"),
+            return_exceptions=True,
+        )
+
+    assert stopped is None
+    assert isinstance(created, RuntimeError)
 
 
 class TestBuildOptions:
