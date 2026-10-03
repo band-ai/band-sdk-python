@@ -1311,6 +1311,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         assistant ``info``; mocked/offline runs don't, so the total is
         simply empty there.
         """
+        if Emit.USAGE not in self.features.emit:
+            return
         total = sum(turn.usage_by_message.values(), TurnUsage())
         logger.info(
             "OpenCode turn: usage room=%s session=%s messages=%s empty=%s",
