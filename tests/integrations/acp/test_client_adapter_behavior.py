@@ -37,7 +37,12 @@ from tests.integrations.acp.acp_toolkit import (
     fake_agent_config,
     live_line,
 )
-from tests.mcpclient import STORE_MEMORY_ARGS, room_endpoint_path, tool_arguments
+from tests.mcpclient import (
+    STORE_MEMORY_ARGS,
+    crash_server,
+    room_endpoint_path,
+    tool_arguments,
+)
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -581,6 +586,33 @@ async def test_band_tool_call_without_chat_id_lands_in_its_own_room(
         room2 = await session.send("remember this", room="room-2")
 
     assert [len(room1.memories), len(room2.memories)] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
+    """The room's open session still dials the crashed server's port; the next
+    message moves the room to a fresh session on the restarted one."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={"content": "Reply from the agent", "mentions": ["@pat"]},
+    )
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("before the crash", room="room-1")
+        crashed_url = band_mcp_url(fake_agent, session.session_id("room-1"))
+        backend = session.adapter._band_mcp_backend
+        assert backend is not None
+        await crash_server(backend.local_server)
+
+        reply = await session.send("after the crash", room="room-1")
+        live_url = band_mcp_url(fake_agent, session.session_id("room-1"))
+
+    assert reply.texts == ["Reply from the agent"]
+    assert "error" not in reply.outline
+    assert urlsplit(live_url).port != urlsplit(crashed_url).port
 
 
 @pytest.mark.asyncio

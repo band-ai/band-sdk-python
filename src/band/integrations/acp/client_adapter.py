@@ -15,6 +15,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import partial
 from typing import Any, ClassVar, Generic, TypeAlias
 from uuid import uuid4
@@ -174,6 +175,15 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 # turn, so it cannot contain the marker the header names.
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
+
+
+class SessionCloseReason(StrEnum):
+    """Why an ACP session is closed before a room is done with it (for logs)."""
+
+    UNCONFIGURED = "unconfigured"
+    STALE_BAND_MCP_URL = "stale Band MCP URL"
+
+
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
 
 
@@ -401,6 +411,9 @@ class ACPClientAdapter(
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._band_mcp_backend: BandMCPBackend | None = None
         self._bootstrapped_sessions: set[str] = set()
+        # The Band MCP URL each room's session was built with; a restarted
+        # backend serves a different one (see _drop_stale_session).
+        self._room_band_urls: dict[str, str] = {}
         self._session_lock = asyncio.Lock()
         # Guards the shared MCP backend singleton on its own lock: one creation
         # path already runs under _session_lock and another outside it, and
@@ -623,6 +636,8 @@ class ACPClientAdapter(
         if self.config.inject_band_tools:
             async with self._session_lock:
                 self._room_tools[room_id] = tools
+            backend = await self._ensure_band_mcp_backend()
+            await self._drop_stale_session(runtime, room_id, backend)
 
         try:
             session_id, created = await self._get_or_create_session(
@@ -999,8 +1014,8 @@ class ACPClientAdapter(
 
         Also re-checks liveness on every call: the serve task backing a
         cached backend can crash on its own, independent of any adapter call,
-        and nothing else would ever notice -- every later room would keep
-        getting handed the same dead host/port until a tool call times out.
+        and nothing else would ever notice. A crashed backend restarts in
+        place on a new port, which ``_drop_stale_session`` reads as stale.
         """
         async with self._mcp_backend_lock:
             if self._stopped:
@@ -1014,8 +1029,7 @@ class ACPClientAdapter(
                 logger.warning(
                     "Band MCP backend crashed; restarting for %s", self.agent_name
                 )
-                await self._band_mcp_backend.stop()
-                self._band_mcp_backend = None
+                await self._band_mcp_backend.restart()
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
                     tool_definitions=self._tool_definitions,
@@ -1025,6 +1039,38 @@ class ACPClientAdapter(
                 )
                 self._band_mcp_backend = backend
             return self._band_mcp_backend
+
+    async def _drop_stale_session(
+        self, runtime: ACPRuntime, room_id: str, backend: BandMCPBackend
+    ) -> None:
+        """Retire a room's session built against a Band MCP URL the backend no
+        longer serves, so the next one is created on the live URL.
+
+        A fresh session rather than ``session/load`` with new MCP servers:
+        how an agent treats reloading a session that is still live is
+        undefined. The caller replays the transcript into the new session.
+        """
+        # Read before any await: another room's restart briefly unsets the port.
+        current_url = backend.endpoint(runtime.agent_mcp_transport, room_id)
+        async with self._session_lock:
+            if self._room_band_urls.get(room_id, current_url) == current_url:
+                return
+            self._room_band_urls.pop(room_id)
+            session_id = self._room_to_session.pop(room_id, None)
+            if session_id is None:
+                return
+            self._bootstrapped_sessions.discard(session_id)
+        logger.info(
+            "Band MCP server restarted; replacing ACP session %s for room %s",
+            session_id,
+            room_id,
+        )
+        runtime.reset_session(session_id)
+        self._track_background_task(
+            self._close_session(
+                runtime, session_id, reason=SessionCloseReason.STALE_BAND_MCP_URL
+            )
+        )
 
     async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
         backend = await self._ensure_band_mcp_backend()
@@ -1138,7 +1184,9 @@ class ACPClientAdapter(
         try:
             await self._configure_session(runtime, room_id, session_id)
         except BaseException:
-            await self._close_fresh_session(runtime, session_id)
+            await self._close_session(
+                runtime, session_id, reason=SessionCloseReason.UNCONFIGURED
+            )
             raise
         await self._record_session(room_id, session_id)
         logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
@@ -1176,11 +1224,15 @@ class ACPClientAdapter(
             yield session
         except asyncio.CancelledError:
             self._track_background_task(
-                self._close_fresh_session(runtime, session.session_id)
+                self._close_session(
+                    runtime, session.session_id, reason=SessionCloseReason.UNCONFIGURED
+                )
             )
             raise
         except BaseException:
-            await self._close_fresh_session(runtime, session.session_id)
+            await self._close_session(
+                runtime, session.session_id, reason=SessionCloseReason.UNCONFIGURED
+            )
             raise
 
     async def _record_session(self, room_id: str, session_id: str) -> None:
@@ -1188,8 +1240,10 @@ class ACPClientAdapter(
         async with self._session_lock:
             self._room_to_session[room_id] = session_id
 
-    async def _close_fresh_session(self, runtime: ACPRuntime, session_id: str) -> None:
-        """Best-effort cleanup when configuration prevented first use."""
+    async def _close_session(
+        self, runtime: ACPRuntime, session_id: str, *, reason: SessionCloseReason
+    ) -> None:
+        """Best-effort close of a session no room will use again."""
         try:
             await asyncio.wait_for(
                 runtime.close_session(session_id),
@@ -1199,14 +1253,16 @@ class ACPClientAdapter(
             raise
         except TimeoutError:
             logger.warning(
-                "Timed out closing unconfigured ACP session %s after %s seconds",
+                "Timed out closing ACP session %s (%s) after %s seconds",
                 session_id,
+                reason,
                 SESSION_CLOSE_TIMEOUT_SECONDS,
             )
         except Exception:
             logger.warning(
-                "Could not close unconfigured ACP session %s",
+                "Could not close ACP session %s (%s)",
                 session_id,
+                reason,
                 exc_info=True,
             )
 
@@ -1249,7 +1305,9 @@ class ACPClientAdapter(
         """The MCP configuration supplied when creating or loading a session."""
         mcp_servers: list[object] = list(self.config.mcp_servers)
         if self.config.inject_band_tools:
-            mcp_servers.append(await self._get_or_start_band_mcp_server(room_id))
+            band_server = await self._get_or_start_band_mcp_server(room_id)
+            self._room_band_urls[room_id] = band_server.url
+            mcp_servers.append(band_server)
         return mcp_servers
 
     async def _configure_session(
@@ -1444,6 +1502,7 @@ class ACPClientAdapter(
             self._room_tools.pop(room_id, None)
             if session_id:
                 self._bootstrapped_sessions.discard(session_id)
+            self._room_band_urls.pop(room_id, None)
             runtime = self._runtimes.pop(room_id, None)
             workspace = self._room_workspaces.pop(room_id, None)
             if workspace is not None:
@@ -1478,6 +1537,7 @@ class ACPClientAdapter(
             initializers = tuple(self._session_initializers.values())
             self._session_initializers.clear()
             self._room_to_session.clear()
+            self._room_band_urls.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())

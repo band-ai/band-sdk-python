@@ -50,7 +50,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     launch_for,
 )
 from tests.integrations.acp.conftest import make_platform_message
-from tests.mcpclient import room_endpoint_path
+from tests.mcpclient import crash_server, room_endpoint_path
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
@@ -411,30 +411,21 @@ class TestACPClientAdapterLocalMcpConfig:
     @pytest.mark.asyncio
     async def test_ensure_band_mcp_backend_restarts_a_crashed_backend(self) -> None:
         """A backend's serve task can crash on its own, independent of any
-        adapter call -- the next turn's cache read must notice via
-        ``is_running`` and self-heal, instead of handing every later room the
-        same dead host/port until a tool call times out."""
+        adapter call -- the next call must notice via ``is_running`` and
+        restart it in place, on a port the dead sessions never dialed."""
         adapter = ACPClientAdapter(CODEX)
-        crashed_backend = MagicMock(
-            local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"),
-            is_running=False,
-        )
-        crashed_backend.stop = AsyncMock()
-        adapter._band_mcp_backend = crashed_backend
+        try:
+            backend = await adapter._ensure_band_mcp_backend()
+            crashed_port = backend.local_server.port
+            await crash_server(backend.local_server)
 
-        fresh_backend = MagicMock(
-            local_server=MagicMock(http_url="http://127.0.0.1:2/mcp"),
-            is_running=True,
-        )
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=fresh_backend),
-        ) as mock_create_backend:
-            recreated = await adapter._ensure_band_mcp_backend()
+            restarted = await adapter._ensure_band_mcp_backend()
 
-        assert recreated is fresh_backend
-        crashed_backend.stop.assert_awaited_once()
-        mock_create_backend.assert_awaited_once()
+            assert restarted is backend
+            assert restarted.is_running
+            assert restarted.local_server.port != crashed_port
+        finally:
+            await adapter.cleanup_all()
 
     @pytest.mark.asyncio
     async def test_shutdown_racing_a_parked_first_turn_fails_loudly(self) -> None:
@@ -1674,11 +1665,15 @@ class TestACPClientAdapterCleanup:
         monkeypatch.setattr(client_adapter, "SESSION_CLOSE_TIMEOUT_SECONDS", 0.01)
 
         with caplog.at_level(logging.WARNING):
-            await adapter._close_fresh_session(runtime, "session-1")
+            await adapter._close_session(
+                runtime,
+                "session-1",
+                reason=client_adapter.SessionCloseReason.UNCONFIGURED,
+            )
 
         runtime.close_session.assert_awaited_once_with("session-1")
         assert caplog.messages == [
-            "Timed out closing unconfigured ACP session session-1 after 0.01 seconds"
+            "Timed out closing ACP session session-1 (unconfigured) after 0.01 seconds"
         ]
 
     @pytest.mark.asyncio
