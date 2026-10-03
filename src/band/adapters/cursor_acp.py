@@ -57,7 +57,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = (CURSOR_CLI_BINARY, "acp")
 CursorAuthMethod = Literal["cursor_login"]
-CURSOR_AUTH_METHOD: CursorAuthMethod = "cursor_login"
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
@@ -71,7 +70,9 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
 
     Attributes:
         command: The ``agent acp`` launch command.
-        auth_method: Cursor's ACP login method; fixed.
+        auth_method: ACP ``authenticate`` method; off by default. Cursor reads
+            ``api_key``, ``auth_token`` or a stored ``agent login`` without
+            it, and never answers ``authenticate`` when no login is stored.
         api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
             exclusive with ``auth_token``.
         auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
@@ -92,7 +93,7 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
     """
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
-    auth_method: CursorAuthMethod = CURSOR_AUTH_METHOD
+    auth_method: CursorAuthMethod | None = None
     api_key: str | None = Field(default=None, repr=False)
     auth_token: str | None = Field(default=None, repr=False)
     approval_mode: ApprovalMode = "manual"

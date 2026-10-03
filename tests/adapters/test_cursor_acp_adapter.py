@@ -219,13 +219,15 @@ class TestCursorACPAdapterConfig:
 
 class TestCursorACPAdapterLaunch:
     @pytest.mark.asyncio
-    async def test_launches_agent_acp_with_cursor_login(self, tmp_path: Path) -> None:
+    async def test_launches_agent_acp_without_authenticate(
+        self, tmp_path: Path
+    ) -> None:
         adapter = cursor_in(tmp_path)
 
         launch = await launch_for(adapter)
 
         assert launch.command == DEFAULT_CURSOR_ACP_COMMAND
-        assert launch.auth_method == "cursor_login"
+        assert launch.auth_method is None
         assert adapter._profile is adapter._cursor_profile
 
     @pytest.mark.parametrize(
