@@ -27,17 +27,21 @@ from band.integrations.acp.client_profiles import (
     parse_cursor_questions,
 )
 from band.integrations.acp.client_runtime import (
+    ALLOW_ALWAYS_KIND,
     ACPRuntime,
+    option_id_of_kind,
     permission_option_ids,
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import (
+    CURSOR_CLI_BINARY,
     DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
     DECISION_TIMED_OUT_TEMPLATE,
     DECISION_UNAUTHORIZED_MESSAGE,
     PERMISSION_REQUESTED_TEMPLATE,
+    PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
 )
@@ -53,9 +57,8 @@ from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
+DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = (CURSOR_CLI_BINARY, "acp")
 CursorAuthMethod = Literal["cursor_login"]
-CURSOR_AUTH_METHOD: CursorAuthMethod = "cursor_login"
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
@@ -69,7 +72,9 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
 
     Attributes:
         command: The ``agent acp`` launch command.
-        auth_method: Cursor's ACP login method; fixed.
+        auth_method: ACP ``authenticate`` method; off by default. Cursor reads
+            ``api_key``, ``auth_token`` or a stored ``agent login`` without
+            it, and never answers ``authenticate`` when no login is stored.
         api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
             exclusive with ``auth_token``.
         auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
@@ -90,7 +95,7 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
     """
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
-    auth_method: CursorAuthMethod = CURSOR_AUTH_METHOD
+    auth_method: CursorAuthMethod | None = None
     api_key: str | None = Field(default=None, repr=False)
     auth_token: str | None = Field(default=None, repr=False)
     approval_mode: ApprovalMode = "manual"
@@ -119,6 +124,11 @@ class CursorTurn:
     requester_id: str | None
     release: asyncio.Future[None]
     session_id: str | None = None
+    # Cursor sends parallel tool calls' permission requests together and does
+    # not apply an "allow always" to one already outstanding, so the room is
+    # asked one at a time and a granted tool settles its queued repeats.
+    permission_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    always_allowed: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -329,19 +339,33 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 turn = self._active_turn_for(request.room_id, request.session_id)
                 if turn is None:
                     return None
-                choices = {"permission": permission_option_ids(request.options)}
-                result = await self._wait_for_decision(
-                    kind="permission",
-                    turn=turn,
-                    choices=choices,
-                    prompt=PERMISSION_REQUESTED_TEMPLATE.format(
-                        tool=request.tool_call.name,
-                        # _wait_for_decision fills the token in once it's minted.
-                        token="{token}",
-                        options=", ".join(sorted(choices["permission"])) or "none",
-                    ),
-                )
-                return result if isinstance(result, str) else None
+                async with turn.permission_lock:
+                    return await self._ask_room_permission(turn, request)
+
+    async def _ask_room_permission(
+        self, turn: CursorTurn, request: ACPPermissionRequest
+    ) -> str | None:
+        tool = request.tool_call.name
+        always = option_id_of_kind(request.options, ALLOW_ALWAYS_KIND)
+        if tool in turn.always_allowed and always is not None:
+            return always
+        choices = {"permission": permission_option_ids(request.options)}
+        result = await self._wait_for_decision(
+            kind="permission",
+            turn=turn,
+            choices=choices,
+            prompt=PERMISSION_REQUESTED_TEMPLATE.format(
+                tool=tool,
+                # _wait_for_decision fills the token in once it's minted.
+                token="{token}",
+                options=", ".join(sorted(choices["permission"])) or "none",
+            ),
+        )
+        if not isinstance(result, str):
+            return None
+        if result == always:
+            turn.always_allowed.add(tool)
+        return result
 
     async def _resolve_extension_method(
         self, method: str, params: dict[str, object]
@@ -416,10 +440,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 result = await self._wait_for_decision(
                     kind="plan",
                     turn=turn,
-                    prompt=(
-                        f"{description} needs approval. Reply "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
+                    prompt=PLAN_REQUESTED_TEMPLATE.format(
+                        plan=description,
+                        # _wait_for_decision fills the token in once it's minted.
+                        token="{token}",
                     ),
                 )
                 return (

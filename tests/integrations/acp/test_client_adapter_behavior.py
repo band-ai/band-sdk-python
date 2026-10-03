@@ -886,6 +886,40 @@ async def test_codex_call_to_another_servers_same_named_tool_is_not_a_reply(
 
 
 @pytest.mark.asyncio
+async def test_cursor_mcp_call_narrates_under_the_name_it_reports_late(
+    fake_agent,
+) -> None:
+    """Cursor opens an MCP call as a nameless ``MCP: tool`` placeholder; posting
+    that left Band tool calls unrecognizable in the room."""
+    fake_agent.will_call_mcp_tool_named_late(
+        "tc-1", "band", "band_list_contacts", arguments={"chat_id": "c1"}, result="[]"
+    ).will_say("No contacts.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("contacts?")
+
+    assert reply.tool_call_names == ["band_list_contacts"]
+    assert reply.tool_call_args == [{"chat_id": "c1"}]
+    assert reply.tool_result_names == ["band_list_contacts"]
+    assert reply.outline == ["tool_call", "tool_result", "message", "task"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_band_post_named_late_is_the_one_reply(fake_agent) -> None:
+    fake_agent.will_call_mcp_tool_named_late(
+        "tc-1",
+        "band",
+        "band_send_message",
+        arguments={"content": "The answer."},
+        result='{"id": "msg-1"}',
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == []
+    assert reply.tool_call_names == ["band_send_message"]
+
+
+@pytest.mark.asyncio
 async def test_roster_update_stays_in_its_own_room(fake_agent) -> None:
     """A roster update delivered with one room's turn must not leak into a
     concurrent room's session prompt."""

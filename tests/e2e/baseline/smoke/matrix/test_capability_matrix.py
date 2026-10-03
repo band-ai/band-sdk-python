@@ -131,6 +131,11 @@ async def test_recall_memory_across_memory_adapters(
     mem.calls.assert_get_called()
 
 
+# Adapters whose runtime reports every tool result as a bare success: Cursor's
+# ACP updates carry ``rawOutput: {"success": true}`` and never the tool's output.
+OPAQUE_TOOL_OUTPUT_ADAPTERS = frozenset({Adapter.CURSOR_ACP})
+
+
 @per_adapter(
     supports={Capability.MEMORY},
     **MEMORY_AGENT,
@@ -210,8 +215,10 @@ async def test_memory_survives_adapter_rehydration(
     mem.stored.assert_stored(content=marker)
     # The checks above prove the tools fired and a matching record exists in the
     # store independently -- neither proves band_get_memory's own tool_result
-    # actually carried it back during this turn. Assert that directly.
-    results.assert_succeeded(MemoryTool.GET.value, output_contains=marker)
+    # actually carried it back during this turn. Assert that directly, where the
+    # runtime reports tool output at all.
+    reported = None if cell.adapter_id in OPAQUE_TOOL_OUTPUT_ADAPTERS else marker
+    results.assert_succeeded(MemoryTool.GET.value, output_contains=reported)
 
 
 @per_adapter(supports={Capability.CONTACTS}, **CONTACTS_AGENT)
