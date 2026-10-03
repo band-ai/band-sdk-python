@@ -38,8 +38,8 @@ TERMINAL_POLL_INTERVAL_S = 0.5
 class TurnPhase(Enum):
     """How far a decided approval turn has got toward closing."""
 
-    OPEN = auto()  # its closing reply hasn't arrived yet
-    RUNNING = auto()  # replied, but the model turn hasn't ended
+    OPEN = auto()  # a notice or the closing reply hasn't streamed yet
+    RUNNING = auto()  # streamed, but usage or the persisted replies lag behind
     CLOSED = auto()
 
 

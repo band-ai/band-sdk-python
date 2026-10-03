@@ -35,7 +35,7 @@ from typing import Any
 
 import pytest
 
-import band.adapters
+import band.adapters.opencode
 from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
@@ -111,10 +111,11 @@ async def approval_room(
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
-    # The adapters' turn-phase records are content-free INFO lines; a failing
-    # cell's captured log then shows where its turn stopped.
+    # OpenCode's turn-phase records are content-free INFO lines; a failing
+    # cell's captured log then shows where its turn stopped. Scoped to that
+    # package: other adapters log tool input at INFO.
     with (
-        sdk_logs_at(band.adapters, logging.INFO),
+        sdk_logs_at(band.adapters.opencode, logging.INFO),
         tempfile.TemporaryDirectory(
             prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
         ) as workdir,

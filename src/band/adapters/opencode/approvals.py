@@ -353,6 +353,12 @@ class RoomApprovals:
             return
         entry = registration.entry
         self._known_question_ids.add(request_id)
+        logger.info(
+            "OpenCode question asked room=%s request=%s mode=%s",
+            self._ports.room_id,
+            request_id,
+            self._config.question_mode,
+        )
 
         if not request.questions:
             logger.warning(
