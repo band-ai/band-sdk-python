@@ -121,6 +121,7 @@ def make_fake_mcp_backend(port: int = 55321) -> MagicMock:
     backend.local_server.port = port
     backend.allowed_tools = ["mcp__band__band_send_message"]
     backend.stop = AsyncMock()
+    backend.restart_if_crashed = AsyncMock(return_value=False)
     return backend
 
 

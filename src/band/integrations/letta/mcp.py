@@ -85,6 +85,9 @@ class LettaMCPBridge:
         # Registration id and tool ids in Letta (populated by ensure_ready).
         self.server_id: str | None = None
         self.tool_ids: list[str] = []
+        # The URL this process last registered; a row still pointing at it
+        # is this process's own, left behind by a crashed backend.
+        self._last_server_url: str | None = None
         # Send-tool names resolved from the registered server's discovered
         # tools; the first known alias is the pre-discovery fallback.
         self.send_message_tool: str = SEND_MESSAGE_TOOL_NAMES[0]
@@ -92,8 +95,11 @@ class LettaMCPBridge:
 
     @property
     def ready(self) -> bool:
-        """Whether the tool path is registered and discovered."""
-        return self.server_id is not None
+        """Whether the tool path is registered, discovered, and (self-hosted)
+        still being served."""
+        return self.server_id is not None and (
+            self.backend is None or self.backend.is_running
+        )
 
     @property
     def silent_reporting_tools(self) -> frozenset[str]:
@@ -114,6 +120,10 @@ class LettaMCPBridge:
         ready.
         """
         if self.ready:
+            return
+
+        if self.server_id is not None and self.backend is not None:
+            await self._repoint(client, self.server_id, self.backend)
             return
 
         if self._config.mode == "external":
@@ -149,27 +159,16 @@ class LettaMCPBridge:
             if server is not None:
                 existing_url = self._registered_url(server)
                 if existing_url and existing_url != server_url:
-                    logger.warning(
-                        "MCP registration %r points at %s, expected %s",
-                        effective_name,
-                        existing_url,
-                        server_url,
+                    server = await self._adopt_or_replace(
+                        client,
+                        server,
+                        name=effective_name,
+                        existing_url=existing_url,
+                        server_url=server_url,
                     )
-                    if (
-                        self._config.mode == "self_host"
-                        and self._config.server_name is None
-                    ):
+                    if server is None:
                         effective_name = f"band-{uuid4().hex[:8]}"
-                        server = None
-                    else:
-                        raise RuntimeError(
-                            f"MCP registration {effective_name!r} points at "
-                            f"{existing_url!r} but this adapter advertises "
-                            f"{server_url!r}. Remove the stale registration "
-                            f"from Letta or use an ephemeral self-hosted name "
-                            f"(omit mcp.server_name)."
-                        )
-                elif server is not None:
+                else:
                     logger.info(
                         "Found existing MCP server %r (id=%s)",
                         effective_name,
@@ -189,6 +188,7 @@ class LettaMCPBridge:
             # must not short-circuit the next ensure_ready into running
             # agents with no tools.
             self.server_id = server_id
+            self._last_server_url = server_url
             logger.info("Discovered %d MCP tools: %s", len(self.tool_ids), tool_names)
         except Exception as e:
             logger.error("Failed to register MCP server: %s", e)
@@ -286,12 +286,83 @@ class LettaMCPBridge:
         url = getattr(server, "server_url", None)
         return str(url) if url else None
 
+    async def _adopt_or_replace(
+        self,
+        client: Any,
+        server: Any,
+        *,
+        name: str,
+        existing_url: str,
+        server_url: str,
+    ) -> Any | None:
+        """Resolve a registration that points somewhere else.
+
+        Returns the row to keep, or ``None`` to register under a fresh
+        ephemeral name. A row at this process's own last URL is repointed (a
+        crashed backend restarted on a new port); any other row may belong to
+        another instance, so it is never touched.
+        """
+        if existing_url == self._last_server_url:
+            await self._point_registration_at(client, server.id, server_url)
+            return server
+        logger.warning(
+            "MCP registration %r points at %s, expected %s",
+            name,
+            existing_url,
+            server_url,
+        )
+        if self._config.mode == "self_host" and self._config.server_name is None:
+            return None
+        raise RuntimeError(
+            f"MCP registration {name!r} points at "
+            f"{existing_url!r} but this adapter advertises "
+            f"{server_url!r}. Remove the stale registration "
+            f"from Letta or use an ephemeral self-hosted name "
+            f"(omit mcp.server_name)."
+        )
+
+    async def _repoint(
+        self, client: Any, server_id: str, backend: BandMCPBackend
+    ) -> None:
+        """Restart a crashed self-hosted server and point its registration at it.
+
+        Letta resolves an MCP tool's server by name and reads its URL on every
+        call, so updating the row reconnects every attached tool with no new
+        tool ids or re-attach -- unlike a fresh registration, which retags
+        the org's tool rows.
+        """
+        await backend.restart_if_crashed()
+        try:
+            await self._point_registration_at(
+                client, server_id, self.advertised_url(backend.local_server.port)
+            )
+        except Exception:
+            self.server_id = None
+            self.tool_ids = []
+            raise
+
+    async def _point_registration_at(
+        self, client: Any, server_id: str, server_url: str
+    ) -> None:
+        """Rewrite an existing registration's URL in place."""
+        await client.mcp_servers.update(
+            server_id,
+            config={
+                "mcp_server_type": self._config.transport,
+                "server_url": server_url,
+            },
+        )
+        self._last_server_url = server_url
+        logger.info("Repointed MCP server registration %s at %s", server_id, server_url)
+
     async def _start_backend(self) -> BandMCPBackend:
-        """Start the in-process Band MCP server (self_host mode)."""
+        """Start the in-process Band MCP server (self_host mode), restarting a
+        kept one whose serve task died."""
         if self.backend is not None:
+            await self.backend.restart_if_crashed()
             return self.backend
 
-        # Ephemeral OS-assigned port (never reused): the Letta server dials
+        # Ephemeral OS-assigned port (rarely reused): the Letta server dials
         # back across a network proxy (docker host-gateway), and re-binding a
         # just-freed scanned port can leave that hop stalled on stale state.
         backend = await create_band_mcp_backend(

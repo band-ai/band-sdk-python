@@ -10,6 +10,8 @@ and agent lifecycle — so each file stays focused on one concern.
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,10 +25,12 @@ from band.adapters.letta import (
 )
 from band.converters.letta import LettaSessionState
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.integrations.letta.mcp import LettaMCPBridge
 from band.integrations.letta.prompts import (
     SEND_EVENT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAMES,
 )
+from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
@@ -40,6 +44,7 @@ from tests.adapters.lettakit import (
     make_platform_message,
     mock_org_user_provisioned,
 )
+from tests.mcpclient import crash_server, mcp_session
 
 
 def _stale_tool_error(message: str) -> Exception:
@@ -845,3 +850,106 @@ class TestSelfHostedMCPLifecycle:
             )
 
         assert adapter._mcp.server_id is None
+
+
+@asynccontextmanager
+async def registered_on_real_server(
+    config: LettaAdapterConfig | None = None,
+) -> AsyncIterator[tuple[LettaMCPBridge, AsyncMock]]:
+    """A self-hosted bridge registered with a mocked Letta, serving a real Band
+    MCP server -- the Letta server is the only boundary not run for real."""
+    client = AsyncMock()
+    client.mcp_servers.list.return_value = []
+    client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-server-1")
+    client.mcp_servers.tools.list.return_value = [
+        make_mock_mcp_tool("t1", "band_send_message")
+    ]
+    bridge = LettaAdapter(config=config)._mcp
+    await bridge.ensure_ready(client)
+    try:
+        yield bridge, client
+    finally:
+        if bridge.backend is not None:
+            await bridge.backend.stop()
+
+
+def registered_urls(client: AsyncMock) -> list[str]:
+    """Every URL handed to Letta, by create or update, in order."""
+    calls = [
+        *client.mcp_servers.create.await_args_list,
+        *client.mcp_servers.update.await_args_list,
+    ]
+    return [call.kwargs["config"]["server_url"] for call in calls]
+
+
+async def serves_band_tools(url: str) -> bool:
+    async with mcp_session(url, BandMCPTransport.SSE) as session:
+        tools = (await session.list_tools()).tools
+    return BandTool.SEND_MESSAGE in {tool.name for tool in tools}
+
+
+async def crash(bridge: LettaMCPBridge) -> None:
+    assert bridge.backend is not None
+    await crash_server(bridge.backend.local_server)
+
+
+class TestSelfHostedMCPCrash:
+    @pytest.mark.asyncio
+    async def test_a_crashed_server_is_repointed_in_place(self) -> None:
+        """Letta reads a registration's URL on every tool call, so updating the
+        row reconnects the agents' attached tools; no new ids, no re-attach."""
+        async with registered_on_real_server() as (bridge, client):
+            await crash(bridge)
+
+            await bridge.ensure_ready(client)
+
+            live_url = registered_urls(client)[-1]
+            assert client.mcp_servers.update.await_args.args == ("mcp-server-1",)
+            assert client.mcp_servers.create.await_count == 1
+            assert (bridge.server_id, bridge.tool_ids) == ("mcp-server-1", ["t1"])
+            assert await serves_band_tools(live_url)
+
+    @pytest.mark.asyncio
+    async def test_a_released_crashed_server_restarts_before_registering(
+        self,
+    ) -> None:
+        async with registered_on_real_server() as (bridge, client):
+            await bridge.release(client)
+            await crash(bridge)
+
+            await bridge.ensure_ready(client)
+
+            assert await serves_band_tools(registered_urls(client)[-1])
+
+    @pytest.mark.asyncio
+    async def test_a_released_crashed_server_keeps_its_fixed_name_registration(
+        self,
+    ) -> None:
+        """The row still points at this process's own dead URL, so it is
+        repointed rather than rejected as another instance's registration."""
+        config = LettaAdapterConfig(mcp=LettaMCPConfig(server_name="band-compose"))
+        async with registered_on_real_server(config) as (bridge, client):
+            (crashed_url,) = registered_urls(client)
+            own_row = make_mock_mcp_server("mcp-server-1")
+            own_row.server_name = "band-compose"
+            own_row.config = {"server_url": crashed_url}
+            client.mcp_servers.list.return_value = [own_row]
+            await bridge.release(client)
+            await crash(bridge)
+
+            await bridge.ensure_ready(client)
+
+            assert client.mcp_servers.create.await_count == 1
+            assert bridge.server_id == "mcp-server-1"
+            assert await serves_band_tools(registered_urls(client)[-1])
+
+    @pytest.mark.asyncio
+    async def test_a_failed_repoint_clears_the_registration(self) -> None:
+        async with registered_on_real_server() as (bridge, client):
+            client.mcp_servers.update.side_effect = RuntimeError("Letta is down")
+            await crash(bridge)
+
+            with pytest.raises(RuntimeError, match="Letta is down"):
+                await bridge.ensure_ready(client)
+
+            assert bridge.server_id is None
