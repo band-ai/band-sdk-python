@@ -1,5 +1,5 @@
 """The shared Band MCP backend: one local MCP server per adapter, owned by a
-``SharedBandMCPBackend`` that starts, heals and stops it."""
+``SharedBandMCPBackend`` that starts, replaces and stops it."""
 
 from __future__ import annotations
 
@@ -35,7 +35,11 @@ class BandMCPTransport(StrEnum):
 
 @dataclass(frozen=True)
 class BandMCPBackend:
-    """A running Band MCP server (both transports) and the tool names it exposes."""
+    """A Band MCP server (both transports) and the tool names it exposes.
+
+    Never restarted: its URLs stay fixed for its whole life, so a URL handed
+    out names exactly one server, and a replacement always serves a new one.
+    """
 
     allowed_tools: list[str]
     local_server: LocalMCPServer
@@ -67,18 +71,6 @@ class BandMCPBackend:
     async def stop(self) -> None:
         """Stop the backing local server."""
         await self.local_server.stop()
-
-    async def restart_if_crashed(self) -> None:
-        """Restart the backing local server if its serve task died.
-
-        The restart lands on a different port when the range has another free
-        one, so a consumer holding the old URL can tell it must reconnect.
-        """
-        if self.is_running:
-            return
-        logger.warning("Band MCP server crashed; restarting it")
-        await self.local_server.stop()
-        await self.local_server.start()
 
 
 @dataclass(frozen=True)
@@ -115,8 +107,11 @@ def _build_allowed_tools(
     return allowed_tools
 
 
-async def create_band_mcp_backend(settings: BandMCPBackendSettings) -> BandMCPBackend:
-    """Start a Band MCP server, serving both transports, as ``settings`` describe."""
+async def create_band_mcp_backend(
+    settings: BandMCPBackendSettings, *, avoid_port: int | None = None
+) -> BandMCPBackend:
+    """Start a Band MCP server, serving both transports, as ``settings`` describe,
+    off ``avoid_port`` whenever the range has another free port."""
     additional_tools = list(settings.additional_tools)
     local_server = LocalMCPServer(
         name=BAND_MCP_SERVER_NAME,
@@ -130,6 +125,7 @@ async def create_band_mcp_backend(settings: BandMCPBackendSettings) -> BandMCPBa
         port_min=settings.port_min,
         port_max=settings.port_max,
         room_bound=settings.room_bound,
+        avoid_port=avoid_port,
     )
     await local_server.start()
     backend = BandMCPBackend(
@@ -145,14 +141,15 @@ async def create_band_mcp_backend(settings: BandMCPBackendSettings) -> BandMCPBa
 
 
 class SharedBandMCPBackend:
-    """One adapter's Band MCP backend: started on first use, restarted in place
-    when its serve task dies, refused once closed for good.
+    """One adapter's Band MCP backend: started on first use, replaced when its
+    server dies, refused once closed for good.
 
     An async context manager for block-scoped use. Adapters, whose lifetime
     spans ``on_started`` to ``cleanup_all``, call ``ensure()``/``close()``
     directly -- the same idiom as ``LocalMCPServer``'s ``start()``/``stop()``.
-    ``settings`` is read at each start, since capabilities (and with them the
-    tool definitions) are only settled when the agent starts.
+    ``settings`` is read at each start, replacements included, since
+    capabilities (and with them the tool definitions) are only settled when
+    the agent starts.
     """
 
     def __init__(self, settings: Callable[[], BandMCPBackendSettings]) -> None:
@@ -169,18 +166,17 @@ class SharedBandMCPBackend:
 
     @property
     def current(self) -> BandMCPBackend | None:
-        """The backend held right now, running or crashed; ``None`` before
-        the first start and after ``close``."""
+        """The backend held right now, running or dead; ``None`` before the
+        first start and after ``close``."""
         return self._backend
 
     async def ensure(self) -> BandMCPBackend:
-        """The running backend: started on first use, healed if its serve task died."""
+        """The running backend: started on first use, replaced if its server died."""
         async with self._lock:
-            self._refuse_if_closed()
-            self._backend = self._backend or await create_band_mcp_backend(
-                self._settings()
-            )
-            await self._backend.restart_if_crashed()
+            if self._closed:
+                raise RuntimeError("Band MCP backend is stopped")
+            if self._backend is None or not self._backend.is_running:
+                self._backend = await self._start(replacing=self._backend)
             return self._backend
 
     async def detach(self, *, final: bool) -> BandMCPBackend | None:
@@ -207,6 +203,13 @@ class SharedBandMCPBackend:
         async with self._lock:
             self._closed = False
 
-    def _refuse_if_closed(self) -> None:
-        if self._closed:
-            raise RuntimeError("Band MCP backend is stopped")
+    async def _start(self, *, replacing: BandMCPBackend | None) -> BandMCPBackend:
+        """A new backend; a dead one it replaces stays held until this succeeds,
+        so a failed start leaves the next ``ensure()`` to retry."""
+        if replacing is not None:
+            logger.warning("Band MCP server died; replacing it")
+            await replacing.stop()
+        return await create_band_mcp_backend(
+            self._settings(),
+            avoid_port=replacing.local_server.port if replacing else None,
+        )

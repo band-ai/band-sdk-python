@@ -131,13 +131,14 @@ class LettaMCPBridge:
         # registration whose server stays alive (see release). The retry on
         # the next message reuses it under a fresh name.
         backend = await self.backend.ensure()
+        server_url = self.advertised_url(backend.local_server.port)
         if self.server_id is not None:
-            await self._repoint(client, self.server_id, backend.local_server.port)
+            await self._repoint(client, self.server_id, server_url)
             return
         await self.register(
             client,
             server_name=self._config.server_name or f"band-{uuid4().hex[:8]}",
-            server_url=self.advertised_url(backend.local_server.port),
+            server_url=server_url,
         )
 
     async def register(self, client: Any, *, server_name: str, server_url: str) -> None:
@@ -268,6 +269,10 @@ class LettaMCPBridge:
             host = self._config.bind_host
         return f"http://{host}:{port}{_MCP_URL_PATHS[self._config.transport]}"
 
+    def _registration_config(self, server_url: str) -> dict[str, str]:
+        """The config Letta stores on a registration, on create and update alike."""
+        return {"mcp_server_type": self._config.transport, "server_url": server_url}
+
     @staticmethod
     def _registered_url(server: Any) -> str | None:
         """The server URL stored on a Letta MCP registration, if any."""
@@ -294,7 +299,7 @@ class LettaMCPBridge:
 
         Returns the row to keep, or ``None`` to register under a fresh
         ephemeral name. A row at this process's own last URL is repointed (a
-        crashed backend restarted on a new port); any other row may belong to
+        crashed backend replaced on a new port); any other row may belong to
         another instance, so it is never touched.
         """
         if existing_url == self._last_server_url:
@@ -316,8 +321,8 @@ class LettaMCPBridge:
             f"(omit mcp.server_name)."
         )
 
-    async def _repoint(self, client: Any, server_id: str, port: int) -> None:
-        """Point the registration at a self-hosted server restarted on ``port``.
+    async def _repoint(self, client: Any, server_id: str, server_url: str) -> None:
+        """Point the registration at a replacement self-hosted server.
 
         Letta resolves an MCP tool's server by name and reads its URL on every
         call, so updating the row reconnects every attached tool with no new
@@ -325,9 +330,7 @@ class LettaMCPBridge:
         the org's tool rows.
         """
         try:
-            await self._point_registration_at(
-                client, server_id, self.advertised_url(port)
-            )
+            await self._point_registration_at(client, server_id, server_url)
         except Exception:
             self.server_id = None
             self.tool_ids = []
@@ -338,11 +341,7 @@ class LettaMCPBridge:
     ) -> None:
         """Rewrite an existing registration's URL in place."""
         await client.mcp_servers.update(
-            server_id,
-            config={
-                "mcp_server_type": self._config.transport,
-                "server_url": server_url,
-            },
+            server_id, config=self._registration_config(server_url)
         )
         self._last_server_url = server_url
         logger.info("Repointed MCP server registration %s at %s", server_id, server_url)
@@ -383,11 +382,7 @@ class LettaMCPBridge:
         """
         try:
             server = await client.mcp_servers.create(
-                server_name=server_name,
-                config={
-                    "mcp_server_type": self._config.transport,
-                    "server_url": server_url,
-                },
+                server_name=server_name, config=self._registration_config(server_url)
             )
         except Exception:
             server = await self._find(client, server_name)

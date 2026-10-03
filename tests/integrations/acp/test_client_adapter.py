@@ -31,6 +31,7 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
     ACPPermissionRequest,
+    RoomSession,
     _resolve_launcher,
 )
 from band.integrations.acp.client_profiles import CursorACPClientProfile
@@ -51,21 +52,13 @@ from tests.integrations.acp.acp_toolkit.harness import (
 )
 from tests.integrations.acp.conftest import make_platform_message
 from tests.mcpclient import (
-    FakeBandMCPBackend,
     backends_created_by,
+    hold_backend,
     room_endpoint_path,
 )
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
-
-
-async def running_backend(adapter: ACPClientAdapter) -> FakeBandMCPBackend:
-    """Start the adapter's Band MCP backend as a fake, as its first turn would."""
-    backend = FakeBandMCPBackend()
-    with backends_created_by(backend):
-        await adapter._mcp.ensure()
-    return backend
 
 
 def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
@@ -341,7 +334,7 @@ class TestACPClientAdapterLocalMcpConfig:
         """A turn arriving after real shutdown must fail loudly, not leak a
         fresh LocalMCPServer nothing will ever stop again."""
         adapter = ACPClientAdapter(CODEX)
-        await running_backend(adapter)
+        await hold_backend(adapter._mcp)
 
         await adapter.cleanup_all()  # final=True default, matches Agent.stop()
 
@@ -357,7 +350,7 @@ class TestACPClientAdapterLocalMcpConfig:
         turn, not to end the adapter -- a later turn on any room must still be
         able to self-heal by starting a fresh backend."""
         adapter = ACPClientAdapter(CODEX)
-        stopped = await running_backend(adapter)
+        stopped = await hold_backend(adapter._mcp)
 
         await adapter.stop()  # the on_message except-handler's call, not shutdown
 
@@ -584,7 +577,10 @@ class TestACPClientAdapterOnMessage:
         )
 
         adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.new_session.assert_called_once()
-        assert adapter_with_mocks._room_to_session["room-123"] == "acp-session-123"
+        assert (
+            adapter_with_mocks._room_to_session["room-123"].session_id
+            == "acp-session-123"
+        )
 
     @pytest.mark.asyncio
     async def test_on_message_applies_selected_session_configuration(
@@ -641,7 +637,9 @@ class TestACPClientAdapterOnMessage:
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """Should reuse existing session for same room."""
-        adapter_with_mocks._room_to_session["room-123"] = "existing-session"
+        adapter_with_mocks._room_to_session["room-123"] = RoomSession(
+            "existing-session", band_url=None
+        )
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
@@ -728,7 +726,9 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        assert adapter_with_mocks._room_to_session["room-123"] == "session-abc"
+        assert (
+            adapter_with_mocks._room_to_session["room-123"].session_id == "session-abc"
+        )
         adapter_with_mocks._runtimes[
             _MOCK_ROOM
         ]._conn.load_session.assert_awaited_once()
@@ -772,7 +772,10 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        assert adapter_with_mocks._room_to_session["room-123"] == "fresh-session"
+        assert (
+            adapter_with_mocks._room_to_session["room-123"].session_id
+            == "fresh-session"
+        )
         adapter_with_mocks._runtimes[_MOCK_ROOM]._conn.new_session.assert_awaited_once()
         adapter_with_mocks._runtimes[
             _MOCK_ROOM
@@ -1519,9 +1522,9 @@ class TestACPClientAdapterCleanup:
     async def test_on_cleanup_removes_mapping(self) -> None:
         """Should remove room -> session mapping."""
         adapter = ACPClientAdapter(CODEX)
-        adapter._room_to_session["room-123"] = "session-123"
+        adapter._room_to_session["room-123"] = RoomSession("session-123", band_url=None)
         adapter._room_tools["room-123"] = MagicMock()
-        backend = await running_backend(adapter)
+        backend = await hold_backend(adapter._mcp)
 
         await adapter.on_cleanup("room-123")
 
@@ -1540,7 +1543,7 @@ class TestACPClientAdapterCleanup:
     async def test_on_cleanup_twice(self) -> None:
         """Should handle cleanup called twice."""
         adapter = ACPClientAdapter(CODEX)
-        adapter._room_to_session["room-123"] = "session-123"
+        adapter._room_to_session["room-123"] = RoomSession("session-123", band_url=None)
 
         await adapter.on_cleanup("room-123")
         await adapter.on_cleanup("room-123")
@@ -1692,9 +1695,9 @@ class TestACPClientAdapterStop:
         adapter._runtimes[_MOCK_ROOM] = runtime
         adapter._room_workspaces[_MOCK_ROOM] = "/tmp/room-123"
         adapter._workspace_rooms["/tmp/room-123"] = _MOCK_ROOM
-        adapter._room_to_session[_MOCK_ROOM] = "session-123"
+        adapter._room_to_session[_MOCK_ROOM] = RoomSession("session-123", band_url=None)
         adapter._room_tools[_MOCK_ROOM] = MagicMock()
-        backend = await running_backend(adapter)
+        backend = await hold_backend(adapter._mcp)
         adapter._bootstrapped_sessions.add("session-123")
 
         await adapter.stop()
@@ -1713,7 +1716,7 @@ class TestACPClientAdapterStop:
     async def test_stop_no_connection(self) -> None:
         """Should handle stop when not connected."""
         adapter = ACPClientAdapter(CODEX)
-        backend = await running_backend(adapter)
+        backend = await hold_backend(adapter._mcp)
 
         await adapter.stop()
 
@@ -2251,7 +2254,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
 
         assert not b_turn.done()
         assert "room-a" not in adapter._room_to_session
-        assert adapter._room_to_session["room-b"] == "sess-b"
+        assert adapter._room_to_session["room-b"].session_id == "sess-b"
         conn_a.cancel.assert_awaited_once_with("sess-a")
         conn_b.cancel.assert_not_called()
         failures = reported_failures(tools_a)

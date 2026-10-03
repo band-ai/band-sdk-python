@@ -34,9 +34,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
-    hold_backend,
     make_assistant_message,
-    make_fake_mcp_backend,
     make_letta_response,
     make_mock_agent,
     make_mock_mcp_server,
@@ -45,7 +43,13 @@ from tests.adapters.lettakit import (
     make_platform_message,
     mock_org_user_provisioned,
 )
-from tests.mcpclient import backends_created_by, crash_server, mcp_session
+from tests.mcpclient import (
+    FakeBandMCPBackend,
+    backends_created_by,
+    crash_backend,
+    hold_backend,
+    served_tool_names,
+)
 
 
 def _stale_tool_error(message: str) -> Exception:
@@ -107,9 +111,8 @@ class TestLettaAdapterOnStarted:
         )
         assert adapter._mcp.server_id == mock_server.id
         assert adapter._mcp.tool_ids == ["t1", "t2"]
-        assert (
-            adapter._mcp.backend.current is None
-        )  # external mode starts no local server
+        # External mode starts no local server.
+        assert adapter._mcp.backend.current is None
         assert adapter._system_prompt  # non-empty
 
     @pytest.mark.asyncio
@@ -134,7 +137,7 @@ class TestLettaAdapterOnStarted:
         mock_letta_module = MagicMock()
         mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
 
-        fake_backend = make_fake_mcp_backend(port=55321)
+        fake_backend = FakeBandMCPBackend()
 
         with (
             patch.dict("sys.modules", {"letta_client": mock_letta_module}),
@@ -149,7 +152,7 @@ class TestLettaAdapterOnStarted:
         assert re.fullmatch(r"band-[0-9a-f]{8}", create_kwargs["server_name"])
         assert create_kwargs["config"] == {
             "mcp_server_type": "sse",
-            "server_url": "http://host.docker.internal:55321/sse",
+            "server_url": f"http://host.docker.internal:{fake_backend.local_server.port}/sse",
         }
         assert adapter._mcp.backend.current is fake_backend
         assert adapter._mcp.server_id == mock_server.id
@@ -403,13 +406,13 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-server-1"
         adapter._mcp.tool_ids = ["t1"]
-        fake_backend = make_fake_mcp_backend()
-        await hold_backend(adapter._mcp, fake_backend)
+        fake_backend = FakeBandMCPBackend()
+        await hold_backend(adapter._mcp.backend, fake_backend)
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
-        fake_backend.stop.assert_not_awaited()
+        assert fake_backend.stop_calls == 0
         mock_client.mcp_servers.delete.assert_not_called()
         assert adapter._mcp.backend.current is fake_backend
         assert adapter._mcp.server_id == "mcp-server-1"
@@ -422,8 +425,8 @@ class TestSelfHostedMCPLifecycle:
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
-        fake_backend = make_fake_mcp_backend(port=55999)
-        await hold_backend(adapter._mcp, fake_backend)
+        fake_backend = FakeBandMCPBackend()
+        await hold_backend(adapter._mcp.backend, fake_backend)
         assert adapter._mcp.server_id is None
 
         mock_server = make_mock_mcp_server("mcp-server-2")
@@ -465,7 +468,7 @@ class TestSelfHostedMCPLifecycle:
         # A re-register already minted fresh ids and flagged the room stale.
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
-        await hold_backend(adapter._mcp, make_fake_mcp_backend())
+        await hold_backend(adapter._mcp.backend, FakeBandMCPBackend())
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", stale_tools=True)
 
         # The agent still carries only the old registration's (dead) tool.
@@ -659,14 +662,14 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-server-1"
         adapter._mcp.tool_ids = ["t1"]
-        fake_backend = make_fake_mcp_backend()
-        await hold_backend(adapter._mcp, fake_backend)
+        fake_backend = FakeBandMCPBackend()
+        await hold_backend(adapter._mcp.backend, fake_backend)
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
         mock_client.mcp_servers.delete.assert_not_called()
-        fake_backend.stop.assert_not_awaited()
+        assert fake_backend.stop_calls == 0
         assert adapter._mcp.backend.current is fake_backend
         assert adapter._mcp.server_id is None
         assert adapter._mcp.tool_ids == []
@@ -681,7 +684,7 @@ class TestSelfHostedMCPLifecycle:
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
-        await hold_backend(adapter._mcp, make_fake_mcp_backend(port=55001))
+        await hold_backend(adapter._mcp.backend, FakeBandMCPBackend())
         adapter._mcp.server_id = "mcp-dead"
         adapter._mcp.tool_ids = ["t-dead"]
 
@@ -715,7 +718,7 @@ class TestSelfHostedMCPLifecycle:
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
-        await hold_backend(adapter._mcp, make_fake_mcp_backend(port=55002))
+        await hold_backend(adapter._mcp.backend, FakeBandMCPBackend())
         adapter._mcp.server_id = "mcp-dead"
         adapter._mcp.tool_ids = ["t-dead"]
         # A sibling room, live before the recovery, wired to the old ids.
@@ -802,14 +805,14 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         mock_client.mcp_servers.list.side_effect = ConnectionError("letta down")
 
-        fake_backend = make_fake_mcp_backend()
+        fake_backend = FakeBandMCPBackend()
         with (
             backends_created_by(fake_backend),
             pytest.raises(RuntimeError, match="MCP server registration failed"),
         ):
             await adapter._mcp.ensure_ready(mock_client)
 
-        fake_backend.stop.assert_not_awaited()
+        assert fake_backend.stop_calls == 0
         assert adapter._mcp.backend.current is fake_backend
         assert adapter._mcp.server_id is None
 
@@ -874,15 +877,7 @@ def registered_urls(client: AsyncMock) -> list[str]:
 
 
 async def serves_band_tools(url: str) -> bool:
-    async with mcp_session(url, BandMCPTransport.SSE) as session:
-        tools = (await session.list_tools()).tools
-    return BandTool.SEND_MESSAGE in {tool.name for tool in tools}
-
-
-async def crash(bridge: LettaMCPBridge) -> None:
-    backend = bridge.backend.current
-    assert backend is not None
-    await crash_server(backend.local_server)
+    return BandTool.SEND_MESSAGE in await served_tool_names(url, BandMCPTransport.SSE)
 
 
 class TestSelfHostedMCPCrash:
@@ -891,7 +886,7 @@ class TestSelfHostedMCPCrash:
         """Letta reads a registration's URL on every tool call, so updating the
         row reconnects the agents' attached tools; no new ids, no re-attach."""
         async with registered_on_real_server() as (bridge, client):
-            await crash(bridge)
+            await crash_backend(bridge.backend)
 
             await bridge.ensure_ready(client)
 
@@ -902,12 +897,12 @@ class TestSelfHostedMCPCrash:
             assert await serves_band_tools(live_url)
 
     @pytest.mark.asyncio
-    async def test_a_released_crashed_server_restarts_before_registering(
+    async def test_a_released_crashed_server_is_replaced_before_registering(
         self,
     ) -> None:
         async with registered_on_real_server() as (bridge, client):
             await bridge.release(client)
-            await crash(bridge)
+            await crash_backend(bridge.backend)
 
             await bridge.ensure_ready(client)
 
@@ -927,7 +922,7 @@ class TestSelfHostedMCPCrash:
             own_row.config = {"server_url": crashed_url}
             client.mcp_servers.list.return_value = [own_row]
             await bridge.release(client)
-            await crash(bridge)
+            await crash_backend(bridge.backend)
 
             await bridge.ensure_ready(client)
 
@@ -939,7 +934,7 @@ class TestSelfHostedMCPCrash:
     async def test_a_failed_repoint_clears_the_registration(self) -> None:
         async with registered_on_real_server() as (bridge, client):
             client.mcp_servers.update.side_effect = RuntimeError("Letta is down")
-            await crash(bridge)
+            await crash_backend(bridge.backend)
 
             with pytest.raises(RuntimeError, match="Letta is down"):
                 await bridge.ensure_ready(client)

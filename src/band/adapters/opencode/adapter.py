@@ -222,13 +222,10 @@ class RoomState:
 @dataclass(frozen=True)
 class McpRegistration:
     """Where OpenCode was told to find our Band MCP server: on which client,
-    at which URL. A restarted server serves a new URL, so it no longer matches."""
+    at which URL. A replaced server serves a new URL, so it no longer matches."""
 
     client: OpencodeClientProtocol
     url: str
-
-    def names(self, client: OpencodeClientProtocol, url: str) -> bool:
-        return self.client is client and self.url == url
 
 
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
@@ -719,8 +716,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         async with self._mcp_lifecycle_lock:
             backend = await self._mcp.ensure()
             url = backend.endpoint(BandMCPTransport.SSE)
-            # A restarted server serves a new URL, so it gets registered again.
-            if self._registration is not None and self._registration.names(client, url):
+            if self._registration == McpRegistration(client=client, url=url):
                 return
             try:
                 result = await client.register_mcp_server(
@@ -742,7 +738,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
             async with self._state_lock:
                 if self._client is client:
-                    self._registration = McpRegistration(client, url)
+                    self._registration = McpRegistration(client=client, url=url)
             logger.info(
                 "MCP server %s registered with OpenCode (status=%s)",
                 self._mcp_server_name,

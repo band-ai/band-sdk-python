@@ -353,7 +353,7 @@ class AcpSession:
         )
 
     def session_id(self, room: str) -> str:
-        return self.adapter._room_to_session[room]
+        return self.adapter._room_to_session[room].session_id
 
 
 def fake_agent_config(**settings: Any) -> ACPClientAdapterConfig:

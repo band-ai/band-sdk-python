@@ -27,7 +27,7 @@ from band.runtime.tools import (
 from band.testing import FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude
 from tests.baseline.decisions import ModelDecision
-from tests.mcpclient import crash_server
+from tests.mcpclient import crash_backend
 
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
@@ -147,9 +147,7 @@ class ClaudeRoom:
 
     async def crash_band_server(self) -> None:
         """The adapter's Band MCP server dies on its own, between turns."""
-        backend = self.adapter._mcp.current
-        assert backend is not None, "adapter not started"
-        await crash_server(backend.local_server)
+        await crash_backend(self.adapter._mcp)
 
     def beside(self, room_id: str) -> ClaudeRoom:
         """Another room served by the same adapter."""

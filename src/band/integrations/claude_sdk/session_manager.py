@@ -331,7 +331,7 @@ class ClaudeSessionManager:
         Get existing ClaudeSDKClient for room or create new one.
 
         Calls for the same room_id return the same client instance while its
-        MCP servers are current; once they change (a restarted Band MCP
+        MCP servers are current; once they change (a replaced Band MCP
         server), the client is replaced, resuming ``resume_session_id``.
 
         Args:

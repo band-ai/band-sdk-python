@@ -10,15 +10,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 from pytest_httpx import HTTPXMock
 
 from band.core.types import PlatformMessage
-from band.integrations.letta.mcp import LettaMCPBridge
 from band.integrations.letta.prompts import render_tool_enforcement
-from tests.mcpclient import backends_created_by
 
 
 def make_platform_message(
@@ -114,23 +112,6 @@ def make_mock_tool_page(*tools: MagicMock) -> MagicMock:
     page = MagicMock()
     page.items = list(tools)
     return page
-
-
-def make_fake_mcp_backend(port: int = 55321) -> MagicMock:
-    """Create a fake self-hosted Band MCP backend."""
-    backend = MagicMock()
-    backend.local_server = MagicMock()
-    backend.local_server.port = port
-    backend.allowed_tools = ["mcp__band__band_send_message"]
-    backend.stop = AsyncMock()
-    backend.restart_if_crashed = AsyncMock(return_value=None)
-    return backend
-
-
-async def hold_backend(bridge: LettaMCPBridge, backend: Any) -> None:
-    """Have ``bridge`` hold ``backend`` as though it had started it."""
-    with backends_created_by(backend):
-        await bridge.backend.ensure()
 
 
 def default_enforcement(room_id: str | None = None) -> str:

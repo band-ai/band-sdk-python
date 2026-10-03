@@ -1,4 +1,4 @@
-"""A Band MCP server that dies between turns is restarted on a new port, and
+"""A Band MCP server that dies between turns is replaced on a new port, and
 every room's next session dials the live one."""
 
 from __future__ import annotations

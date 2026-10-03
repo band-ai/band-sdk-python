@@ -1,4 +1,4 @@
-"""A Band MCP server that dies between turns is restarted on a new port and
+"""A Band MCP server that dies between turns is replaced on a new port and
 re-registered with OpenCode under the same name."""
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from tests.adapters.opencode.helpers import (
     tools_protocol,
     wait_for,
 )
-from tests.mcpclient import crash_server, mcp_session
+from tests.mcpclient import crash_backend, served_tool_names
 
 
 @pytest.fixture(autouse=True)
@@ -56,14 +56,11 @@ async def test_a_crashed_server_is_re_registered_on_its_new_port(
 
     try:
         await send("before the crash", bootstrap=True)
-        backend = adapter._mcp.current
-        assert backend is not None
-        await crash_server(backend.local_server)
+        await crash_backend(adapter._mcp)
         await send("after the crash", bootstrap=False)
 
         crashed, live = client.registered_mcp_servers
-        async with mcp_session(live["url"], BandMCPTransport.SSE) as session:
-            served = {tool.name for tool in (await session.list_tools()).tools}
+        served = await served_tool_names(live["url"], BandMCPTransport.SSE)
     finally:
         await adapter.on_cleanup("room-1")
 

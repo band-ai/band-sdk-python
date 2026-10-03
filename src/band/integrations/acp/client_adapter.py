@@ -149,6 +149,24 @@ class SessionInitializer:
 _PROVIDER = "acp"
 
 
+@dataclass(frozen=True)
+class RoomSession:
+    """A room's ACP session and the Band MCP URL it dials, ``None`` when it
+    dials none. The agent only learns that URL at ``session/new``, so a
+    session whose URL the backend no longer serves is replaced."""
+
+    session_id: str
+    band_url: str | None
+
+
+@dataclass(frozen=True)
+class SessionMcpServers:
+    """The MCP servers a session is created or loaded with."""
+
+    servers: list[object]
+    band_url: str | None
+
+
 class ACPTurnTimeoutError(TimeoutError):
     """The adapter deadline expired before the ACP prompt completed."""
 
@@ -404,7 +422,7 @@ class ACPClientAdapter(
         self._room_workspaces: dict[str, str] = {}
         self._workspace_rooms: dict[str, str] = {}
 
-        self._room_to_session: dict[str, str] = {}
+        self._room_to_session: dict[str, RoomSession] = {}
         # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
@@ -412,9 +430,6 @@ class ACPClientAdapter(
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._bootstrapped_sessions: set[str] = set()
-        # The Band MCP URL each room's session was built with; a restarted
-        # backend serves a different one (see _drop_stale_session).
-        self._room_band_urls: dict[str, str] = {}
         self._session_lock = asyncio.Lock()
 
     @property
@@ -493,11 +508,11 @@ class ACPClientAdapter(
 
     async def _live_session(self, room_id: str) -> tuple[str, ACPRuntime] | None:
         async with self._session_lock:
-            session_id = self._room_to_session.get(room_id)
+            session = self._room_to_session.get(room_id)
             runtime = self._runtimes.get(room_id)
-        if session_id is None or runtime is None:
+        if session is None or runtime is None:
             return None
-        return session_id, runtime
+        return session.session_id, runtime
 
     def locate_model_options(
         self, options: Sequence[SessionConfigOption]
@@ -1004,33 +1019,30 @@ class ACPClientAdapter(
         how an agent treats reloading a session that is still live is
         undefined. The caller replays the transcript into the new session.
         """
-        # Read before any await: another room's restart briefly unsets the port.
-        current_url = backend.endpoint(runtime.agent_mcp_transport, room_id)
+        band_url = backend.endpoint(runtime.agent_mcp_transport, room_id)
         async with self._session_lock:
-            if self._room_band_urls.get(room_id, current_url) == current_url:
+            session = self._room_to_session.get(room_id)
+            if session is None or session.band_url == band_url:
                 return
-            self._room_band_urls.pop(room_id)
-            session_id = self._room_to_session.pop(room_id, None)
-            if session_id is None:
-                return
-            self._bootstrapped_sessions.discard(session_id)
+            del self._room_to_session[room_id]
+            self._bootstrapped_sessions.discard(session.session_id)
         logger.info(
-            "Band MCP server restarted; replacing ACP session %s for room %s",
-            session_id,
+            "Band MCP server replaced; replacing ACP session %s for room %s",
+            session.session_id,
             room_id,
         )
-        runtime.reset_session(session_id)
+        runtime.reset_session(session.session_id)
         self._track_background_task(
             self._close_session(
-                runtime, session_id, reason=SessionCloseReason.STALE_BAND_MCP_URL
+                runtime,
+                session.session_id,
+                reason=SessionCloseReason.STALE_BAND_MCP_URL,
             )
         )
 
     async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
-        # The runtime first: no await may separate ensure() from reading the
-        # endpoint, or another room's restart could catch its port unset.
-        runtime = await self._runtime_for(room_id)
         backend = await self._mcp.ensure()
+        runtime = await self._runtime_for(room_id)
         return self._build_local_mcp_server_config(
             backend, runtime.agent_mcp_transport, room_id
         )
@@ -1047,8 +1059,8 @@ class ACPClientAdapter(
         the caller owes it a transcript replay.
         """
         async with self._session_lock:
-            if room_id in self._room_to_session:
-                return self._room_to_session[room_id], False
+            if (session := self._room_to_session.get(room_id)) is not None:
+                return session.session_id, False
             initializer = self._session_initializers.get(room_id)
             if (
                 initializer is not None
@@ -1100,24 +1112,24 @@ class ACPClientAdapter(
         history: ACPClientSessionState | None,
     ) -> tuple[str, bool]:
         """Restore or create one room session outside the shared state lock."""
-        mcp_servers = await self._session_mcp_servers(room_id)
+        mcp = await self._session_mcp_servers(room_id)
         restored_session_id = await self._restore_session(
             runtime,
             room_id,
             history,
-            mcp_servers,
+            mcp,
         )
         if restored_session_id is not None:
             return restored_session_id, False
 
-        return await self._create_session(runtime, room_id, mcp_servers), True
+        return await self._create_session(runtime, room_id, mcp), True
 
     async def _restore_session(
         self,
         runtime: ACPRuntime,
         room_id: str,
         history: ACPClientSessionState | None,
-        mcp_servers: list[object],
+        mcp: SessionMcpServers,
     ) -> str | None:
         """Restore and configure the persisted session for this room, if available."""
         session_id = history.room_to_session.get(room_id) if history else None
@@ -1127,7 +1139,7 @@ class ACPClientAdapter(
         loaded = await runtime.load_session_response(
             cwd=self._room_workspaces[room_id],
             session_id=session_id,
-            mcp_servers=mcp_servers,
+            mcp_servers=mcp.servers,
         )
         if loaded is None:
             logger.info(
@@ -1144,23 +1156,28 @@ class ACPClientAdapter(
                 runtime, session_id, reason=SessionCloseReason.UNCONFIGURED
             )
             raise
-        await self._record_session(room_id, session_id)
+        await self._record_session(
+            room_id, RoomSession(session_id=session_id, band_url=mcp.band_url)
+        )
         logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
         return session_id
 
     async def _create_session(
-        self, runtime: ACPRuntime, room_id: str, mcp_servers: list[object]
+        self, runtime: ACPRuntime, room_id: str, mcp: SessionMcpServers
     ) -> str:
         """Create, configure, and publish a session for one room."""
-        async with self._fresh_session(runtime, room_id, mcp_servers) as session:
+        async with self._fresh_session(runtime, room_id, mcp.servers) as session:
             await self._configure_session(runtime, room_id, session.session_id)
-            await self._record_session(room_id, session.session_id)
+            await self._record_session(
+                room_id,
+                RoomSession(session_id=session.session_id, band_url=mcp.band_url),
+            )
 
         logger.info(
             "Created ACP session %s for room %s (mcp_servers=%d)",
             session.session_id,
             room_id,
-            len(mcp_servers),
+            len(mcp.servers),
         )
         return session.session_id
 
@@ -1191,10 +1208,10 @@ class ACPClientAdapter(
             )
             raise
 
-    async def _record_session(self, room_id: str, session_id: str) -> None:
+    async def _record_session(self, room_id: str, session: RoomSession) -> None:
         """Publish a fully initialized session to its room."""
         async with self._session_lock:
-            self._room_to_session[room_id] = session_id
+            self._room_to_session[room_id] = session
 
     async def _close_session(
         self, runtime: ACPRuntime, session_id: str, *, reason: SessionCloseReason
@@ -1257,14 +1274,15 @@ class ACPClientAdapter(
             await asyncio.gather(*pending, return_exceptions=True)
             self._background_tasks.difference_update(pending)
 
-    async def _session_mcp_servers(self, room_id: str) -> list[object]:
+    async def _session_mcp_servers(self, room_id: str) -> SessionMcpServers:
         """The MCP configuration supplied when creating or loading a session."""
-        mcp_servers: list[object] = list(self.config.mcp_servers)
-        if self.config.inject_band_tools:
-            band_server = await self._get_or_start_band_mcp_server(room_id)
-            self._room_band_urls[room_id] = band_server.url
-            mcp_servers.append(band_server)
-        return mcp_servers
+        servers: list[object] = list(self.config.mcp_servers)
+        if not self.config.inject_band_tools:
+            return SessionMcpServers(servers=servers, band_url=None)
+        band_server = await self._get_or_start_band_mcp_server(room_id)
+        return SessionMcpServers(
+            servers=[*servers, band_server], band_url=band_server.url
+        )
 
     async def _configure_session(
         self, runtime: ACPRuntime, room_id: str, session_id: str
@@ -1453,12 +1471,11 @@ class ACPClientAdapter(
 
     async def on_cleanup(self, room_id: str) -> None:
         async with self._session_lock:
-            session_id = self._room_to_session.pop(room_id, None)
+            session = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
-            if session_id:
-                self._bootstrapped_sessions.discard(session_id)
-            self._room_band_urls.pop(room_id, None)
+            if session is not None:
+                self._bootstrapped_sessions.discard(session.session_id)
             runtime = self._runtimes.pop(room_id, None)
             workspace = self._room_workspaces.pop(room_id, None)
             if workspace is not None:
@@ -1493,7 +1510,6 @@ class ACPClientAdapter(
             initializers = tuple(self._session_initializers.values())
             self._session_initializers.clear()
             self._room_to_session.clear()
-            self._room_band_urls.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())

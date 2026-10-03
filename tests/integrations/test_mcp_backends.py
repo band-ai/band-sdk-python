@@ -5,18 +5,29 @@ import asyncio
 
 import pytest
 
-from band.integrations.mcp import BandMCPBackendSettings, SharedBandMCPBackend
+from band.integrations.mcp import (
+    BandMCPBackendSettings,
+    BandMCPTransport,
+    SharedBandMCPBackend,
+)
 from band.integrations.mcp.backends import create_band_mcp_backend
 from band.runtime.tools import iter_tool_definitions
 from band.testing import FakeAgentTools
-from tests.mcpclient import FakeBandMCPBackend, backends_created_by, crash_server
+from tests.mcpclient import (
+    FakeBandMCPBackend,
+    backends_created_by,
+    crash_backend,
+    served_tool_names,
+)
 from tests.paths import REPO_ROOT, SRC_ROOT
+
+ONE_TOOL = next(iter(iter_tool_definitions()))
 
 
 def one_tool_settings() -> BandMCPBackendSettings:
-    """A real server on the default port range, where a restart moves port."""
+    """A real server on the default port range."""
     return BandMCPBackendSettings(
-        tool_definitions=list(iter_tool_definitions())[:1],
+        tool_definitions=[ONE_TOOL],
         get_tools=lambda _room_id: None,
     )
 
@@ -52,17 +63,28 @@ class TestSharedBandMCPBackend:
         assert first is second
         assert len(starts.requested) == 1
 
-    async def test_a_crashed_backend_is_healed_in_place_on_a_new_port(self) -> None:
+    async def test_a_crashed_backend_is_replaced_by_a_live_one(self) -> None:
         async with SharedBandMCPBackend(one_tool_settings) as owner:
-            backend = await owner.ensure()
-            crashed_port = backend.local_server.port
-            await crash_server(backend.local_server)
+            await owner.ensure()
+            crashed = await crash_backend(owner)
 
-            healed = await owner.ensure()
+            replacement = await owner.ensure()
 
-            assert healed is backend
-            assert healed.is_running
-            assert healed.local_server.port != crashed_port
+            url = replacement.endpoint(BandMCPTransport.HTTP)
+            assert replacement is not crashed
+            assert crashed.endpoint(BandMCPTransport.HTTP) != url
+            assert await served_tool_names(url) == {ONE_TOOL.name}
+
+    async def test_a_replacement_avoids_the_dead_servers_port(self) -> None:
+        with backends_created_by() as starts:
+            async with SharedBandMCPBackend(one_tool_settings) as owner:
+                dead = await owner.ensure()
+                dead.is_running = False
+
+                await owner.ensure()
+
+        assert starts.avoided == [None, dead.local_server.port]
+        assert dead.stop_calls == 1
 
     async def test_a_failed_start_holds_nothing_and_the_next_use_retries(self) -> None:
         with backends_created_by(OSError("no free port")):
@@ -73,19 +95,22 @@ class TestSharedBandMCPBackend:
                 assert owner.current is None
                 assert await owner.ensure() is owner.current
 
-    async def test_a_failed_restart_keeps_the_backend_for_the_next_use(self) -> None:
-        backend = RestartFailsOnce()
-        with backends_created_by(backend):
+    async def test_a_failed_replacement_keeps_the_dead_backend_for_the_next_use(
+        self,
+    ) -> None:
+        dead = FakeBandMCPBackend()
+        with backends_created_by(dead, OSError("no free port")) as starts:
             async with SharedBandMCPBackend(one_tool_settings) as owner:
                 await owner.ensure()
-                backend.is_running = False
+                dead.is_running = False
 
                 with pytest.raises(OSError):
                     await owner.ensure()
+                assert owner.current is dead
 
-                assert owner.current is backend
-                assert await owner.ensure() is backend
-                assert backend.is_running
+                assert await owner.ensure() is not dead
+
+        assert starts.avoided[1:] == [dead.local_server.port] * 2
 
     async def test_a_final_close_refuses_every_use_until_reopened(self) -> None:
         with backends_created_by():
@@ -163,20 +188,6 @@ class TestSharedBandMCPBackend:
         assert replacement is not stopping
 
 
-class RestartFailsOnce(FakeBandMCPBackend):
-    """A backend whose first restart fails, as when no port is free."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._failed = False
-
-    async def restart_if_crashed(self) -> None:
-        if not self.is_running and not self._failed:
-            self._failed = True
-            raise OSError("no free port")
-        await super().restart_if_crashed()
-
-
 # --- Only the owner runs Band MCP backends -----------------------------------
 
 _OWNER_PACKAGE = SRC_ROOT / "integrations" / "mcp"
@@ -184,7 +195,7 @@ _SCAN_ROOTS = (SRC_ROOT, REPO_ROOT / "packages" / "band-mcp" / "src")
 
 
 def _runs_a_backend_by_hand(source: str) -> bool:
-    """Whether ``source`` creates, constructs or heals a Band MCP server itself."""
+    """Whether ``source`` creates or constructs a Band MCP server itself."""
     for node in ast.walk(ast.parse(source)):
         match node:
             case (
@@ -194,13 +205,11 @@ def _runs_a_backend_by_hand(source: str) -> bool:
                 return True
             case ast.Call(func=ast.Name(id="LocalMCPServer")):
                 return True
-            case ast.Attribute(attr="restart_if_crashed"):
-                return True
     return False
 
 
 def test_only_the_owner_runs_band_mcp_backends() -> None:
-    """A new adapter goes through SharedBandMCPBackend, which starts, heals
+    """A new adapter goes through SharedBandMCPBackend, which starts, replaces
     and stops its server; hand-rolling any of that is how a crash goes unseen."""
     assert all(root.is_dir() for root in (*_SCAN_ROOTS, _OWNER_PACKAGE))
     offenders = sorted(
@@ -222,7 +231,6 @@ def test_only_the_owner_runs_band_mcp_backends() -> None:
     [
         ("from band.integrations.mcp.backends import create_band_mcp_backend", True),
         ("server = LocalMCPServer(name='band', tool_registrations=[])", True),
-        ("await backend.restart_if_crashed()", True),
         ("backend = await self._mcp.ensure()", False),
     ],
 )

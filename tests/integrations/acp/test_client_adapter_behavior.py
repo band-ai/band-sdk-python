@@ -39,7 +39,7 @@ from tests.integrations.acp.acp_toolkit import (
 )
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
-    crash_server,
+    crash_backend,
     room_endpoint_path,
     tool_arguments,
 )
@@ -589,9 +589,23 @@ async def test_band_tool_call_without_chat_id_lands_in_its_own_room(
 
 
 @pytest.mark.asyncio
+async def test_a_room_keeps_its_session_while_its_band_server_lives(
+    fake_agent,
+) -> None:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("first", room="room-1")
+        first = session.session_id("room-1")
+        await session.send("second", room="room-1")
+
+        assert session.session_id("room-1") == first
+
+
+@pytest.mark.asyncio
 async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
     """The room's open session still dials the crashed server's port; the next
-    message moves the room to a fresh session on the restarted one."""
+    message moves the room to a fresh session on its replacement."""
     fake_agent.will_call_mcp_tool(
         "tc-message",
         "band_send_message",
@@ -603,9 +617,7 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
     ) as session:
         await session.send("before the crash", room="room-1")
         crashed_url = band_mcp_url(fake_agent, session.session_id("room-1"))
-        backend = session.adapter._mcp.current
-        assert backend is not None
-        await crash_server(backend.local_server)
+        await crash_backend(session.adapter._mcp)
 
         reply = await session.send("after the crash", room="room-1")
         live_url = band_mcp_url(fake_agent, session.session_id("room-1"))
@@ -621,6 +633,7 @@ async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
         FakeACPAgent(supports_session_load=True)
         .knows_session("persisted")
         .will_say("ok")
+        .will_say("still here")
     )
 
     async with acp_adapter(agent, fake_agent_config(inject_band_tools=True)) as session:
@@ -629,6 +642,9 @@ async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
             bootstrap=True,
             history=rehydration_history(session="persisted"),
         )
+        await session.send("again")
+
+        assert session.session_id("room-1") == "persisted"
 
     assert agent.session_load_requests == ["persisted"]
     assert urlsplit(band_mcp_url(agent, "persisted")).path == room_endpoint_path(
