@@ -2,12 +2,14 @@
 
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPBackendSettings,
     BandMCPTransport,
-    create_band_mcp_backend,
+    SharedBandMCPBackend,
 )
 
 __all__ = [
     "BandMCPBackend",
+    "BandMCPBackendSettings",
     "BandMCPTransport",
-    "create_band_mcp_backend",
+    "SharedBandMCPBackend",
 ]

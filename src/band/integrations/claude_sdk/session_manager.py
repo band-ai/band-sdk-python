@@ -34,6 +34,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class ClaudeSessionManagerStoppedError(RuntimeError):
+    """A session was requested from a manager that ``stop()`` shut down."""
+
+
 @dataclass
 class SessionCommand:
     """Command to be processed by the session manager task."""
@@ -103,42 +107,60 @@ class ClaudeSessionManager:
         self._sessions: dict[str, ClaudeSDKClient] = {}
         self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
-        self._started = False
+        self._shutdown: asyncio.Task[None] | None = None
         logger.info("ClaudeSessionManager initialized")
 
     async def start(self) -> None:
         """Start the background task that manages all sessions."""
-        if self._started:
+        if self._shutdown is not None:
+            raise ClaudeSessionManagerStoppedError()
+        if self._task is not None:
             return
 
         self._task = asyncio.create_task(self._run_session_loop())
-        self._started = True
         logger.info("ClaudeSessionManager background task started")
 
     async def stop(self) -> None:
-        """Stop the background task and cleanup all sessions."""
-        if not self._started:
-            return
+        """Stop the background task and cleanup all sessions, for good: the
+        adapter builds a new manager when it starts again. Every caller
+        awaits the same shutdown, which a cancelled caller doesn't abandon."""
+        if self._shutdown is None:
+            self._shutdown = asyncio.create_task(self._shut_down(self._queue_stop()))
+        await asyncio.shield(self._shutdown)
 
-        # Send stop command
-        stop_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        await self._command_queue.put(
-            SessionCommand(action="stop", result_future=stop_future)
+    def _queue_stop(self) -> asyncio.Future[None] | None:
+        """Queue the stop at call time, so it orders against other commands
+        by when ``stop()`` was called, not when the shutdown task first runs."""
+        if self._task is None:
+            return None
+        stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._command_queue.put_nowait(
+            SessionCommand(action="stop", result_future=stopped)
         )
+        return stopped
 
-        # Wait for cleanup to complete
-        await stop_future
+    async def _shut_down(self, stopped: asyncio.Future[None] | None) -> None:
+        if self._task is None or stopped is None:
+            return
+        await stopped
 
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
 
-        self._started = False
+        self._fail_pending_commands()
         logger.info("ClaudeSessionManager background task stopped")
+
+    def _fail_pending_commands(self) -> None:
+        """Fail every command still queued once the loop has exited, so no
+        caller waits forever on a future nothing will resolve."""
+        while not self._command_queue.empty():
+            cmd = self._command_queue.get_nowait()
+            if cmd.result_future and not cmd.result_future.done():
+                cmd.result_future.set_exception(ClaudeSessionManagerStoppedError())
 
     async def _run_session_loop(self) -> None:
         """Background task that processes all session commands."""
@@ -217,6 +239,12 @@ class ClaudeSessionManager:
         if not room_id:
             raise ValueError("room_id is required")
 
+        if (client := self._sessions.get(room_id)) is not None and not (
+            self._is_current(room_id, client)
+        ):
+            logger.info("MCP servers changed; recycling session for room %s", room_id)
+            await self._do_cleanup_session(room_id)
+
         if room_id not in self._sessions:
             if resume_session_id:
                 logger.info(
@@ -247,6 +275,12 @@ class ClaudeSessionManager:
             logger.debug("Reusing existing session for room: %s", room_id)
 
         return self._sessions[room_id]
+
+    def _is_current(self, room_id: str, client: ClaudeSDKClient) -> bool:
+        """Whether ``client`` still dials the MCP servers the room has now."""
+        if self._mcp_servers_factory is None:
+            return True
+        return client.options.mcp_servers == self._mcp_servers_factory(room_id)
 
     def _do_invalidate_session(self, room_id: str | None) -> None:
         """Evict a dead session without calling disconnect() (runs in background task).
@@ -303,8 +337,9 @@ class ClaudeSessionManager:
         """
         Get existing ClaudeSDKClient for room or create new one.
 
-        This method is idempotent - calling it multiple times for the same
-        room_id returns the same client instance.
+        Calls for the same room_id return the same client instance while its
+        MCP servers are current; once they change (a replaced Band MCP
+        server), the client is replaced, resuming ``resume_session_id``.
 
         Args:
             room_id: Band chat room ID (UUID)
@@ -314,8 +349,7 @@ class ClaudeSessionManager:
         Returns:
             ClaudeSDKClient instance for this room
         """
-        if not self._started:
-            await self.start()
+        await self.start()
 
         result_future: asyncio.Future[ClaudeSDKClient] = (
             asyncio.get_running_loop().create_future()
@@ -342,7 +376,7 @@ class ClaudeSessionManager:
         Args:
             room_id: Band chat room ID
         """
-        if not self._started:
+        if self._task is None:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -366,7 +400,7 @@ class ClaudeSessionManager:
         Args:
             room_id: Band chat room ID
         """
-        if not self._started:
+        if self._task is None:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -386,7 +420,7 @@ class ClaudeSessionManager:
         This should be called when the adapter is shutting down to ensure
         all Claude SDK clients are properly disconnected.
         """
-        if not self._started:
+        if self._task is None:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()

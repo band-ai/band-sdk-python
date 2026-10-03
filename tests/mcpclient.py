@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
@@ -13,14 +14,16 @@ from mcp.types import Tool
 
 from band.integrations.mcp import (
     BandMCPBackend,
+    BandMCPBackendSettings,
     BandMCPTransport,
-    create_band_mcp_backend,
+    SharedBandMCPBackend,
 )
 from band.integrations.mcp.engine import RoomToolResolver
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
+    LocalMCPServer,
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import ToolDefinition
@@ -41,10 +44,13 @@ _TRANSPORT_PATHS: dict[BandMCPTransport, str] = {
 }
 
 
-def room_endpoint_path(
-    room_id: str, transport: BandMCPTransport = BandMCPTransport.HTTP
+def endpoint_path(
+    transport: BandMCPTransport = BandMCPTransport.HTTP, room_id: str | None = None
 ) -> str:
-    """The URL path a room-bound Band MCP server serves ``room_id`` on."""
+    """The URL path a Band MCP server serves ``transport`` on: the multi-room
+    one, or ``room_id``'s on a room-bound server."""
+    if room_id is None:
+        return _TRANSPORT_PATHS[transport]
     return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{_TRANSPORT_PATHS[transport]}"
 
 
@@ -54,10 +60,10 @@ async def started_backend(
     room_bound: bool,
     tool_definitions: Sequence[ToolDefinition],
     get_tools: RoomToolResolver,
-    additional_tools: list[CustomToolDef] | None = None,
+    additional_tools: Sequence[CustomToolDef] = (),
 ) -> AsyncIterator[BandMCPBackend]:
     """A Band MCP backend on an OS-assigned port, always stopped on exit."""
-    backend = await create_band_mcp_backend(
+    settings = BandMCPBackendSettings(
         tool_definitions=tool_definitions,
         get_tools=get_tools,
         additional_tools=additional_tools,
@@ -65,10 +71,25 @@ async def started_backend(
         port_min=0,
         port_max=0,
     )
-    try:
-        yield backend
-    finally:
-        await backend.stop()
+    async with SharedBandMCPBackend(lambda: settings) as owner:
+        yield await owner.ensure()
+
+
+async def crash_server(server: LocalMCPServer) -> None:
+    """End ``server``'s serve task the way a crash does: on its own, leaving
+    its port and socket behind for whoever still holds its URL."""
+    uvicorn_server, serve_task = server._uvicorn_server, server._serve_task
+    assert uvicorn_server is not None and serve_task is not None, "not running"
+    uvicorn_server.should_exit = True
+    await asyncio.wait([serve_task])
+
+
+async def crash_backend(owner: SharedBandMCPBackend) -> BandMCPBackend:
+    """Crash the server ``owner`` holds now, returning the crashed backend."""
+    backend = owner.current
+    assert backend is not None, "no Band MCP backend started"
+    await crash_server(backend.local_server)
+    return backend
 
 
 @asynccontextmanager
@@ -88,6 +109,14 @@ async def mcp_session(
     ):
         await session.initialize()
         yield session
+
+
+async def served_tool_names(
+    url: str, transport: BandMCPTransport = BandMCPTransport.HTTP
+) -> set[str]:
+    """The names of the tools the Band MCP server at ``url`` lists."""
+    async with mcp_session(url, transport) as session:
+        return {tool.name for tool in (await session.list_tools()).tools}
 
 
 def tool_arguments(tools: Sequence[Tool], tool_name: str) -> set[str]:

@@ -17,7 +17,9 @@ CLI launch options and chat approvals are nested groups:
 - **Band tools are bound to the room.** The adapter hosts one loopback
   `LocalMCPServer` and gives each room's session that room's endpoint
   (`/rooms/<room>/mcp`), so the tools take no `chat_id` and the prompt never
-  states one.
+  states one. If that server dies, the next message replaces it on a new port
+  and each room's session resumes against it on that room's next message; a
+  turn already in flight loses its Band tools until it ends.
 - **Assistant text is never posted.** The adapter only debug-logs it. A reply
   reaches the room through the `band_send_message` tool, and a turn that ends
   with no successful reply or action tool call is reported to the room as an
