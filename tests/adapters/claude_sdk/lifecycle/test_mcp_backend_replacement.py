@@ -7,6 +7,9 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeSessionManagerStoppedError,
+)
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -66,6 +69,24 @@ async def test_a_message_after_shutdown_is_refused(claude_room: OpenRoom) -> Non
         await room.send("hi")
 
     assert backend.is_running is False
+    assert room.claude.sessions == []
+
+
+async def test_a_message_caught_by_shutdown_restarts_nothing(
+    claude_room: OpenRoom,
+) -> None:
+    """A message whose session request lands after the session manager
+    stopped is refused, not retried as a failed resume that would bring the
+    stopped manager back to life and report a failure mid-shutdown."""
+    room = await claude_room()
+    manager = room.adapter._session_manager
+    assert manager is not None
+    await manager.stop()
+
+    with pytest.raises(ClaudeSessionManagerStoppedError):
+        await room.send("hi", session_id="sess-earlier")
+
+    assert room.reported_failures == []
     assert room.claude.sessions == []
 
 

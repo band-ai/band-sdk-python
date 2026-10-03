@@ -23,7 +23,11 @@ from band.integrations.letta.prompts import (
     SEND_EVENT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAMES,
 )
-from band.integrations.mcp import BandMCPBackendSettings, SharedBandMCPBackend
+from band.integrations.mcp import (
+    BandMCPBackend,
+    BandMCPBackendSettings,
+    SharedBandMCPBackend,
+)
 from band.integrations.mcp.local_server import LOCAL_MCP_HTTP_PATH, LOCAL_MCP_SSE_PATH
 from band.runtime.tools import ToolDefinition
 
@@ -82,8 +86,7 @@ class LettaMCPBridge:
         # Registration id and tool ids in Letta (populated by ensure_ready).
         self.server_id: str | None = None
         self.tool_ids: list[str] = []
-        # The URL this process last registered; a row still pointing at it
-        # is this process's own, left behind by a crashed backend.
+        # The URL this process last registered or repointed a row at.
         self._last_server_url: str | None = None
         # Send-tool names resolved from the registered server's discovered
         # tools; the first known alias is the pre-discovery fallback.
@@ -98,8 +101,7 @@ class LettaMCPBridge:
             return False
         backend = self.backend.current
         return backend is None or (
-            backend.is_running
-            and self._last_server_url == self.advertised_url(backend.local_server.port)
+            backend.is_running and self._last_server_url == self._served_url(backend)
         )
 
     @property
@@ -137,7 +139,7 @@ class LettaMCPBridge:
         # registration whose server stays alive (see release). The retry on
         # the next message reuses it under a fresh name.
         backend = await self.backend.ensure()
-        server_url = self.advertised_url(backend.local_server.port)
+        server_url = self._served_url(backend)
         if self.server_id is not None:
             await self._point_registration_at(client, self.server_id, server_url)
             return
@@ -151,10 +153,10 @@ class LettaMCPBridge:
         """Register a Band MCP server with Letta and discover its tools.
 
         Uses lookup-or-create to handle adapter restarts where the MCP server
-        name is already registered in Letta.  An adopted registration must point
-        at the same ``server_url``, or at this process's own last URL, which is
-        repointed — otherwise a replaced backend can wire agents to a dead
-        port, or two instances can cross-delete each other's row.
+        name is already registered in Letta.  A row pointing anywhere else goes
+        through ``_adopt_or_replace`` — otherwise a replaced backend can wire
+        agents to a dead port, or two instances can cross-delete each other's
+        row.
         """
         try:
             effective_name = server_name
@@ -281,6 +283,9 @@ class LettaMCPBridge:
     def _registration_config(self, server_url: str) -> dict[str, str]:
         """The config Letta stores on a registration, on create and update alike."""
         return {"mcp_server_type": self._config.transport, "server_url": server_url}
+
+    def _served_url(self, backend: BandMCPBackend) -> str:
+        return self.advertised_url(backend.local_server.port)
 
     @staticmethod
     def _registered_url(server: Any) -> str | None:

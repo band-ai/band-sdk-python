@@ -103,7 +103,10 @@ from band.integrations.claude_sdk.dedup_tools import (
     DedupingAgentTools,
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
-from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeSessionManager,
+    ClaudeSessionManagerStoppedError,
+)
 from band.integrations.mcp import (
     BandMCPBackendSettings,
     BandMCPTransport,
@@ -733,7 +736,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
     def _mcp_settings(self) -> BandMCPBackendSettings:
-        """One room-bound endpoint per room; tools resolve via _mcp_room_tools."""
         return BandMCPBackendSettings(
             tool_definitions=list(
                 iter_tool_definitions(capabilities=self.features.capabilities)
@@ -836,6 +838,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             client = await self._session_manager.get_or_create_session(
                 room_id, resume_session_id=stored_session_id
             )
+        except ClaudeSessionManagerStoppedError:
+            raise
         except Exception as resume_exc:
             if stored_session_id:
                 logger.warning(

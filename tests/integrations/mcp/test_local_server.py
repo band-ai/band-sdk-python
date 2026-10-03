@@ -52,13 +52,20 @@ def _text_of(result: CallToolResult) -> str:
     return block.text
 
 
+HIGHEST_PORT = 65535
+PORT_PAIR_ATTEMPTS = 100
+
+
 def free_port_pair() -> int:
     """A port ``p`` the OS just reported free, with ``p + 1`` free too."""
-    while True:
+    for _ in range(PORT_PAIR_ATTEMPTS):
         port = reserve_port(LOCAL_MCP_HOST)
+        if port == HIGHEST_PORT:
+            continue
         with socket.socket() as neighbor, suppress(OSError):
             neighbor.bind((LOCAL_MCP_HOST, port + 1))
             return port
+    raise AssertionError("no free adjacent port pair")
 
 
 def _registration_named(
@@ -525,11 +532,14 @@ class TestLocalMcpServer:
             name="test-cancelled-start", tool_registrations=[], port_min=0, port_max=0
         )
         starting = asyncio.create_task(server.start())
-        while server._serve_task is None:
-            await asyncio.sleep(0)
+        async with asyncio.timeout(1):
+            while server._serve_task is None:
+                await asyncio.sleep(0)
 
         starting.cancel()
         with suppress(asyncio.CancelledError):
             await starting
 
-        _assert_fully_stopped(server)
+        assert server.is_running is False
+        with pytest.raises(OSError):
+            await asyncio.open_connection(LOCAL_MCP_HOST, server.port)

@@ -12,7 +12,7 @@ from band.core.types import FeatureKwargs
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
 from tests.adapters.opencode.helpers import AskFactory, FakeOpencodeClient
-from tests.mcpclient import backends_created_by
+from tests.mcpbackends import backends_created_by
 
 
 @pytest.fixture

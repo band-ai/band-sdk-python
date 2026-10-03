@@ -30,7 +30,13 @@ from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.types import ACPToolCall
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
-from tests.integrations.acp.acp_toolkit.harness import launch_for, pair_in_process
+from tests.integrations.acp.acp_toolkit.harness import (
+    AcpSession,
+    launch_for,
+    pair_in_process,
+    started_acp_adapter,
+)
+from tests.mcpclient import crash_backend
 
 
 class DecisionTools(FakeAgentTools):
@@ -1056,3 +1062,32 @@ class TestCursorACPAdapterControlMessages:
         assert len(adapter._pending_decisions) == 1
         adapter._cancel_all_decisions()
         await second
+
+
+async def leave_the_room(adapter: CursorACPAdapter, session: AcpSession) -> None:
+    await adapter.on_cleanup("room-1")
+
+
+async def replace_its_band_server(
+    adapter: CursorACPAdapter, session: AcpSession
+) -> None:
+    await crash_backend(adapter._mcp)
+    await session.send("after the crash", room="room-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("release", [leave_the_room, replace_its_band_server])
+async def test_a_released_sessions_todos_are_forgotten(
+    release: Callable[[CursorACPAdapter, AcpSession], Awaitable[None]],
+) -> None:
+    agent = FakeACPAgent().will_update_cursor_todos("ship it").will_say("ok")
+    adapter = CursorACPAdapter(
+        CursorACPAdapterConfig(command="fake-agent", inject_band_tools=True)
+    )
+
+    async with started_acp_adapter(adapter, agent) as session:
+        await session.send("plan it", room="room-1")
+        released = session.session_id("room-1")
+        await release(adapter, session)
+
+        assert released not in adapter._cursor_profile._todos_by_session

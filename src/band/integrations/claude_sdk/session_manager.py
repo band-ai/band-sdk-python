@@ -34,6 +34,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class ClaudeSessionManagerStoppedError(RuntimeError):
+    """A session was requested from a manager that ``stop()`` shut down."""
+
+
 @dataclass
 class SessionCommand:
     """Command to be processed by the session manager task."""
@@ -104,6 +108,7 @@ class ClaudeSessionManager:
         self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._started = False
+        self._stopped = False
         logger.info("ClaudeSessionManager initialized")
 
     async def start(self) -> None:
@@ -116,7 +121,9 @@ class ClaudeSessionManager:
         logger.info("ClaudeSessionManager background task started")
 
     async def stop(self) -> None:
-        """Stop the background task and cleanup all sessions."""
+        """Stop the background task and cleanup all sessions, for good: the
+        adapter builds a new manager when it starts again."""
+        self._stopped = True
         if not self._started:
             return
 
@@ -142,18 +149,12 @@ class ClaudeSessionManager:
         logger.info("ClaudeSessionManager background task stopped")
 
     def _fail_pending_commands(self) -> None:
-        """Fail every command queued behind ``stop``.
-
-        Until ``stop()`` clears ``_started``, a caller still sees the manager
-        running and enqueues work the exited loop will never read; without
-        this its future would wait forever.
-        """
+        """Fail every command still queued once the loop has exited, so no
+        caller waits forever on a future nothing will resolve."""
         while not self._command_queue.empty():
             cmd = self._command_queue.get_nowait()
             if cmd.result_future and not cmd.result_future.done():
-                cmd.result_future.set_exception(
-                    RuntimeError("ClaudeSessionManager stopped")
-                )
+                cmd.result_future.set_exception(ClaudeSessionManagerStoppedError())
 
     async def _run_session_loop(self) -> None:
         """Background task that processes all session commands."""
@@ -342,6 +343,8 @@ class ClaudeSessionManager:
         Returns:
             ClaudeSDKClient instance for this room
         """
+        if self._stopped:
+            raise ClaudeSessionManagerStoppedError()
         if not self._started:
             await self.start()
 

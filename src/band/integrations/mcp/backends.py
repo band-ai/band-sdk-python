@@ -38,8 +38,7 @@ class BandMCPBackend:
     """A Band MCP server (both transports) and the tool names it exposes.
 
     Never restarted: its URLs stay fixed for its whole life, so a URL handed
-    out names exactly one server, and a replacement serves a new one whenever
-    its port range has another free port.
+    out names exactly one server.
     """
 
     allowed_tools: list[str]
@@ -85,8 +84,8 @@ class BandMCPBackendSettings:
     interface; see ``LocalMCPServer`` for the non-loopback caveat.
     ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
     rarely reused, for callers whose MCP client dials across a network proxy.
-    The OS may still hand a replacement its dead predecessor's port, so a
-    caller relying on a replacement's URL changing scans a range instead.
+    ``avoid_port`` has no effect there, so a replacement may get its dead
+    predecessor's URL back.
     """
 
     tool_definitions: Sequence[ToolDefinition]
@@ -113,8 +112,7 @@ def _build_allowed_tools(
 async def create_band_mcp_backend(
     settings: BandMCPBackendSettings, *, avoid_port: int | None = None
 ) -> BandMCPBackend:
-    """Start a Band MCP server, serving both transports, as ``settings`` describe,
-    off ``avoid_port`` whenever the range has another free port."""
+    """Start a Band MCP server, serving both transports, as ``settings`` describe."""
     additional_tools = list(settings.additional_tools)
     local_server = LocalMCPServer(
         name=BAND_MCP_SERVER_NAME,
@@ -210,7 +208,10 @@ class SharedBandMCPBackend:
         """A new backend; a dead one it replaces stays held until this succeeds,
         so a failed start leaves the next ``ensure()`` to retry."""
         if replacing is not None:
-            logger.warning("Band MCP server died; replacing it")
+            logger.warning(
+                "Band MCP server on port %s died; replacing it",
+                replacing.local_server.port,
+            )
             await replacing.stop()
         return await create_band_mcp_backend(
             self._settings(),

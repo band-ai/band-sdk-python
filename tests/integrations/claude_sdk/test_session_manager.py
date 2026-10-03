@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeSessionManager,
+    ClaudeSessionManagerStoppedError,
+)
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 
 if _HAS_CLAUDE_SDK:
@@ -166,7 +169,21 @@ async def test_a_session_requested_while_stopping_fails_instead_of_hanging(
         )
 
     assert stopped is None
-    assert isinstance(created, RuntimeError)
+    assert isinstance(created, ClaudeSessionManagerStoppedError)
+
+
+async def test_a_stopped_manager_refuses_new_sessions(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    """``stop()`` is final: the adapter builds a fresh manager to start again,
+    so a stopped one must never quietly restart its loop."""
+    manager = ClaudeSessionManager(mock_options)
+    await manager.start()
+    await manager.stop()
+
+    with pytest.raises(ClaudeSessionManagerStoppedError):
+        async with asyncio.timeout(1):
+            await manager.get_or_create_session("room-1")
 
 
 class TestBuildOptions:

@@ -51,11 +51,8 @@ from tests.integrations.acp.acp_toolkit.harness import (
     launch_for,
 )
 from tests.integrations.acp.conftest import make_platform_message
-from tests.mcpclient import (
-    backends_created_by,
-    hold_backend,
-    room_endpoint_path,
-)
+from tests.mcpbackends import backends_created_by, hold_backend
+from tests.mcpclient import room_endpoint_path
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
@@ -328,21 +325,6 @@ class TestACPClientAdapterLocalMcpConfig:
 
         assert first.url == second.url
         assert len(starts.requested) == 1
-
-    @pytest.mark.asyncio
-    async def test_final_cleanup_blocks_backend_recreation(self) -> None:
-        """A turn arriving after real shutdown must fail loudly, not leak a
-        fresh LocalMCPServer nothing will ever stop again."""
-        adapter = ACPClientAdapter(CODEX)
-        await hold_backend(adapter._mcp)
-
-        await adapter.cleanup_all()  # final=True default, matches Agent.stop()
-
-        with (
-            backends_created_by(then=None),
-            pytest.raises(RuntimeError, match="stopped"),
-        ):
-            await adapter._mcp.ensure()
 
     @pytest.mark.asyncio
     async def test_turn_recovery_stop_allows_backend_recreation(self) -> None:

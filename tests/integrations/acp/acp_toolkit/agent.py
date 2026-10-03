@@ -380,6 +380,19 @@ class FakeACPAgent:
         )
         return self
 
+    def will_update_cursor_todos(self, *contents: str) -> FakeACPAgent:
+        """Push Cursor's ``cursor/update_todos`` extension notification."""
+        todos = [
+            {"id": f"t{index}", "content": content, "status": "pending"}
+            for index, content in enumerate(contents)
+        ]
+        self._script.append(
+            lambda a, sid: a._conn_for(sid).ext_notification(
+                "cursor/update_todos", {"sessionId": sid, "todos": todos}
+            )
+        )
+        return self
+
     def will_ask_permission(
         self,
         *,

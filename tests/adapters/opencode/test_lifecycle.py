@@ -26,7 +26,7 @@ from tests.adapters.opencode.helpers import (
     wait_for,
 )
 from tests.adapters.usage_events import recorded_usage_payloads
-from tests.mcpclient import FakeBandMCPBackend, backends_created_by
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 async def test_watch_task_drains_the_turn_that_started_it() -> None:

@@ -35,6 +35,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
+    letta_mcp_servers_api,
     make_assistant_message,
     make_letta_response,
     make_mock_agent,
@@ -44,13 +45,8 @@ from tests.adapters.lettakit import (
     make_platform_message,
     mock_org_user_provisioned,
 )
-from tests.mcpclient import (
-    FakeBandMCPBackend,
-    backends_created_by,
-    crash_backend,
-    hold_backend,
-    served_tool_names,
-)
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by, hold_backend
+from tests.mcpclient import crash_backend, served_tool_names
 
 
 def _stale_tool_error(message: str) -> Exception:
@@ -852,6 +848,7 @@ class TestSelfHostedMCPLifecycle:
 def letta_registering_one_tool() -> AsyncMock:
     """A Letta client that registers ``mcp-server-1`` exposing one send tool."""
     client = AsyncMock()
+    client.mcp_servers = letta_mcp_servers_api()
     client.mcp_servers.list.return_value = []
     client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-server-1")
     client.mcp_servers.tools.list.return_value = [
@@ -957,8 +954,14 @@ class TestSelfHostedMCPCrash:
             pytest.raises(RuntimeError, match="Letta is down"),
         ):
             await bridge.ensure_ready(client)
-
         assert bridge.server_id is None
+
+        client.mcp_servers.update.side_effect = None
+        with backends_created_by():
+            await bridge.ensure_ready(client)
+
+        assert client.mcp_servers.create.await_count == 2
+        assert bridge.ready
 
     @pytest.mark.asyncio
     async def test_a_cancelled_repoint_is_retried_on_the_same_row(self) -> None:

@@ -704,7 +704,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         await self._register_mcp_backend(client)
 
     def _mcp_settings(self) -> BandMCPBackendSettings:
-        """One multi-room endpoint; tools resolve the room from ``chat_id``."""
         return BandMCPBackendSettings(
             tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,

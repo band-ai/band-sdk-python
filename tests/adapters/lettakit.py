@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 from uuid import uuid4
 
+from letta_client import AsyncLetta
 from pytest_httpx import HTTPXMock
 
 from band.core.types import PlatformMessage
@@ -88,6 +89,13 @@ def make_mock_mcp_server(
     if url is not None:
         server.config = {"server_url": url}
     return server
+
+
+def letta_mcp_servers_api() -> Any:
+    """Letta's MCP-server API, specced from the installed letta-client so a
+    call that drifts from its real signature fails."""
+    client = AsyncLetta(base_url="http://letta.invalid", api_key="test")
+    return create_autospec(client.mcp_servers, instance=True)
 
 
 def make_mock_mcp_tool(tool_id: str, tool_name: str) -> MagicMock:

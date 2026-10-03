@@ -12,14 +12,9 @@ from band.integrations.mcp import (
 )
 from band.runtime.tools import iter_tool_definitions
 from band.testing import FakeAgentTools
-from tests.mcpclient import (
-    FakeBandMCPBackend,
-    backends_created_by,
-    crash_backend,
-    served_tool_names,
-    started_backend,
-)
-from tests.paths import REPO_ROOT, SRC_ROOT
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
+from tests.mcpclient import crash_backend, served_tool_names, started_backend
+from tests.paths import REPO_ROOT, SHIPPED_SOURCE_ROOTS, SRC_ROOT
 
 ONE_TOOL = next(iter(iter_tool_definitions()))
 
@@ -49,7 +44,13 @@ class TestBandMcpBackends:
 
 class TestSharedBandMCPBackend:
     async def test_concurrent_first_uses_start_one_backend(self) -> None:
-        with backends_created_by() as starts:
+        """The start suspends, so the second use arrives while it is running."""
+
+        async def suspending_start() -> FakeBandMCPBackend:
+            await asyncio.sleep(0)
+            return FakeBandMCPBackend()
+
+        with backends_created_by(then=suspending_start) as starts:
             async with SharedBandMCPBackend(one_tool_settings) as owner:
                 first, second = await asyncio.gather(owner.ensure(), owner.ensure())
 
@@ -184,7 +185,6 @@ class TestSharedBandMCPBackend:
 # --- Only the owner runs Band MCP backends -----------------------------------
 
 _OWNER_PACKAGE = SRC_ROOT / "integrations" / "mcp"
-_SCAN_ROOTS = (SRC_ROOT, REPO_ROOT / "packages" / "band-mcp" / "src")
 
 
 def _runs_a_backend_by_hand(source: str) -> bool:
@@ -204,10 +204,10 @@ def _runs_a_backend_by_hand(source: str) -> bool:
 def test_only_the_owner_runs_band_mcp_backends() -> None:
     """A new adapter goes through SharedBandMCPBackend, which starts, replaces
     and stops its server; hand-rolling any of that is how a crash goes unseen."""
-    assert all(root.is_dir() for root in (*_SCAN_ROOTS, _OWNER_PACKAGE))
+    assert all(root.is_dir() for root in (*SHIPPED_SOURCE_ROOTS, _OWNER_PACKAGE))
     offenders = sorted(
         path.relative_to(REPO_ROOT)
-        for root in _SCAN_ROOTS
+        for root in SHIPPED_SOURCE_ROOTS
         for path in root.rglob("*.py")
         if not path.is_relative_to(_OWNER_PACKAGE)
         and _runs_a_backend_by_hand(path.read_text(encoding="utf-8"))

@@ -24,7 +24,7 @@ from tests.adapters.opencode.helpers import (
     run_single_turn,
     tools_protocol,
 )
-from tests.mcpclient import FakeBandMCPBackend, backends_created_by
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 def test_no_leaked_adapter_config_env_vars(
@@ -216,23 +216,18 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
 
 async def test_mcp_registration_retries_until_connected() -> None:
     """A transient non-connected registration result must not be treated as
-    success -- the next on_message (which always calls
-    _ensure_client_started) retries instead of leaving Band tools
-    unregistered for the rest of the process."""
-    fake_backend = FakeBandMCPBackend()
+    success -- the next message retries instead of leaving Band tools
+    unregistered for the rest of the process -- while a connected one is kept."""
     fake_client = FakeOpencodeClient(
         register_mcp_statuses=["pending"],
-        prompt_event_sequences=[
-            [event_session_idle("sess-1")],
-            [event_session_idle("sess-1")],
-        ],
+        prompt_event_sequences=[[event_session_idle("sess-1")]] * 3,
     )
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
     tools = FakeAgentTools()
+    registrations_after_each_message = []
 
-    with backends_created_by(fake_backend):
-        await adapter.on_started("OpenCode Agent", "A coding agent")
-
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    for _ in range(3):
         await adapter.on_message(
             make_platform_message(),
             tools_protocol(tools),
@@ -242,21 +237,9 @@ async def test_mcp_registration_retries_until_connected() -> None:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter._registration is None
-        assert len(fake_client.registered_mcp_servers) == 1
+        registrations_after_each_message.append(len(fake_client.registered_mcp_servers))
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools_protocol(tools),
-            OpencodeSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        assert adapter._registration is not None
-        assert adapter._registration.client is fake_client
-        assert len(fake_client.registered_mcp_servers) == 2
+    assert registrations_after_each_message == [1, 2, 2]
 
 
 async def test_bootstrap_creates_session_relays_text_and_persists_task(
