@@ -340,6 +340,8 @@ jobs:
         name: opencode-serve-${{ matrix.os }}
         path: ${{ env.OPENCODE_SERVE_LOG }}
         if-no-files-found: ignore
+        # The server log quotes gated commands and question answers.
+        retention-days: 14
 
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
