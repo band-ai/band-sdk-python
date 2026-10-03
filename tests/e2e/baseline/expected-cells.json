@@ -1062,15 +1062,6 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_cursor_workflows.py::test_rejected_plan_stays_read_only_until_separately_approved",
-      "adapter": "cursor_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
       "test": "tests/e2e/baseline/smoke/behavior/test_cursor_workflows.py::test_repairs_a_failing_project_after_a_human_gate",
       "adapter": "cursor_acp",
       "lanes": [

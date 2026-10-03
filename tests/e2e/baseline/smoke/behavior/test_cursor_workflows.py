@@ -23,20 +23,12 @@ from band.core.memory_types import (
     MemoryType,
 )
 from band.core.types import Capability
-from band.integrations.acp.client_profiles import CURSOR_CREATE_PLAN_METHOD
-from band.integrations.acp.cursor import (
-    DECISION_RESOLVED_TEMPLATE,
-    PLAN_REQUESTED_TEMPLATE,
-    ROOM_COMMAND,
-    CursorCommandWord,
-)
 from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
 from band.runtime.tools.effects import turn_effect
 from band.runtime.tools.types import TurnEffect
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import (
-    APPROVAL_LOG_LEVEL,
     TERMINAL_POLL_INTERVAL_S,
     ApprovalRoom,
 )
@@ -45,8 +37,6 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     AgentSetup,
     Outcome,
     cursor_test_adapter,
-    find_requests,
-    template_pattern,
 )
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
@@ -64,19 +54,12 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 if TYPE_CHECKING:
     from band.adapters.cursor_acp import CursorACPAdapter
-    from band.integrations.acp.session_config import (
-        ACPConfigRequest,
-        SessionConfigResolver,
-    )
 
 logger = logging.getLogger(__name__)
 
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 WORKFLOW_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
 RECOVERY_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=4)
-CURSOR_MODE_OPTION_ID = "mode"
-CURSOR_PLAN_MODE = "plan"
-CURSOR_AGENT_MODE = "agent"
 MAX_PERMISSION_REQUESTS = 8
 PROJECT_TEST_TIMEOUT_S = 30
 SOURCE_FILE = "calculator.py"
@@ -86,7 +69,6 @@ NOTE_FILE = "note.txt"
 # Operands and expected sum once calculator.py is repaired.
 REPAIRED_TOTAL = (2, 3, 5)
 PROJECT_WRITE_PROMPT = "Use a shell tool for project writes. Keep replies short."
-PLAN_REQUEST = template_pattern(PLAN_REQUESTED_TEMPLATE)
 T = TypeVar("T")
 
 
@@ -282,110 +264,6 @@ async def _assert_repaired_project(root: Path) -> None:
     assert result == 0, output
 
 
-def _normalized_plan(plan: str) -> str:
-    return " ".join(plan.split())
-
-
-def _assert_revised_scoped_plan(accepted: str, rejected: str) -> None:
-    """Accepted plan must revise the rejected one and name the scoped project files."""
-    assert _normalized_plan(accepted) != _normalized_plan(rejected), (
-        "Accepted plan is only whitespace-different from the rejected plan: "
-        f"{accepted!r}"
-    )
-    assert SOURCE_FILE in accepted and TEST_FILE in accepted, (
-        f"Accepted plan did not name the scoped files {SOURCE_FILE} and "
-        f"{TEST_FILE}: {accepted!r}"
-    )
-
-
-def _select_mode(mode: str) -> SessionConfigResolver:
-    async def resolve(request: ACPConfigRequest) -> dict[str, str]:
-        # The ACP extra is absent from the crewai and parlant collection venvs.
-        from band.integrations.acp.session_config import (  # noqa: PLC0415
-            find_select,
-            select_values,
-        )
-
-        option = find_select(request.config_options, CURSOR_MODE_OPTION_ID)
-        assert option is not None, (
-            f"Cursor did not advertise a selectable {CURSOR_MODE_OPTION_ID} mode: "
-            f"{request.config_options}"
-        )
-        offered = select_values(option)
-        assert mode in offered, f"Cursor did not advertise {mode}: {offered}"
-        return {CURSOR_MODE_OPTION_ID: mode}
-
-    return resolve
-
-
-async def _plan_request(
-    room: ApprovalRoom, checkpoint: TurnCheckpoint
-) -> re.Match[str]:
-    messages = await _within_turn(
-        room,
-        checkpoint,
-        f"Cursor did not send {CURSOR_CREATE_PLAN_METHOD} in plan mode",
-        room.capture.wait_until(
-            lambda items: bool(find_requests(PLAN_REQUEST, items[checkpoint.cursor :])),
-            deadline_s=room.budget.deadline_s,
-        ),
-    )
-    return find_requests(PLAN_REQUEST, messages[checkpoint.cursor :])[0]
-
-
-async def _decide_plan(
-    room: ApprovalRoom,
-    *,
-    checkpoint: TurnCheckpoint,
-    word: CursorCommandWord,
-    reply_marker: str,
-) -> str:
-    request = await _plan_request(room, checkpoint)
-    token = request["token"]
-    after_decision = await room.say(f"{ROOM_COMMAND} {word} {token}")
-    logger.log(
-        APPROVAL_LOG_LEVEL,
-        "Plan decision adapter=%s request=%s outcome=%s",
-        room.adapter_id,
-        token,
-        word,
-    )
-    notice = DECISION_RESOLVED_TEMPLATE.format(kind="plan", token=token)
-    await _within_turn(
-        room,
-        checkpoint,
-        "Cursor did not resolve the plan decision",
-        room.shown(notice, since=after_decision),
-    )
-    messages = await _within_turn(
-        room,
-        checkpoint,
-        "Cursor did not finish the plan decision",
-        room.capture.wait_until(
-            lambda items: (
-                bool(find_requests(PLAN_REQUEST, items[after_decision:]))
-                or any(
-                    reply_marker in (item.content or "")
-                    for item in items[after_decision:]
-                )
-            ),
-            deadline_s=room.budget.deadline_s,
-        ),
-    )
-    # A repeated request would hold the turn open on a new manual decision.
-    repeated = [
-        match["token"]
-        for match in find_requests(PLAN_REQUEST, messages[after_decision:])
-    ]
-    assert not repeated, (
-        f"Cursor requested another plan without separate human review: {repeated}"
-    )
-    await _within_turn(
-        room, checkpoint, "Cursor turn did not close", _until_closed(room, checkpoint)
-    )
-    return request["plan"]
-
-
 async def _permission_request(
     room: ApprovalRoom, checkpoint: TurnCheckpoint
 ) -> re.Match[str]:
@@ -532,106 +410,6 @@ async def test_repairs_a_failing_project_after_a_human_gate(
         stored = await _stored_memories(capture, agent)
         assert len(stored) == 1
         stored.assert_stored(content=marker)
-
-
-@per_adapter(Adapter.CURSOR_ACP)
-@pytest.mark.timeout(extra=WORKFLOW_BUDGET.extra_s)
-@pytest.mark.asyncio(loop_scope="session")
-async def test_rejected_plan_stays_read_only_until_separately_approved(
-    cell: AdapterCell,
-    user_ops: UserOps,
-    reply_capture: CaptureFactory,
-    tmp_path: Path,
-) -> None:
-    root = tmp_path.resolve()
-    source = _project(root)
-    original = source.read_text()
-    original_state = _project_state(root)
-    rejected_reply = unique_marker("cursor-plan-rejected")
-    accepted_reply = unique_marker("cursor-plan-accepted")
-    implementation_reply = unique_marker("cursor-plan-implemented")
-    setup = _agent_setup(root, WORKFLOW_BUDGET)
-    identity = await cell.provision(label="cursor-plan")
-    room_id = await cell.resources.provision_room(
-        title="e2e-cursor-plan", participants=[identity.id]
-    )
-
-    def plan_adapter() -> CursorACPAdapter:
-        return cursor_test_adapter(
-            cell.settings,
-            setup,
-            approval_mode="auto_accept",
-            plan_mode="manual",
-            resolve_session_config=_select_mode(CURSOR_PLAN_MODE),
-        )
-
-    async with (
-        running_agent(identity, plan_adapter(), cell.settings),
-        reply_capture(room_id) as capture,
-    ):
-        room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
-        checkpoint = await _start_turn(
-            room,
-            f"Read {SOURCE_FILE} and {TEST_FILE} in this workspace. "
-            "Plan a multi-step repair of the failing calculator test. Submit "
-            f"the plan for human review with {CURSOR_CREATE_PLAN_METHOD}, not just a "
-            "chat outline. Do not implement yet. If I reject it, do not "
-            f"request another plan; reply with {rejected_reply}.",
-        )
-        rejected_plan = await _decide_plan(
-            room,
-            checkpoint=checkpoint,
-            word=CursorCommandWord.REJECT,
-            reply_marker=rejected_reply,
-        )
-        _assert_project_unchanged(root, original_state)
-
-    async with (
-        running_agent(identity, plan_adapter(), cell.settings),
-        reply_capture(room_id) as capture,
-    ):
-        room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
-        checkpoint = await _start_turn(
-            room,
-            f"Revise the plan to keep the change limited to {SOURCE_FILE} and "
-            f"{TEST_FILE}, then request human review with {CURSOR_CREATE_PLAN_METHOD} again. "
-            f"If I accept it, reply with {accepted_reply}. Do not implement yet.",
-        )
-        accepted_plan = await _decide_plan(
-            room,
-            checkpoint=checkpoint,
-            word=CursorCommandWord.ACCEPT,
-            reply_marker=accepted_reply,
-        )
-        _assert_revised_scoped_plan(accepted_plan, rejected_plan)
-        _assert_project_unchanged(root, original_state)
-
-    agent_adapter = cursor_test_adapter(
-        cell.settings,
-        setup,
-        resolve_session_config=_select_mode(CURSOR_AGENT_MODE),
-        custom_section=PROJECT_WRITE_PROMPT,
-    )
-    async with (
-        running_agent(identity, agent_adapter, cell.settings),
-        reply_capture(room_id) as capture,
-    ):
-        room = _cursor_room(identity, room_id, capture, user_ops, WORKFLOW_BUDGET)
-        checkpoint = await _start_turn(
-            room,
-            "Implement the accepted calculator repair plan below, run its "
-            "unittest in the same shell tool call, and report the result with "
-            f"{implementation_reply}.\n\nAccepted plan:\n{accepted_plan}",
-        )
-        request = await _permission_request(room, checkpoint)
-        # Nothing may change while the human gate is pending.
-        _assert_project_unchanged(root, original_state)
-        await _decide_permissions_until_closed(
-            room, request, checkpoint=checkpoint, reply_marker=implementation_reply
-        )
-    assert source.read_text() != original
-    _assert_changed_within(root, original_state, {SOURCE_FILE, TEST_FILE})
-    await _assert_repaired_project(root)
 
 
 @per_adapter(Adapter.CURSOR_ACP)

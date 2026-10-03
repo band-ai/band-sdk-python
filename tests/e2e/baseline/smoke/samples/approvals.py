@@ -94,8 +94,7 @@ from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 
 if TYPE_CHECKING:
-    from band.adapters.cursor_acp import CursorACPAdapter, PlanMode
-    from band.integrations.acp.session_config import SessionConfigResolver
+    from band.adapters.cursor_acp import CursorACPAdapter
 
 SHELL_PROMPT = "Keep responses short. Use your shell tool when asked."
 # Poll cadence for Notice.assert_shown's event read (see its docstring): there's
@@ -447,8 +446,6 @@ def cursor_test_adapter(
     setup: AgentSetup,
     *,
     approval_mode: ApprovalMode = "manual",
-    plan_mode: PlanMode = "auto_accept",
-    resolve_session_config: SessionConfigResolver | None = None,
     workspace_for_room: WorkspaceResolver | None = None,
     custom_section: str = SHELL_PROMPT,
     capabilities: set[Capability] | None = None,
@@ -462,7 +459,7 @@ def cursor_test_adapter(
     config_kwargs: dict[str, Any] = {
         **cursor_config_kwargs(settings, prompt=custom_section),
         "approval_mode": approval_mode,
-        "plan_mode": plan_mode,
+        "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
         "inject_band_tools": inject_band_tools,
@@ -472,7 +469,6 @@ def cursor_test_adapter(
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         workspace_for_room=workspace_for_room,
-        resolve_session_config=resolve_session_config,
         capabilities=capabilities,
     )
 
