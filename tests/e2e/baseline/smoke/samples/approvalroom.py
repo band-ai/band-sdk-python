@@ -20,6 +20,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     ApprovalDialect,
     Notice,
     Outcome,
+    closes_with,
 )
 from tests.e2e.baseline.timeouts import SlowTurnBudget
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
@@ -273,7 +274,7 @@ class ApprovalRoom:
         return (
             f"agent_messages={len(said)} "
             f"text_notices_shown={text_notices_shown} "
-            f"closing_word_said={any(closing_reply in content for content in said)} "
+            f"closing_reply_said={any(closes_with(content, closing_reply) for content in said)} "
             f"settled={settled} "
             f"durable_settled={durable_settled} "
             f"unhandled_requests={len(self._unhandled_requests(captured))} "
