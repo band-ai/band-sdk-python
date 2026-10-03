@@ -29,6 +29,7 @@ from band.integrations.acp.client_runtime import (
 )
 from band.integrations.acp.session_config import select_ids
 from band.integrations.acp.types import ChunkType, CollectedChunk
+from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
 
 
@@ -818,7 +819,7 @@ class TestACPRuntime:
         await runtime.start()
 
         assert runtime._conn is mock_conn
-        assert runtime._agent_mcp_transport == "sse"
+        assert runtime._agent_mcp_transport is BandMCPTransport.SSE
         assert runtime._agent_supports_session_load
         mock_conn.initialize.assert_awaited_once_with(protocol_version=1)
         mock_conn.authenticate.assert_awaited_once_with(method_id="cursor_login")

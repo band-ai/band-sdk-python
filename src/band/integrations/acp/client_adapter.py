@@ -61,7 +61,6 @@ from band.integrations.acp.client_runtime import (
     ACPRuntime,
     ElicitationHandler,
     ElicitationNarrator,
-    MCPTransportKind,
     PermissionHandler,
     PermissionNarrator,
     allow_permission,
@@ -93,10 +92,9 @@ from band.integrations.acp.session_config import (
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp.backends import (
     BandMCPBackend,
-    BandMCPBackendKind,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
-from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_effects,
@@ -156,7 +154,6 @@ class ACPTurnTimeoutError(TimeoutError):
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 # What ACP's session/new takes; YAML/JSON entries validate into these.
 SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
-DEFAULT_BAND_MCP_BACKEND_KIND: BandMCPBackendKind = "http"
 
 # Prefixes the change-triggered roster/contacts updates injected into a
 # prompt, so the model reads them as platform state, not as the requester
@@ -935,6 +932,15 @@ class ACPClientAdapter(
             features=self.features,
         )
 
+        # Injected Band tools are bound to this room by their endpoint; only
+        # an external Band MCP server still takes the room as an argument.
+        room_line, room_hint = "", ""
+        if not self.config.inject_band_tools:
+            room_line = f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
+            room_hint = (
+                f" When a tool needs the current room, use the Current "
+                f"{CHAT_ID_FIELD_NAME} value above."
+            )
         room_context = (
             f"\n## Room Context\n"
             f"You are connected to Band using the Band tools.\n"
@@ -945,33 +951,28 @@ class ACPClientAdapter(
             f"delivered to the room on your behalf. Do not narrate the tool "
             f"calls you are about to make.\n"
             f"\n"
-            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
+            f"{room_line}"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             f"\n"
-            f"Use each MCP tool's schema for its argument names. When a tool needs "
-            f"the current room, use the Current {CHAT_ID_FIELD_NAME} value above.\n"
+            f"Use each MCP tool's schema for its argument names.{room_hint}\n"
         )
 
         return f"[System Context]\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
-        self, local_server: LocalMCPServer, transport: MCPTransportKind
+        self, backend: BandMCPBackend, transport: BandMCPTransport, room_id: str
     ) -> LocalMcpServerConfig:
-        if transport == "sse":
-            return SseMcpServer(
-                type="sse",
-                name=BAND_MCP_SERVER_NAME,
-                url=local_server.sse_url,
-                headers=[],
-            )
-
-        return HttpMcpServer(
-            type="http",
-            name=BAND_MCP_SERVER_NAME,
-            url=local_server.http_url,
-            headers=[],
-        )
+        url = backend.endpoint(transport, room_id)
+        match transport:
+            case BandMCPTransport.SSE:
+                return SseMcpServer(
+                    type="sse", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
+                )
+            case BandMCPTransport.HTTP:
+                return HttpMcpServer(
+                    type="http", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
+                )
 
     def _canonical_tool_name(self, name: str) -> str:
         """Strip an MCP server prefix off one of our own tools.
@@ -1017,23 +1018,19 @@ class ACPClientAdapter(
                 self._band_mcp_backend = None
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
-                    kind=DEFAULT_BAND_MCP_BACKEND_KIND,
                     tool_definitions=self._tool_definitions,
                     get_tools=self._room_tools.get,
                     additional_tools=self._custom_tools,
+                    room_bound=True,
                 )
                 self._band_mcp_backend = backend
             return self._band_mcp_backend
 
     async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
         backend = await self._ensure_band_mcp_backend()
-        local_server = backend.local_server
-        if local_server is None:
-            raise RuntimeError("ACP MCP backend did not create a local server")
-
         runtime = await self._runtime_for(room_id)
         return self._build_local_mcp_server_config(
-            local_server, runtime.agent_mcp_transport
+            backend, runtime.agent_mcp_transport, room_id
         )
 
     async def _get_or_create_session(

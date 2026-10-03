@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -48,8 +49,7 @@ async def _list_tool(session: ClientSession, name: str) -> Any:
 
 async def _call(session: ClientSession, name: str, **arguments: object) -> Any:
     """Call a tool and parse its text content -- the engine's real wire shape
-    (row 15: every registration returns a JSON *string*, matching how a real
-    MCP client / LiveHarness reads it, not FastMCP's structuredContent wrapper)."""
+    (row 15: every registration returns a JSON *string*, its only content)."""
     result = await session.call_tool(name, arguments)
     assert not result.isError, result.content
     text = result.content[0].text if result.content else None
@@ -335,6 +335,22 @@ async def test_embedded_style_uniform_wrap_room_bound_dispatch(
         assert room_id.startswith("room-")
 
 
+async def test_tool_results_are_plain_json_text_without_a_structured_wrapper(
+    agent_session_factory,
+) -> None:
+    """No output schema and no ``{"result": "<json>"}`` structured content: a
+    client that prefers structured content would show it double-encoded."""
+    mcp = await agent_session_factory(FakeAgentTools(room_id="room-1"))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        tool = await _list_tool(session, "band_lookup_peers")
+        result = await session.call_tool("band_lookup_peers", {"chat_id": "room-1"})
+
+    assert tool.outputSchema is None
+    assert result.structuredContent is None
+    assert json.loads(result.content[0].text)["data"] == []
+
+
 async def test_embedded_send_message_round_trip_and_participant_refresh(
     agent_session_factory,
 ) -> None:
@@ -504,7 +520,7 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
 
     registration = build_custom_tool_registration(
         CustomToolSpec(input_model=EchoInput, handler=handler),
-        room_bound=True,
+        advertise_chat_id=True,
     )
     spec = EngineSpec(name="test-custom", tools=(registration,))
     mcp = build_engine(spec)
@@ -528,6 +544,30 @@ async def test_custom_tool_accepts_bare_tuple_contract() -> None:
     async with create_connected_server_and_client_session(mcp) as session:
         result = await _call(session, "echo", message="hi")
         assert result == {"echo": "hi"}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_tool_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unexpected execute failures keep a stack in agent logs."""
+
+    async def handler(_input_data: EchoInput) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=handler)
+    )
+    mcp = build_engine(EngineSpec(name="test-fail-log", tools=(registration,)))
+
+    with caplog.at_level(logging.ERROR, logger="band.integrations.mcp.engine"):
+        async with create_connected_server_and_client_session(mcp) as session:
+            result = await session.call_tool("echo", {"message": "hi"})
+
+    assert result.isError
+    record = next(r for r in caplog.records if r.message == "echo failed")
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
 
 
 async def test_custom_tool_default_factory_field_advertised_as_optional() -> None:

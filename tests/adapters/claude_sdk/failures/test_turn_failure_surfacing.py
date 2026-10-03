@@ -36,7 +36,7 @@ async def test_a_turn_that_answered_the_room_is_narrated_and_quiet(
     room.claude.script(
         [
             Thinking("Check who is here first."),
-            ModelDecision.call("mcp__band__band_get_participants", chat_id="room-1"),
+            ModelDecision.call("mcp__band__band_get_participants"),
             room.model_reply("Everyone is here."),
         ]
     )
@@ -62,10 +62,9 @@ async def test_the_room_hears_whenever_a_turn_left_it_unanswered(
     room.claude.script(
         [ModelDecision.text_reply("Here is my answer, in plain text.")],
         [
-            ModelDecision.call("mcp__band__band_get_participants", chat_id="room-1"),
+            ModelDecision.call("mcp__band__band_get_participants"),
             ModelDecision.call(
                 "mcp__band__band_send_event",
-                chat_id="room-1",
                 content="Still thinking",
                 message_type="thought",
             ),

@@ -19,6 +19,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import (
     PlatformMessage,
 )
+from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodePermissionRequest,
@@ -411,16 +412,16 @@ class FakeMCPBackend:
         stop_started: asyncio.Event | None = None,
         stop_release: asyncio.Event | None = None,
     ) -> None:
-        self.kind = "sse"
-        self.server = None
         self.allowed_tools: list[str] = []
         self._sse_url = sse_url
-        self.local_server = type(
-            "_FakeLocalServer", (), {"sse_url": sse_url, "stop": AsyncMock()}
-        )()
         self.stop_calls = 0
         self._stop_started = stop_started
         self._stop_release = stop_release
+
+    def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:
+        if (transport, room_id) != (BandMCPTransport.SSE, None):
+            raise ValueError("OpenCode registers the multi-room SSE endpoint")
+        return self._sse_url
 
     async def stop(self) -> None:
         self.stop_calls += 1

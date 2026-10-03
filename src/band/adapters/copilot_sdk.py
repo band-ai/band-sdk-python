@@ -52,7 +52,6 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    CHAT_ID_FIELD_NAME,
     get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
@@ -455,7 +454,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 msg,
                 participants_msg,
                 contacts_msg,
-                room_id=room_id,
                 inject_text=inject_text,
             )
 
@@ -910,21 +908,16 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
-        room_id: str,
         inject_text: str | None,
     ) -> str:
-        # Label must read "chat_id" (the model-facing name everywhere else,
-        # e.g. claude_sdk.py's own room_context), not the Python-side room_id
-        # it's built from.
-        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
         parts: list[str] = []
         if inject_text:
             parts.append(f"[Previous conversation context:]\n{inject_text}")
         if participants_msg:
-            parts.append(f"{room_context}[System]: {participants_msg}")
+            parts.append(f"[System]: {participants_msg}")
         if contacts_msg:
-            parts.append(f"{room_context}[System]: {contacts_msg}")
-        parts.append(f"{room_context}{msg.format_for_llm()}")
+            parts.append(f"[System]: {contacts_msg}")
+        parts.append(msg.format_for_llm())
         return "\n\n".join(parts)
 
     async def _run_turn(

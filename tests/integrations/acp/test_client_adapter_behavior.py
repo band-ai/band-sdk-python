@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from acp import RequestError
@@ -29,12 +30,14 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
+from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
     fake_agent_config,
     live_line,
 )
+from tests.mcpclient import STORE_MEMORY_ARGS, room_endpoint_path, tool_arguments
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -375,7 +378,6 @@ async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None
         "tc-message",
         "band_send_message",
         arguments={
-            "room_id": "room-1",
             "content": "Reply from the agent",
             "mentions": ["@pat"],
         },
@@ -400,7 +402,6 @@ async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None
         "tc-event",
         "band_send_event",
         arguments={
-            "room_id": "room-1",
             "content": "Working on it",
             "message_type": "thought",
         },
@@ -433,7 +434,6 @@ async def test_permissioned_band_mcp_turn_has_one_causal_transcript(fake_agent) 
         "tc-message",
         "band_send_message",
         arguments={
-            "room_id": "room-1",
             "content": "Reply from the agent",
             "mentions": ["@pat"],
         },
@@ -512,6 +512,96 @@ async def test_two_rooms_get_isolated_sessions(fake_agent) -> None:
     # Each room created its own ACP session and got its own reply — no cross-talk.
     assert len({s["session_id"] for s in fake_agent.sessions}) == 2
     assert reply1.texts != reply2.texts
+
+
+# --- Room-bound Band MCP endpoints ---------------------------------------------
+#
+# Each room's session gets its own endpoint on the adapter's one Band MCP
+# server; the endpoint carries the room, so the model never supplies one.
+
+
+def band_mcp_url(agent: FakeACPAgent, session_id: str) -> str:
+    return agent.mcp_server(session_id, BAND_MCP_SERVER_NAME).url
+
+
+@pytest.mark.asyncio
+async def test_rooms_get_their_own_band_mcp_endpoint_on_one_server(
+    fake_agent,
+) -> None:
+    fake_agent.will_say("ok")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("hi", room="room-1")
+        await session.send("hi", room="room-2")
+        urls = [
+            urlsplit(band_mcp_url(fake_agent, session.session_id(room)))
+            for room in ("room-1", "room-2")
+        ]
+
+    assert len({url.netloc for url in urls}) == 1
+    assert [url.path for url in urls] == [
+        room_endpoint_path("room-1"),
+        room_endpoint_path("room-2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_injected_band_tools_advertise_no_chat_id(fake_agent) -> None:
+    fake_agent.will_say("ok")
+
+    async with acp_adapter(
+        fake_agent,
+        fake_agent_config(inject_band_tools=True),
+        capabilities=Capability.MEMORY,
+    ) as session:
+        await session.send("hi", room="room-1")
+        tools = await fake_agent.list_mcp_tools(
+            session_id=session.session_id("room-1"), server=BAND_MCP_SERVER_NAME
+        )
+
+    assert "chat_id" not in tool_arguments(tools, "band_store_memory")
+
+
+@pytest.mark.asyncio
+async def test_band_tool_call_without_chat_id_lands_in_its_own_room(
+    fake_agent,
+) -> None:
+    fake_agent.will_call_mcp_tool(
+        "tc-memory", "band_store_memory", arguments=STORE_MEMORY_ARGS
+    ).will_say("stored")
+
+    async with acp_adapter(
+        fake_agent,
+        fake_agent_config(inject_band_tools=True),
+        capabilities=Capability.MEMORY,
+    ) as session:
+        room1 = await session.send("remember this", room="room-1")
+        room2 = await session.send("remember this", room="room-2")
+
+    assert [len(room1.memories), len(room2.memories)] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
+    agent = (
+        FakeACPAgent(supports_session_load=True)
+        .knows_session("persisted")
+        .will_say("ok")
+    )
+
+    async with acp_adapter(agent, fake_agent_config(inject_band_tools=True)) as session:
+        await session.send(
+            "hi",
+            bootstrap=True,
+            history=rehydration_history(session="persisted"),
+        )
+
+    assert agent.session_load_requests == ["persisted"]
+    assert urlsplit(band_mcp_url(agent, "persisted")).path == room_endpoint_path(
+        "room-1"
+    )
 
 
 # --- Band-history replay when the remote session cannot be restored ------------

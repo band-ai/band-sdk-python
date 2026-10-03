@@ -142,15 +142,12 @@ class ClaudeRoom:
 
     def model_call(self, tool: str, **arguments: Any) -> ModelDecision:
         """The model calling a Band-server tool, by bare name, for this room."""
-        return ModelDecision.call(
-            f"{MCP_TOOL_PREFIX}{tool}", chat_id=self.room_id, **arguments
-        )
+        return ModelDecision.call(f"{MCP_TOOL_PREFIX}{tool}", **arguments)
 
     def model_reply(self, content: str) -> ModelDecision:
         """The model answering the room through the Band reply tool."""
         return ModelDecision.call(
             SEND_MESSAGE_MCP_NAME,
-            chat_id=self.room_id,
             content=content,
             mentions=[APPROVER["handle"]],
         )

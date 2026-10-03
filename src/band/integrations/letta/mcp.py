@@ -129,13 +129,10 @@ class LettaMCPBridge:
         # registration whose server stays alive (see release). The retry on
         # the next message reuses it under a fresh name.
         backend = await self._start_backend()
-        local_server = backend.local_server
-        if local_server is None:
-            raise RuntimeError("Band MCP backend has no local server to register")
         await self.register(
             client,
             server_name=self._config.server_name or f"band-{uuid4().hex[:8]}",
-            server_url=self.advertised_url(local_server.port),
+            server_url=self.advertised_url(backend.local_server.port),
         )
 
     async def register(self, client: Any, *, server_name: str, server_url: str) -> None:
@@ -298,7 +295,6 @@ class LettaMCPBridge:
         # back across a network proxy (docker host-gateway), and re-binding a
         # just-freed scanned port can leave that hop stalled on stale state.
         backend = await create_band_mcp_backend(
-            kind="sse" if self._config.transport == "sse" else "http",
             tool_definitions=self._tool_definitions,
             get_tools=self._get_tools,
             host=self._config.bind_host,

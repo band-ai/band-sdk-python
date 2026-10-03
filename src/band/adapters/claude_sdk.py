@@ -44,6 +44,8 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        McpHttpServerConfig,
+        McpServerConfig,
         PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
@@ -104,6 +106,7 @@ from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_promp
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
 from band.runtime.custom_tools import (
@@ -118,8 +121,8 @@ from band.runtime.decisions import (
 from band.runtime.formatters import format_tokens, strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
+    BAND_MCP_SERVER_NAME,
     BASE_TOOL_NAMES,
-    CHAT_ID_FIELD_NAME,
     MAX_INLINE_IMAGE_BYTES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
@@ -579,9 +582,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         self.config = config or ClaudeSDKAdapterConfig()
 
-        # Session manager and MCP server (created after start)
+        # Session manager and MCP backend (created after start)
         self._session_manager: ClaudeSessionManager | None = None
-        self._mcp_server = None
         self._mcp_backend: BandMCPBackend | None = None
 
         # Per-room tools: the adapter's own sends use them directly, while the
@@ -648,9 +650,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
 
-        # Create MCP server with self (provides tool access via _mcp_room_tools)
+        # Each room's session dials its own room-bound endpoint on this
+        # backend (see _room_mcp_servers); tools resolve via _mcp_room_tools.
         self._mcp_backend = await self._create_mcp_backend()
-        self._mcp_server = self._mcp_backend.server
 
         # Generate system prompt with agent info
         system_prompt = generate_claude_sdk_agent_prompt(
@@ -669,7 +671,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             model=resolved_model,
             fallback_model=self.config.fallback_model,
             system_prompt=system_prompt,
-            mcp_servers={"band": self._mcp_server},
             allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
             # Same values as the SDK's PermissionMode (pinned by tests/adapters/claude_sdk/test_config.py).
             permission_mode=cast("PermissionMode", self.config.permission_mode),
@@ -718,6 +719,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
+            mcp_servers_factory=self._room_mcp_servers,
         )
 
         logger.info(
@@ -736,19 +738,30 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             iter_tool_definitions(capabilities=self.features.capabilities)
         )
         backend = await create_band_mcp_backend(
-            kind="sdk",
             tool_definitions=tool_definitions,
             get_tools=self._mcp_room_tools.get,
             additional_tools=self._custom_tools,
+            room_bound=True,
         )
 
         logger.info(
-            "Band MCP SDK server created with %s tools (%s custom)",
+            "Band MCP server started with %s tools (%s custom)",
             len(backend.allowed_tools),
             len(self._custom_tools),
         )
 
         return backend
+
+    def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
+        """A room session's MCP servers: the Band endpoint bound to that room."""
+        if self._mcp_backend is None:
+            raise RuntimeError("Band MCP backend is not started")
+        return {
+            BAND_MCP_SERVER_NAME: McpHttpServerConfig(
+                type="http",
+                url=self._mcp_backend.endpoint(BandMCPTransport.HTTP, room_id),
+            )
+        }
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
@@ -767,7 +780,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         - Store tools for MCP server access
         - Get or create ClaudeSDKClient for this room
-        - Include chat_id in the message so Claude can pass it to tools
         - Stream response and log events (tools execute via MCP)
         """
         logger.debug("Handling message %s in room %s", msg.id, room_id)
@@ -859,11 +871,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 )
                 raise
 
-        # Add chat_id context (Claude needs this for tool calls) -- the label
-        # must read "chat_id" (the model-facing name everywhere else), not
-        # the Python-side room_id it's built from.
-        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
-
         # Initialize history for this room on first message
         if is_session_bootstrap:
             if history.text:  # Already converted to text by SimpleAdapter
@@ -898,17 +905,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Inject participants message if changed
         if participants_msg:
-            messages_to_send.append(f"{room_context}[System]: {participants_msg}")
+            messages_to_send.append(f"[System]: {participants_msg}")
             logger.info("Room %s: Participants updated", room_id)
 
         # Inject contacts message if present
         if contacts_msg:
-            messages_to_send.append(f"{room_context}[System]: {contacts_msg}")
+            messages_to_send.append(f"[System]: {contacts_msg}")
             logger.info("Room %s: Contacts broadcast received", room_id)
 
-        # Add current message with room_id context
-        user_message = f"{room_context}{msg.format_for_llm()}"
-        messages_to_send.append(user_message)
+        messages_to_send.append(msg.format_for_llm())
 
         # Send combined message to Claude
         full_message = "\n\n".join(messages_to_send)
@@ -1613,7 +1618,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if self._mcp_backend:
             await self._mcp_backend.stop()
             self._mcp_backend = None
-            self._mcp_server = None
         self._room_tools.clear()
         self._mcp_room_tools.clear()
         self._session_context.clear()
@@ -1632,7 +1636,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     def _semantic_tool_name(sdk_tool_name: str) -> str:
         """The bare tool name for platform/user-facing records.
 
-        claude_sdk exposes band + custom tools through an in-process MCP server, so
+        claude_sdk exposes band + custom tools through its Band MCP server, so
         the Claude Agent SDK namespaces them as ``mcp__band__<tool>``. The platform
         ``tool_call`` event and the approval UX are cross-adapter, semantic records
         where every other adapter uses the bare name, so strip our own server's

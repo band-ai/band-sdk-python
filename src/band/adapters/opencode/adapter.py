@@ -37,6 +37,7 @@ from band.core.types import (
 )
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPTransport,
     create_band_mcp_backend,
 )
 from band.integrations.opencode import (
@@ -705,7 +706,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return self._mcp_backend
 
         backend = await create_band_mcp_backend(
-            kind="sse",
             tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,
             additional_tools=self._custom_tools or None,
@@ -725,14 +725,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
             try:
                 backend = await self._ensure_mcp_backend()
-                local_server = backend.local_server
-                if local_server is None:
-                    logger.warning(
-                        "MCP backend has no local server to register with OpenCode"
-                    )
-                    return
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name, url=local_server.sse_url
+                    name=self._mcp_server_name,
+                    url=backend.endpoint(BandMCPTransport.SSE),
                 )
             except Exception:
                 logger.exception(
