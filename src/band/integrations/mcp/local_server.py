@@ -141,6 +141,7 @@ class LocalMCPServer:
         self._serve_task: asyncio.Task[None] | None = None
         self._socket: socket.socket | None = None
         self._port: int | None = None
+        self._previous_port: int | None = None
 
     async def __aenter__(self) -> Self:
         await self.start()
@@ -297,6 +298,8 @@ class LocalMCPServer:
             self._uvicorn_server = None
             self._serve_task = None
             self._socket = None
+            if self._port is not None:
+                self._previous_port = self._port
             self._port = None
 
     def _build_app(self, mcp: FastMCP) -> Starlette:
@@ -349,15 +352,8 @@ class LocalMCPServer:
             port = reserved_socket.getsockname()[1]
             return _listen(reserved_socket), port
 
-        # Random starting offset, not first-fit from port_min: first-fit
-        # reuses the port a just-stopped sibling freed, and that port's old
-        # consumers (an MCP client subprocess still winding down) keep
-        # sending stale traffic that wedges the new server's transport.
         last_error: OSError | None = None
-        span = self._port_max - self._port_min + 1
-        start = random.randrange(span)
-        for offset in range(span):
-            port = self._port_min + (start + offset) % span
+        for port in self._candidate_ports():
             reserved_socket = _new_reusable_socket()
             try:
                 reserved_socket.bind((self._host, port))
@@ -371,3 +367,20 @@ class LocalMCPServer:
             "Could not find a free localhost MCP port in range "
             f"{self._port_min}-{self._port_max}"
         ) from last_error
+
+    def _candidate_ports(self) -> list[int]:
+        """Every port in range, from a random offset, this server's previous port last.
+
+        Random rather than first-fit from port_min: first-fit reuses the port a
+        just-stopped sibling freed, and that port's old consumers (an MCP
+        client subprocess still winding down) keep sending stale traffic that
+        wedges the new server's transport. The server's own previous port goes
+        last for the same reason, and so a restart moves to a new URL.
+        """
+        span = self._port_max - self._port_min + 1
+        start = random.randrange(span)
+        ports = [self._port_min + (start + offset) % span for offset in range(span)]
+        if self._previous_port in ports:
+            ports.remove(self._previous_port)
+            ports.append(self._previous_port)
+        return ports

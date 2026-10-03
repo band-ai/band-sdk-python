@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import socket
 from contextlib import suppress
@@ -49,6 +50,17 @@ def _text_of(result: CallToolResult) -> str:
     block = result.content[0]
     assert isinstance(block, TextContent), block
     return block.text
+
+
+def free_port_pair() -> int:
+    """A port ``p`` the OS just reported free, with ``p + 1`` free too."""
+    while True:
+        with socket.socket() as probe:
+            probe.bind((LOCAL_MCP_HOST, 0))
+            port = probe.getsockname()[1]
+        with socket.socket() as neighbor, suppress(OSError):
+            neighbor.bind((LOCAL_MCP_HOST, port + 1))
+            return port
 
 
 def _registration_named(
@@ -465,3 +477,40 @@ class TestLocalMcpServer:
         ):
             await session.initialize()
             await _call_echo(session, "hi")
+
+    @pytest.mark.asyncio
+    async def test_a_restart_moves_to_a_new_port(self) -> None:
+        """Clients holding the old URL can only tell a restarted server apart
+        by its port, so a restart never comes back on the one it left -- ten
+        cycles in a row, which a random pick alone passes 1 time in 1024."""
+        port = free_port_pair()
+        server = LocalMCPServer(
+            name="test-restart-port",
+            tool_registrations=[],
+            port_min=port,
+            port_max=port + 1,
+        )
+        ports = []
+        async with running(server):
+            for _ in range(10):
+                ports.append(server.port)
+                await server.stop()
+                await server.start()
+            ports.append(server.port)
+
+        assert all(before != after for before, after in itertools.pairwise(ports))
+
+    @pytest.mark.asyncio
+    async def test_a_one_port_range_still_restarts_on_its_port(self) -> None:
+        port = free_port_pair()
+        server = LocalMCPServer(
+            name="test-restart-one-port",
+            tool_registrations=[],
+            port_min=port,
+            port_max=port,
+        )
+        async with running(server):
+            await server.stop()
+            await server.start()
+
+            assert server.port == port

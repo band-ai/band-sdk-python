@@ -62,6 +62,12 @@ class BandMCPBackend:
         """Stop the backing local server."""
         await self.local_server.stop()
 
+    async def restart(self) -> None:
+        """Restart the backing local server, on a different port when its range
+        has another free one, so every consumer of the old URL can tell."""
+        await self.local_server.stop()
+        await self.local_server.start()
+
 
 def _build_allowed_tools(
     tool_definitions: Sequence[ToolDefinition],
@@ -93,7 +99,7 @@ async def create_band_mcp_backend(
     routes by a required ``chat_id`` argument. ``host`` sets the bind
     interface; see ``LocalMCPServer`` for the non-loopback caveat.
     ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
-    never reused, for callers whose MCP client dials across a network proxy.
+    rarely reused, for callers whose MCP client dials across a network proxy.
     """
     resolved_tools = list(additional_tools or [])
     local_server = LocalMCPServer(

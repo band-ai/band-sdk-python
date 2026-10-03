@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
@@ -21,6 +22,7 @@ from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
+    LocalMCPServer,
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import ToolDefinition
@@ -69,6 +71,15 @@ async def started_backend(
         yield backend
     finally:
         await backend.stop()
+
+
+async def crash_server(server: LocalMCPServer) -> None:
+    """End ``server``'s serve task the way a crash does: on its own, leaving
+    its port and socket behind for whoever still holds its URL."""
+    uvicorn_server, serve_task = server._uvicorn_server, server._serve_task
+    assert uvicorn_server is not None and serve_task is not None, "not running"
+    uvicorn_server.should_exit = True
+    await asyncio.wait([serve_task])
 
 
 @asynccontextmanager
