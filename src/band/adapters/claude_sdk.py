@@ -585,8 +585,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         self.config = config or ClaudeSDKAdapterConfig()
 
-        # Session manager (created after start) and the Band MCP backend each
-        # room's session dials (see _room_mcp_servers).
+        # Created in on_started.
         self._session_manager: ClaudeSessionManager | None = None
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
 
@@ -833,40 +832,20 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             history.session_id if is_session_bootstrap else None
         ) or self._session_ids.get(room_id)
 
-        # Get or create Claude SDK client for this room (optionally resuming)
         try:
-            client = await self._session_manager.get_or_create_session(
-                room_id, resume_session_id=stored_session_id
+            client = await self._open_session(
+                manager=self._session_manager,
+                room_id=room_id,
+                resume_session_id=stored_session_id,
             )
         except ClaudeSessionManagerStoppedError:
             raise
-        except Exception as resume_exc:
-            if stored_session_id:
-                logger.warning(
-                    "Room %s: Session resume failed (session_id=%s): %s. "
-                    "Creating new session",
-                    room_id,
-                    stored_session_id,
-                    resume_exc,
-                )
-                try:
-                    client = await self._session_manager.get_or_create_session(
-                        room_id, resume_session_id=None
-                    )
-                except Exception:
-                    logger.exception(
-                        "Room %s: Fresh session creation also failed", room_id
-                    )
-                    await tools.send_failure(
-                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    raise
-            else:
-                logger.exception("Room %s: Session creation failed", room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
+        except Exception:
+            logger.exception("Room %s: Session creation failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
 
         # Initialize history for this room on first message
         if is_session_bootstrap:
@@ -951,6 +930,29 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         finally:
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
+
+    @staticmethod
+    async def _open_session(
+        manager: ClaudeSessionManager, room_id: str, resume_session_id: str | None
+    ) -> ClaudeSDKClient:
+        """The room's client, starting a fresh session when the resume fails."""
+        try:
+            return await manager.get_or_create_session(
+                room_id, resume_session_id=resume_session_id
+            )
+        except ClaudeSessionManagerStoppedError:
+            raise
+        except Exception as resume_exc:
+            if not resume_session_id:
+                raise
+            logger.warning(
+                "Room %s: Session resume failed (session_id=%s): %s. "
+                "Creating new session",
+                room_id,
+                resume_session_id,
+                resume_exc,
+            )
+        return await manager.get_or_create_session(room_id, resume_session_id=None)
 
     async def _run_turn(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -153,23 +154,73 @@ class TestInvalidateSession:
         await manager.stop()
 
 
-async def test_a_session_requested_while_stopping_fails_instead_of_hanging(
+@pytest.mark.parametrize(
+    "request_during_stop",
+    [
+        pytest.param(lambda m: m.cleanup_session("room-1"), id="queued-behind-stop"),
+        pytest.param(lambda m: m.get_or_create_session("room-1"), id="new-session"),
+    ],
+)
+async def test_a_request_racing_stop_fails_instead_of_hanging(
     mock_options: ClaudeAgentOptions,
+    request_during_stop: Callable[[ClaudeSessionManager], Awaitable[object]],
 ) -> None:
-    """A request queued behind ``stop`` lands after the loop exits; it must
-    fail rather than wait forever on a future nothing will resolve."""
+    """A request made while ``stop`` runs must fail, never wait forever on a
+    future nothing will resolve, nor start a new session on a stopping manager."""
     manager = ClaudeSessionManager(mock_options)
     await manager.start()
 
     async with asyncio.timeout(1):
-        stopped, created = await asyncio.gather(
+        stopped, requested = await asyncio.gather(
             manager.stop(),
-            manager.get_or_create_session("room-1"),
+            request_during_stop(manager),
             return_exceptions=True,
         )
 
     assert stopped is None
-    assert isinstance(created, ClaudeSessionManagerStoppedError)
+    assert isinstance(requested, ClaudeSessionManagerStoppedError)
+
+
+async def start_slow_to_stop(options: ClaudeAgentOptions) -> ClaudeSessionManager:
+    """A running manager whose shutdown yields while disconnecting a session.
+
+    A helper, not a fixture: async fixtures run on the session loop, and the
+    manager's loop task must live on the test's.
+    """
+
+    async def slow_disconnect() -> None:
+        await asyncio.sleep(0)
+
+    manager = ClaudeSessionManager(options)
+    await manager.start()
+    manager._sessions["room-1"] = MagicMock(disconnect=slow_disconnect)
+    return manager
+
+
+async def test_overlapping_stops_share_one_shutdown(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    slow_to_stop = await start_slow_to_stop(mock_options)
+    async with asyncio.timeout(1):
+        results = await asyncio.gather(
+            slow_to_stop.stop(), slow_to_stop.stop(), return_exceptions=True
+        )
+
+    assert results == [None, None]
+
+
+async def test_a_cancelled_stop_still_finishes_the_shutdown(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    slow_to_stop = await start_slow_to_stop(mock_options)
+    first = asyncio.ensure_future(slow_to_stop.stop())
+    await asyncio.sleep(0)
+    first.cancel()
+
+    async with asyncio.timeout(1):
+        await slow_to_stop.stop()
+
+    assert not slow_to_stop.has_session("room-1")
 
 
 async def test_a_stopped_manager_refuses_new_sessions(

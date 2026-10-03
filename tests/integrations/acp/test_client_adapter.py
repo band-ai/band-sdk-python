@@ -52,7 +52,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
 )
 from tests.integrations.acp.conftest import make_platform_message
 from tests.mcpbackends import backends_created_by, hold_backend
-from tests.mcpclient import room_endpoint_path
+from tests.mcpclient import endpoint_path
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
@@ -288,7 +288,7 @@ class TestACPClientAdapterLocalMcpConfig:
             await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert urlsplit(server.url).path == room_endpoint_path("room-1")
+        assert urlsplit(server.url).path == endpoint_path(room_id="room-1")
         assert server.headers == []
         assert server.type == "http"
 
@@ -308,8 +308,8 @@ class TestACPClientAdapterLocalMcpConfig:
             await adapter.cleanup_all()
 
         assert server.name == "band"
-        assert urlsplit(server.url).path == room_endpoint_path(
-            "room-1", BandMCPTransport.SSE
+        assert urlsplit(server.url).path == endpoint_path(
+            BandMCPTransport.SSE, room_id="room-1"
         )
         assert server.headers == []
         assert server.type == "sse"

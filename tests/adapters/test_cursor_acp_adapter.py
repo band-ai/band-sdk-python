@@ -1091,3 +1091,22 @@ async def test_a_released_sessions_todos_are_forgotten(
         await release(adapter, session)
 
         assert released not in adapter._cursor_profile._todos_by_session
+
+
+@pytest.mark.asyncio
+async def test_a_turn_still_running_at_cleanup_leaves_no_todos() -> None:
+    """A turn left running detached keeps updating todos until the runtime's
+    stop closes its connection; none of that may outlive the cleanup."""
+    agent = FakeACPAgent()
+    updating = agent.keeps_updating_cursor_todos()
+    adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent"))
+
+    async with started_acp_adapter(adapter, agent) as session:
+        turn = asyncio.create_task(session.send("plan it", room="room-1"))
+        await updating.wait()
+        released = session.session_id("room-1")
+        await adapter.on_cleanup("room-1")
+
+        assert released not in adapter._cursor_profile._todos_by_session
+        turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)

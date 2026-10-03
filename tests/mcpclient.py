@@ -54,13 +54,6 @@ def endpoint_path(
     return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{_TRANSPORT_PATHS[transport]}"
 
 
-def room_endpoint_path(
-    room_id: str, transport: BandMCPTransport = BandMCPTransport.HTTP
-) -> str:
-    """The URL path a room-bound Band MCP server serves ``room_id`` on."""
-    return endpoint_path(transport, room_id)
-
-
 @asynccontextmanager
 async def started_backend(
     *,

@@ -41,7 +41,7 @@ from tests.mcpbackends import backends_created_by
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
     crash_backend,
-    room_endpoint_path,
+    endpoint_path,
     tool_arguments,
 )
 
@@ -548,8 +548,8 @@ async def test_rooms_get_their_own_band_mcp_endpoint_on_one_server(
 
     assert len({url.netloc for url in urls}) == 1
     assert [url.path for url in urls] == [
-        room_endpoint_path("room-1"),
-        room_endpoint_path("room-2"),
+        endpoint_path(room_id="room-1"),
+        endpoint_path(room_id="room-2"),
     ]
 
 
@@ -646,6 +646,7 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
         await session.adapter._drain_background_tasks()
 
         assert fake_agent.closed_sessions == [stale_session]
+        assert not session.runtime_keeps_output_of(stale_session, room="room-1")
 
     assert reply.texts == ["Reply from the agent"]
     assert "error" not in reply.outline
@@ -672,8 +673,8 @@ async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
         assert session.session_id("room-1") == "persisted"
 
     assert agent.session_load_requests == ["persisted"]
-    assert urlsplit(band_mcp_url(agent, "persisted")).path == room_endpoint_path(
-        "room-1"
+    assert urlsplit(band_mcp_url(agent, "persisted")).path == endpoint_path(
+        room_id="room-1"
     )
 
 

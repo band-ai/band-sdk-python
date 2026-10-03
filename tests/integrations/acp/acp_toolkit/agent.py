@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -392,6 +393,26 @@ class FakeACPAgent:
             )
         )
         return self
+
+    def keeps_updating_cursor_todos(self) -> asyncio.Event:
+        """Push ``cursor/update_todos`` on every prompt until the connection
+        drops; the returned event is set once the first update is sent."""
+        updating = asyncio.Event()
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            for index in itertools.count():
+                todos = [{"id": f"t{index}", "content": "x", "status": "pending"}]
+                try:
+                    await a._conn_for(sid).ext_notification(
+                        "cursor/update_todos", {"sessionId": sid, "todos": todos}
+                    )
+                except Exception:  # noqa: BLE001 -- the client hung up
+                    return
+                updating.set()
+                await asyncio.sleep(0)
+
+        self._script.append(_action)
+        return updating
 
     def will_ask_permission(
         self,

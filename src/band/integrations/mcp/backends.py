@@ -82,10 +82,8 @@ class BandMCPBackendSettings:
     path and advertise no ``chat_id``; otherwise one multi-room endpoint
     routes by a required ``chat_id`` argument. ``host`` sets the bind
     interface; see ``LocalMCPServer`` for the non-loopback caveat.
-    ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
-    rarely reused, for callers whose MCP client dials across a network proxy.
-    ``avoid_port`` has no effect there, so a replacement may get its dead
-    predecessor's URL back.
+    ``port_min=0`` requests an OS-assigned ephemeral port; ``avoid_port`` has
+    no effect there, so a replacement may get its dead predecessor's URL back.
     """
 
     tool_definitions: Sequence[ToolDefinition]
@@ -209,7 +207,7 @@ class SharedBandMCPBackend:
         so a failed start leaves the next ``ensure()`` to retry."""
         if replacing is not None:
             logger.warning(
-                "Band MCP server on port %s died; replacing it",
+                "Band MCP server on port %s is not running; starting a replacement",
                 replacing.local_server.port,
             )
             await replacing.stop()

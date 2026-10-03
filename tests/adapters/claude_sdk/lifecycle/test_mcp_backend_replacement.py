@@ -3,6 +3,7 @@ every room's next session dials the live one."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
+from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -88,6 +90,28 @@ async def test_a_message_caught_by_shutdown_restarts_nothing(
 
     assert room.reported_failures == []
     assert room.claude.sessions == []
+
+
+async def test_a_resume_cut_short_by_shutdown_reports_nothing(
+    claude_room: OpenRoom,
+) -> None:
+    """The shutdown lands while a resume is connecting and the resume fails;
+    the fresh-session fallback must meet the stopped manager quietly."""
+    room = await claude_room()
+    room.claude.unresumable.add("sess-earlier")
+    room.claude.connecting = connecting = Hold()
+    sending = asyncio.create_task(room.send("hi", session_id="sess-earlier"))
+
+    async with connecting:
+        stopping = asyncio.create_task(room.adapter.cleanup_all())
+        await asyncio.sleep(0)  # cleanup_all reaches the manager's stop()
+
+    with pytest.raises(ClaudeSessionManagerStoppedError):
+        await sending
+    await stopping
+
+    assert room.reported_failures == []
+    assert room.claude.resumed == ["sess-earlier"]
 
 
 async def test_a_restarted_agent_serves_band_tools_again(claude_room: OpenRoom) -> None:

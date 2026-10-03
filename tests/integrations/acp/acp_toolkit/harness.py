@@ -355,6 +355,11 @@ class AcpSession:
     def session_id(self, room: str) -> str:
         return self.adapter._room_to_session[room].session_id
 
+    def runtime_keeps_output_of(self, session_id: str, *, room: str) -> bool:
+        """Whether the room's runtime still holds what a turn collected for
+        ``session_id``; a retired session's must not linger."""
+        return bool(self.adapter._runtimes[room].get_collected_chunks(session_id))
+
 
 def fake_agent_config(**settings: Any) -> ACPClientAdapterConfig:
     """Settings for an adapter paired in process with a ``FakeACPAgent``.

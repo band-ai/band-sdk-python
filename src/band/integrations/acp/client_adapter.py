@@ -1475,8 +1475,6 @@ class ACPClientAdapter(
             session = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
-            if session is not None:
-                self._release_session(session.session_id)
             runtime = self._runtimes.pop(room_id, None)
             workspace = self._room_workspaces.pop(room_id, None)
             if workspace is not None:
@@ -1485,6 +1483,10 @@ class ACPClientAdapter(
         await self._cancel_session_initializers(initializer)
         if runtime is not None:
             await runtime.stop()
+        # After the stop: a turn left running detached keeps delivering
+        # session updates until its connection closes.
+        if session is not None:
+            self._release_session(session.session_id)
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 

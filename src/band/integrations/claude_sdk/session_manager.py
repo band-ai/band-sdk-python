@@ -107,45 +107,51 @@ class ClaudeSessionManager:
         self._sessions: dict[str, ClaudeSDKClient] = {}
         self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
-        self._started = False
-        self._stopped = False
+        self._shutdown: asyncio.Task[None] | None = None
         logger.info("ClaudeSessionManager initialized")
 
     async def start(self) -> None:
         """Start the background task that manages all sessions."""
-        if self._started:
+        if self._shutdown is not None:
+            raise ClaudeSessionManagerStoppedError()
+        if self._task is not None:
             return
 
         self._task = asyncio.create_task(self._run_session_loop())
-        self._started = True
         logger.info("ClaudeSessionManager background task started")
 
     async def stop(self) -> None:
         """Stop the background task and cleanup all sessions, for good: the
-        adapter builds a new manager when it starts again."""
-        self._stopped = True
-        if not self._started:
-            return
+        adapter builds a new manager when it starts again. Every caller
+        awaits the same shutdown, which a cancelled caller doesn't abandon."""
+        if self._shutdown is None:
+            self._shutdown = asyncio.create_task(self._shut_down(self._queue_stop()))
+        await asyncio.shield(self._shutdown)
 
-        # Send stop command
-        stop_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        await self._command_queue.put(
-            SessionCommand(action="stop", result_future=stop_future)
+    def _queue_stop(self) -> asyncio.Future[None] | None:
+        """Queue the stop at call time, so it orders against other commands
+        by when ``stop()`` was called, not when the shutdown task first runs."""
+        if self._task is None:
+            return None
+        stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._command_queue.put_nowait(
+            SessionCommand(action="stop", result_future=stopped)
         )
+        return stopped
 
-        # Wait for cleanup to complete
-        await stop_future
+    async def _shut_down(self, stopped: asyncio.Future[None] | None) -> None:
+        if self._task is None or stopped is None:
+            return
+        await stopped
 
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
 
         self._fail_pending_commands()
-        self._started = False
         logger.info("ClaudeSessionManager background task stopped")
 
     def _fail_pending_commands(self) -> None:
@@ -343,10 +349,7 @@ class ClaudeSessionManager:
         Returns:
             ClaudeSDKClient instance for this room
         """
-        if self._stopped:
-            raise ClaudeSessionManagerStoppedError()
-        if not self._started:
-            await self.start()
+        await self.start()
 
         result_future: asyncio.Future[ClaudeSDKClient] = (
             asyncio.get_running_loop().create_future()
@@ -373,7 +376,7 @@ class ClaudeSessionManager:
         Args:
             room_id: Band chat room ID
         """
-        if not self._started:
+        if self._task is None:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -397,7 +400,7 @@ class ClaudeSessionManager:
         Args:
             room_id: Band chat room ID
         """
-        if not self._started:
+        if self._task is None:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -417,7 +420,7 @@ class ClaudeSessionManager:
         This should be called when the adapter is shutting down to ensure
         all Claude SDK clients are properly disconnected.
         """
-        if not self._started:
+        if self._task is None:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()

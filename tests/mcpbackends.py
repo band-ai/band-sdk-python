@@ -17,7 +17,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.integrations.mcp.local_server import LOCAL_MCP_HOST
+from band.integrations.mcp.local_server import LOCAL_MCP_HOST, LOCAL_MCP_PORT_MIN
 from tests.mcpclient import endpoint_path
 
 
@@ -34,7 +34,7 @@ class FakeBandMCPBackend:
     shutdown.
     """
 
-    _ports = itertools.count(50000)
+    _ports = itertools.count(LOCAL_MCP_PORT_MIN)
 
     def __init__(
         self,
