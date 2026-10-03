@@ -10,10 +10,11 @@ from contextlib import contextmanager
 @contextmanager
 def sdk_logs_at(logger_name: str, level: int) -> Iterator[None]:
     """Let ``logger_name`` records at ``level`` reach pytest's captured log, which
-    a failing test prints; the root logger's WARNING default otherwise drops them."""
+    a failing test prints; the root logger's WARNING default otherwise drops them.
+    Never raises the threshold, so a run at ``--log-level=DEBUG`` keeps its DEBUG."""
     sdk_logger = logging.getLogger(logger_name)
     previous_level = sdk_logger.level
-    sdk_logger.setLevel(level)
+    sdk_logger.setLevel(min(level, sdk_logger.getEffectiveLevel()))
     try:
         yield
     finally:
