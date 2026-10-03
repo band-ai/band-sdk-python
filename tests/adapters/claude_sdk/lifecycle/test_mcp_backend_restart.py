@@ -3,8 +3,9 @@ every room's next session dials the live one."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
+
+import pytest
 
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -53,28 +54,27 @@ async def test_an_open_room_after_a_crash_resumes_on_the_new_endpoint(
     assert second_port != first_port
 
 
-async def test_a_message_parked_behind_shutdown_never_restarts_the_server(
-    claude_room: OpenRoom,
-) -> None:
-    """A message waiting on the backend lock while cleanup_all stops the
-    server must fail, not start a server nothing would ever stop.
-
-    No message is sent first: an unstarted session manager lets cleanup_all
-    reach the lock without suspending, so the ensure call genuinely parks
-    behind it while the server's stop awaits its serve task.
-    """
+async def test_a_message_after_shutdown_is_refused(claude_room: OpenRoom) -> None:
+    """Shutdown closes the backend for good: a late message can't start a
+    server nothing would stop."""
     room = await claude_room()
-    adapter = room.adapter
-    backend = adapter._mcp_backend
+    backend = room.adapter._mcp.current
     assert backend is not None
+    await room.adapter.cleanup_all()
 
-    shutdown, parked = await asyncio.gather(
-        adapter.cleanup_all(),
-        adapter._ensure_mcp_backend(),
-        return_exceptions=True,
-    )
+    with pytest.raises(RuntimeError, match="stopped"):
+        await room.send("hi")
 
-    assert shutdown is None
-    assert isinstance(parked, RuntimeError)
-    assert adapter._mcp_backend is None
     assert backend.is_running is False
+    assert room.claude.sessions == []
+
+
+async def test_a_restarted_agent_serves_band_tools_again(claude_room: OpenRoom) -> None:
+    room = await claude_room()
+    room.claude.script([room.model_reply("back again")])
+    await room.adapter.cleanup_all()
+
+    await room.adapter.on_started("Test Agent", "An agent under test")
+    await room.send("hi")
+
+    assert room.chat == ["back again"]

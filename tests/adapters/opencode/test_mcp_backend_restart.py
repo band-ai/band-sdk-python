@@ -56,7 +56,7 @@ async def test_a_crashed_server_is_re_registered_on_its_new_port(
 
     try:
         await send("before the crash", bootstrap=True)
-        backend = adapter._mcp_backend
+        backend = adapter._mcp.current
         assert backend is not None
         await crash_server(backend.local_server)
         await send("after the crash", bootstrap=False)

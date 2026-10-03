@@ -147,7 +147,7 @@ class ClaudeRoom:
 
     async def crash_band_server(self) -> None:
         """The adapter's Band MCP server dies on its own, between turns."""
-        backend = self.adapter._mcp_backend
+        backend = self.adapter._mcp.current
         assert backend is not None, "adapter not started"
         await crash_server(backend.local_server)
 

@@ -35,10 +35,10 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.integrations.mcp.backends import (
-    BandMCPBackend,
+from band.integrations.mcp import (
+    BandMCPBackendSettings,
     BandMCPTransport,
-    create_band_mcp_backend,
+    SharedBandMCPBackend,
 )
 from band.integrations.opencode import (
     HttpOpencodeClient,
@@ -219,6 +219,18 @@ class RoomState:
         return True
 
 
+@dataclass(frozen=True)
+class McpRegistration:
+    """Where OpenCode was told to find our Band MCP server: on which client,
+    at which URL. A restarted server serves a new URL, so it no longer matches."""
+
+    client: OpencodeClientProtocol
+    url: str
+
+    def names(self, client: OpencodeClientProtocol, url: str) -> bool:
+        return self.client is client and self.url == url
+
+
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     """Band adapter for the OpenCode HTTP server.
 
@@ -293,12 +305,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
-        self._mcp_backend: BandMCPBackend | None = None
+        self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._rooms: dict[str, RoomState] = {}
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._mcp_lifecycle_lock = asyncio.Lock()
-        self._registered_client: OpencodeClientProtocol | None = None
+        self._registration: McpRegistration | None = None
         self._system_prompt: str = ""
         # The tools this adapter registers with OpenCode (band platform tools +
         # custom tools). Computed once at construction -- both inputs are known
@@ -694,45 +706,25 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             client = self._client
         await self._register_mcp_backend(client)
 
-    async def _ensure_mcp_backend(self) -> BandMCPBackend:
-        """The shared Band MCP backend (LocalMCPServer with SSE), started on
-        first use and restarted in place if its serve task died.
-
-        Only ever called while holding ``_mcp_lifecycle_lock`` (from
-        ``_register_mcp_backend``), the same lock ``_shutdown_client`` needs
-        to read or clear ``self._mcp_backend`` -- so no concurrent shutdown
-        can race the ``await`` below. A restart under that lock never waits on
-        an open SSE read: the serve task it stops has already ended.
-        """
-        if self._mcp_backend is not None:
-            if await self._mcp_backend.restart_if_crashed():
-                # OpenCode's registration still names the dead URL.
-                self._registered_client = None
-            return self._mcp_backend
-
-        backend = await create_band_mcp_backend(
+    def _mcp_settings(self) -> BandMCPBackendSettings:
+        """One multi-room endpoint; tools resolve the room from ``chat_id``."""
+        return BandMCPBackendSettings(
             tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,
-            additional_tools=self._custom_tools or None,
+            additional_tools=self._custom_tools,
         )
-        self._mcp_backend = backend
-        logger.info(
-            "Shared Band MCP backend started with %d tools (%d custom)",
-            len(backend.allowed_tools),
-            len(self._custom_tools),
-        )
-        return backend
 
     async def _register_mcp_backend(self, client: OpencodeClientProtocol) -> None:
         """Start the shared MCP backend and register it with OpenCode."""
         async with self._mcp_lifecycle_lock:
-            backend = await self._ensure_mcp_backend()
-            if self._registered_client is client:
+            backend = await self._mcp.ensure()
+            url = backend.endpoint(BandMCPTransport.SSE)
+            # A restarted server serves a new URL, so it gets registered again.
+            if self._registration is not None and self._registration.names(client, url):
                 return
             try:
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name,
-                    url=backend.endpoint(BandMCPTransport.SSE),
+                    name=self._mcp_server_name, url=url
                 )
             except Exception:
                 logger.exception(
@@ -750,7 +742,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
             async with self._state_lock:
                 if self._client is client:
-                    self._registered_client = client
+                    self._registration = McpRegistration(client, url)
             logger.info(
                 "MCP server %s registered with OpenCode (status=%s)",
                 self._mcp_server_name,
@@ -758,10 +750,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
     async def _shutdown_client(self) -> None:
-        # _register_mcp_backend creates/assigns self._mcp_backend under this
-        # same lock; reading and clearing it under _state_lock alone would let
-        # an in-flight registration finish after this snapshot and leave a
-        # live, unstopped backend that shutdown already decided doesn't exist.
+        # _register_mcp_backend starts and registers the backend under this
+        # same lock; detaching it under _state_lock alone would let an
+        # in-flight registration finish after this snapshot and leave a live,
+        # unstopped backend that shutdown already decided doesn't exist.
         async with self._mcp_lifecycle_lock:
             async with self._state_lock:
                 # ``on_cleanup`` decides to shut down after removing the last
@@ -773,19 +765,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     return
                 event_task = self._event_task
                 client = self._client
-                mcp_backend = self._mcp_backend
+                mcp_backend = await self._mcp.detach(final=False)
                 self._event_task = None
                 self._client = None
-                self._mcp_backend = None
 
-            if (
-                mcp_backend is not None
-                and client is not None
-                and self._registered_client is client
-            ):
-                self._registered_client = None
+            registration = self._registration
+            if registration is not None and registration.client is client:
+                self._registration = None
                 try:
-                    await client.disconnect_mcp_server(self._mcp_server_name)
+                    await registration.client.disconnect_mcp_server(
+                        self._mcp_server_name
+                    )
                 except Exception:  # noqa: BLE001 -- best-effort cleanup; OpenCode may already be stopped, and nothing downstream awaits this disconnect
                     logger.debug(
                         "Failed to disconnect MCP server %s (OpenCode may already be stopped)",

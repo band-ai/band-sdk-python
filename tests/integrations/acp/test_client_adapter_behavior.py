@@ -603,7 +603,7 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
     ) as session:
         await session.send("before the crash", room="room-1")
         crashed_url = band_mcp_url(fake_agent, session.session_id("room-1"))
-        backend = session.adapter._band_mcp_backend
+        backend = session.adapter._mcp.current
         assert backend is not None
         await crash_server(backend.local_server)
 

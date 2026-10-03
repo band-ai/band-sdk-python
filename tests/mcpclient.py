@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+import inspect
+import itertools
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import Any
+from unittest.mock import patch
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -14,9 +17,10 @@ from mcp.types import Tool
 
 from band.integrations.mcp import (
     BandMCPBackend,
+    BandMCPBackendSettings,
     BandMCPTransport,
-    create_band_mcp_backend,
 )
+from band.integrations.mcp.backends import create_band_mcp_backend
 from band.integrations.mcp.engine import RoomToolResolver
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
@@ -60,17 +64,99 @@ async def started_backend(
 ) -> AsyncIterator[BandMCPBackend]:
     """A Band MCP backend on an OS-assigned port, always stopped on exit."""
     backend = await create_band_mcp_backend(
-        tool_definitions=tool_definitions,
-        get_tools=get_tools,
-        additional_tools=additional_tools,
-        room_bound=room_bound,
-        port_min=0,
-        port_max=0,
+        BandMCPBackendSettings(
+            tool_definitions=tool_definitions,
+            get_tools=get_tools,
+            additional_tools=additional_tools or (),
+            room_bound=room_bound,
+            port_min=0,
+            port_max=0,
+        )
     )
     try:
         yield backend
     finally:
         await backend.stop()
+
+
+class FakeBandMCPBackend:
+    """A ``BandMCPBackend`` stand-in for tests that never dial it.
+
+    Each fake gets its own port, so a restarted or replaced backend shows up
+    as a changed URL. ``stop`` can be held open with ``stop_release`` to
+    exercise a slow shutdown.
+    """
+
+    _ports = itertools.count(50000)
+
+    def __init__(
+        self,
+        *,
+        stop_started: asyncio.Event | None = None,
+        stop_release: asyncio.Event | None = None,
+    ) -> None:
+        self.allowed_tools: list[str] = []
+        self.port = next(self._ports)
+        self.is_running = True
+        self.stop_calls = 0
+        self._stop_started = stop_started
+        self._stop_release = stop_release
+
+    def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:
+        path = (
+            _TRANSPORT_PATHS[transport]
+            if room_id is None
+            else room_endpoint_path(room_id, transport)
+        )
+        return f"http://127.0.0.1:{self.port}{path}"
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+        self.is_running = False
+        if self._stop_started is not None:
+            self._stop_started.set()
+        if self._stop_release is not None:
+            await self._stop_release.wait()
+
+    async def restart_if_crashed(self) -> None:
+        self.is_running = True
+
+
+class BackendStarts:
+    """Stands in for ``create_band_mcp_backend``, recording the settings each
+    start asked for.
+
+    Starts are answered from ``outcomes`` in order -- a backend is returned,
+    an exception raised -- and then by ``then`` (sync or async), or fail when
+    ``then`` is None.
+    """
+
+    def __init__(self, outcomes: Sequence[Any], then: Callable[[], Any] | None) -> None:
+        self._outcomes = list(outcomes)
+        self._then = then
+        self.requested: list[BandMCPBackendSettings] = []
+
+    async def __call__(self, settings: BandMCPBackendSettings) -> Any:
+        self.requested.append(settings)
+        if self._outcomes:
+            outcome = self._outcomes.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+        if self._then is None:
+            raise AssertionError("unexpected Band MCP backend start")
+        backend = self._then()
+        return await backend if inspect.isawaitable(backend) else backend
+
+
+@contextmanager
+def backends_created_by(
+    *outcomes: Any, then: Callable[[], Any] | None = FakeBandMCPBackend
+) -> Iterator[BackendStarts]:
+    """Every Band MCP backend start, faked at the one seam all owners use."""
+    starts = BackendStarts(outcomes, then)
+    with patch("band.integrations.mcp.backends.create_band_mcp_backend", starts):
+        yield starts
 
 
 async def crash_server(server: LocalMCPServer) -> None:

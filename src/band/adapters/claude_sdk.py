@@ -104,10 +104,10 @@ from band.integrations.claude_sdk.dedup_tools import (
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
-from band.integrations.mcp.backends import (
-    BandMCPBackend,
+from band.integrations.mcp import (
+    BandMCPBackendSettings,
     BandMCPTransport,
-    create_band_mcp_backend,
+    SharedBandMCPBackend,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -582,11 +582,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
         self.config = config or ClaudeSDKAdapterConfig()
 
-        # Session manager and MCP backend (created after start)
+        # Session manager (created after start) and the Band MCP backend each
+        # room's session dials (see _room_mcp_servers).
         self._session_manager: ClaudeSessionManager | None = None
-        self._mcp_backend: BandMCPBackend | None = None
-        # Guards restarting the backend against cleanup_all detaching it.
-        self._mcp_backend_lock = asyncio.Lock()
+        self._mcp = SharedBandMCPBackend(self._mcp_settings)
 
         # Per-room tools: the adapter's own sends use them directly, while the
         # MCP server's tool calls go through _mcp_room_tools (see _bind_mcp_tools).
@@ -652,9 +651,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
 
-        # Each room's session dials its own room-bound endpoint on this
-        # backend (see _room_mcp_servers); tools resolve via _mcp_room_tools.
-        self._mcp_backend = await self._create_mcp_backend()
+        await self._mcp.reopen()
+        mcp_backend = await self._mcp.ensure()
 
         # Generate system prompt with agent info
         system_prompt = generate_claude_sdk_agent_prompt(
@@ -673,7 +671,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             model=resolved_model,
             fallback_model=self.config.fallback_model,
             system_prompt=system_prompt,
-            allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
+            allowed_tools=[*mcp_backend.allowed_tools, TOOL_SEARCH],
             # Same values as the SDK's PermissionMode (pinned by tests/adapters/claude_sdk/test_config.py).
             permission_mode=cast("PermissionMode", self.config.permission_mode),
             effort=self.config.effort,
@@ -734,47 +732,25 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             self._approval_label,
         )
 
-    async def _create_mcp_backend(self) -> BandMCPBackend:
-        """Create shared MCP backend that uses stored room tools."""
-        tool_definitions = list(
-            iter_tool_definitions(capabilities=self.features.capabilities)
-        )
-        backend = await create_band_mcp_backend(
-            tool_definitions=tool_definitions,
+    def _mcp_settings(self) -> BandMCPBackendSettings:
+        """One room-bound endpoint per room; tools resolve via _mcp_room_tools."""
+        return BandMCPBackendSettings(
+            tool_definitions=list(
+                iter_tool_definitions(capabilities=self.features.capabilities)
+            ),
             get_tools=self._mcp_room_tools.get,
             additional_tools=self._custom_tools,
             room_bound=True,
         )
 
-        logger.info(
-            "Band MCP server started with %s tools (%s custom)",
-            len(backend.allowed_tools),
-            len(self._custom_tools),
-        )
-
-        return backend
-
-    async def _ensure_mcp_backend(self) -> None:
-        """Restart the Band MCP backend if its serve task died.
-
-        ``None`` means ``cleanup_all`` ran, so a message parked on the lock
-        through shutdown fails rather than starting a server nothing would stop.
-        """
-        async with self._mcp_backend_lock:
-            if self._mcp_backend is None:
-                raise RuntimeError(
-                    "ClaudeSDKAdapter is stopped; cannot restart the Band MCP backend"
-                )
-            await self._mcp_backend.restart_if_crashed()
-
     def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
         """A room session's MCP servers: the Band endpoint bound to that room."""
-        if self._mcp_backend is None:
+        if (backend := self._mcp.current) is None:
             raise RuntimeError("Band MCP backend is not started")
         return {
             BAND_MCP_SERVER_NAME: McpHttpServerConfig(
                 type="http",
-                url=self._mcp_backend.endpoint(BandMCPTransport.HTTP, room_id),
+                url=backend.endpoint(BandMCPTransport.HTTP, room_id),
             )
         }
 
@@ -847,7 +823,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
             return
 
-        await self._ensure_mcp_backend()
+        await self._mcp.ensure()
 
         # The manager only resumes when it has to create the client: on
         # bootstrap, or after a retired client (see _retire_client).
@@ -1632,10 +1608,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             await self._cancel_turn(room_id)
         if self._session_manager:
             await self._session_manager.stop()
-        async with self._mcp_backend_lock:
-            backend, self._mcp_backend = self._mcp_backend, None
-            if backend is not None:
-                await backend.stop()
+        await self._mcp.close(final=True)
         self._room_tools.clear()
         self._mcp_room_tools.clear()
         self._session_context.clear()

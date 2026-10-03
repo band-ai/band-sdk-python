@@ -1,11 +1,14 @@
-"""The shared Band MCP backend: one local MCP server per adapter."""
+"""The shared Band MCP backend: one local MCP server per adapter, owned by a
+``SharedBandMCPBackend`` that starts, heals and stops it."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Self
 
 from band.integrations.mcp.engine import (
     RoomToolResolver,
@@ -65,20 +68,39 @@ class BandMCPBackend:
         """Stop the backing local server."""
         await self.local_server.stop()
 
-    async def restart_if_crashed(self) -> bool:
-        """Restart the backing local server if its serve task died; True if it did.
+    async def restart_if_crashed(self) -> None:
+        """Restart the backing local server if its serve task died.
 
-        The serve task can end on its own, and nothing else notices: every
-        consumer would keep dialing a dead port. The restart lands on a
-        different port when the range has another free one, so a consumer
-        holding the old URL can tell.
+        The restart lands on a different port when the range has another free
+        one, so a consumer holding the old URL can tell it must reconnect.
         """
         if self.is_running:
-            return False
+            return
         logger.warning("Band MCP server crashed; restarting it")
         await self.local_server.stop()
         await self.local_server.start()
-        return True
+
+
+@dataclass(frozen=True)
+class BandMCPBackendSettings:
+    """What an adapter needs from its Band MCP backend.
+
+    A ``room_bound`` backend serves one endpoint per room
+    (``endpoint(transport, room_id)``) whose tools take their room from the
+    path and advertise no ``chat_id``; otherwise one multi-room endpoint
+    routes by a required ``chat_id`` argument. ``host`` sets the bind
+    interface; see ``LocalMCPServer`` for the non-loopback caveat.
+    ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
+    rarely reused, for callers whose MCP client dials across a network proxy.
+    """
+
+    tool_definitions: Sequence[ToolDefinition]
+    get_tools: RoomToolResolver
+    additional_tools: Sequence[CustomToolDef] = ()
+    room_bound: bool = False
+    host: str = LOCAL_MCP_HOST
+    port_min: int = LOCAL_MCP_PORT_MIN
+    port_max: int = LOCAL_MCP_PORT_MAX
 
 
 def _build_allowed_tools(
@@ -93,42 +115,98 @@ def _build_allowed_tools(
     return allowed_tools
 
 
-async def create_band_mcp_backend(
-    *,
-    tool_definitions: Sequence[ToolDefinition],
-    get_tools: RoomToolResolver,
-    additional_tools: list[CustomToolDef] | None = None,
-    room_bound: bool = False,
-    host: str = LOCAL_MCP_HOST,
-    port_min: int = LOCAL_MCP_PORT_MIN,
-    port_max: int = LOCAL_MCP_PORT_MAX,
-) -> BandMCPBackend:
-    """Start a shared Band MCP server, serving both transports.
-
-    A ``room_bound`` backend serves one endpoint per room
-    (``endpoint(transport, room_id)``) whose tools take their room from the
-    path and advertise no ``chat_id``; otherwise one multi-room endpoint
-    routes by a required ``chat_id`` argument. ``host`` sets the bind
-    interface; see ``LocalMCPServer`` for the non-loopback caveat.
-    ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
-    rarely reused, for callers whose MCP client dials across a network proxy.
-    """
-    resolved_tools = list(additional_tools or [])
+async def create_band_mcp_backend(settings: BandMCPBackendSettings) -> BandMCPBackend:
+    """Start a Band MCP server, serving both transports, as ``settings`` describe."""
+    additional_tools = list(settings.additional_tools)
     local_server = LocalMCPServer(
         name=BAND_MCP_SERVER_NAME,
         tool_registrations=build_resolved_band_mcp_tool_registrations(
-            get_tools=get_tools,
-            additional_tools=resolved_tools,
-            tool_definitions=tool_definitions,
-            room_from_connection=room_bound,
+            get_tools=settings.get_tools,
+            additional_tools=additional_tools,
+            tool_definitions=settings.tool_definitions,
+            room_from_connection=settings.room_bound,
         ),
-        host=host,
-        port_min=port_min,
-        port_max=port_max,
-        room_bound=room_bound,
+        host=settings.host,
+        port_min=settings.port_min,
+        port_max=settings.port_max,
+        room_bound=settings.room_bound,
     )
     await local_server.start()
-    return BandMCPBackend(
-        allowed_tools=_build_allowed_tools(tool_definitions, resolved_tools),
+    backend = BandMCPBackend(
+        allowed_tools=_build_allowed_tools(settings.tool_definitions, additional_tools),
         local_server=local_server,
     )
+    logger.info(
+        "Band MCP server started with %s tools (%s custom)",
+        len(backend.allowed_tools),
+        len(additional_tools),
+    )
+    return backend
+
+
+class SharedBandMCPBackend:
+    """One adapter's Band MCP backend: started on first use, restarted in place
+    when its serve task dies, refused once closed for good.
+
+    An async context manager for block-scoped use. Adapters, whose lifetime
+    spans ``on_started`` to ``cleanup_all``, call ``ensure()``/``close()``
+    directly -- the same idiom as ``LocalMCPServer``'s ``start()``/``stop()``.
+    ``settings`` is read at each start, since capabilities (and with them the
+    tool definitions) are only settled when the agent starts.
+    """
+
+    def __init__(self, settings: Callable[[], BandMCPBackendSettings]) -> None:
+        self._settings = settings
+        self._backend: BandMCPBackend | None = None
+        self._closed = False
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.close(final=True)
+
+    @property
+    def current(self) -> BandMCPBackend | None:
+        """The backend held right now, running or crashed; ``None`` before
+        the first start and after ``close``."""
+        return self._backend
+
+    async def ensure(self) -> BandMCPBackend:
+        """The running backend: started on first use, healed if its serve task died."""
+        async with self._lock:
+            self._refuse_if_closed()
+            self._backend = self._backend or await create_band_mcp_backend(
+                self._settings()
+            )
+            await self._backend.restart_if_crashed()
+            return self._backend
+
+    async def detach(self, *, final: bool) -> BandMCPBackend | None:
+        """Hand the backend over for the caller to stop.
+
+        ``final`` refuses every later ``ensure()`` until ``reopen()``, so a
+        message parked on the lock through shutdown can't start a server
+        nothing would stop. A non-final detach never lifts that refusal.
+        """
+        async with self._lock:
+            if final:
+                self._closed = True
+            backend, self._backend = self._backend, None
+            return backend
+
+    async def close(self, *, final: bool) -> None:
+        """Detach and stop the backend; the stop runs outside the lock, so a
+        slow one never holds up the next ``ensure()``."""
+        if (backend := await self.detach(final=final)) is not None:
+            await backend.stop()
+
+    async def reopen(self) -> None:
+        """Accept ``ensure()`` again after a final close (an agent restarting)."""
+        async with self._lock:
+            self._closed = False
+
+    def _refuse_if_closed(self) -> None:
+        if self._closed:
+            raise RuntimeError("Band MCP backend is stopped")

@@ -23,10 +23,7 @@ from band.integrations.letta.prompts import (
     SEND_EVENT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAMES,
 )
-from band.integrations.mcp.backends import (
-    BandMCPBackend,
-    create_band_mcp_backend,
-)
+from band.integrations.mcp import BandMCPBackendSettings, SharedBandMCPBackend
 from band.integrations.mcp.local_server import LOCAL_MCP_HTTP_PATH, LOCAL_MCP_SSE_PATH
 from band.runtime.tools import ToolDefinition
 
@@ -80,8 +77,8 @@ class LettaMCPBridge:
         self._get_tools = get_tools
         self._teardown_timeout_s = teardown_timeout_s
 
-        # Self-hosted MCP backend (None in external mode / not yet started).
-        self.backend: BandMCPBackend | None = None
+        # Self-hosted MCP backend, never started in external mode.
+        self.backend = SharedBandMCPBackend(self._backend_settings)
         # Registration id and tool ids in Letta (populated by ensure_ready).
         self.server_id: str | None = None
         self.tool_ids: list[str] = []
@@ -97,9 +94,8 @@ class LettaMCPBridge:
     def ready(self) -> bool:
         """Whether the tool path is registered, discovered, and (self-hosted)
         still being served."""
-        return self.server_id is not None and (
-            self.backend is None or self.backend.is_running
-        )
+        backend = self.backend.current
+        return self.server_id is not None and (backend is None or backend.is_running)
 
     @property
     def silent_reporting_tools(self) -> frozenset[str]:
@@ -122,10 +118,6 @@ class LettaMCPBridge:
         if self.ready:
             return
 
-        if self.server_id is not None and self.backend is not None:
-            await self._repoint(client, self.server_id, self.backend)
-            return
-
         if self._config.mode == "external":
             await self.register(
                 client,
@@ -138,7 +130,10 @@ class LettaMCPBridge:
         # registration may still point at it, and Letta only tolerates a
         # registration whose server stays alive (see release). The retry on
         # the next message reuses it under a fresh name.
-        backend = await self._start_backend()
+        backend = await self.backend.ensure()
+        if self.server_id is not None:
+            await self._repoint(client, self.server_id, backend.local_server.port)
+            return
         await self.register(
             client,
             server_name=self._config.server_name or f"band-{uuid4().hex[:8]}",
@@ -321,20 +316,17 @@ class LettaMCPBridge:
             f"(omit mcp.server_name)."
         )
 
-    async def _repoint(
-        self, client: Any, server_id: str, backend: BandMCPBackend
-    ) -> None:
-        """Restart a crashed self-hosted server and point its registration at it.
+    async def _repoint(self, client: Any, server_id: str, port: int) -> None:
+        """Point the registration at a self-hosted server restarted on ``port``.
 
         Letta resolves an MCP tool's server by name and reads its URL on every
         call, so updating the row reconnects every attached tool with no new
         tool ids or re-attach -- unlike a fresh registration, which retags
         the org's tool rows.
         """
-        await backend.restart_if_crashed()
         try:
             await self._point_registration_at(
-                client, server_id, self.advertised_url(backend.local_server.port)
+                client, server_id, self.advertised_url(port)
             )
         except Exception:
             self.server_id = None
@@ -355,29 +347,17 @@ class LettaMCPBridge:
         self._last_server_url = server_url
         logger.info("Repointed MCP server registration %s at %s", server_id, server_url)
 
-    async def _start_backend(self) -> BandMCPBackend:
-        """Start the in-process Band MCP server (self_host mode), restarting a
-        kept one whose serve task died."""
-        if self.backend is not None:
-            await self.backend.restart_if_crashed()
-            return self.backend
-
+    def _backend_settings(self) -> BandMCPBackendSettings:
         # Ephemeral OS-assigned port (rarely reused): the Letta server dials
         # back across a network proxy (docker host-gateway), and re-binding a
         # just-freed scanned port can leave that hop stalled on stale state.
-        backend = await create_band_mcp_backend(
+        return BandMCPBackendSettings(
             tool_definitions=self._tool_definitions,
             get_tools=self._get_tools,
             host=self._config.bind_host,
             port_min=0,
             port_max=0,
         )
-        self.backend = backend
-        logger.info(
-            "Self-hosted Band MCP server started with %d tools",
-            len(backend.allowed_tools),
-        )
-        return backend
 
     async def _find(self, client: Any, server_name: str) -> Any | None:
         """The registered MCP server named ``server_name``, or None."""

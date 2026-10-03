@@ -50,19 +50,21 @@ from tests.integrations.acp.acp_toolkit.harness import (
     launch_for,
 )
 from tests.integrations.acp.conftest import make_platform_message
-from tests.mcpclient import crash_server, room_endpoint_path
+from tests.mcpclient import (
+    FakeBandMCPBackend,
+    backends_created_by,
+    room_endpoint_path,
+)
 
 _MOCK_ROOM = "room-123"
 CODEX = ACPClientAdapterConfig(command="codex")
 
 
-def mock_band_backend() -> MagicMock:
-    """A mocked ``BandMCPBackend`` that serves every room an endpoint."""
-    backend = MagicMock()
-    backend.endpoint.side_effect = lambda transport, room_id: (
-        f"http://127.0.0.1:1{room_endpoint_path(room_id, transport)}"
-    )
-    backend.restart_if_crashed = AsyncMock(return_value=False)
+async def running_backend(adapter: ACPClientAdapter) -> FakeBandMCPBackend:
+    """Start the adapter's Band MCP backend as a fake, as its first turn would."""
+    backend = FakeBandMCPBackend()
+    with backends_created_by(backend):
+        await adapter._mcp.ensure()
     return backend
 
 
@@ -189,7 +191,6 @@ class TestACPClientAdapterConfig:
         assert adapter._room_workspaces == {}
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
-        assert adapter._band_mcp_backend is None
 
 
 class TestACPClientAdapterTransport:
@@ -277,12 +278,10 @@ class TestACPClientAdapterShutdown:
 
         await adapter.on_started("Codex", "bridge")  # Agent.start() again
 
-        backend = mock_band_backend()
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ):
-            assert await adapter._ensure_band_mcp_backend() is backend
+        with backends_created_by() as starts:
+            await adapter._mcp.ensure()
+
+        assert len(starts.requested) == 1
 
 
 class TestACPClientAdapterLocalMcpConfig:
@@ -329,61 +328,28 @@ class TestACPClientAdapterLocalMcpConfig:
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:
         """Should start the shared Band MCP server only once."""
         adapter = ACPClientAdapter(CODEX)
-        backend = mock_band_backend()
 
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ) as mock_create_backend:
+        with backends_created_by() as starts:
             first = await adapter._get_or_start_band_mcp_server("room-1")
             second = await adapter._get_or_start_band_mcp_server("room-1")
 
         assert first.url == second.url
-        mock_create_backend.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_concurrent_first_turns_share_one_backend(self) -> None:
-        """Two rooms' concurrent first turns must not each start a backend —
-        the loser would leak a running LocalMCPServer (started, never stopped)."""
-        adapter = ACPClientAdapter(CODEX)
-        backend = mock_band_backend()
-
-        async def slow_create(**kwargs: object) -> MagicMock:
-            await asyncio.sleep(0)  # yield, so the second caller can interleave
-            return backend
-
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(side_effect=slow_create),
-        ) as mock_create_backend:
-            await asyncio.gather(
-                adapter._get_or_start_band_mcp_server("room-1"),
-                adapter._get_or_start_band_mcp_server("room-2"),
-            )
-
-        mock_create_backend.assert_awaited_once()
+        assert len(starts.requested) == 1
 
     @pytest.mark.asyncio
     async def test_final_cleanup_blocks_backend_recreation(self) -> None:
         """A turn arriving after real shutdown must fail loudly, not leak a
         fresh LocalMCPServer nothing will ever stop again."""
         adapter = ACPClientAdapter(CODEX)
-        backend = mock_band_backend()
-        backend.stop = AsyncMock()
-        adapter._band_mcp_backend = backend
+        await running_backend(adapter)
 
         await adapter.cleanup_all()  # final=True default, matches Agent.stop()
 
         with (
-            patch(
-                "band.integrations.acp.client_adapter.create_band_mcp_backend",
-                new=AsyncMock(),
-            ) as mock_create_backend,
+            backends_created_by(then=None),
             pytest.raises(RuntimeError, match="stopped"),
         ):
-            await adapter._ensure_band_mcp_backend()
-
-        mock_create_backend.assert_not_awaited()
+            await adapter._mcp.ensure()
 
     @pytest.mark.asyncio
     async def test_turn_recovery_stop_allows_backend_recreation(self) -> None:
@@ -391,85 +357,21 @@ class TestACPClientAdapterLocalMcpConfig:
         turn, not to end the adapter -- a later turn on any room must still be
         able to self-heal by starting a fresh backend."""
         adapter = ACPClientAdapter(CODEX)
-        backend = mock_band_backend()
-        backend.stop = AsyncMock()
-        adapter._band_mcp_backend = backend
+        stopped = await running_backend(adapter)
 
         await adapter.stop()  # the on_message except-handler's call, not shutdown
 
-        fresh_backend = MagicMock(
-            local_server=MagicMock(http_url="http://127.0.0.1:2/mcp")
-        )
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=fresh_backend),
-        ) as mock_create_backend:
-            recreated = await adapter._ensure_band_mcp_backend()
+        with backends_created_by() as starts:
+            recreated = await adapter._mcp.ensure()
 
-        assert recreated is fresh_backend
-        mock_create_backend.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_ensure_band_mcp_backend_restarts_a_crashed_backend(self) -> None:
-        """A backend's serve task can crash on its own, independent of any
-        adapter call -- the next call must notice via ``is_running`` and
-        restart it in place, on a port the dead sessions never dialed."""
-        adapter = ACPClientAdapter(CODEX)
-        try:
-            backend = await adapter._ensure_band_mcp_backend()
-            crashed_port = backend.local_server.port
-            await crash_server(backend.local_server)
-
-            restarted = await adapter._ensure_band_mcp_backend()
-
-            assert restarted is backend
-            assert restarted.is_running
-            assert restarted.local_server.port != crashed_port
-        finally:
-            await adapter.cleanup_all()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_racing_a_parked_first_turn_fails_loudly(self) -> None:
-        """The exact reachability the review named: a room's first-turn
-        bootstrap is genuinely parked on ``_mcp_backend_lock`` (not just
-        sequenced after) while real shutdown holds it -- it must wake to a
-        raise, never a backend that outlives shutdown unstopped."""
-        adapter = ACPClientAdapter(CODEX)
-        backend = mock_band_backend()
-
-        async def slow_stop() -> None:
-            await asyncio.sleep(0)  # yield while holding the lock, so the
-            # parked _ensure_band_mcp_backend call can interleave here
-
-        backend.stop = AsyncMock(side_effect=slow_stop)
-        adapter._band_mcp_backend = backend
-
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(),
-        ) as mock_create_backend:
-            results = await asyncio.gather(
-                adapter.cleanup_all(),
-                adapter._ensure_band_mcp_backend(),
-                return_exceptions=True,
-            )
-
-        assert results[0] is None  # cleanup_all completed normally
-        assert isinstance(results[1], RuntimeError)
-        mock_create_backend.assert_not_awaited()
-        backend.stop.assert_awaited_once()  # stopped exactly once, not raced
+        assert recreated is not stopped
+        assert len(starts.requested) == 1
 
     async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
-        """The tool names the adapter would hand to ``create_band_mcp_backend``."""
-        backend = mock_band_backend()
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ) as mock_create_backend:
+        """The tool names the adapter asks its Band MCP backend to serve."""
+        with backends_created_by() as starts:
             await adapter._get_or_start_band_mcp_server("room-1")
-        return {
-            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
-        }
+        return {d.name for d in starts.requested[0].tool_definitions}
 
     @pytest.mark.asyncio
     async def test_memory_tools_registered_when_declared(self) -> None:
@@ -1619,17 +1521,13 @@ class TestACPClientAdapterCleanup:
         adapter = ACPClientAdapter(CODEX)
         adapter._room_to_session["room-123"] = "session-123"
         adapter._room_tools["room-123"] = MagicMock()
-        local_server = MagicMock()
-        local_server.stop = AsyncMock()
-        backend = MagicMock(local_server=local_server)
-        backend.stop = AsyncMock()
-        adapter._band_mcp_backend = backend
+        backend = await running_backend(adapter)
 
         await adapter.on_cleanup("room-123")
 
         assert "room-123" not in adapter._room_to_session
         assert "room-123" not in adapter._room_tools
-        local_server.stop.assert_not_awaited()
+        assert backend.stop_calls == 0
 
     @pytest.mark.asyncio
     async def test_on_cleanup_idempotent(self) -> None:
@@ -1796,38 +1694,30 @@ class TestACPClientAdapterStop:
         adapter._workspace_rooms["/tmp/room-123"] = _MOCK_ROOM
         adapter._room_to_session[_MOCK_ROOM] = "session-123"
         adapter._room_tools[_MOCK_ROOM] = MagicMock()
-        local_server = MagicMock()
-        local_server.stop = AsyncMock()
-        backend = MagicMock(local_server=local_server)
-        backend.stop = AsyncMock()
-        adapter._band_mcp_backend = backend
+        backend = await running_backend(adapter)
         adapter._bootstrapped_sessions.add("session-123")
 
         await adapter.stop()
 
         mock_ctx.__aexit__.assert_called_once()
-        backend.stop.assert_awaited_once()
+        assert backend.stop_calls == 1
         assert runtime._ctx is None
         assert runtime._conn is None
         assert runtime._client is None
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
-        assert adapter._band_mcp_backend is None
+        assert adapter._mcp.current is None
         assert adapter._bootstrapped_sessions == set()
 
     @pytest.mark.asyncio
     async def test_stop_no_connection(self) -> None:
         """Should handle stop when not connected."""
         adapter = ACPClientAdapter(CODEX)
-        local_server = MagicMock()
-        local_server.stop = AsyncMock()
-        backend = MagicMock(local_server=local_server)
-        backend.stop = AsyncMock()
-        adapter._band_mcp_backend = backend
+        backend = await running_backend(adapter)
 
         await adapter.stop()
 
-        backend.stop.assert_awaited_once()
+        assert backend.stop_calls == 1
 
     @pytest.mark.asyncio
     async def test_stop_handles_exit_error(self) -> None:

@@ -91,10 +91,11 @@ from band.integrations.acp.session_config import (
     apply_session_config_selections,
 )
 from band.integrations.acp.types import ACPToolCall
-from band.integrations.mcp.backends import (
+from band.integrations.mcp import (
     BandMCPBackend,
+    BandMCPBackendSettings,
     BandMCPTransport,
-    create_band_mcp_backend,
+    SharedBandMCPBackend,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -409,21 +410,12 @@ class ACPClientAdapter(
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
-        self._band_mcp_backend: BandMCPBackend | None = None
+        self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._bootstrapped_sessions: set[str] = set()
         # The Band MCP URL each room's session was built with; a restarted
         # backend serves a different one (see _drop_stale_session).
         self._room_band_urls: dict[str, str] = {}
         self._session_lock = asyncio.Lock()
-        # Guards the shared MCP backend singleton on its own lock: one creation
-        # path already runs under _session_lock and another outside it, and
-        # asyncio.Lock is not re-entrant, so the backend cannot reuse it.
-        self._mcp_backend_lock = asyncio.Lock()
-        # Set under _mcp_backend_lock by cleanup_all. Without it, a turn parked
-        # on _mcp_backend_lock while cleanup_all tears down would wake to find
-        # _band_mcp_backend None and start a fresh one that outlives shutdown
-        # and is never stopped -- a real leaked server, not just a failed turn.
-        self._stopped = False
 
     @property
     def model_selection(self) -> ModelSelection:
@@ -612,12 +604,8 @@ class ACPClientAdapter(
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
-        # The other end of cleanup_all(final=True)'s _stopped: Agent.start()
-        # reuses this instance across a restart or a retry after a failed
-        # start, and the ACP connection below self-heals unconditionally, so
-        # the backend must be startable again too.
-        async with self._mcp_backend_lock:
-            self._stopped = False
+        # Agent.start() reuses this instance after cleanup_all(final=True).
+        await self._mcp.reopen()
 
     async def on_message(
         self,
@@ -636,7 +624,7 @@ class ACPClientAdapter(
         if self.config.inject_band_tools:
             async with self._session_lock:
                 self._room_tools[room_id] = tools
-            backend = await self._ensure_band_mcp_backend()
+            backend = await self._mcp.ensure()
             await self._drop_stale_session(runtime, room_id, backend)
 
         try:
@@ -997,42 +985,14 @@ class ACPClientAdapter(
         """
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
 
-    async def _ensure_band_mcp_backend(self) -> BandMCPBackend:
-        """The shared backend singleton (one ``LocalMCPServer`` per adapter),
-        starting it on first use.
-
-        Always through the lock, no unlocked fast-path read: a fast path
-        reading ``self._band_mcp_backend`` before acquiring the lock could
-        observe it non-``None`` while ``cleanup_all`` is mid-teardown (already
-        nulled it out but still awaiting ``backend.stop()`` under the same
-        lock). An uncontended ``asyncio.Lock.acquire()`` doesn't suspend, so
-        the lock costs nothing on the hot path it guards.
-
-        Raises once ``cleanup_all`` has run: a turn that was parked on this
-        lock while shutdown completed must fail loudly rather than silently
-        start a fresh backend that outlives shutdown and is never stopped.
-
-        Also re-checks liveness on every call: the serve task backing a
-        cached backend can crash on its own, independent of any adapter call,
-        and nothing else would ever notice. A crashed backend restarts in
-        place on a new port, which ``_drop_stale_session`` reads as stale.
-        """
-        async with self._mcp_backend_lock:
-            if self._stopped:
-                raise RuntimeError(
-                    "ACP client adapter is stopped; cannot start the Band MCP backend"
-                )
-            if self._band_mcp_backend is not None:
-                await self._band_mcp_backend.restart_if_crashed()
-            if self._band_mcp_backend is None:
-                backend = await create_band_mcp_backend(
-                    tool_definitions=self._tool_definitions,
-                    get_tools=self._room_tools.get,
-                    additional_tools=self._custom_tools,
-                    room_bound=True,
-                )
-                self._band_mcp_backend = backend
-            return self._band_mcp_backend
+    def _mcp_settings(self) -> BandMCPBackendSettings:
+        """One room-bound endpoint per room; tools resolve via _room_tools."""
+        return BandMCPBackendSettings(
+            tool_definitions=self._tool_definitions,
+            get_tools=self._room_tools.get,
+            additional_tools=self._custom_tools,
+            room_bound=True,
+        )
 
     async def _drop_stale_session(
         self, runtime: ACPRuntime, room_id: str, backend: BandMCPBackend
@@ -1067,8 +1027,10 @@ class ACPClientAdapter(
         )
 
     async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
-        backend = await self._ensure_band_mcp_backend()
+        # The runtime first: no await may separate ensure() from reading the
+        # endpoint, or another room's restart could catch its port unset.
         runtime = await self._runtime_for(room_id)
+        backend = await self._mcp.ensure()
         return self._build_local_mcp_server_config(
             backend, runtime.agent_mcp_transport, room_id
         )
@@ -1540,21 +1502,7 @@ class ACPClientAdapter(
             self._workspace_rooms.clear()
         await self._cancel_session_initializers(*initializers)
         await self._drain_background_tasks()
-        async with self._mcp_backend_lock:
-            backend = self._band_mcp_backend
-            self._band_mcp_backend = None
-            if final:
-                # Set before releasing the lock: a room's first turn parked on
-                # _mcp_backend_lock (e.g. while _initialize_session awaits
-                # _session_mcp_servers()) wakes to find
-                # _stopped True and raises instead of starting a backend that
-                # would outlive this teardown and never be stopped again.
-                self._stopped = True
-            # Stop while still holding the lock: closes the window where a
-            # concurrent _ensure_band_mcp_backend's locked slow path could see
-            # None and start a fresh backend while this one is mid-teardown.
-            if backend is not None:
-                await backend.stop()
+        await self._mcp.close(final=final)
         await self._stop_runtimes(runtimes)
         logger.info("ACP client adapter stopped")
 
