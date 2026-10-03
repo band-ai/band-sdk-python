@@ -670,6 +670,11 @@ class RoomApprovals:
                 await client.reply_question(entry.token, answers=answers)
         except ApprovalReplyError:
             return False
+        logger.info(
+            "OpenCode question answered room=%s request=%s",
+            self._ports.room_id,
+            entry.token,
+        )
         self._forget(self._questions, entry)
         return True
 
@@ -689,6 +694,11 @@ class RoomApprovals:
                 await client.reject_question(entry.token)
         except ApprovalReplyError:
             return False
+        logger.info(
+            "OpenCode question rejected room=%s request=%s",
+            self._ports.room_id,
+            entry.token,
+        )
         self._forget(self._questions, entry)
         return True
 

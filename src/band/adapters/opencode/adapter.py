@@ -852,10 +852,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             case QuestionAskedEvent():
                 await room_state.approvals.on_question_asked(event.properties)
             case SessionErrorEvent():
+                # The error class only: its data can carry provider text.
                 logger.info(
-                    "OpenCode turn: session.error room=%s session=%s",
+                    "OpenCode turn: session.error room=%s session=%s error=%s",
                     room_state.room_id,
                     event.session_id,
+                    event.properties.error.name if event.properties.error else None,
                 )
                 if room_state.turn is not None:
                     room_state.turn.last_error_message = describe_error(
