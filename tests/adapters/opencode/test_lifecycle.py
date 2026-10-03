@@ -122,7 +122,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     )
     assert next_turn.usage_by_message == {}
 
-    await adapter._emit_turn_usage(first_turn)
+    await adapter._emit_turn_usage(room_state.room_id, first_turn)
 
     usage_payloads = recorded_usage_payloads(tools)
     assert usage_payloads == [

@@ -4,33 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
+import band.runtime
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
-
-# Parent logger for the SDK control path; raised to DEBUG so pytest captures it.
-SDK_CONTROL_LOGGER = "band.runtime"
-
-
-@contextmanager
-def sdk_control_logs_at_debug() -> Iterator[None]:
-    """Let the SDK's control-path DEBUG lines reach pytest's captured log, which
-    a failing control test prints; they are otherwise filtered at the logger."""
-    sdk_logger = logging.getLogger(SDK_CONTROL_LOGGER)
-    previous_level = sdk_logger.level
-    sdk_logger.setLevel(logging.DEBUG)
-    try:
-        yield
-    finally:
-        sdk_logger.setLevel(previous_level)
 
 
 class ControlRuntime:
@@ -98,7 +84,8 @@ async def running_control_runtime(
         ws_url=settings.endpoints.ws_url,
         rest_url=settings.endpoints.rest_url,
     )
-    with sdk_control_logs_at_debug():
+    # The SDK control path's DEBUG lines explain a failing control test.
+    with sdk_logs_at(band.runtime, logging.DEBUG):
         control = ControlRuntime()
         runtime = AgentRuntime(
             link=link, agent_id=agent.id, on_execute=control.on_execute
