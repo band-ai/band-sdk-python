@@ -15,24 +15,25 @@ import tempfile
 
 from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.deps import cli_binary
 
 # This runs in an always() step ahead of the scorecard uploads; a stalled CLI
 # must not hold it until the job timeout.
 VERSION_TIMEOUT_S = 30
 
 
-def cli_version(binary: str) -> str:
+def cli_version(binary: str, *args: str) -> str:
+    """``binary [args] --version``; ``args`` lead a runtime launched directly."""
     if (cli := shutil.which(binary)) is None:
         return "not found"
-    # A resolved local path plus a literal flag, so shell=True carries no
+    command = " ".join(f'"{part}"' for part in (cli, *args))
+    # Resolved local paths plus a literal flag, so shell=True carries no
     # injection risk; it lets Windows .cmd shims launch through cmd.exe.
     # A file, not a pipe: the timeout kills only the shell, and on Windows a pipe
     # still held by the shim's grandchild would block run() past the timeout.
     with tempfile.TemporaryFile("w+") as output:
         try:
             completed = subprocess.run(
-                f'"{cli}" --version',
+                f"{command} --version",
                 shell=True,
                 stdout=output,
                 stderr=subprocess.DEVNULL,
@@ -49,13 +50,17 @@ def cli_version(binary: str) -> str:
     return version or "empty version output"
 
 
+def cursor_launch(command: str) -> list[str]:
+    """The Cursor launch argv without its ``acp`` subcommand."""
+    argv = command.split() or [CURSOR_CLI_BINARY]
+    return argv[:-1] if argv[-1] == "acp" else argv
+
+
 def main() -> None:
     settings = BaselineSettings()
     metadata = {
         "copilot_cli": cli_version("copilot"),
-        "cursor_cli": cli_version(
-            cli_binary(settings.backends.cursor_command, CURSOR_CLI_BINARY)
-        ),
+        "cursor_cli": cli_version(*cursor_launch(settings.backends.cursor_command)),
         "os": platform.platform(),
         "copilot_auth": {
             "mode": "byok",

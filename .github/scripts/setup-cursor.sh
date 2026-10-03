@@ -51,11 +51,14 @@ case "$(uname -s)" in
       rm "$archive"
       # The launcher runs the bundled node.exe beside it (%~dp0), so it stays in
       # the package and `agent` is a shim that calls it.
-      cp "$package_dir/cursor-agent.cmd" "$package_dir/agent.cmd"
-      printf '@call "%s\\agent.cmd" %%*\r\n' "$(cygpath -w "$package_dir")" > "$bin_dir/agent.cmd"
+      printf '@call "%s\\cursor-agent.cmd" %%*\r\n' "$(cygpath -w "$package_dir")" > "$bin_dir/agent.cmd"
     fi
+    # ACP runs node directly, as the launcher would: through cmd.exe and
+    # PowerShell, stopping the adapter ends only cmd.exe, and the surviving
+    # node.exe keeps its working directory locked.
     if [[ -n "${GITHUB_ENV:-}" ]]; then
-      printf 'CURSOR_COMMAND=%s\\agent.cmd acp\n' "$(cygpath -w "$package_dir")" >> "$GITHUB_ENV"
+      runtime="$(cygpath -w "$package_dir")"
+      printf 'CURSOR_COMMAND=%s\\node.exe %s\\index.js acp\n' "$runtime" "$runtime" >> "$GITHUB_ENV"
     fi
     ;;
   *) echo "Unsupported operating system: $(uname -s)" >&2; exit 1 ;;

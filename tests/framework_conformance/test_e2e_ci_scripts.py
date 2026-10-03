@@ -197,6 +197,7 @@ def _fake_cli(
     stdout: str = "",
     exit_code: int = 0,
     sleep_s: float = 0,
+    echo_args: bool = False,
 ) -> None:
     """Install a host-runnable CLI stub that works on POSIX and Windows."""
     script = directory / f"_{name}_impl.py"
@@ -206,6 +207,7 @@ def _fake_cli(
         "import time\n"
         f"time.sleep({sleep_s})\n"
         + (f"print({stdout!r})\n" if stdout else "")
+        + ("print(' '.join(sys.argv[1:]))\n" if echo_args else "")
         + f"raise SystemExit({exit_code})\n"
     )
     if sys.platform == "win32":
@@ -255,6 +257,27 @@ def test_environment_record_reports_each_cli_version_probe(tmp_path: Path) -> No
     environment = json.loads(record.read_text())
     assert environment["cursor_cli"] == "2026.01.01-abc123"
     assert environment["copilot_cli"] == "exited 3"
+
+
+@pytest.mark.parametrize(
+    ("command", "probe"),
+    [
+        ("fake-cursor acp", "--version"),
+        # Windows CI launches Cursor's bundled node and entrypoint directly.
+        ("fake-node index.js acp", "index.js --version"),
+    ],
+    ids=["launcher", "direct-runtime"],
+)
+def test_cursor_version_probes_the_launch_command_without_acp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, probe: str
+) -> None:
+    module = _load_record_backends_environment()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_cli(bin_dir, command.split()[0], echo_args=True)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    assert module.cli_version(*module.cursor_launch(command)) == probe
 
 
 def test_cli_version_reports_not_found_and_timeout(
