@@ -25,10 +25,15 @@ import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 import yaml
 from band_rest import AsyncRestClient
-from band_rest.types import AgentRegisterRequest
+from band_rest.types import (
+    AgentRegisterRequest,
+    BulkDeletionItemStatus,
+    BulkDeletionJobStatus,
+)
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -41,6 +46,15 @@ CONFIG_PATH = HERE / "agent_config.yaml"
 DEMO_DIR = HERE / ".demo"
 AGENTS_ENV = DEMO_DIR / "agents.env"
 AGENT_IDS = DEMO_DIR / "agent_ids.txt"
+ROOM_IDS = DEMO_DIR / "room_ids.txt"
+ROOM_DELETION_POLL_S = 1.0
+ROOM_DELETION_TIMEOUT_S = 60.0
+# The generated client declares these statuses as Literal aliases, with no enum
+# to import; tests pin every value here to those aliases.
+FINISHED_JOB_STATUSES: Final[frozenset[BulkDeletionJobStatus]] = frozenset(
+    {"completed", "failed"}
+)
+DELETED_ITEM_STATUS: Final[BulkDeletionItemStatus] = "succeeded"
 
 
 @dataclass(frozen=True)
@@ -155,6 +169,31 @@ async def create(client: AsyncRestClient) -> None:
     logger.info("Wrote %s, %s, %s", CONFIG_PATH.name, AGENTS_ENV, AGENT_IDS)
 
 
+def record_room(room_id: str) -> None:
+    """Append a created room to the teardown ledger before anything else can fail."""
+    DEMO_DIR.mkdir(exist_ok=True)
+    with ROOM_IDS.open("a", encoding="utf-8") as ledger:
+        ledger.write(f"{room_id}\n")
+
+
+async def delete_rooms(client: AsyncRestClient) -> None:
+    """Delete every recorded room; one already gone counts as deleted."""
+    if not ROOM_IDS.exists():
+        return
+    room_ids = ROOM_IDS.read_text(encoding="utf-8").split()
+    deletions = client.human_api_bulk_deletions
+    job = (await deletions.bulk_delete_my_chats(ids=room_ids)).data
+    async with asyncio.timeout(ROOM_DELETION_TIMEOUT_S):
+        while job.status not in FINISHED_JOB_STATUSES:
+            await asyncio.sleep(ROOM_DELETION_POLL_S)
+            job = (await deletions.show_my_bulk_deletion(job.id)).data
+    left = [item.id for item in job.results if item.status != DELETED_ITEM_STATUS]
+    if left:
+        raise RuntimeError(f"Could not delete rooms {left}; rerun to retry")
+    logger.info("Deleted rooms %s", ", ".join(room_ids))
+    ROOM_IDS.unlink()
+
+
 async def delete(client: AsyncRestClient) -> None:
     if not AGENT_IDS.exists():
         logger.info("No %s — nothing to delete", AGENT_IDS)
@@ -171,7 +210,10 @@ async def main() -> None:
     settings = ProvisionSettings()
     client = make_client(settings)
     if len(sys.argv) > 1 and sys.argv[1] == "delete":
-        await delete(client)
+        try:
+            await delete_rooms(client)
+        finally:
+            await delete(client)
     else:
         await create(client)
 

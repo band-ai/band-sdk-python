@@ -53,6 +53,7 @@ from docker_demo.breaker import (
     ObservedMessage,
     SenderClass,
 )
+from docker_demo.provision import record_room
 
 from band.config import load_agent_config
 
@@ -243,6 +244,7 @@ class Conductor:
             chat=CreateMyChatRoomRequestChat(title=self._room_title())
         )
         self.chat_id = resp.data.id
+        record_room(self.chat_id)
         logger.info("Created demo room: %s", self.chat_id)
 
         for agent_id in (self.roster.pm_id, self.roster.dev_id):

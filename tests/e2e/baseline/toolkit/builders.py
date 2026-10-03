@@ -123,7 +123,7 @@ def _build_copilot_sdk(
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
-    # ask_user / base_directory / a shared client are bespoke knobs exercised by
+    # ask_user / a shared client are bespoke knobs exercised by
     # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
     from copilot import (  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
         ProviderConfig,
@@ -134,10 +134,14 @@ def _build_copilot_sdk(
         CopilotSDKAdapterConfig,
     )
 
-    return CopilotSDKAdapter(
+    # A per-cell COPILOT_HOME, as copilot_acp gets: host hooks and extensions
+    # in ~/.copilot otherwise steer or deny the turn under test.
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-sdk-")
+    adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
             use_logged_in_user=False,
+            base_directory=copilot_home_dir(sandbox.name),
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
@@ -148,6 +152,8 @@ def _build_copilot_sdk(
         ),
         **feature_kwargs(features),
     )
+    weakref.finalize(adapter, sandbox.cleanup)
+    return adapter
 
 
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)

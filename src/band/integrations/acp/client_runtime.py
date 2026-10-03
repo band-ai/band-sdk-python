@@ -1109,7 +1109,7 @@ class ACPRuntime:
         return self.get_collected_chunks(session_id)
 
     async def cancel_turn(self, session_id: str) -> None:
-        """Tell the agent to stop a timed-out room's prompt."""
+        """Tell the agent to stop a room's in-flight prompt."""
         conn = await self.ensure_connection(can_respawn=False)
         await conn.cancel(session_id)
 
