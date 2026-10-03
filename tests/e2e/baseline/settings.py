@@ -187,6 +187,11 @@ class Backends(BaseSettings):
     # stay cheap and deterministic across runs.
     copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
+    # Kiro CLI over ACP (kiro_acp, e2e_pending): only read when running the
+    # pending adapter locally with a personal key.
+    kiro_command: str = ""  # KIRO_COMMAND (override the `kiro-cli` binary + args)
+    kiro_api_key: str = ""  # KIRO_API_KEY
+
 
 class LLMModels(BaseSettings):
     """Model ids for the agents under test and the judge."""

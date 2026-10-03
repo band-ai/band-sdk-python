@@ -234,7 +234,7 @@ async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
     )
     acp_runtime.reset_session(session_id)
 
-    chunks = await asyncio.wait_for(
+    result = await asyncio.wait_for(
         acp_runtime.prompt(
             session_id=session_id,
             prompt_text="What is 2 + 2? Reply with just the number.",
@@ -242,14 +242,14 @@ async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
         timeout=_PROMPT_TIMEOUT,
     )
     text = acp_runtime.client.get_collected_text(session_id)
-    logger.info("Collected %d chunks, text: %s", len(chunks), text[:200])
+    logger.info("Collected %d chunks, text: %s", len(result.chunks), text[:200])
 
-    assert len(chunks) > 0, "Expected at least one response chunk"
+    assert len(result.chunks) > 0, "Expected at least one response chunk"
     assert len(text) > 0, "Expected non-empty response text"
 
     # Verify chunk types are valid
     valid_types = {"text", "thought", "tool_call", "tool_result", "plan"}
-    seen_types = {chunk.chunk_type for chunk in chunks}
+    seen_types = {chunk.chunk_type for chunk in result.chunks}
     assert seen_types <= valid_types, f"Unexpected chunk types: {seen_types}"
 
 
@@ -298,7 +298,7 @@ async def test_codex_acp_dynamic_configuration_survives_two_turns(
         ),
         timeout=_PROMPT_TIMEOUT,
     )
-    assert first_turn
+    assert first_turn.chunks
     assert marker in acp_runtime.client.get_collected_text(session.session_id)
 
     confirmation = f"acp-confirm-{uuid4().hex}"
@@ -313,7 +313,7 @@ async def test_codex_acp_dynamic_configuration_survives_two_turns(
         ),
         timeout=_PROMPT_TIMEOUT,
     )
-    assert second_turn
+    assert second_turn.chunks
     second_text = acp_runtime.client.get_collected_text(session.session_id)
     assert marker in second_text
     assert confirmation in second_text
@@ -367,7 +367,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
         acp_runtime.reset_session(session_id)
         acp_runtime.set_permission_handler(session_id, _allow_all_permissions)
 
-        chunks = await asyncio.wait_for(
+        result = await asyncio.wait_for(
             acp_runtime.prompt(
                 session_id=session_id,
                 prompt_text=(
@@ -379,8 +379,8 @@ async def test_codex_acp_http_mcp_server_tool_call(
         )
         text = acp_runtime.client.get_collected_text(session_id)
 
-        assert any(chunk.chunk_type == "tool_call" for chunk in chunks)
-        assert any(chunk.chunk_type == "tool_result" for chunk in chunks)
+        assert any(chunk.chunk_type == "tool_call" for chunk in result.chunks)
+        assert any(chunk.chunk_type == "tool_result" for chunk in result.chunks)
         assert "mcp smoke ok" in text
     finally:
         await local_server.stop()
@@ -448,7 +448,7 @@ async def test_codex_acp_band_mcp_tool_call(
         acp_runtime.reset_session(session_id)
         acp_runtime.set_permission_handler(session_id, _allow_all_permissions)
 
-        chunks = await asyncio.wait_for(
+        result = await asyncio.wait_for(
             acp_runtime.prompt(
                 session_id=session_id,
                 prompt_text=(
@@ -462,7 +462,9 @@ async def test_codex_acp_band_mcp_tool_call(
         )
         text = acp_runtime.client.get_collected_text(session_id)
 
-        tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
+        tool_calls = [
+            chunk for chunk in result.chunks if chunk.chunk_type == "tool_call"
+        ]
         if not tool_calls:
             pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
         if not called_tool(tool_calls, "band_get_participants"):
@@ -491,13 +493,13 @@ async def test_codex_acp_multiple_sessions(acp_runtime: ACPRuntime) -> None:
     acp_runtime.reset_session(s2_id)
 
     # Send prompts to both (sequentially)
-    chunks_1 = await asyncio.wait_for(
+    result_1 = await asyncio.wait_for(
         acp_runtime.prompt(
             session_id=s1_id, prompt_text="Say 'hello' and nothing else."
         ),
         timeout=_PROMPT_TIMEOUT,
     )
-    chunks_2 = await asyncio.wait_for(
+    result_2 = await asyncio.wait_for(
         acp_runtime.prompt(
             session_id=s2_id, prompt_text="Say 'world' and nothing else."
         ),
@@ -505,8 +507,8 @@ async def test_codex_acp_multiple_sessions(acp_runtime: ACPRuntime) -> None:
     )
 
     # Both sessions should have responses in separate buffers
-    assert len(chunks_1) > 0, "Session 1 should have response chunks"
-    assert len(chunks_2) > 0, "Session 2 should have response chunks"
+    assert len(result_1.chunks) > 0, "Session 1 should have response chunks"
+    assert len(result_2.chunks) > 0, "Session 2 should have response chunks"
 
     text_1 = acp_runtime.client.get_collected_text(s1_id)
     text_2 = acp_runtime.client.get_collected_text(s2_id)

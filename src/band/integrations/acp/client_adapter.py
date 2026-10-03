@@ -30,6 +30,7 @@ from acp.schema import (
     PermissionOption,
     SetSessionConfigOptionResponse,
     SseMcpServer,
+    Usage,
 )
 from band_sdk_core import AgentFailure
 from pydantic import PositiveFloat, field_validator, model_validator
@@ -53,6 +54,7 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
+    TurnUsage,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
@@ -332,8 +334,9 @@ class ACPClientAdapter(
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
 
+    # Narration kinds gate RoomTurnEmitter; USAGE comes from `session/prompt`'s response.
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
@@ -689,7 +692,7 @@ class ACPClientAdapter(
                 turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
                 try:
                     async with turn_deadline:
-                        await runtime.prompt(
+                        result = await runtime.prompt(
                             session_id=session_id,
                             prompt_text=prompt_text,
                             on_chunk=emitter.emit,
@@ -721,6 +724,7 @@ class ACPClientAdapter(
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self.config.turn_timeout_s}s"
                     ) from None
+                await self.emit_usage(tools, self._turn_usage(result.usage))
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -732,6 +736,21 @@ class ACPClientAdapter(
             await self.on_cleanup(room_id)
             await tools.send_failure(_to_agent_failure(e))
             raise
+
+    @staticmethod
+    def _turn_usage(usage: Usage | None) -> TurnUsage:
+        """Map ACP's ``Usage`` onto ``TurnUsage``, folding in the disjoint ``thoughtTokens``.
+
+        Forwarded raw: ACP documents ``PromptResponse.usage`` as per-turn.
+        """
+        return TurnUsage.from_object(
+            usage,
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cached_read_tokens",
+            cache_write="cached_write_tokens",
+            reasoning="thought_tokens",
+        )
 
     async def _handle_turn_timeout(
         self,

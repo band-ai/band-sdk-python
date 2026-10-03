@@ -1463,15 +1463,10 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
       "adapter": "copilot_acp",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "backends"
       ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -1514,15 +1509,10 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
       "adapter": "cursor_acp",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "backends"
       ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -1564,15 +1554,10 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
       "adapter": "omp_acp",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "backends"
       ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -1641,15 +1626,10 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
       "adapter": "copilot_acp",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "backends"
       ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -1692,15 +1672,10 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
       "adapter": "cursor_acp",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "backends"
       ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -1742,15 +1717,10 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
       "adapter": "omp_acp",
       "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
+        "backends"
       ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -4866,20 +4836,6 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
-      "adapter": "copilot_acp",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
-      ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
       "adapter": "copilot_sdk",
       "lanes": [
         "core"
@@ -4917,20 +4873,6 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
-      "adapter": "cursor_acp",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
-      ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -4955,20 +4897,6 @@
       ],
       "status": "pass",
       "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
-      "adapter": "omp_acp",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "parlant"
-      ],
-      "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
