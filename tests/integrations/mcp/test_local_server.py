@@ -514,3 +514,19 @@ class TestLocalMcpServer:
             await server.start()
 
             assert server.port == port
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_start_leaves_nothing_running(self) -> None:
+        """Whoever cancelled the start never got the server back to stop it."""
+        server = LocalMCPServer(
+            name="test-cancelled-start", tool_registrations=[], port_min=0, port_max=0
+        )
+        starting = asyncio.create_task(server.start())
+        while server._serve_task is None:
+            await asyncio.sleep(0)
+
+        starting.cancel()
+        with suppress(asyncio.CancelledError):
+            await starting
+
+        _assert_fully_stopped(server)

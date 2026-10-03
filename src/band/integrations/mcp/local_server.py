@@ -254,7 +254,9 @@ class LocalMCPServer:
                 await wait_until_started(
                     uvicorn_server, serve_task, timeout_s=SERVER_START_TIMEOUT_S
                 )
-            except Exception:
+            except BaseException:
+                # Cancellation too: no caller holds a server whose start never
+                # returned, so a serve task left running here could never stop.
                 await self._stop_locked()
                 raise
 
