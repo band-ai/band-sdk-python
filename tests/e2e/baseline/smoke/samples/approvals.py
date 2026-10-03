@@ -14,6 +14,7 @@ import asyncio
 import codecs
 import re
 import string
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -463,12 +464,17 @@ def cursor_test_adapter(
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
         "inject_band_tools": inject_band_tools,
+        # Cursor saves an "allow always" grant to its config dir, which would
+        # let later cells run that command unasked.
+        "env": {
+            "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
+        },
     }
-    if workspace_for_room is None:
-        config_kwargs["cwd"] = str(setup.workdir)
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
-        workspace_for_room=workspace_for_room,
+        # Not ``cwd``: that roots a per-room child dir, while the cells read
+        # their effects straight from ``setup.workdir``.
+        workspace_for_room=workspace_for_room or (lambda _room_id: str(setup.workdir)),
         capabilities=capabilities,
     )
 
