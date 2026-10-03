@@ -21,9 +21,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeVar
 
-from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
+from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import (
+    ApprovalReply,
     OpencodeClientProtocol,
     OpencodePermissionRequest,
     OpencodeQuestion,
@@ -53,7 +54,6 @@ class ApprovalPorts:
     """What the approval machinery needs from the adapter, per room."""
 
     room_id: str
-    session_id: Callable[[], str | None]
     client: Callable[[], OpencodeClientProtocol | None]
     tools: Callable[[], AgentToolsProtocol | None]
     turn_mentions: Callable[[], list[dict[str, str]]]
@@ -148,6 +148,12 @@ APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
 )
 QUESTION_NO_LONGER_PENDING_TEMPLATE = (
     "OpenCode question `{request_id}` is no longer pending."
+)
+# Feedback carried on POST /permission/{id}/reply so OpenCode hands the turn
+# back to the model instead of ending on a bare RejectedError.
+REJECTED_PERMISSION_FEEDBACK = (
+    "This request was declined. Do not retry it or try another way to do the "
+    "same thing; reply to the user instead."
 )
 
 
@@ -603,13 +609,10 @@ class RoomApprovals:
 
     async def _approve_own_band_tool(self, request_id: str) -> None:
         try:
-            async with self._permission_reply(
+            async with self._client_reply(
                 "auto-approve permission", request_id
-            ) as (
-                client,
-                session_id,
-            ):
-                await client.reply_permission(session_id, request_id, response="always")
+            ) as client:
+                await client.reply_permission(request_id, reply="always")
         except ApprovalReplyError:
             return
 
@@ -618,13 +621,20 @@ class RoomApprovals:
     ) -> bool:
         """Perform the reply I/O for an already-claimed permission."""
         try:
-            async with self._permission_reply("reply to permission", entry.token) as (
-                client,
-                session_id,
-            ):
-                await client.reply_permission(session_id, entry.token, response=reply)
+            async with self._client_reply("reply to permission", entry.token) as client:
+                await client.reply_permission(
+                    entry.token,
+                    reply=reply,
+                    message=REJECTED_PERMISSION_FEEDBACK if reply == "reject" else None,
+                )
         except ApprovalReplyError:
             return False
+        logger.info(
+            "OpenCode permission resolved room=%s request=%s reply=%s",
+            self._ports.room_id,
+            entry.token,
+            reply,
+        )
         self._forget(self._permissions, entry)
         return True
 
@@ -640,7 +650,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the answer I/O for an already-claimed question."""
         try:
-            async with self._question_reply("answer question", entry.token) as client:
+            async with self._client_reply("answer question", entry.token) as client:
                 await client.reply_question(entry.token, answers=answers)
         except ApprovalReplyError:
             return False
@@ -659,7 +669,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the reject I/O for an already-claimed question."""
         try:
-            async with self._question_reply("reject question", entry.token) as client:
+            async with self._client_reply("reject question", entry.token) as client:
                 await client.reject_question(entry.token)
         except ApprovalReplyError:
             return False
@@ -689,7 +699,7 @@ class RoomApprovals:
 
     @asynccontextmanager
     async def _reply_guard(self, action: str, request_id: str) -> AsyncIterator[None]:
-        """Shared failure handling for the two reply context managers below."""
+        """Failure handling for a reply sent through ``_client_reply``."""
         try:
             yield
         except Exception as error:
@@ -697,19 +707,7 @@ class RoomApprovals:
             raise ApprovalReplyError from error
 
     @asynccontextmanager
-    async def _permission_reply(
-        self, action: str, request_id: str
-    ) -> AsyncIterator[tuple[OpencodeClientProtocol, str]]:
-        client = self._ports.client()
-        session_id = self._ports.session_id()
-        if client is None or not session_id:
-            await self._fail_request(action, request_id)
-            raise ApprovalReplyError
-        async with self._reply_guard(action, request_id):
-            yield client, session_id
-
-    @asynccontextmanager
-    async def _question_reply(
+    async def _client_reply(
         self, action: str, request_id: str
     ) -> AsyncIterator[OpencodeClientProtocol]:
         if (client := self._ports.client()) is None:

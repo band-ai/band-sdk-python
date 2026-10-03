@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, ClassVar
+from typing import ClassVar
 from uuid import uuid4
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -30,9 +30,20 @@ from band.client.rest import (
 )
 from band.converters.a2a_gateway import GatewayHistoryConverter
 from band.core.content import BLANK_CONTENT_ERROR
-from band.core.protocols import FAILURE_CODE_TIMEOUT, AgentToolsProtocol
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    AgentToolsProtocol,
+    FailureMetadataKey,
+)
+from band.core.redaction import redact_credentials, redact_credentials_deep
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    Capability,
+    Emit,
+    FeatureKwargs,
+    MessageType,
+    PlatformMessage,
+)
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -83,38 +94,6 @@ def slugify(name: str) -> str:
 
 
 _GATEWAY_ERROR_MAX_CHARS = 240
-_BEARER_TOKEN_RE = re.compile(r"Bearer\s+[^\s,;]+", re.IGNORECASE)
-# The value group excludes only "," and ";" (not whitespace) so a
-# scheme-prefixed credential (e.g. "Authorization: ApiKey sk-...") gets
-# redacted in full instead of leaking everything past the first space.
-_CREDENTIAL_KV_RE = re.compile(
-    r"(token|authorization|api[_-]?key|access[_-]?key|secret|password)"
-    r"\s*[:=]\s*[^,;]+",
-    re.IGNORECASE,
-)
-
-
-def _redact_credentials(text: str) -> str:
-    """Redact bearer tokens/API keys a message may embed."""
-    redacted = _BEARER_TOKEN_RE.sub("Bearer [REDACTED]", text)
-    return _CREDENTIAL_KV_RE.sub(r"\1=[REDACTED]", redacted)
-
-
-def _redact_credentials_deep(value: Any) -> Any:
-    """Recursively redact credentials from a peer's ``AgentFailure.detail``.
-
-    ``detail`` is untrusted, adapter-defined structure (e.g. Codex's own
-    ``codex_additional_details`` echoes upstream error text) that can nest
-    a credential-bearing string at any depth before it reaches an external
-    A2A client.
-    """
-    if isinstance(value, str):
-        return _redact_credentials(value)
-    if isinstance(value, dict):
-        return {key: _redact_credentials_deep(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact_credentials_deep(item) for item in value]
-    return value
 
 
 def _sanitize_gateway_error_message(exc: BaseException) -> str:
@@ -126,7 +105,7 @@ def _sanitize_gateway_error_message(exc: BaseException) -> str:
     trimmed = str(exc).strip()
     if not trimmed:
         return "Unknown error"
-    redacted = _redact_credentials(trimmed)
+    redacted = redact_credentials(trimmed)
     if len(redacted) <= _GATEWAY_ERROR_MAX_CHARS:
         return redacted
     return f"{redacted[: _GATEWAY_ERROR_MAX_CHARS - 3]}..."
@@ -149,11 +128,13 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
     Example:
         from band import Agent
-        from band.integrations.a2a.gateway import A2AGatewayAdapter
+        from band.integrations.a2a.gateway import (
+            A2AGatewayAdapter,
+            A2AGatewayAdapterConfig,
+        )
 
         adapter = A2AGatewayAdapter(
-            gateway_url="http://localhost:10000",
-            port=10000,
+            A2AGatewayAdapterConfig(gateway_url="http://localhost:10000", port=10000)
         )
         agent = Agent.create(
             adapter=adapter,
@@ -168,21 +149,16 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
     def __init__(
         self,
-        gateway_url: str | None = None,
-        port: int = 10000,
         config: A2AGatewayAdapterConfig | None = None,
+        *,
         rest_client: AsyncRestClient | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize gateway adapter.
 
         Args:
-            gateway_url: Base URL for A2A endpoints exposed by this gateway
-                (what remote clients see in agent cards). ``None`` (default)
-                derives ``http://localhost:{port}``; set explicitly when the
-                gateway is reachable at a different public address.
-            port: Port for HTTP server to listen on.
-            config: A2A Gateway runtime configuration.
+            config: Gateway address, port, and response timeout — see
+                :class:`A2AGatewayAdapterConfig`.
             rest_client: Optional ``AsyncRestClient`` injection seam (tests).
                 Normally the client is built at startup from the platform
                 connection the runtime injects — the credentials given to
@@ -192,8 +168,6 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             history_converter=GatewayHistoryConverter(),
             **features,
         )
-        self.gateway_url = gateway_url or f"http://localhost:{port}"
-        self.port = port
         self.config = config or A2AGatewayAdapterConfig()
 
         # Direct REST client for room/message operations; built at startup
@@ -238,8 +212,8 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         # Create and start HTTP server with peer routes
         self._server = GatewayServer(
             peers=self._peers,
-            gateway_url=self.gateway_url,
-            port=self.port,
+            gateway_url=self.config.public_url,
+            port=self.config.port,
             executor_factory=partial(BandAgentExecutor, self),
         )
         await self._server.start()
@@ -616,20 +590,22 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         self, pending: PendingA2ATask, msg: PlatformMessage
     ) -> None:
         """Translate Band's message category into an A2A task intent."""
-        if msg.message_type == "error":
+        if msg.message_type == MessageType.ERROR:
             # The peer's own adapter already built this AgentFailure (see
             # to_failure_event) -- relay it rather than re-tagging its
             # provider as "a2a-gateway", but still redact credentials the
             # peer's own message may embed before it reaches an external
             # A2A client, same as this gateway's own exception path.
             failure = (
-                msg.metadata.get("failure") if isinstance(msg.metadata, dict) else None
+                msg.metadata.get(FailureMetadataKey.FAILURE)
+                if isinstance(msg.metadata, dict)
+                else None
             )
             if isinstance(failure, dict):
-                failure = _redact_credentials_deep(failure)
+                failure = redact_credentials_deep(failure)
             else:
                 failure = None
-            await pending.fail(_redact_credentials(msg.content), failure=failure)
+            await pending.fail(redact_credentials(msg.content), failure=failure)
         elif msg.message_type in ("thought", "tool_call", "tool_result"):
             await pending.report_progress(msg.content)
         else:

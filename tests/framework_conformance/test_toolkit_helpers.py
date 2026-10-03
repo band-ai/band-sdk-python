@@ -27,6 +27,7 @@ import pytest
 from pydantic import BaseModel
 
 from band.client.streaming import MessageCreatedPayload
+from band.integrations.omp import DEFAULT_OMP_ACP_COMMAND
 from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import TurnEffect
 from tests.e2e.baseline.settings import Backends, BaselineSettings
@@ -60,6 +61,13 @@ def _handler(args: SampleInput) -> str:
 def _terminal_shorthand(handler: Callable[..., str]) -> Callable[..., str]:
     handler.band_terminal = True  # type: ignore[attr-defined]
     return handler
+
+
+def test_provisioned_agent_failure_repr_redacts_api_key() -> None:
+    agent = ProvisionedAgent(id="agent-id", api_key="private-agent-key", name="agent")
+
+    assert "agent-id" in repr(agent)
+    assert "private-agent-key" not in repr(agent)
 
 
 @pytest.mark.parametrize(
@@ -122,7 +130,7 @@ def _settings_with_omp_command(omp_command: str) -> BaselineSettings:
     return BaselineSettings(backends=Backends(omp_command=omp_command))
 
 
-def test_omp_cli_responds_defaults_base_to_omp_acp() -> None:
+def test_omp_cli_responds_probes_the_command_the_tests_launch() -> None:
     with (
         mock.patch(
             "tests.e2e.baseline.toolkit.deps.shutil.which", return_value="/bin/omp"
@@ -135,7 +143,7 @@ def test_omp_cli_responds_defaults_base_to_omp_acp() -> None:
         assert _omp_cli_responds(_settings_with_omp_command("")) is True
 
     run.assert_called_once()
-    assert run.call_args.args[0] == ["omp", "acp", "--help"]
+    assert run.call_args.args[0] == [*DEFAULT_OMP_ACP_COMMAND, "--help"]
 
 
 def test_omp_cli_responds_treats_override_as_full_base_command() -> None:
@@ -196,6 +204,14 @@ def test_assert_at_most_raises_above_ceiling_naming_contents() -> None:
     replies = Replies([_reply("first"), _reply("second"), _reply("RUNAWAY")])
     with pytest.raises(AssertionError, match="RUNAWAY"):
         replies.assert_at_most(2)
+
+
+def test_exact_content_assertion_rejects_changed_marker_case() -> None:
+    replies = Replies([_reply("The marker is Rehydratemem-a1b2c3d4.")])
+
+    replies.assert_contains_exact("Rehydratemem-a1b2c3d4")
+    with pytest.raises(AssertionError, match="exact value"):
+        replies.assert_contains_exact("rehydratemem-a1b2c3d4")
 
 
 # --- running_members (shared concurrent-start machinery) ----------------------

@@ -15,9 +15,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
+from pydantic import PositiveFloat
 from typing_extensions import Unpack
 
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_reply,
@@ -72,6 +74,34 @@ class GuidelineSpec:
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
+class ParlantAdapterConfig(BaseAdapterConfig):
+    """Settings for the Parlant adapter.
+
+    Attributes:
+        name: Parlant agent name. Defaults to the Band agent's name.
+        description: Parlant agent description (its behavioral instructions).
+            Defaults to the Band agent's description.
+        system_prompt: Full override of the created Parlant agent's
+            description. Only applies to an adapter-created agent.
+        custom_section: Extra instructions appended to the created agent's
+            description. Ignored when ``system_prompt`` overrides the whole
+            description; only applies to an adapter-created agent.
+        response_timeout: Max seconds to wait for the agent's response per
+            turn. A cold start (server warmup plus the first
+            guideline-matching/generation round-trips) can run long on a slow
+            host.
+        response_poll: Seconds per polling window within that budget; the wait
+            returns as soon as the response arrives, so a warm turn is fast.
+    """
+
+    name: str | None = None
+    description: str | None = None
+    system_prompt: str | None = None
+    custom_section: str | None = None
+    response_timeout: PositiveFloat = 300.0
+    response_poll: PositiveFloat = 30.0
+
+
 class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     """
     Parlant adapter using the official Parlant SDK directly.
@@ -84,11 +114,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     Example:
         import parlant.sdk as p
         from band import Agent
-        from band.adapters import ParlantAdapter
+        from band.adapters import ParlantAdapter, ParlantAdapterConfig
 
         adapter = ParlantAdapter(
-            name="Assistant",
-            description="A helpful assistant",
+            ParlantAdapterConfig(name="Assistant", description="A helpful assistant"),
             nlp_service=p.NLPServices.openai,
         )
         adapter.add_guideline(
@@ -115,28 +144,22 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     def __init__(
         self,
+        config: ParlantAdapterConfig | None = None,
         *,
-        name: str | None = None,
-        description: str | None = None,
+        history_converter: ParlantHistoryConverter | None = None,
         nlp_service: Any | None = None,
         server_options: dict[str, Any] | None = None,
         server: p.Server | None = None,
         parlant_agent: p.Agent | None = None,
         configure: ConfigureCallback | None = None,
-        system_prompt: str | None = None,
-        custom_section: str | None = None,
-        history_converter: ParlantHistoryConverter | None = None,
-        response_timeout: float = 300.0,
-        response_poll: float = 30.0,
         **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Parlant SDK adapter.
 
         Args:
-            name: Parlant agent name. Defaults to the Band agent's name.
-            description: Parlant agent description (its behavioral instructions).
-                Defaults to the Band agent's description.
+            config: Adapter settings; defaults to ``ParlantAdapterConfig()``.
+            history_converter: Custom history converter (optional)
             nlp_service: Parlant NLP service for the adapter-owned server (e.g.
                 ``p.NLPServices.openai``). Defaults to Parlant's own default.
             server_options: Extra keyword arguments passed verbatim to
@@ -147,30 +170,17 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 adapter-owned one. Borrowed: the adapter never tears it down.
                 Mutually exclusive with ``nlp_service`` / ``server_options``.
             parlant_agent: Bring your own ``p.Agent``; requires ``server=``.
+                Cannot be combined with ``config.system_prompt`` /
+                ``config.custom_section``.
             configure: Async callback ``(server, parlant_agent)`` run at startup
                 after guidelines are applied, for full native Parlant API access.
-            system_prompt: Full override of the created Parlant agent's
-                description (its behavioral instructions). Only applies to an
-                adapter-created agent; cannot be combined with ``parlant_agent=``.
-            custom_section: Extra instructions appended to the created agent's
-                description. Ignored when ``system_prompt`` overrides the whole
-                description; cannot be combined with ``parlant_agent=``.
-            history_converter: Custom history converter (optional)
-            response_timeout: Max seconds to wait for the agent's response per turn.
-                Default 300 (5 min): a cold start — server warmup plus the first
-                guideline-matching/generation round-trips — can run long on a slow host.
-            response_poll: Seconds per polling window within that budget (default 30);
-                the wait returns as soon as the response arrives, so a warm turn is fast.
         """
         super().__init__(
             history_converter=history_converter or ParlantHistoryConverter(),
             **features,
         )
+        self.config = config or ParlantAdapterConfig()
 
-        if response_timeout <= 0:
-            raise ValueError("response_timeout must be greater than 0")
-        if response_poll <= 0:
-            raise ValueError("response_poll must be greater than 0")
         if parlant_agent is not None and server is None:
             raise ValueError(
                 "parlant_agent requires the server it lives on; pass server= as well"
@@ -181,7 +191,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 "they cannot be combined with a caller-provided server="
             )
         if parlant_agent is not None and (
-            system_prompt is not None or custom_section is not None
+            self.config.system_prompt is not None
+            or self.config.custom_section is not None
         ):
             raise ValueError(
                 "system_prompt/custom_section shape the adapter-created agent's "
@@ -189,8 +200,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 "parlant_agent="
             )
 
-        self._name = name
-        self._description = description
         self._nlp_service = nlp_service
         self._server_options = dict(server_options or {})
         self._server = server
@@ -199,10 +208,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._parlant_agent = parlant_agent
         self._created_agent = parlant_agent is None
         self._configure = configure
-        self.system_prompt = system_prompt
-        self.custom_section = custom_section
-        self._response_timeout = response_timeout
-        self._response_poll = response_poll
 
         # Guidelines declared before startup, created on the live agent at start.
         # A restart with a borrowed (still-alive) agent must only create the
@@ -277,11 +282,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     def _agent_instructions(self, agent_description: str) -> str:
         """Behavioral instructions for the adapter-created Parlant agent."""
-        if self.system_prompt:
-            return self.system_prompt
-        description = self._description or agent_description
-        if self.custom_section:
-            description = f"{description}\n\n{self.custom_section}"
+        if self.config.system_prompt:
+            return self.config.system_prompt
+        description = self.config.description or agent_description
+        if self.config.custom_section:
+            description = f"{description}\n\n{self.config.custom_section}"
         return description
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -346,7 +351,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         agent = self._parlant_agent
         if agent is None:
             agent = await server.create_agent(
-                name=self._name or agent_name,
+                name=self.config.name or agent_name,
                 description=self._agent_instructions(agent_description),
             )
 
@@ -676,10 +681,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         # the moment a final (or tool-sent) message is seen, so a warm turn is fast.
         # Use perf_counter (the highest-resolution monotonic clock) for deadlines —
         # its resolution holds up on Windows, where time.monotonic() is coarse.
-        deadline = time.perf_counter() + self._response_timeout
+        deadline = time.perf_counter() + self.config.response_timeout
 
         while time.perf_counter() < deadline:
-            poll = min(self._response_poll, deadline - time.perf_counter())
+            poll = min(self.config.response_poll, deadline - time.perf_counter())
 
             # Wait for agent response
             logger.debug(
@@ -861,7 +866,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             logger.warning(
                 "Room %s: Timed out after %ss waiting for agent response",
                 room_id,
-                self._response_timeout,
+                self.config.response_timeout,
             )
 
     async def on_cleanup(self, room_id: str) -> None:

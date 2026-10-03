@@ -1,8 +1,25 @@
 # ACP (Agent Client Protocol) Integration
 
-Facts about `ACPClientAdapter` (Band room → room-owned ACP subprocess) that span
-modules or that the code cannot say for itself. The server side is
-`ACPServer` + `BandACPServerAdapter`.
+Facts about the ACP integration that span modules or that the code cannot say for
+itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
+the server side is `ACPServer` + `BandACPServerAdapter`.
+
+## Configuration
+
+`ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig`,
+`CopilotACPAdapterConfig` and `OmpACPAdapterConfig` extend it with backend defaults
+and fields. Callables (`workspace_for_room`, `resolve_session_config`,
+`resolve_permission`) are keyword-only constructor arguments.
+
+```python
+from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
+
+config = ACPClientAdapterConfig.model_validate(
+    {"command": "codex-acp", "turn_timeout_s": 600}
+)
+adapter = ACPClientAdapter(config)
+assert adapter.config.command == ("codex-acp",)
+```
 
 ## Turn delivery
 
@@ -45,10 +62,17 @@ failure fails that room turn visibly instead of falling back.
 
 - **OMP:** `approval_mode="yolo"` bypasses OMP's native approval and gives the agent full
   access to its host. It does not change Band tool registration or platform permissions.
+  `OmpACPAdapterConfig.model` is passed as OMP's `--model` flag; OMP does not read an
+  `OMP_MODEL` env variable. Set `api_key` with it and the adapter passes the key in the env
+  variable that model's provider needs.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
   session; Cursor turns are serialized.
+  The adapter does not pick a plan/agent mode itself; a caller selects one through
+  `resolve_session_config`, which reads each session's advertised catalog before the
+  first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
+  as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
 - **Kiro:** stdio only (Kiro documents no remote mode). `KiroACPClientProfile` posts
   `_kiro.dev/metadata`'s `contextUsagePercentage` as a plan chunk (the field name comes from
   the `kiro-cli` 2.24 binary, not a live session) and only logs `_kiro.dev/mcp/oauth_request`,
@@ -56,3 +80,21 @@ failure fails that room turn visibly instead of falling back.
   which requires a paid subscription with no bring-your-own-key route. The org has not
   bought one, so the baseline builder is `e2e_pending`: only unit and `FakeACPAgent` wire
   tests cover Band's side, not `kiro-cli`'s real wire behavior.
+
+## Server prompt outcomes
+
+`ACPServer.prompt` settles on the first terminal outcome for its room:
+
+- Completed text returns `end_turn`; `session/cancel` returns `cancelled`. A Band `error`
+  rejects the prompt with JSON-RPC `internal_error`, the Core failure projection in
+  `error.data`; room cleanup and agent shutdown also fail it. A second prompt while one is
+  pending in that room is rejected with `invalid_params`.
+- Room events bind to a prompt only once its Band post returns, so a previous turn's
+  late event stays unsolicited and cannot settle the prompt or drop the send. A terminal
+  outcome releases the prompt even while its Band REST send is still pending. One
+  timeout bounds the send and the reply together.
+- Error updates carry the same projection on the agent-message chunk's `_meta`, unsolicited
+  errors in mapped rooms included. Their text and projected keys and values are
+  credential-redacted; values under credential-named fields are redacted in full.
+- The ACP Python client drains queued update handlers before surfacing a prompt error, so
+  a slow client handler can still delay its own `prompt()`.

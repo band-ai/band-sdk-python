@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai]>=1.2.0"]
+# dependencies = ["band-sdk[pydantic-ai]>=4.0.0"]
 # ///
 """
 Basic Pydantic AI agent example.
@@ -20,7 +20,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import PydanticAIAdapter
+from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,8 +31,10 @@ async def main() -> None:
 
     # Create adapter with framework-specific settings
     adapter = PydanticAIAdapter(
-        model="openai:gpt-5.4-mini",
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        PydanticAIAdapterConfig(
+            model="openai:gpt-5.4-mini",
+            custom_section="You are a helpful assistant. Be concise and friendly.",
+        )
     )
 
     logger.info("Starting Pydantic AI agent...")

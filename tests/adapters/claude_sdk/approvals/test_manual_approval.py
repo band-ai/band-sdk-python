@@ -13,7 +13,7 @@ from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE,
     APPROVAL_UNAUTHORIZED_MESSAGE,
 )
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom, with_approvals
 from tests.baseline.decisions import ModelDecision, ToolCall
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -21,7 +21,6 @@ OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 ADMIN = {"id": "admin-1", "name": "Admin"}
 DECLINED = "User declined tool use"
 LIST_FILES = ModelDecision.call("Bash", command="ls")
-WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
 
 
 def prompt(token: str, summary: str) -> str:
@@ -38,7 +37,7 @@ async def test_a_room_answers_each_gated_tool_while_its_commands_stay_local(
     """A shell command and a file write (which acceptEdits would otherwise
     auto-approve) both wait on the room; listing, status, a wrong token and a
     bare approve are answered locally and never reach the model."""
-    room = await claude_room(approval_mode="manual")
+    room = await claude_room(with_approvals())
     room.claude.script([LIST_FILES, WRITE_NOTE, room.model_reply("Listed, no note.")])
 
     await room.send("List the files, then jot a note")
@@ -73,7 +72,7 @@ async def test_a_busy_room_evicts_the_oldest_ask_and_asks_for_a_token(
 ) -> None:
     """Three parallel tool calls against room for two: the oldest is declined
     without a notice, and a bare approve then names the two still open."""
-    room = await claude_room(approval_mode="manual", max_pending_approvals_per_room=2)
+    room = await claude_room(with_approvals(max_pending_per_room=2))
     room.claude.script(
         [
             ModelDecision(
@@ -125,9 +124,7 @@ async def test_only_allowlisted_senders_decide_but_anyone_can_list(
     """However a stranger names the approval, they are refused every time
     rather than guided to a token; an empty allowlist admits nobody, not
     everybody."""
-    room = await claude_room(
-        approval_mode="manual", approval_authorized_senders=allowlist
-    )
+    room = await claude_room(with_approvals(authorized_senders=allowlist))
     room.claude.script([LIST_FILES, room.model_reply("Listed.")])
 
     await room.send("List the files")
@@ -163,9 +160,7 @@ async def test_an_unanswered_ask_times_out_to_the_configured_decision(
     """A reply landing while the timeout notice is still being sent is told
     the token is gone, not "resolved"."""
     room = await claude_room(
-        approval_mode="manual",
-        approval_wait_timeout_s=60,
-        approval_timeout_decision=decision,
+        with_approvals(wait_timeout_s=60, timeout_decision=decision)
     )
     room.claude.script([LIST_FILES, room.model_reply("Done waiting.")])
     timeout_notice = room.tools.hold_message("timed out")
@@ -190,7 +185,7 @@ async def test_answers_stand_however_a_flaky_room_connection_fares(
     """An undelivered prompt nobody answered declines at once and leaves
     nothing pending; one answered mid-send honors the answer; and a
     "resolved" notice that fails to send never undoes the accept."""
-    room = await claude_room(approval_mode="manual")
+    room = await claude_room(with_approvals())
     network_down = RuntimeError("network down")
     room.claude.script(
         [LIST_FILES, room.model_reply("Could not ask.")],
@@ -241,7 +236,7 @@ async def test_leaving_a_room_drops_only_its_asks_and_tokens_keep_counting(
     """Tokens count per room; leaving one room closes its session without
     touching the other's pending ask, a rejoin continues the room's token
     sequence, and stopping the agent closes every session."""
-    room = await claude_room(approval_mode="manual")
+    room = await claude_room(with_approvals())
     other = room.beside("room-2")
     room.claude.script(
         [LIST_FILES, room.model_reply("Listed.")],

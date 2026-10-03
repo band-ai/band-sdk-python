@@ -31,11 +31,9 @@ Example (ACP Server):
 
 Example (ACP Client):
     from band import Agent
-    from band.integrations.acp import ACPClientAdapter
+    from band.integrations.acp import ACPClientAdapter, ACPClientAdapterConfig
 
-    adapter = ACPClientAdapter(
-        command="codex",
-    )
+    adapter = ACPClientAdapter(ACPClientAdapterConfig(command=("codex",)))
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()
 """
@@ -46,7 +44,10 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from band.integrations.acp.client_adapter import ACPClientAdapter
+    from band.integrations.acp.client_adapter import (
+        ACPClientAdapter,
+        ACPClientAdapterConfig,
+    )
     from band.integrations.acp.client_types import (
         ACPClientSessionState,
         BandACPClient,
@@ -55,7 +56,10 @@ if TYPE_CHECKING:
     from band.integrations.acp.push_handler import ACPPushHandler
     from band.integrations.acp.router import AgentRouter
     from band.integrations.acp.server import ACPServer, run_acp_server
-    from band.integrations.acp.server_adapter import BandACPServerAdapter
+    from band.integrations.acp.server_adapter import (
+        BandACPServerAdapter,
+        BandACPServerAdapterConfig,
+    )
     from band.integrations.acp.session_config import ACPConfigRequest
     from band.integrations.acp.types import (
         ACPSessionState,
@@ -65,6 +69,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ACPClientAdapter",
+    "ACPClientAdapterConfig",
     "ACPClientSessionState",
     "ACPConfigRequest",
     "ACPPushHandler",
@@ -73,6 +78,7 @@ __all__ = [
     "AgentRouter",
     "BandACPClient",
     "BandACPServerAdapter",
+    "BandACPServerAdapterConfig",
     "CollectedChunk",
     "EventConverter",
     "PendingACPPrompt",
@@ -81,6 +87,10 @@ __all__ = [
 
 _IMPORT_MAP: dict[str, tuple[str, str]] = {
     "ACPClientAdapter": ("band.integrations.acp.client_adapter", "ACPClientAdapter"),
+    "ACPClientAdapterConfig": (
+        "band.integrations.acp.client_adapter",
+        "ACPClientAdapterConfig",
+    ),
     "ACPConfigRequest": ("band.integrations.acp.session_config", "ACPConfigRequest"),
     "ACPClientSessionState": (
         "band.integrations.acp.client_types",
@@ -94,6 +104,10 @@ _IMPORT_MAP: dict[str, tuple[str, str]] = {
     "BandACPServerAdapter": (
         "band.integrations.acp.server_adapter",
         "BandACPServerAdapter",
+    ),
+    "BandACPServerAdapterConfig": (
+        "band.integrations.acp.server_adapter",
+        "BandACPServerAdapterConfig",
     ),
     "ACPSessionState": ("band.integrations.acp.types", "ACPSessionState"),
     "CollectedChunk": ("band.integrations.acp.types", "CollectedChunk"),

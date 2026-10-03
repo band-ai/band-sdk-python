@@ -387,13 +387,18 @@ class PlatformConnection:
     ws_url: str
 
 
+# How an adapter settles a tool-permission request: ask in chat, or answer
+# it automatically.
+ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
+
+
 class FeatureKwargs(TypedDict, total=False):
     """The feature keywords every ``SimpleAdapter`` constructor accepts.
 
     Adapters forward these via ``**features: Unpack[FeatureKwargs]`` instead
     of repeating the five parameters in every signature, and instead of
     taking a wrapping ``AdapterFeatures`` object -- callers pass the knobs
-    directly, e.g. ``ClaudeSDKAdapter(model="...", emit=Emit.THOUGHTS)``.
+    directly, e.g. ``ClaudeSDKAdapter(config, emit=Emit.THOUGHTS)``.
     ``AdapterFeatures`` itself is the internal frozen container ``self.features``
     resolves to; it is not part of the public constructor surface.
     """

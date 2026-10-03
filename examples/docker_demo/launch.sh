@@ -310,13 +310,13 @@ cleanup() {
     while IFS= read -r host; do
       [ -n "$host" ] || continue
       sbx policy check network "$host" >/dev/null 2>&1 || continue   # already gone
-      sbx policy rm network --resource "$host" -f >/dev/null 2>&1 \
-        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host -f"; failed=1; }
+      sbx policy rm network --resource "$host" >/dev/null 2>&1 \
+        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host"; failed=1; }
     done <"$MF_POLICY"
   fi
 
-  # Provisioned agents: provision.py deletes by the ids it recorded.
-  ( cd "$HERE" && uv run provision.py delete ) || { warn "agent deletion reported an error"; failed=1; }
+  # Meeting rooms and provisioned agents: provision.py deletes by the ids recorded.
+  ( cd "$HERE" && uv run provision.py delete ) || { warn "room/agent deletion reported an error"; failed=1; }
 
   rm -f "$HERE/.demo/room.url"
   if [ "$failed" -eq 0 ]; then

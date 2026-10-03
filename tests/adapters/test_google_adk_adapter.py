@@ -27,6 +27,7 @@ pytest.importorskip("google.adk", reason="google-adk not installed")
 # Imports below require google-adk; guarded by importorskip above.
 _google_adk_mod = importlib.import_module("band.adapters.google_adk")
 GoogleADKAdapter = _google_adk_mod.GoogleADKAdapter
+GoogleADKAdapterConfig = _google_adk_mod.GoogleADKAdapterConfig
 _get_tool_bridge_class = _google_adk_mod._get_tool_bridge_class
 _BandToolBridge = _get_tool_bridge_class()
 _sanitize_adk_agent_name = _google_adk_mod._sanitize_adk_agent_name
@@ -85,25 +86,28 @@ def mock_tools():
 class TestInitialization:
     """Tests for adapter initialization."""
 
-    def test_default_model(self):
-        """Should default to gemini-2.5-flash."""
-        adapter = GoogleADKAdapter()
-        assert adapter.model == "gemini-2.5-flash"
+    @pytest.mark.asyncio
+    async def test_runner_agent_uses_configured_model(self, mock_tools):
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(model="gemini-2.5-pro"))
+        await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
 
-    def test_custom_model(self):
-        """Should accept custom model."""
-        adapter = GoogleADKAdapter(model="gemini-2.5-pro")
-        assert adapter.model == "gemini-2.5-pro"
+        runner = adapter._create_runner(mock_tools)
 
-    def test_system_prompt_override(self):
-        """Should store custom system_prompt override."""
-        adapter = GoogleADKAdapter(system_prompt="You are a custom assistant.")
-        assert adapter._system_prompt_override == "You are a custom assistant."
+        assert runner.agent.model == "gemini-2.5-pro"
 
-    def test_custom_section(self):
-        """Should store custom section."""
-        adapter = GoogleADKAdapter(custom_section="Be helpful.")
-        assert adapter.custom_section == "Be helpful."
+    @pytest.mark.asyncio
+    async def test_custom_section_is_rendered_into_the_prompt(self):
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(custom_section="Be helpful."))
+        await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+
+        assert "Be helpful." in adapter._system_prompt
+
+    @pytest.mark.parametrize("field", ["max_history_messages", "max_transcript_chars"])
+    def test_history_bounds_must_be_positive(self, field):
+        with pytest.raises(
+            ValueError, match=f"{field}\n  Input should be greater than 0"
+        ):
+            GoogleADKAdapterConfig(**{field: 0})
 
     def test_execution_reporting_default(self):
         """Should default emit to everything the adapter supports."""
@@ -124,16 +128,6 @@ class TestInitialization:
         """Should have history converter set by default."""
         adapter = GoogleADKAdapter()
         assert adapter.history_converter is not None
-
-    def test_max_history_messages_default(self):
-        """Should default max_history_messages to 50."""
-        adapter = GoogleADKAdapter()
-        assert adapter.max_history_messages == 50
-
-    def test_custom_max_history_messages(self):
-        """Should accept custom max_history_messages."""
-        adapter = GoogleADKAdapter(max_history_messages=100)
-        assert adapter.max_history_messages == 100
 
 
 class TestADKAgentNameSanitization:
@@ -174,7 +168,9 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt_when_provided(self):
         """Should use custom system_prompt instead of rendered one."""
-        adapter = GoogleADKAdapter(system_prompt="Custom prompt here.")
+        adapter = GoogleADKAdapter(
+            GoogleADKAdapterConfig(system_prompt="Custom prompt here.")
+        )
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
 
         assert adapter._system_prompt == "Custom prompt here."
@@ -1209,7 +1205,7 @@ class TestHistoryAccumulation:
     @pytest.mark.asyncio
     async def test_sliding_window_limits_transcript(self, sample_message, mock_tools):
         """Should only inject the last max_history_messages in the transcript."""
-        adapter = GoogleADKAdapter(max_history_messages=3)
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(max_history_messages=3))
         await adapter.on_started("TestBot", "Test bot")
 
         # Seed room history with more messages than the window
@@ -1254,7 +1250,7 @@ class TestHistoryAccumulation:
         self, sample_message, mock_tools
     ):
         """Should trim accumulated history when it exceeds 2x max_history_messages."""
-        adapter = GoogleADKAdapter(max_history_messages=3)
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(max_history_messages=3))
         await adapter.on_started("TestBot", "Test bot")
 
         # Seed room history just below the trim threshold (2 * 3 = 6)
@@ -1292,7 +1288,7 @@ class TestTranscriptTruncation:
     @pytest.mark.asyncio
     async def test_truncates_large_transcript(self, sample_message, mock_tools):
         """Should truncate transcript exceeding max_transcript_chars."""
-        adapter = GoogleADKAdapter(max_transcript_chars=200)
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(max_transcript_chars=200))
         await adapter.on_started("TestBot", "Test bot")
 
         # Seed history with messages that produce a transcript > 200 chars
@@ -1340,7 +1336,7 @@ class TestTranscriptTruncation:
     @pytest.mark.asyncio
     async def test_no_truncation_when_within_limit(self, sample_message, mock_tools):
         """Should not truncate transcript when within max_transcript_chars."""
-        adapter = GoogleADKAdapter(max_transcript_chars=100_000)
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(max_transcript_chars=100_000))
         await adapter.on_started("TestBot", "Test bot")
 
         adapter._room_history["room-123"] = [

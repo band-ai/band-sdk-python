@@ -73,6 +73,7 @@ from band.runtime.tools import (
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "opencode"
+NO_TEXT_REPLY_MESSAGE = "OpenCode completed the turn without a text reply."
 
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
@@ -658,7 +659,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config,
             ApprovalPorts(
                 room_id=state.room_id,
-                session_id=lambda: self._if_owner(owner, lambda t: t.session_id, None),
                 client=lambda: self._if_owner(owner, lambda t: t.client, None),
                 tools=lambda: self._if_owner(owner, lambda t: t.tools, None),
                 turn_mentions=lambda: self._if_owner(
@@ -1283,7 +1283,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
             elif not replied:
                 await turn.tools.send_message(
-                    "OpenCode completed the turn without a text reply.",
+                    NO_TEXT_REPLY_MESSAGE,
                     mentions=turn.pending_mentions,
                 )
         finally:

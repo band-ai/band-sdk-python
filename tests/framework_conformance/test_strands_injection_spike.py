@@ -122,7 +122,7 @@ async def test_scripted_model_routes_to_typed_send_message() -> None:
     """
     room_id = "strands-spike-room"
     tools = FakeAgentTools(room_id=room_id)
-    adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
+    adapter = StrandsAdapter(llm=ScriptedStrandsModel([_SEND_TURN]))
     await _run(adapter, tools, room_id)
 
     # Strands dispatches platform tools through typed AgentToolsProtocol
@@ -162,7 +162,7 @@ async def test_custom_tool_decision_dispatches_to_handler() -> None:
     room_id = "strands-spike-custom"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
-        model=ScriptedStrandsModel([ToolTurn("echo", {"text": "MANGO"})]),
+        llm=ScriptedStrandsModel([ToolTurn("echo", {"text": "MANGO"})]),
         additional_tools=[(EchoInput, echo_handler)],
     )
     await _run(adapter, tools, room_id)
@@ -179,8 +179,7 @@ async def test_l6_execution_events_ordered_paired_and_correlated() -> None:
     room_id = "strands-spike-l6"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
-        model=ScriptedStrandsModel([_SEND_TURN]),
-        emit=Emit.TOOL_CALLS,
+        llm=ScriptedStrandsModel([_SEND_TURN]), emit=Emit.TOOL_CALLS
     )
     await _run(adapter, tools, room_id)
 
@@ -207,7 +206,7 @@ async def test_negative_control_text_only_sends_no_message() -> None:
     room_id = "strands-spike-negative"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
-        model=ScriptedStrandsModel([TextTurn("just a reply, no tools")])
+        llm=ScriptedStrandsModel([TextTurn("just a reply, no tools")])
     )
     with pytest.raises(TurnResultAlreadyReported):
         await _run(adapter, tools, room_id)

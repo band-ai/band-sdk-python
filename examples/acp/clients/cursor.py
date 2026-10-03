@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 Cursor ACP Client - Use Cursor's AI agent from Band.
@@ -32,8 +32,7 @@ Prerequisites:
        agent login
        # OR set CURSOR_API_KEY / CURSOR_AUTH_TOKEN environment variable
 
-    2. Set environment variables:
-       - BAND_API_KEY: Your Band API key (required for tool injection)
+    2. A 'cursor_agent' entry in agent_config.yaml.
 
     3. Optionally configure:
        - CURSOR_API_KEY: Cursor API key (alternative to `agent login`)
@@ -147,11 +146,11 @@ async def main() -> None:
             cwd=cwd,
             api_key=settings.cursor_api_key or None,
             auth_token=settings.cursor_auth_token or None,
-            resolve_session_config=partial(
-                choose_session_config,
-                preferences=settings.session_config_preferences,
-            ),
-        )
+        ),
+        resolve_session_config=partial(
+            choose_session_config,
+            preferences=settings.session_config_preferences,
+        ),
     )
 
     logger.info("Starting Cursor ACP client bridge...")

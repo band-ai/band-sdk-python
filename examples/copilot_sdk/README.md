@@ -88,8 +88,8 @@ Copilot's built-in `ask_user` tool lets the model ask a human a question —
 freeform or multiple-choice. Off by default; route it with `ask_user`:
 
 ```python notest
-config = CopilotSDKAdapterConfig(ask_user="room")  # ask the people in the room
-config = CopilotSDKAdapterConfig(ask_user=handler)  # ask someone outside it
+adapter = CopilotSDKAdapter(config, ask_user="room")  # ask the people in the room
+adapter = CopilotSDKAdapter(config, ask_user=handler)  # ask someone outside it
 ```
 
 ### `ask_user="room"` — ask the room (recommended)
@@ -115,13 +115,15 @@ default). Tell the model the operator exists — handler mode injects no
 prompt guidance — and raise both knobs for patient operators:
 
 ```python notest
-config = CopilotSDKAdapterConfig(
-    custom_section=(
-        "A human operator supervises you. When a request needs a decision "
-        "you cannot make alone, consult them with the ask_user tool."
+adapter = CopilotSDKAdapter(
+    CopilotSDKAdapterConfig(
+        custom_section=(
+            "A human operator supervises you. When a request needs a decision "
+            "you cannot make alone, consult them with the ask_user tool."
+        ),
+        turn_timeout_s=600.0,  # must stay above answer_timeout_s
     ),
     ask_user=OperatorConsole(answer_timeout_s=300.0).ask,
-    turn_timeout_s=600.0,  # must stay above answer_timeout_s
 )
 ```
 

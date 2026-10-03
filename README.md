@@ -192,21 +192,21 @@ The rest of this README stays LangGraph-first because it is the shortest path to
 Your model/provider credentials change with the framework, but Band room routing, history hydration, mentions, participant updates, and platform tools stay the same. Replace the adapter construction in the quickstart with one of these snippets, and keep the surrounding `Agent.create(...)` and `await agent.run()` wrapper.
 
 ```python
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
-adapter = AnthropicAdapter(model="claude-sonnet-4-5")
+adapter = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-5"))
 ```
 
 ```python
-from band.adapters import PydanticAIAdapter
+from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
-adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
+adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4-mini"))
 ```
 
 ```python
-from band.adapters import GeminiAdapter
+from band.adapters import GeminiAdapter, GeminiAdapterConfig
 
-adapter = GeminiAdapter(model="gemini-2.5-flash")
+adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-2.5-flash"))
 ```
 
 Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
@@ -327,13 +327,13 @@ assert OTEL_CORRELATION_FIELDS == (
 ```
 
 ```python
-from band.adapters import PydanticAIAdapter
+from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
 # None (default) inherits Agent.instrument_all(); False opts out of it;
 # True uses the global TracerProvider; InstrumentationSettings(...) customizes.
-adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini", instrument=True)
-
-assert adapter.instrument is True
+adapter = PydanticAIAdapter(
+    PydanticAIAdapterConfig(model="openai:gpt-5.4-mini"), instrument=True
+)
 ```
 
 Set it up in this order:
@@ -498,11 +498,11 @@ The table below is the agent tool surface exposed to LLM adapters. Framework ada
 Enable optional contact and memory tool categories by passing `capabilities=` when you construct an adapter:
 
 ```python
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.types import Capability
 
 adapter = AnthropicAdapter(
-    model="claude-sonnet-4-5",
+    AnthropicAdapterConfig(model="claude-sonnet-4-5"),
     capabilities=Capability.CONTACTS | Capability.MEMORY,
 )
 ```
@@ -511,15 +511,17 @@ adapter = AnthropicAdapter(
 
 ### Configuring Adapters
 
-Adapters support optional capabilities, emit telemetry, custom instructions, and custom tools, all passed directly as adapter constructor keyword arguments.
+Each adapter takes its settings (model, custom instructions, ...) as one config object, then optional capabilities, emit telemetry, and custom tools as keyword arguments.
 
 ```python
 from band import Capability, Emit
-from band.adapters import AnthropicAdapter
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
 adapter = AnthropicAdapter(
-    model="claude-sonnet-4-5",
-    prompt="You are a concise technical reviewer.",
+    AnthropicAdapterConfig(
+        model="claude-sonnet-4-5",
+        custom_section="You are a concise technical reviewer.",
+    ),
     capabilities=Capability.CONTACTS,
     emit=Emit.TOOL_CALLS,
 )
@@ -669,11 +671,13 @@ uv add "band-sdk[a2a]"
 Replace the adapter construction in the quickstart with:
 
 ```python
-from band.adapters.a2a import A2AAdapter, A2AAuth
+from band.adapters.a2a import A2AAdapter, A2AAdapterConfig, A2AAuth
 
 adapter = A2AAdapter(
-    remote_url="http://localhost:10000",
-    auth=A2AAuth(api_key="..."),
+    A2AAdapterConfig(
+        remote_url="http://localhost:10000",
+        auth=A2AAuth(api_key="..."),
+    )
 )
 ```
 
@@ -708,10 +712,12 @@ async def main() -> None:
     gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
     adapter = A2AGatewayAdapter(
-        gateway_url=gateway_url,
-        port=gateway_port,
-        # The default is 300 seconds. Use None for no response deadline.
-        config=A2AGatewayAdapterConfig(response_timeout_s=300),
+        A2AGatewayAdapterConfig(
+            gateway_url=gateway_url,
+            port=gateway_port,
+            # The default is 300 seconds. Use None for no response deadline.
+            response_timeout_s=300,
+        )
     )
 
     agent = Agent.create(
@@ -901,9 +907,9 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | **Find peers** | `band_lookup_peers()` |
 | **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
-| **Emit telemetry** | `AnthropicAdapter(model=..., emit=Emit.TOOL_CALLS)` |
-| **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
-| **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
+| **Emit telemetry** | `AnthropicAdapter(AnthropicAdapterConfig(model=...), emit=Emit.TOOL_CALLS)` |
+| **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(config, additional_tools=[(InputModel, handler)])` |
+| **A2A bridge** | `A2AAdapter(A2AAdapterConfig(remote_url="http://..."))` |
 | **Editor ACP** | `band-acp --agent-id ID --api-key KEY` |
 | **Store memory** | `band_store_memory(content, system, type, segment, thought)` |
 

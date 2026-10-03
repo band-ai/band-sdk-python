@@ -22,6 +22,7 @@ from typing import Any
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 
+from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from tests.baseline.decisions import ModelDecision, ToolCall
 
 MODEL = "claude-fake"
@@ -59,6 +60,14 @@ class Hangup:
     """The CLI process dies: the stream ends with no result."""
 
 
+@dataclass(frozen=True)
+class StreamFails:
+    """Reading the CLI's output raises ``error``, as a broken pipe or a read
+    timeout would; the SDK re-raises it unchanged to the turn."""
+
+    error: Exception
+
+
 @dataclass
 class Hold:
     """Parks the turn at this step: ``async with hold`` waits for the turn to
@@ -79,7 +88,7 @@ class Hold:
         self.released.set()
 
 
-Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup
+Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup | StreamFails
 Turn = Sequence[Step]
 
 
@@ -96,6 +105,12 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # Modes the account or model can't run; the CLI falls back to
+        # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
+        self.unavailable_modes: set[ClaudePermissionMode] = set()
+        # A wedged CLI: interrupt requests are acknowledged but the turn
+        # neither stops nor ends.
+        self.ignore_interrupt = False
         self.errors: list[BaseException] = []
 
     def script(self, *turns: Turn) -> None:
@@ -133,8 +148,9 @@ class FakeCLISession(Transport):
     def __init__(self, claude: FakeClaude, options: ClaudeAgentOptions) -> None:
         self.claude = claude
         self.options = options
+        self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
-        self._outbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._outbox: asyncio.Queue[dict[str, Any] | Exception | None] = asyncio.Queue()
         self._awaiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._hooks: dict[str, list[dict[str, Any]]] = {}
@@ -165,6 +181,8 @@ class FakeCLISession(Transport):
 
     async def read_messages(self) -> AsyncIterator[dict[str, Any]]:
         while (message := await self._outbox.get()) is not None:
+            if isinstance(message, Exception):
+                raise message
             yield message
 
     async def write(self, data: str) -> None:
@@ -193,6 +211,15 @@ class FakeCLISession(Transport):
                 "response": {},
             },
         )
+        if request["subtype"] == "interrupt":
+            self._interrupt()
+
+    def _interrupt(self) -> None:
+        """Stop the running turn; like the real CLI it still ends with a result."""
+        if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
+            return
+        self._turn.cancel()
+        self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
 
     def _emit(self, **message: Any) -> None:
         self._outbox.put_nowait(message)
@@ -209,6 +236,16 @@ class FakeCLISession(Transport):
         ending = EndTurn()
         try:
             self._emit(type="system", subtype="init", session_id=self.session_id)
+            if self.permission_mode in self.claude.unavailable_modes:
+                # The real CLI announces the fallback once, in a status message.
+                self.permission_mode = AUTO_FALLBACK_PERMISSION_MODE
+                self._emit(
+                    type="system",
+                    subtype="status",
+                    status=None,
+                    permissionMode=self.permission_mode,
+                    session_id=self.session_id,
+                )
             for step in turn:
                 match step:
                     case ModelDecision():
@@ -228,10 +265,19 @@ class FakeCLISession(Transport):
                         self.alive = False
                         self._outbox.put_nowait(None)
                         return
+                    case StreamFails(error=error):
+                        self.alive = False
+                        self._outbox.put_nowait(error)
+                        return
         # A broken script must fail the test (assert_done), not die unseen in this task.
         except Exception as error:  # noqa: BLE001
             self.claude.errors.append(error)
             ending = EndTurn(is_error=True, result=str(error))
+        self._emit_result(ending, denials)
+
+    def _emit_result(
+        self, ending: EndTurn, denials: list[dict[str, Any]] | None = None
+    ) -> None:
         self._emit(
             type="result",
             subtype="success",
@@ -331,10 +377,10 @@ class FakeCLISession(Transport):
         )
 
     def _auto_approved(self, tool_name: str) -> bool:
-        match self.options.permission_mode:
-            case "bypassPermissions":
+        match self.permission_mode:
+            case ClaudePermissionMode.BYPASS_PERMISSIONS:
                 return True
-            case "acceptEdits" if tool_name in EDIT_TOOLS:
+            case ClaudePermissionMode.ACCEPT_EDITS if tool_name in EDIT_TOOLS:
                 return True
         return any(
             _allow_rule_matches(rule, tool_name) for rule in self.options.allowed_tools
@@ -343,7 +389,7 @@ class FakeCLISession(Transport):
     async def _can_use_tool(self, tool_use_id: str, call: ToolCall) -> dict[str, Any]:
         if (
             self.options.can_use_tool is None
-            or self.options.permission_mode == "dontAsk"
+            or self.permission_mode == ClaudePermissionMode.DONT_ASK
         ):
             return {"behavior": "deny", "message": "Permission denied"}
         response = await self._ask_sdk(

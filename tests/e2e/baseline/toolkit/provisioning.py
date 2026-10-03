@@ -22,7 +22,7 @@ from contextlib import (
     asynccontextmanager,
     contextmanager,
 )
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -98,7 +98,7 @@ class ProvisionedAgent:
     """
 
     id: str
-    api_key: str
+    api_key: str = field(repr=False)
     name: str
     adapter_id: str | None = None
     description: str = ""

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]>=1.2.0"]
+# dependencies = ["band-sdk[claude_sdk]>=4.0.0"]
 # ///
 """
 Tom the cat agent using Claude SDK.
@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_tom_prompt
 
 from band import Agent, configure_logging
-from band.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.types import Emit
 
 configure_logging(
@@ -53,7 +53,7 @@ async def main() -> None:
     load_dotenv()
 
     adapter = ClaudeSDKAdapter(
-        custom_section=generate_tom_prompt("Tom"),
+        ClaudeSDKAdapterConfig(custom_section=generate_tom_prompt("Tom")),
         emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 

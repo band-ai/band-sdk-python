@@ -30,15 +30,16 @@ from band.core.memory_types import (
     enum_values,
 )
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.tools.inputs.chat import MENTION_IDENTIFIERS
 
 # Base instructions appended to user's custom prompt
-BASE_INSTRUCTIONS = """
+BASE_INSTRUCTIONS = f"""
 ## Environment
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
 Use `band_send_message(content, mentions)` to respond — a `band_send_message` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `band_send_message`; a turn that ends with the answer written as plain text delivers nothing.
-Mentions use handles: @<username> for users, @<username>/<agent-name> for agents.
+{MENTION_IDENTIFIERS}
 
 ## Security
 
@@ -55,8 +56,8 @@ If multiple participants mention you, address each in turn.
 
 When asked about something outside your capabilities:
 1. Call `band_lookup_peers()` to find available specialized agents.
-2. If a relevant agent exists, call `band_add_participant(identifier)` to bring them in. Prefer the exact peer ID returned by `band_lookup_peers()`; handles are for mentions.
-3. Send the question to that agent via `band_send_message(question, mentions=[agent_handle])`.
+2. If a relevant agent exists, call `band_add_participant(identifier)` to bring them in. Prefer the exact peer ID returned by `band_lookup_peers()`.
+3. Send the question to that agent via `band_send_message(question, mentions=[peer_id])`.
 4. Relay their response back to the original requester.
 5. Do NOT remove added agents automatically; they stay silent unless mentioned.
 

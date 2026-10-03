@@ -49,7 +49,8 @@ async def test_peer_initiated_delegation_with_self_recall(
 ) -> None:
     """B recalls a seeded value, routes it to A by mention, and A responds."""
     value = unique_marker("value")
-    async with cell.run_many(2) as (agent_a, agent_b):
+    # Short names keep the platform's capped agent handles unambiguous.
+    async with cell.run_many(2, labels=["peer-a", "peer-b"]) as (agent_a, agent_b):
         room_id = await resource_manager.provision_room(
             title=f"e2e-peer-delegation-{cell.adapter_id}",
             participants=[agent_a.id, agent_b.id],
@@ -77,8 +78,16 @@ async def test_peer_initiated_delegation_with_self_recall(
             )
             # Coupled: B mentioned A (metadata) in a message carrying the recalled value
             # — a real peer-initiated routing mention off B's own context.
-            replies_b = await capture.wait_for_reply(deleg_mid, agent_b.id, since=mark)
-            replies_b.mentioning(agent_a.id).assert_contains_any([value])
+            await capture.wait_for_processed(deleg_mid, agent_b.id)
+            replies_b = capture.messages.since(mark).from_sender(agent_b.id)
+            routed = replies_b.mentioning(agent_a.id)
+            routed.assert_contains_exact(value)
+            routed_message = next(
+                message for message in routed if value in message.content
+            )
+            await capture.wait_for_processed(
+                routed_message.id, agent_a.id, deadline_s=cascade_deadline
+            )
 
             # Cascade barrier: A's reply is driven by B's mention (not a user send), so
             # wait until A has produced a message *since the delegation* — reusing the same

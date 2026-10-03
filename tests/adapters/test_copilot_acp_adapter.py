@@ -10,7 +10,6 @@ adapter against an in-process fake shaped like Copilot's live catalog.
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -42,6 +41,7 @@ from tests.integrations.acp.acp_toolkit.agent import (
 from tests.integrations.acp.acp_toolkit.harness import (
     DEFAULT_ROOM,
     AcpSession,
+    launch_for,
     started_acp_adapter,
 )
 
@@ -50,25 +50,44 @@ class TestCopilotACPAdapterConstruction:
     def test_is_acp_client_adapter(self) -> None:
         assert issubclass(CopilotACPAdapter, ACPClientAdapter)
 
-    def test_defaults_to_stdio_copilot_command(self) -> None:
-        adapter = CopilotACPAdapter()
-        assert adapter._command == list(DEFAULT_COPILOT_COMMAND)
-
-    def test_no_config_equivalent_to_default_config(self) -> None:
-        a, b = CopilotACPAdapter(), CopilotACPAdapter(CopilotACPAdapterConfig())
-        for attr in ("_command", "_env", "_inject_band_tools"):
-            assert getattr(a, attr) == getattr(b, attr)
-
-    def test_custom_command_is_forwarded(self) -> None:
-        adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(command=("copilot", "--acp", "--yolo"))
-        )
-        assert adapter._command == ["copilot", "--acp", "--yolo"]
-
-    def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_launches_copilot_with_its_ambient_login_by_default(
+        self, tmp_path: Path
+    ) -> None:
+        # No token and no env -> the CLI's ambient login (stored / gh / BYOK).
         adapter = CopilotACPAdapter(CopilotACPAdapterConfig(cwd=str(tmp_path)))
 
-        assert adapter._workspace("room-a") == str(tmp_path / "room-a")
+        launch = await launch_for(adapter)
+
+        assert launch.command == DEFAULT_COPILOT_COMMAND
+        assert launch.env is None
+
+    @pytest.mark.asyncio
+    async def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(cwd=str(tmp_path)))
+
+        launch = await launch_for(adapter, "room-a")
+
+        assert launch.cwd == str(tmp_path / "room-a")
+
+    def test_cwd_and_a_workspace_resolver_are_exclusive(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="set either cwd or workspace_for_room"):
+            CopilotACPAdapter(
+                CopilotACPAdapterConfig(cwd=str(tmp_path)),
+                workspace_for_room=lambda room_id: str(tmp_path / room_id),
+            )
+
+    @pytest.mark.parametrize(
+        "setting",
+        [{"host": "10.0.0.5", "port": 8080}, {"port": 8080}],
+        ids=["host-and-port", "port"],
+    )
+    def test_tcp_config_is_rejected(self, setting: dict[str, object]) -> None:
+        with pytest.raises(
+            ValueError,
+            match="TCP ACP transport cannot guarantee room process isolation",
+        ):
+            CopilotACPAdapterConfig.model_validate(setting)
 
     def test_no_profile_uses_default_noop(self) -> None:
         # Copilot speaks vanilla ACP; the base adapter leaves profile unset and the
@@ -78,107 +97,59 @@ class TestCopilotACPAdapterConstruction:
         client = adapter._build_runtime()._client_factory()
         assert isinstance(client._profile, NoopACPClientProfile)
 
-    def test_github_token_injected_into_stdio_env(self) -> None:
-        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(github_token="ghp_x"))
-        assert adapter._env == {"GITHUB_TOKEN": "ghp_x"}
-
-    def test_no_env_without_token(self) -> None:
-        # No token and no env → rely on the CLI's ambient login (stored / gh / BYOK).
-        assert CopilotACPAdapter()._env is None
-
-    def test_env_passthrough_for_any_auth_method(self) -> None:
-        # A user can auth however Copilot supports — e.g. the highest-precedence
-        # COPILOT_GITHUB_TOKEN, or BYOK provider keys — via the general env passthrough.
+    @pytest.mark.parametrize(
+        ("config", "env"),
+        [
+            pytest.param(
+                CopilotACPAdapterConfig(github_token="ghp_x"),
+                {"GITHUB_TOKEN": "ghp_x"},
+                id="token",
+            ),
+            # Any auth Copilot supports (COPILOT_GITHUB_TOKEN, BYOK keys) passes
+            # through env.
+            pytest.param(
+                CopilotACPAdapterConfig(
+                    env={"COPILOT_GITHUB_TOKEN": "tok", "OTHER": "x"}
+                ),
+                {"COPILOT_GITHUB_TOKEN": "tok", "OTHER": "x"},
+                id="env",
+            ),
+            pytest.param(
+                CopilotACPAdapterConfig(github_token="ghp_x", env={"GH_TOKEN": "gh"}),
+                {"GH_TOKEN": "gh", "GITHUB_TOKEN": "ghp_x"},
+                id="token-merged-into-env",
+            ),
+            pytest.param(
+                CopilotACPAdapterConfig(
+                    github_token="from-shortcut", env={"GITHUB_TOKEN": "from-env"}
+                ),
+                {"GITHUB_TOKEN": "from-env"},
+                id="env-wins-over-token",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_auth_reaches_the_cli_environment(
+        self, config: CopilotACPAdapterConfig, env: dict[str, str], tmp_path: Path
+    ) -> None:
         adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(env={"COPILOT_GITHUB_TOKEN": "tok", "OTHER": "x"})
-        )
-        assert adapter._env == {"COPILOT_GITHUB_TOKEN": "tok", "OTHER": "x"}
-
-    def test_github_token_convenience_merges_with_env(self) -> None:
-        adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(github_token="ghp_x", env={"GH_TOKEN": "gh"})
-        )
-        assert adapter._env == {"GH_TOKEN": "gh", "GITHUB_TOKEN": "ghp_x"}
-
-    def test_explicit_env_github_token_wins_over_convenience(self) -> None:
-        adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(
-                github_token="from-shortcut", env={"GITHUB_TOKEN": "from-env"}
-            )
-        )
-        assert adapter._env == {"GITHUB_TOKEN": "from-env"}
-
-    def test_custom_section_threaded_to_system_context(self) -> None:
-        adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(custom_section="You are a triage bot.")
-        )
-        assert adapter._custom_section == "You are a triage bot."
-
-    def test_inject_band_tools_forwarded(self) -> None:
-        assert CopilotACPAdapter()._inject_band_tools is True
-        assert (
-            CopilotACPAdapter(
-                CopilotACPAdapterConfig(inject_band_tools=False)
-            )._inject_band_tools
-            is False
+            config, workspace_for_room=lambda room_id: str(tmp_path / room_id)
         )
 
-    def test_additional_tools_forwarded(self) -> None:
+        launch = await launch_for(adapter)
+
+        assert launch.env == env
+
+    def test_additional_tools_are_registered(self) -> None:
         class EchoInput(BaseModel):
             text: str
 
         def _echo(text: str) -> str:
             return text
 
-        tool = (EchoInput, _echo)
-        adapter = CopilotACPAdapter(additional_tools=[tool])
-        assert adapter._custom_tools == [tool]
+        adapter = CopilotACPAdapter(additional_tools=[(EchoInput, _echo)])
 
-    def test_session_config_resolver_is_forwarded(self) -> None:
-        async def resolver(request: ACPConfigRequest) -> dict[str, str]:
-            del request
-            return {"reasoning_effort": "high"}
-
-        adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(resolve_session_config=resolver)
-        )
-
-        assert adapter._resolve_session_config is resolver
-
-
-class TestCopilotACPAdapterTcpTransport:
-    def test_tcp_config_is_rejected(self) -> None:
-        with pytest.raises(
-            ValueError,
-            match="TCP ACP transport cannot guarantee room process isolation",
-        ):
-            CopilotACPAdapter(CopilotACPAdapterConfig(host="10.0.0.5", port=8080))
-
-    def test_custom_command_with_tcp_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="not both"):
-            CopilotACPAdapter(
-                CopilotACPAdapterConfig(
-                    command=("copilot", "--acp", "--yolo"), host="10.0.0.5", port=8080
-                )
-            )
-
-    def test_tcp_with_auth_warns_before_rejection(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # CopilotACPAdapter warns about ignored auth before the base adapter rejects TCP.
-        with (
-            caplog.at_level(logging.WARNING, logger="band.adapters.copilot_acp"),
-            pytest.raises(
-                ValueError,
-                match="TCP ACP transport cannot guarantee room process isolation",
-            ),
-        ):
-            CopilotACPAdapter(
-                CopilotACPAdapterConfig(
-                    host="10.0.0.5", port=8080, github_token="ghp_x"
-                )
-            )
-        assert any("ignored over TCP" in r.message for r in caplog.records)
+        assert "echo" in adapter._own_tool_names
 
 
 # Copilot CLI 1.0.89's efforts per model (probed live).
@@ -608,7 +579,6 @@ class TestCopilotACPModelSelection:
 
         with pytest.raises(ValueError, match="not both"):
             CopilotACPAdapter(
-                CopilotACPAdapterConfig(
-                    model="gpt-5.4", resolve_session_config=resolver
-                )
+                CopilotACPAdapterConfig(model="gpt-5.4"),
+                resolve_session_config=resolver,
             )

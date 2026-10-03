@@ -150,9 +150,11 @@ adapter = LangGraphAdapter(
 
 ```python
 adapter = LangGraphAdapter(
+    LangGraphAdapterConfig(
+        custom_section="You are a pirate assistant. Always respond in pirate speak!",
+    ),
     llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
-    custom_section="You are a pirate assistant. Always respond in pirate speak!",
 )
 ```
 

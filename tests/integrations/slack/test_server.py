@@ -14,7 +14,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from band.core.simple_adapter import SimpleAdapter
-from band.integrations.slack.adapter import SlackAdapter
+from band.integrations.slack.adapter import SlackAdapter, SlackAdapterConfig
 from band.integrations.slack.server import build_router
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
@@ -257,8 +257,8 @@ def test_adapter_router_property_exposes_starlette_router():
             return None
 
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(_app(),)),
         inner=_NoopInner(),
-        apps=[_app()],
         rest_client=MagicMock(),
     )
     router = adapter.router

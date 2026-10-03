@@ -19,6 +19,19 @@ text. `tests/framework_conformance/test_tool_text_drift.py` is the drift
 guard; an adapter that builds its own tool schemas sets `advertised_arg_text`
 on its test config so the guard can read what the model actually sees.
 
+## Adapter Constructor Shape
+
+Every adapter is built as `XAdapter(config: XAdapterConfig | None = None, *,
+history_converter=..., additional_tools=..., <live objects>, **features)`.
+`config` is required (no `None` default) only when no usable default exists,
+such as a remote endpoint or app credentials.
+`XAdapterConfig` subclasses `BaseAdapterConfig` (or `EnvAdapterConfig` when env
+vars may set it) from `src/band/core/adapterconfig.py`. It is frozen, rejects
+unknown fields, and holds plain data only, so it loads from YAML/JSON. Clients,
+graphs, LLM objects, factories and callbacks stay keyword-only constructor
+arguments. Validate settings in the config, not the constructor.
+`tests/framework_conformance/test_adapter_shape.py` enforces the shape.
+
 ## Adapter Feature Flags & Capability Negotiation
 
 Every adapter constructor takes `emit=`/`capabilities=`/`include_tools=`/etc.
@@ -233,7 +246,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -376,6 +389,13 @@ install` it and exercise the real call in this repo's venv.
   If writing the assertion requires re-deriving *how* the code decided
   something, the test is checking the wrong thing — assert the decision
   itself.
+- **Tests run on Ubuntu and Windows CI — test across OSes, don't skip one.**
+  Build host paths with `tmp_path` or `tests.paths.host_absolute_path`, never a
+  hard-coded `"/opt/..."` (no drive, so relative on Windows); check absoluteness
+  with `band.workspaces.is_host_absolute`. Where behavior differs per OS, write
+  one parametrize table that runs everywhere, each row naming the `os.name`
+  values that accept it. `skipif(os.name ...)` is only for a boundary that
+  cannot run on that OS, never for a path or separator assumption.
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a

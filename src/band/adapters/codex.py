@@ -27,6 +27,7 @@ from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
+from band.core.adapterconfig import EnvAdapterConfig
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_reply,
@@ -43,6 +44,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
+    ApprovalMode,
     Capability,
     Emit,
     FeatureKwargs,
@@ -61,6 +63,7 @@ from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
+    CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
     build_agent_failure,
@@ -86,6 +89,7 @@ from band.runtime.tools import (
 from band.workspaces import (
     WorkspaceResolver,
     claim_room_workspace,
+    is_host_absolute,
     release_room_workspace,
     resolve_room_workspace,
 )
@@ -109,7 +113,6 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 TransportKind = Literal["stdio", "ws"]
-ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
@@ -235,8 +238,18 @@ _TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
         CodexItemType.WEB_SEARCH,
         CodexItemType.IMAGE_VIEW,
         CodexItemType.COLLAB_AGENT_TOOL_CALL,
-        CodexItemType.DYNAMIC_TOOL_CALL,
     }
+)
+
+# Tools Codex asks the adapter to run (item/tool/call). The adapter reports them
+# there, with the real result, so their item/completed is the same call again.
+_REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.DYNAMIC_TOOL_CALL}
+)
+
+# The prompt and the reply; the reply's text is read by the turn loop.
+_MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
 )
 
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
@@ -395,7 +408,7 @@ class _WithoutCwdBinding(PydanticBaseSettingsSource):
         return values
 
 
-class CodexAdapterConfig(BaseSettings):
+class CodexAdapterConfig(EnvAdapterConfig):
     """Runtime configuration for Codex adapter sessions.
 
     Every field can be set explicitly (highest priority) or via a
@@ -419,16 +432,10 @@ class CodexAdapterConfig(BaseSettings):
         when its extra metadata is desired.
     """
 
-    # extra="forbid" (not the usual settings "ignore"): this config is
-    # commonly built with many explicit kwargs, so a typo'd field name
-    # must fail construction instead of silently vanishing.
     # populate_by_name: an aliased field stays constructible by its field name
     # and keeps its prefix-derived environment variable.
     model_config = SettingsConfigDict(
         env_prefix="CODEX_",
-        case_sensitive=False,
-        extra="forbid",
-        env_ignore_empty=True,
         populate_by_name=True,
         arbitrary_types_allowed=True,
     )
@@ -478,6 +485,8 @@ class CodexAdapterConfig(BaseSettings):
     )
     enable_self_config_tools: bool = False
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
+    # CODEX_SKILL_ROOTS is a JSON list.
+    skill_roots: list[str] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
     max_pending_approvals_per_room: int = Field(default=50, ge=1)
@@ -536,6 +545,13 @@ class CodexAdapterConfig(BaseSettings):
         if isinstance(value, str):
             return value.split()
         return value
+
+    @field_validator("skill_roots")
+    @classmethod
+    def _require_absolute_paths(cls, roots: list[str]) -> list[str]:
+        if relative := [root for root in roots if not is_host_absolute(root)]:
+            raise ValueError(f"skill_roots must be absolute paths: {relative}")
+        return roots
 
     @classmethod
     def settings_customise_sources(
@@ -1468,7 +1484,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if turn_id:
                 try:
                     await self._client.request(
-                        "turn/interrupt",
+                        CodexRequestMethod.TURN_INTERRUPT,
                         {"threadId": thread_id, "turnId": turn_id},
                     )
                 except Exception:
@@ -1587,6 +1603,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 client_version=self.config.client_version,
                 experimental_api=self.config.experimental_api,
             )
+            await self._register_skill_roots(client)
             self._selected_model = await self._select_model()
             self._initialized = True
         except Exception:
@@ -1610,6 +1627,17 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     self._release_room_workspace(state, room_id)
             raise
 
+    async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
+        roots = self.config.skill_roots
+        if not roots:
+            return
+        try:
+            await client.request(
+                CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET, {"extraRoots": roots}
+            )
+        except CodexJsonRpcError as exc:
+            raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
+
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
         state = self._active_client_state()
         if state is None:
@@ -1630,7 +1658,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         try:
-            result = await self._client.request("model/list", {})
+            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; using default Codex model",
@@ -1661,7 +1689,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if is_session_bootstrap and history.has_thread():
             try:
                 result = await self._client.request(
-                    "thread/resume",
+                    CodexRequestMethod.THREAD_RESUME,
                     {
                         "threadId": history.thread_id,
                         "personality": self.config.personality,
@@ -1714,7 +1742,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await self._client.request("thread/start", start_params)
+        started = await self._client.request(
+            CodexRequestMethod.THREAD_START, start_params
+        )
         thread = started.get("thread") if isinstance(started, dict) else {}
         thread_id = str((thread or {}).get("id") or "")
         if not thread_id:
@@ -2384,8 +2414,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        # Skip known non-actionable types
-        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
+        if item_type in _REQUESTED_TOOL_ITEM_TYPES or item_type in _MESSAGE_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -2406,8 +2435,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return CodexAdapter._extract_image_view(item)
             case CodexItemType.COLLAB_AGENT_TOOL_CALL:
                 return CodexAdapter._extract_collab_agent_tool_call(item)
-            case CodexItemType.DYNAMIC_TOOL_CALL:
-                return CodexAdapter._extract_dynamic_tool_call(item)
             case _:
                 return CodexToolItem(item_type, {}, "completed")
 
@@ -2488,51 +2515,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             item.get("result"), default="completed", raw_fallback=True
         )
         return CodexToolItem(name, collab_args, output)
-
-    @staticmethod
-    def _extract_dynamic_tool_call(item: dict[str, Any]) -> CodexToolItem:
-        tool = item.get("tool") or item.get("name") or item.get("toolName")
-        if isinstance(tool, dict):
-            tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
-        name = str(tool or "dynamic_tool")
-
-        raw_args = (
-            item.get("arguments")
-            if "arguments" in item
-            else item.get("args")
-            if "args" in item
-            else item.get("input")
-            if "input" in item
-            else item.get("inputJson", {})
-        )
-        args = CodexAdapter._coerce_tool_args(raw_args)
-
-        output = CodexAdapter._stringify_tool_output(
-            item.get("result"),
-            item.get("output"),
-            item.get("content"),
-            item.get("error"),
-            item.get("contentItems"),
-            default=str(item.get("status", "completed")),
-        )
-        return CodexToolItem(name, args, output)
-
-    @staticmethod
-    def _coerce_tool_args(value: Any) -> dict[str, Any]:
-        """Return a dict for Codex tool args across protocol variants."""
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return {"input": value}
-            if isinstance(parsed, dict):
-                return parsed
-            return {"input": parsed}
-        if value is None:
-            return {}
-        return {"input": value}
 
     @staticmethod
     def _stringify_tool_output(
@@ -3164,7 +3146,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if model_arg.lower() in _MODEL_LIST_WORDS:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
-                result = await self._client.request("model/list", {})
+                result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
                 models = self._visible_model_ids(result)
                 if models:
                     preview = ", ".join(models[:10])
@@ -3536,7 +3518,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        return await self._client.request("turn/start", params)
+        return await self._client.request(CodexRequestMethod.TURN_START, params)
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None
@@ -3914,7 +3896,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             raise RuntimeError("Codex client not initialized")
         model_id = self._selected_model or await self._select_model()
         try:
-            result = await self._client.request("model/list", {})
+            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; supported reasoning efforts are unknown",

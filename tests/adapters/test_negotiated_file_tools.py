@@ -10,7 +10,10 @@ import pytest
 from band.adapters.letta import LettaAdapter
 from band.adapters.opencode import OpencodeAdapter
 from band.core.types import AdapterFeatures, Capability
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import (
+    ACPClientAdapter,
+    ACPClientAdapterConfig,
+)
 from band.runtime.tools import FILE_TOOL_NAMES, ToolDefinition
 from tests.e2e.baseline.toolkit.observations import ToolResult, ToolResults
 
@@ -39,7 +42,10 @@ CachedAdapter = tuple[Callable[[], object], Callable[[object], list[ToolDefiniti
             id="opencode",
         ),
         pytest.param(
-            lambda: ACPClientAdapter(command="test-acp", capabilities=Capability.FILES),
+            lambda: ACPClientAdapter(
+                ACPClientAdapterConfig(command="test-acp"),
+                capabilities=Capability.FILES,
+            ),
             _acp_definitions,
             id="acp",
         ),

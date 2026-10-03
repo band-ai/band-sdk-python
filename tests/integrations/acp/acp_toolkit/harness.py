@@ -10,14 +10,18 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
 from band.core.types import USAGE_METADATA_KEY, PlatformMessage, is_usage_event
-from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
+from band.integrations.acp.client_adapter import (
+    ACPClientAdapter,
+    ACPClientAdapterConfig,
+    _resolve_launcher,
+)
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
@@ -134,6 +138,43 @@ class FakeSpawn:
         return self.calls[-1][1]
 
 
+@dataclass(frozen=True)
+class Launch:
+    """How an adapter launched and set up its agent process for one room."""
+
+    command: tuple[str, ...]
+    env: dict[str, str] | None
+    cwd: str | None
+    use_unstable_protocol: bool
+    auth_method: str | None
+    client_capabilities: object | None
+
+
+async def launch_for(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> Launch:
+    """Start ``room``'s runtime through the adapter's real ``_build_runtime`` and
+    record the subprocess launch, which is replaced by a scripted connection."""
+    spawn = FakeSpawn()
+    with (
+        patch("band.integrations.acp.client_adapter.spawn_agent_process", spawn),
+        patch("band.integrations.acp.client_adapter.shutil.which", return_value=None),
+    ):
+        runtime = await adapter._runtime_for(room)
+        await runtime.start()
+    await runtime.stop()
+    command, kwargs = spawn.last_call
+    authenticate = spawn.conn.authenticate.await_args
+    return Launch(
+        command=command,
+        env=kwargs["env"],
+        cwd=kwargs["cwd"],
+        use_unstable_protocol=kwargs.get("use_unstable_protocol", False),
+        auth_method=None if authenticate is None else authenticate.kwargs["method_id"],
+        client_capabilities=spawn.conn.initialize.await_args.kwargs.get(
+            "client_capabilities"
+        ),
+    )
+
+
 def inject_acp_spawn(
     adapter: ACPClientAdapter, spawn: FakeSpawn | Callable[..., Any]
 ) -> None:
@@ -141,10 +182,10 @@ def inject_acp_spawn(
 
     def _build_runtime(workspace: str | None = None) -> ACPRuntime:
         return ACPRuntime(
-            command=_resolve_launcher(adapter._command),
-            env=adapter._env,
+            command=_resolve_launcher(adapter._spawn_command(None)),
+            env=adapter._spawn_env(),
             cwd=workspace,
-            auth_method=adapter._auth_method,
+            auth_method=adapter.config.auth_method,
             client_factory=lambda: BandACPClient(
                 profile=adapter._profile,
                 canonicalize_tool_name=adapter._canonical_tool_name,
@@ -217,6 +258,14 @@ class Reply:
         malformed event fails loudly here rather than passing vacuously."""
         return [
             ToolCallRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_calls
+        ]
+
+    @property
+    def tool_call_args(self) -> list[dict[str, Any]]:
+        """Narrated tool_call arguments in order (see ``tool_call_names``)."""
+        return [
+            ToolCallRoomEvent.model_validate_json(e["content"]).args
             for e in self.tool_calls
         ]
 
@@ -345,19 +394,27 @@ class AcpSession:
         return self.adapter._room_to_session[room]
 
 
+def fake_agent_config(**settings: Any) -> ACPClientAdapterConfig:
+    """Settings for an adapter paired in process with a ``FakeACPAgent``.
+
+    The command is never spawned; Band tool injection is off unless asked for.
+    """
+    return ACPClientAdapterConfig(
+        **{"command": "fake-agent", "inject_band_tools": False, **settings}
+    )
+
+
 @asynccontextmanager
 async def acp_adapter(
-    agent: FakeACPAgent, *, inject_band_tools: bool = False, **adapter_kwargs: Any
+    agent: FakeACPAgent,
+    config: ACPClientAdapterConfig | None = None,
+    **adapter_kwargs: Any,
 ) -> AsyncIterator[AcpSession]:
     """A started ``ACPClientAdapter`` wired to ``agent`` over an in-process socketpair.
 
     Yields an :class:`AcpSession`; tears the adapter down on exit.
     """
-    adapter = ACPClientAdapter(
-        command="fake-agent",  # ignored — the injected transport pairs us with agent
-        inject_band_tools=inject_band_tools,
-        **adapter_kwargs,
-    )
+    adapter = ACPClientAdapter(config or fake_agent_config(), **adapter_kwargs)
     async with started_acp_adapter(adapter, agent) as session:
         yield session
 
