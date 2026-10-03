@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install + start the OpenCode server for the `backends` e2e lane.
 #
-# Reads OPENCODE_ZEN_API_KEY (job env, the Zen provider key) and exports
+# Reads OPENCODE_ZEN_API_KEY (job env, the Zen provider key) and
+# OPENCODE_SERVE_LOG (job env, the checkout-relative server log path), and exports
 # OPENCODE_BASE_URL / E2E_OPENCODE_BASH_ASKS of the running server to later steps
 # via $GITHUB_ENV.
 set -euo pipefail
@@ -32,9 +33,9 @@ JSON
 # tools, so in the repo checkout a weak free model wanders into the source instead of
 # replying. An empty cwd keeps it on task.
 workdir="$(mktemp -d)"
-# Under the checkout, where the e2e workflow uploads it: the server's own loop,
-# permission and session records explain a turn the adapter logs can't.
-serve_log="$PWD/artifacts/opencode-serve.log"
+# The server's own loop, permission and session records explain a turn the
+# adapter logs can't; the e2e workflow uploads this file.
+serve_log="$PWD/${OPENCODE_SERVE_LOG:?OPENCODE_SERVE_LOG is required}"
 mkdir -p "$(dirname "$serve_log")"
 mkdir -p ~/.config/opencode
 printf '%s\n' "$OPENCODE_CONFIG_JSON" > ~/.config/opencode/opencode.json
