@@ -936,10 +936,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             and not room_state.turn.replied_via_room_tool
         ):
             logger.info(
-                "OpenCode turn: replied via %s room=%s session=%s",
-                tool_name,
+                "OpenCode turn: replied via room tool room=%s session=%s tool=%s",
                 room_state.room_id,
                 room_state.turn.session_id,
+                tool_name,
             )
             room_state.turn.replied_via_room_tool = True
 
@@ -1092,7 +1092,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     )
                 # Tokens spent before the timeout were still spent — emit them,
                 # same as the success path (best-effort; no-op if none captured).
-                await self._emit_turn_usage(turn)
+                await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to report the OpenCode timeout for room %s", room_id
@@ -1101,7 +1101,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
-                await self._emit_turn_usage(turn)
+                await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to deliver the OpenCode turn result for room %s", room_id
@@ -1301,10 +1301,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         finally:
             turn.pending_mentions = []
 
-    async def _emit_turn_usage(
-        self,
-        turn: TurnState,
-    ) -> None:
+    async def _emit_turn_usage(self, room_id: str, turn: TurnState) -> None:
         """Sum the turn's per-assistant-message usage and emit it.
 
         A no-op when usage reporting is off (``Emit.USAGE`` absent) or
@@ -1316,7 +1313,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         """
         total = sum(turn.usage_by_message.values(), TurnUsage())
         logger.info(
-            "OpenCode turn: usage session=%s messages=%d empty=%s",
+            "OpenCode turn: usage room=%s session=%s messages=%s empty=%s",
+            room_id,
             turn.session_id,
             len(turn.usage_by_message),
             total.is_empty,

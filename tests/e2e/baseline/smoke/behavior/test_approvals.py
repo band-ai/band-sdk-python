@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 
+import band.adapters
 from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
@@ -91,9 +92,6 @@ PATIENT_WAIT_S = THREE_BARRIERS.deadline_s * 2
 REFUSING = tuple(a for a, dialect in DIALECTS.items() if dialect.refusal)
 REMEMBERING = tuple(a for a, dialect in DIALECTS.items() if dialect.session_approval)
 ASKING = tuple(a for a, dialect in DIALECTS.items() if dialect.question)
-# The adapters' turn-phase records are content-free INFO lines; a failing cell's
-# captured log then shows where its turn stopped.
-ADAPTER_LOGGER = "band.adapters"
 
 
 @asynccontextmanager
@@ -113,8 +111,10 @@ async def approval_room(
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
+    # The adapters' turn-phase records are content-free INFO lines; a failing
+    # cell's captured log then shows where its turn stopped.
     with (
-        sdk_logs_at(ADAPTER_LOGGER, logging.INFO),
+        sdk_logs_at(band.adapters, logging.INFO),
         tempfile.TemporaryDirectory(
             prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
         ) as workdir,

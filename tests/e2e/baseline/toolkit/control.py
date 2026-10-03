@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import band.runtime
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
@@ -16,9 +17,6 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
-
-# Parent logger for the SDK control path; raised to DEBUG so pytest captures it.
-SDK_CONTROL_LOGGER = "band.runtime"
 
 
 class ControlRuntime:
@@ -86,7 +84,8 @@ async def running_control_runtime(
         ws_url=settings.endpoints.ws_url,
         rest_url=settings.endpoints.rest_url,
     )
-    with sdk_logs_at(SDK_CONTROL_LOGGER, logging.DEBUG):
+    # The SDK control path's DEBUG lines explain a failing control test.
+    with sdk_logs_at(band.runtime, logging.DEBUG):
         control = ControlRuntime()
         runtime = AgentRuntime(
             link=link, agent_id=agent.id, on_execute=control.on_execute
