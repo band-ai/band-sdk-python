@@ -122,17 +122,6 @@ class TestInvalidateSession:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_invalidate_when_not_started_is_noop(
-        self, mock_options: ClaudeAgentOptions
-    ) -> None:
-        """invalidate_session before start() should return immediately."""
-
-        manager = ClaudeSessionManager(mock_options)
-
-        # Should not raise or hang
-        await manager.invalidate_session("room-1")
-
-    @pytest.mark.asyncio
     async def test_invalidate_does_not_affect_other_rooms(
         self, mock_options: ClaudeAgentOptions
     ) -> None:
@@ -152,6 +141,38 @@ class TestInvalidateSession:
         assert manager._sessions["room-b"] is client_b
 
         await manager.stop()
+
+
+async def never_started(manager: ClaudeSessionManager) -> None:
+    pass
+
+
+async def stopped(manager: ClaudeSessionManager) -> None:
+    await manager.start()
+    await manager.stop()
+
+
+@pytest.mark.parametrize("state", [never_started, stopped])
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(lambda m: m.cleanup_session("room-1"), id="cleanup_session"),
+        pytest.param(lambda m: m.invalidate_session("room-1"), id="invalidate_session"),
+        pytest.param(lambda m: m.cleanup_all(), id="cleanup_all"),
+    ],
+)
+async def test_a_command_without_a_running_loop_returns_at_once(
+    mock_options: ClaudeAgentOptions,
+    state: Callable[[ClaudeSessionManager], Awaitable[None]],
+    command: Callable[[ClaudeSessionManager], Awaitable[None]],
+) -> None:
+    """An agent can leave a room before any message started the loop, or
+    after it stopped; nothing would ever answer a queued command."""
+    manager = ClaudeSessionManager(mock_options)
+    await state(manager)
+
+    async with asyncio.timeout(1):
+        await command(manager)
 
 
 @pytest.mark.parametrize(

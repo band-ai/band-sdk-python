@@ -679,6 +679,26 @@ async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_a_bootstrap_after_a_crash_never_restores_the_retired_session() -> None:
+    """Each bootstrap names the room's persisted session (as a one-shot
+    invoker sends it); once its Band URL went stale, the room gets a fresh
+    session rather than a reload of the one being closed."""
+    agent = FakeACPAgent(supports_session_load=True).knows_session("persisted")
+    history = rehydration_history(session="persisted")
+
+    async with acp_adapter(agent, fake_agent_config(inject_band_tools=True)) as session:
+        await session.send("before the crash", bootstrap=True, history=history)
+        await crash_backend(session.adapter._mcp)
+        await session.send("after the crash", bootstrap=True, history=history)
+        await session.adapter._drain_background_tasks()
+
+        assert session.session_id("room-1") != "persisted"
+
+    assert agent.session_load_requests == ["persisted"]
+    assert agent.closed_sessions == ["persisted"]
+
+
 # --- Band-history replay when the remote session cannot be restored ------------
 #
 # The remote agent owns its session state; a container restart or fresh spawn

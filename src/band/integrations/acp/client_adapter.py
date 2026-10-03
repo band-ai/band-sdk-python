@@ -1059,6 +1059,8 @@ class ACPClientAdapter(
             if stale is not None:
                 del self._room_to_session[room_id]
                 self._bootstrapped_sessions.discard(stale.session_id)
+                # Never restore: the persisted id may be the one being retired.
+                history = None
             initializer = self._session_initializers.get(room_id)
             if (
                 initializer is not None
