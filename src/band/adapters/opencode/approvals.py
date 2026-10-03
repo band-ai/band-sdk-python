@@ -307,14 +307,17 @@ class RoomApprovals:
             self._config.approval_mode,
         )
 
-        if self._config.approval_mode == "auto_accept":
-            await self._reply_permission(pending, "once")
-            return
+        match self._config.approval_mode:
+            case "auto_accept":
+                await self._reply_permission(pending, "once")
+            case "auto_decline":
+                await self._reply_permission(pending, "reject")
+            case "manual":
+                await self._ask_room(entry)
 
-        if self._config.approval_mode == "auto_decline":
-            await self._reply_permission(pending, "reject")
-            return
-
+    async def _ask_room(self, entry: DecisionEntry[PendingPermission]) -> None:
+        """Park the ask on a human: post it to the room and start its expiry."""
+        pending = entry.payload
         self._permissions.start_timeout(
             entry, self._config.approval_wait_timeout_s, self._expire_permission
         )
@@ -324,7 +327,7 @@ class RoomApprovals:
             APPROVAL_REQUESTED_TEMPLATE.format(
                 permission=pending.permission,
                 patterns=pattern_text,
-                request_id=request_id,
+                request_id=pending.request_id,
             ),
             self._ports.turn_mentions(),
         )

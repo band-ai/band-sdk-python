@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 import pytest
 from band_rest import ChatMessage
@@ -32,6 +33,14 @@ APPROVAL_LOG_LEVEL = (
     else logging.INFO
 )
 TERMINAL_POLL_INTERVAL_S = 0.5
+
+
+class TurnPhase(Enum):
+    """How far a decided approval turn has got toward closing."""
+
+    OPEN = auto()  # its closing reply hasn't arrived yet
+    RUNNING = auto()  # replied, but the model turn hasn't ended
+    CLOSED = auto()
 
 
 @dataclass
@@ -153,63 +162,24 @@ class ApprovalRoom:
     async def _await_close(
         self,
         since: int,
-        expected_notices: list[Notice],
+        notices: list[Notice],
         closing_reply: str,
         allowed_followup_commands: frozenset[str],
     ) -> None:
-        unexpected_requests: list[str] = []
-        known_followups = 0
+        # One read-back of the approved write is tolerated; it uses this up.
+        allowed_readbacks = set(allowed_followup_commands)
         while True:
-            await self._wait_for_reply_or_request(
-                since, expected_notices, closing_reply
-            )
-            pending = self._unhandled_requests(self.capture.messages.since(since))
-            if not pending and self.dialect.settled(
-                self.capture.messages.since(since),
-                *expected_notices,
-                closing_reply=closing_reply,
-            ):
-                if self.adapter_id is Adapter.CURSOR_ACP:
-                    break
-                # These adapters persist usage only after their model turn ends.
-                if not await self.capture.usage(sender_id=self.agent.id):
+            await self._wait_for_reply_or_request(since, notices, closing_reply)
+            match await self._turn_phase(since, notices, closing_reply):
+                case TurnPhase.CLOSED:
+                    return
+                case TurnPhase.RUNNING:
                     await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
                     continue
-                logger.log(
-                    APPROVAL_LOG_LEVEL,
-                    "Approval terminal usage adapter=%s requests=%s",
-                    self.adapter_id,
-                    sorted(self.handled_requests),
-                )
-                durable = await self._durable_replies()
-                pending = self._unhandled_requests(durable)
-                if not pending and self.dialect.settled(
-                    durable, *expected_notices, closing_reply=closing_reply
-                ):
-                    break
-                if not pending:
-                    await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
-                    continue
-            for request in pending:
-                readback = (
-                    self.dialect.shell_command(request) in allowed_followup_commands
-                    and known_followups == 0
-                )
-                if readback:
-                    known_followups += 1
-                else:
-                    unexpected_requests.append(request["token"])
-                logger.log(
-                    APPROVAL_LOG_LEVEL,
-                    "Declining follow-up approval adapter=%s request=%s permission=%s",
-                    self.adapter_id,
-                    request["token"],
-                    request.groupdict().get("permission", ""),
-                )
-                await self.decide(Outcome.DECLINE, request)
-                expected_notices.append(self.dialect.notice(Outcome.DECLINE, request))
-            if unexpected_requests:
-                pytest.fail(f"Unexpected follow-up approvals: {unexpected_requests}")
+                case TurnPhase.OPEN:
+                    pass
+                case list() as requests:
+                    await self._decline_followups(requests, notices, allowed_readbacks)
             if self._opencode_missing_text_reply(since):
                 logger.log(
                     APPROVAL_LOG_LEVEL,
@@ -218,6 +188,59 @@ class ApprovalRoom:
                     sorted(self.handled_requests),
                 )
                 pytest.fail("OpenCode ended the approval turn without a text reply")
+
+    async def _turn_phase(
+        self, since: int, notices: list[Notice], closing_reply: str
+    ) -> TurnPhase | list[re.Match[str]]:
+        """Where the decided turn stands, or the follow-up requests it raised."""
+        captured = self.capture.messages.since(since)
+        if pending := self._unhandled_requests(captured):
+            return pending
+        if not self.dialect.settled(captured, *notices, closing_reply=closing_reply):
+            return TurnPhase.OPEN
+        if self.adapter_id is Adapter.CURSOR_ACP:
+            return TurnPhase.CLOSED
+        # These adapters persist usage only after their model turn ends.
+        if not await self.capture.usage(sender_id=self.agent.id):
+            return TurnPhase.RUNNING
+        logger.log(
+            APPROVAL_LOG_LEVEL,
+            "Approval terminal usage adapter=%s requests=%s",
+            self.adapter_id,
+            sorted(self.handled_requests),
+        )
+        durable = await self._durable_replies()
+        if pending := self._unhandled_requests(durable):
+            return pending
+        if self.dialect.settled(durable, *notices, closing_reply=closing_reply):
+            return TurnPhase.CLOSED
+        return TurnPhase.RUNNING
+
+    async def _decline_followups(
+        self,
+        requests: list[re.Match[str]],
+        notices: list[Notice],
+        allowed_readbacks: set[str],
+    ) -> None:
+        """Decline every follow-up request, failing on any but one read-back."""
+        unexpected: list[str] = []
+        for request in requests:
+            command = self.dialect.shell_command(request)
+            if command in allowed_readbacks:
+                allowed_readbacks.clear()
+            else:
+                unexpected.append(request["token"])
+            logger.log(
+                APPROVAL_LOG_LEVEL,
+                "Declining follow-up approval adapter=%s request=%s permission=%s",
+                self.adapter_id,
+                request["token"],
+                request.groupdict().get("permission", ""),
+            )
+            await self.decide(Outcome.DECLINE, request)
+            notices.append(self.dialect.notice(Outcome.DECLINE, request))
+        if unexpected:
+            pytest.fail(f"Unexpected follow-up approvals: {unexpected}")
 
     async def _closing_state(
         self, since: int, notices: list[Notice], closing_reply: str
