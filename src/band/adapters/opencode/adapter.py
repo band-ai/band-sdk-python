@@ -705,14 +705,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         an open SSE read: the serve task it stops has already ended.
         """
         if self._mcp_backend is not None:
-            if not self._mcp_backend.is_running:
-                logger.warning(
-                    "Band MCP backend crashed; restarting for %s", self.agent_name
-                )
-                # OpenCode's registration names the dead URL; clearing it first
-                # means a failed restart can't leave it looking current.
+            if await self._mcp_backend.restart_if_crashed():
+                # OpenCode's registration still names the dead URL.
                 self._registered_client = None
-                await self._mcp_backend.restart()
             return self._mcp_backend
 
         backend = await create_band_mcp_backend(

@@ -431,8 +431,9 @@ class FakeMCPBackend:
         if self._stop_release is not None:
             await self._stop_release.wait()
 
-    async def restart(self) -> None:
-        self.is_running = True
+    async def restart_if_crashed(self) -> bool:
+        crashed, self.is_running = not self.is_running, True
+        return crashed
 
 
 def make_fake_mcp_backend_factory(

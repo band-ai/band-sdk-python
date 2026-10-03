@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +19,8 @@ from band.integrations.mcp.local_server import (
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
+
+logger = logging.getLogger(__name__)
 
 
 class BandMCPTransport(StrEnum):
@@ -62,11 +65,20 @@ class BandMCPBackend:
         """Stop the backing local server."""
         await self.local_server.stop()
 
-    async def restart(self) -> None:
-        """Restart the backing local server, on a different port when its range
-        has another free one, so every consumer of the old URL can tell."""
+    async def restart_if_crashed(self) -> bool:
+        """Restart the backing local server if its serve task died; True if it did.
+
+        The serve task can end on its own, and nothing else notices: every
+        consumer would keep dialing a dead port. The restart lands on a
+        different port when the range has another free one, so a consumer
+        holding the old URL can tell.
+        """
+        if self.is_running:
+            return False
+        logger.warning("Band MCP server crashed; restarting it")
         await self.local_server.stop()
         await self.local_server.start()
+        return True
 
 
 def _build_allowed_tools(

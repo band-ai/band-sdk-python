@@ -757,21 +757,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def _ensure_mcp_backend(self) -> None:
         """Restart the Band MCP backend if its serve task died.
 
-        The serve task can crash on its own, and nothing else notices: every
-        later session would get a URL on a dead port. ``None`` means
-        ``cleanup_all`` ran, so a message parked on the lock through shutdown
-        fails rather than starting a server nothing would stop.
+        ``None`` means ``cleanup_all`` ran, so a message parked on the lock
+        through shutdown fails rather than starting a server nothing would stop.
         """
         async with self._mcp_backend_lock:
             if self._mcp_backend is None:
                 raise RuntimeError(
                     "ClaudeSDKAdapter is stopped; cannot restart the Band MCP backend"
                 )
-            if not self._mcp_backend.is_running:
-                logger.warning(
-                    "Band MCP backend crashed; restarting for %s", self.agent_name
-                )
-                await self._mcp_backend.restart()
+            await self._mcp_backend.restart_if_crashed()
 
     def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
         """A room session's MCP servers: the Band endpoint bound to that room."""

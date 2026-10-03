@@ -62,6 +62,7 @@ def mock_band_backend() -> MagicMock:
     backend.endpoint.side_effect = lambda transport, room_id: (
         f"http://127.0.0.1:1{room_endpoint_path(room_id, transport)}"
     )
+    backend.restart_if_crashed = AsyncMock(return_value=False)
     return backend
 
 

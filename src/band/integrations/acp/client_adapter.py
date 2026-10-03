@@ -1022,14 +1022,8 @@ class ACPClientAdapter(
                 raise RuntimeError(
                     "ACP client adapter is stopped; cannot start the Band MCP backend"
                 )
-            if (
-                self._band_mcp_backend is not None
-                and not self._band_mcp_backend.is_running
-            ):
-                logger.warning(
-                    "Band MCP backend crashed; restarting for %s", self.agent_name
-                )
-                await self._band_mcp_backend.restart()
+            if self._band_mcp_backend is not None:
+                await self._band_mcp_backend.restart_if_crashed()
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
                     tool_definitions=self._tool_definitions,

@@ -18,6 +18,7 @@ from tests.adapters.opencode.helpers import (
     event_session_idle,
     make_platform_message,
     tools_protocol,
+    wait_for,
 )
 from tests.mcpclient import crash_server, mcp_session
 
@@ -50,6 +51,8 @@ async def test_a_crashed_server_is_re_registered_on_its_new_port(
             is_session_bootstrap=bootstrap,
             room_id="room-1",
         )
+        room = await adapter._get_or_create_room_state("room-1")
+        await wait_for(lambda: room.turn is None or room.turn.turn_future.done())
 
     try:
         await send("before the crash", bootstrap=True)
