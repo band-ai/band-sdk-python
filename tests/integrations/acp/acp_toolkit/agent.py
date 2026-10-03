@@ -244,6 +244,46 @@ class FakeACPAgent:
         self._script.append(_action)
         return self
 
+    def will_call_mcp_tool_named_late(
+        self,
+        tool_call_id: str,
+        server: str,
+        tool: str,
+        *,
+        arguments: Mapping[str, Any],
+        result: Any,
+    ) -> FakeACPAgent:
+        """Cursor's MCP call: a pending ``MCP: tool`` placeholder with no input,
+        then a statusless update carrying the real title and ``rawInput``."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, "MCP: tool", status="pending", raw_input={}
+                ),
+            )
+            await a.emit(
+                sid,
+                update_tool_call(
+                    tool_call_id,
+                    title=f"{server}: {tool}",
+                    raw_input={
+                        "providerIdentifier": server,
+                        "toolName": tool,
+                        "args": dict(arguments),
+                    },
+                ),
+            )
+            await a.emit(sid, update_tool_call(tool_call_id, status="in_progress"))
+            await a.emit(
+                sid,
+                update_tool_call(tool_call_id, raw_output=result, status="completed"),
+            )
+
+        self._script.append(_action)
+        return self
+
     def will_call_tool_then_trailing_update(
         self,
         tool_call_id: str,

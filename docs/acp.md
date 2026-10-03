@@ -65,6 +65,10 @@ failure fails that room turn visibly instead of falling back.
   room participant with `/cursor <word> <token>`. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
   session; Cursor turns are serialized.
+  The adapter does not pick a plan/agent mode itself; a caller selects one through
+  `resolve_session_config`, which reads each session's advertised catalog before the
+  first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
+  as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
 
 ## Server prompt outcomes
 
