@@ -44,6 +44,21 @@ class TurnPhase(Enum):
 
 
 @dataclass
+class ReadbackAllowance:
+    """The one read-back of an approved write a coding agent may follow up with."""
+
+    commands: frozenset[str]
+    used: bool = False
+
+    def take(self, command: str | None) -> bool:
+        """Whether ``command`` is the allowed read-back, spending the allowance."""
+        if self.used or command not in self.commands:
+            return False
+        self.used = True
+        return True
+
+
+@dataclass
 class ApprovalRoom:
     """One manual-approval agent in its own room, driven by the room's humans."""
 
@@ -166,8 +181,7 @@ class ApprovalRoom:
         closing_reply: str,
         allowed_followup_commands: frozenset[str],
     ) -> None:
-        # One read-back of the approved write is tolerated; it uses this up.
-        allowed_readbacks = set(allowed_followup_commands)
+        readback = ReadbackAllowance(allowed_followup_commands)
         while True:
             await self._wait_for_reply_or_request(since, notices, closing_reply)
             match await self._turn_phase(since, notices, closing_reply):
@@ -179,7 +193,7 @@ class ApprovalRoom:
                 case TurnPhase.OPEN:
                     pass
                 case list() as requests:
-                    await self._decline_followups(requests, notices, allowed_readbacks)
+                    await self._decline_followups(requests, notices, readback)
             if self._opencode_missing_text_reply(since):
                 logger.log(
                     APPROVAL_LOG_LEVEL,
@@ -220,15 +234,12 @@ class ApprovalRoom:
         self,
         requests: list[re.Match[str]],
         notices: list[Notice],
-        allowed_readbacks: set[str],
+        readback: ReadbackAllowance,
     ) -> None:
         """Decline every follow-up request, failing on any but one read-back."""
         unexpected: list[str] = []
         for request in requests:
-            command = self.dialect.shell_command(request)
-            if command in allowed_readbacks:
-                allowed_readbacks.clear()
-            else:
+            if not readback.take(self.dialect.shell_command(request)):
                 unexpected.append(request["token"])
             logger.log(
                 APPROVAL_LOG_LEVEL,
@@ -253,9 +264,15 @@ class ApprovalRoom:
             await self._durable_replies(), *notices, closing_reply=closing_reply
         )
         usage = await self.capture.usage(sender_id=self.agent.id)
+        # Event notices only show up in a post-turn read; assert_shown checks those.
+        text_notices_shown = [
+            notice.streamed_in(said)
+            for notice in notices
+            if notice.message_type == MessageType.TEXT
+        ]
         return (
             f"agent_messages={len(said)} "
-            f"notices_shown={[notice.streamed_in(said) for notice in notices]} "
+            f"text_notices_shown={text_notices_shown} "
             f"closing_word_said={any(closing_reply in content for content in said)} "
             f"settled={settled} "
             f"durable_settled={durable_settled} "
