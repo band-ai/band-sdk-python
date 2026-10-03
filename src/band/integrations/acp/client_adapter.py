@@ -1003,10 +1003,10 @@ class ACPClientAdapter(
             room_bound=True,
         )
 
-    def _release_session(self, session_id: str) -> None:
-        """Drop what the adapter keeps per ACP session once no room uses it;
-        a subclass holding its own per-session state extends this."""
-        self._bootstrapped_sessions.discard(session_id)
+    def _forget_session(self, session_id: str) -> None:
+        """Drop per-session state a subclass keeps, once the session can
+        deliver no more updates: its connection stopped or it was closed.
+        Runs even when that stop or close is cancelled."""
 
     def _retire_stale_session(
         self, runtime: ACPRuntime, room_id: str, session: RoomSession
@@ -1058,7 +1058,7 @@ class ACPClientAdapter(
                 return stale.session_id, False
             if stale is not None:
                 del self._room_to_session[room_id]
-                self._release_session(stale.session_id)
+                self._bootstrapped_sessions.discard(stale.session_id)
             initializer = self._session_initializers.get(room_id)
             if (
                 initializer is not None
@@ -1239,6 +1239,8 @@ class ACPClientAdapter(
                 reason,
                 exc_info=True,
             )
+        finally:
+            self._forget_session(session_id)
 
     def _track_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Run a fire-and-forget task that outlives its caller.
@@ -1400,11 +1402,12 @@ class ACPClientAdapter(
         """True exactly once per session — the caller owns the bootstrap prompt.
 
         Lock-free: the check-and-add runs without an ``await``, so the event
-        loop's run-to-completion makes it atomic. ``on_cleanup``/``cleanup_all``
-        mutate this same set under ``_session_lock`` instead — also safe today
-        for the same no-``await``-in-between reason, not because of the lock.
-        Adding an ``await`` to any of these three mutation sites would need a
-        real lock added back everywhere ``_bootstrapped_sessions`` is touched.
+        loop's run-to-completion makes it atomic. ``on_cleanup``,
+        ``cleanup_all`` and ``_get_or_create_session`` mutate this same set
+        under ``_session_lock`` instead — also safe today for the same
+        no-``await``-in-between reason, not because of the lock. Adding an
+        ``await`` before any of these mutations would need a real lock added
+        back everywhere ``_bootstrapped_sessions`` is touched.
         """
         if session_id in self._bootstrapped_sessions:
             return False
@@ -1475,18 +1478,20 @@ class ACPClientAdapter(
             session = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
+            if session is not None:
+                self._bootstrapped_sessions.discard(session.session_id)
             runtime = self._runtimes.pop(room_id, None)
             workspace = self._room_workspaces.pop(room_id, None)
             if workspace is not None:
                 release_room_workspace(room_id, workspace, self._workspace_rooms)
 
-        await self._cancel_session_initializers(initializer)
-        if runtime is not None:
-            await runtime.stop()
-        # After the stop: a turn left running detached keeps delivering
-        # session updates until its connection closes.
-        if session is not None:
-            self._release_session(session.session_id)
+        try:
+            await self._cancel_session_initializers(initializer)
+            if runtime is not None:
+                await runtime.stop()
+        finally:
+            if session is not None:
+                self._forget_session(session.session_id)
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 

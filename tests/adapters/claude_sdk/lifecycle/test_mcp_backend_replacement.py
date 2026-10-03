@@ -11,6 +11,7 @@ import pytest
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
+from band.integrations.mcp import BandMCPBackendStoppedError
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -67,7 +68,7 @@ async def test_a_message_after_shutdown_is_refused(claude_room: OpenRoom) -> Non
     assert backend is not None
     await room.adapter.cleanup_all()
 
-    with pytest.raises(RuntimeError, match="stopped"):
+    with pytest.raises(BandMCPBackendStoppedError):
         await room.send("hi")
 
     assert backend.is_running is False

@@ -435,15 +435,24 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
         try:
             yield conn, agent_conn
         finally:
-            for closable in (conn, agent_conn):
-                with contextlib.suppress(Exception):
-                    await closable.close()
-            for writer in (writer_c, writer_a):
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+            try:
+                await _exit(agent)
+            finally:
+                for closable in (conn, agent_conn):
+                    with contextlib.suppress(Exception):
+                        await closable.close()
+                for writer in (writer_c, writer_a):
+                    writer.close()
+                    with contextlib.suppress(Exception):
+                        await writer.wait_closed()
 
     return _spawn
+
+
+async def _exit(agent: FakeACPAgent) -> None:
+    if (gate := agent.exit_gate) is not None:
+        gate.received.set()
+        await gate.release.wait()
 
 
 LIVE_SENDER_NAME = "Peer"

@@ -6,6 +6,7 @@ import pytest
 
 from band.integrations.mcp import (
     BandMCPBackendSettings,
+    BandMCPBackendStoppedError,
     BandMCPTransport,
     SharedBandMCPBackend,
 )
@@ -109,11 +110,11 @@ class TestSharedBandMCPBackend:
             owner = SharedBandMCPBackend(one_tool_settings)
             async with owner:
                 await owner.ensure()
-            with pytest.raises(RuntimeError, match="stopped"):
+            with pytest.raises(BandMCPBackendStoppedError):
                 await owner.ensure()
 
             await owner.close(final=False)
-            with pytest.raises(RuntimeError, match="stopped"):
+            with pytest.raises(BandMCPBackendStoppedError):
                 await owner.ensure()
 
             await owner.reopen()

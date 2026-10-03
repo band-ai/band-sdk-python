@@ -25,9 +25,12 @@ def _runs_a_backend_by_hand(source: str) -> bool:
                 | ast.alias(name="create_band_mcp_backend")
             ):
                 return True
-            case ast.Call(
-                func=ast.Name(id="LocalMCPServer")
-                | ast.Attribute(attr="LocalMCPServer")
+            case (
+                ast.Call(
+                    func=ast.Name(id="LocalMCPServer")
+                    | ast.Attribute(attr="LocalMCPServer")
+                )
+                | ast.alias(name="LocalMCPServer", asname=str())
             ):
                 return True
     return False
@@ -56,6 +59,8 @@ def test_only_the_owner_runs_band_mcp_backends() -> None:
         ("backend = await backends.create_band_mcp_backend(settings)", True),
         ("server = LocalMCPServer(name='band', tool_registrations=[])", True),
         ("server = local_server.LocalMCPServer(name='band')", True),
+        ("from band.runtime.mcp_server import LocalMCPServer as Server", True),
+        ("from band.runtime.mcp_server import LocalMCPServer", False),
         ("backend = await self._mcp.ensure()", False),
     ],
 )

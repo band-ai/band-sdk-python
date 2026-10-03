@@ -33,6 +33,10 @@ class BandMCPTransport(StrEnum):
     SSE = "sse"
 
 
+class BandMCPBackendStoppedError(RuntimeError):
+    """A ``SharedBandMCPBackend`` was asked for its backend after a final close."""
+
+
 @dataclass(frozen=True)
 class BandMCPBackend:
     """A Band MCP server (both transports) and the tool names it exposes.
@@ -173,7 +177,7 @@ class SharedBandMCPBackend:
         """The running backend: started on first use, replaced if its server died."""
         async with self._lock:
             if self._closed:
-                raise RuntimeError("Band MCP backend is stopped")
+                raise BandMCPBackendStoppedError()
             if self._backend is None or not self._backend.is_running:
                 self._backend = await self._start(replacing=self._backend)
             return self._backend

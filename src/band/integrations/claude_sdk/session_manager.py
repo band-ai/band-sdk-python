@@ -110,11 +110,15 @@ class ClaudeSessionManager:
         self._shutdown: asyncio.Task[None] | None = None
         logger.info("ClaudeSessionManager initialized")
 
+    @property
+    def _loop_running(self) -> bool:
+        return self._task is not None
+
     async def start(self) -> None:
         """Start the background task that manages all sessions."""
         if self._shutdown is not None:
             raise ClaudeSessionManagerStoppedError()
-        if self._task is not None:
+        if self._loop_running:
             return
 
         self._task = asyncio.create_task(self._run_session_loop())
@@ -125,32 +129,17 @@ class ClaudeSessionManager:
         adapter builds a new manager when it starts again. Every caller
         awaits the same shutdown, which a cancelled caller doesn't abandon."""
         if self._shutdown is None:
-            self._shutdown = asyncio.create_task(self._shut_down(self._queue_stop()))
+            # Queued now, so it orders by when stop() was called.
+            if self._loop_running:
+                self._command_queue.put_nowait(SessionCommand(action="stop"))
+            self._shutdown = asyncio.create_task(self._shut_down())
         await asyncio.shield(self._shutdown)
 
-    def _queue_stop(self) -> asyncio.Future[None] | None:
-        """Queue the stop at call time, so it orders against other commands
-        by when ``stop()`` was called, not when the shutdown task first runs."""
+    async def _shut_down(self) -> None:
         if self._task is None:
-            return None
-        stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._command_queue.put_nowait(
-            SessionCommand(action="stop", result_future=stopped)
-        )
-        return stopped
-
-    async def _shut_down(self, stopped: asyncio.Future[None] | None) -> None:
-        if self._task is None or stopped is None:
             return
-        await stopped
-
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
+        await self._task  # the loop exits after handling its stop command
         self._task = None
-
         self._fail_pending_commands()
         logger.info("ClaudeSessionManager background task stopped")
 
@@ -195,8 +184,6 @@ class ClaudeSessionManager:
 
                 elif cmd.action == "stop":
                     await self._do_cleanup_all()
-                    if cmd.result_future:
-                        cmd.result_future.set_result(None)
                     break
 
                 self._command_queue.task_done()
@@ -376,7 +363,7 @@ class ClaudeSessionManager:
         Args:
             room_id: Band chat room ID
         """
-        if self._task is None:
+        if not self._loop_running:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -400,7 +387,7 @@ class ClaudeSessionManager:
         Args:
             room_id: Band chat room ID
         """
-        if self._task is None:
+        if not self._loop_running:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -420,7 +407,7 @@ class ClaudeSessionManager:
         This should be called when the adapter is shutting down to ensure
         all Claude SDK clients are properly disconnected.
         """
-        if self._task is None:
+        if not self._loop_running:
             return
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()

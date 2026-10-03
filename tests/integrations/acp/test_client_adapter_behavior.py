@@ -29,6 +29,7 @@ from band.integrations.acp.client_adapter import (
     SYSTEM_UPDATE_PREFIX,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.mcp import BandMCPBackendStoppedError
 from band.runtime.formatters import build_participants_message
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit import (
@@ -602,7 +603,7 @@ async def test_a_turn_after_shutdown_is_refused(fake_agent) -> None:
             await session.send("before shutdown", room="room-1")
             await session.adapter.cleanup_all()
 
-            with pytest.raises(RuntimeError, match="stopped"):
+            with pytest.raises(BandMCPBackendStoppedError):
                 await session.send("after shutdown", room="room-2")
 
     assert len(starts.requested) == 1

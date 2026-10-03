@@ -1073,6 +1073,7 @@ async def replace_its_band_server(
 ) -> None:
     await crash_backend(adapter._mcp)
     await session.send("after the crash", room="room-1")
+    await adapter._drain_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -1110,3 +1111,24 @@ async def test_a_turn_still_running_at_cleanup_leaves_no_todos() -> None:
         assert released not in adapter._cursor_profile._todos_by_session
         turn.cancel()
         await asyncio.gather(turn, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_cleanup_cancelled_mid_stop_still_releases_the_session() -> None:
+    """The room may rejoin and restore its session while the old runtime is
+    still exiting, so the bootstrap mark goes before the stop; the todos go
+    after it, even when the stop is cancelled."""
+    agent = FakeACPAgent().will_update_cursor_todos("ship it").will_say("ok")
+    exiting = agent.exits_slowly()
+    adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent"))
+
+    async with started_acp_adapter(adapter, agent) as session:
+        await session.send("plan it", room="room-1")
+        released = session.session_id("room-1")
+        cleanup = asyncio.create_task(adapter.on_cleanup("room-1"))
+        await exiting.received.wait()
+
+        assert adapter._claim_session_bootstrap(released)
+        cleanup.cancel()
+        await asyncio.gather(cleanup, return_exceptions=True)
+        assert released not in adapter._cursor_profile._todos_by_session

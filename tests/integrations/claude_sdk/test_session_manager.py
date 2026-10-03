@@ -197,6 +197,26 @@ async def start_slow_to_stop(options: ClaudeAgentOptions) -> ClaudeSessionManage
     return manager
 
 
+async def test_a_manager_without_an_mcp_factory_reuses_the_rooms_session(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    """Only a factory's changed servers recycle a session; without one, the
+    room keeps its client instead of reconnecting the CLI every message."""
+    manager = ClaudeSessionManager(mock_options)
+    client = MagicMock(connect=AsyncMock(), disconnect=AsyncMock())
+
+    with patch(
+        "band.integrations.claude_sdk.session_manager.ClaudeSDKClient",
+        return_value=client,
+    ):
+        first = await manager.get_or_create_session("room-1")
+        second = await manager.get_or_create_session("room-1")
+    await manager.stop()
+
+    assert first is second
+    client.connect.assert_awaited_once()
+
+
 async def test_overlapping_stops_share_one_shutdown(
     mock_options: ClaudeAgentOptions,
 ) -> None:

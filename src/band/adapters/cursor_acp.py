@@ -311,8 +311,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id)
 
-    def _release_session(self, session_id: str) -> None:
-        super()._release_session(session_id)
+    def _forget_session(self, session_id: str) -> None:
         self._cursor_profile.forget_session(session_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
