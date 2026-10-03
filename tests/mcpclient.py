@@ -22,7 +22,6 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.integrations.mcp.backends import create_band_mcp_backend
 from band.integrations.mcp.engine import RoomToolResolver
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
@@ -62,23 +61,19 @@ async def started_backend(
     room_bound: bool,
     tool_definitions: Sequence[ToolDefinition],
     get_tools: RoomToolResolver,
-    additional_tools: list[CustomToolDef] | None = None,
+    additional_tools: Sequence[CustomToolDef] = (),
 ) -> AsyncIterator[BandMCPBackend]:
     """A Band MCP backend on an OS-assigned port, always stopped on exit."""
-    backend = await create_band_mcp_backend(
-        BandMCPBackendSettings(
-            tool_definitions=tool_definitions,
-            get_tools=get_tools,
-            additional_tools=additional_tools or (),
-            room_bound=room_bound,
-            port_min=0,
-            port_max=0,
-        )
+    settings = BandMCPBackendSettings(
+        tool_definitions=tool_definitions,
+        get_tools=get_tools,
+        additional_tools=additional_tools,
+        room_bound=room_bound,
+        port_min=0,
+        port_max=0,
     )
-    try:
-        yield backend
-    finally:
-        await backend.stop()
+    async with SharedBandMCPBackend(lambda: settings) as owner:
+        yield await owner.ensure()
 
 
 @dataclass

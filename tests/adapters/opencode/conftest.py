@@ -49,7 +49,7 @@ def make_adapter() -> Callable[..., OpencodeAdapter]:
 
 
 @pytest.fixture(autouse=True)
-def patch_mcp_backend() -> Iterator[None]:
+def fake_band_mcp_backends() -> Iterator[None]:
     """Fake every Band MCP backend start in OpenCode adapter tests."""
     with backends_created_by():
         yield

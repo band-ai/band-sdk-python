@@ -39,6 +39,7 @@ from tests.integrations.acp.acp_toolkit import (
 )
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
+    backends_created_by,
     crash_backend,
     room_endpoint_path,
     tool_arguments,
@@ -592,14 +593,15 @@ async def test_band_tool_call_without_chat_id_lands_in_its_own_room(
 async def test_a_room_keeps_its_session_while_its_band_server_lives(
     fake_agent,
 ) -> None:
-    async with acp_adapter(
-        fake_agent, fake_agent_config(inject_band_tools=True)
-    ) as session:
-        await session.send("first", room="room-1")
-        first = session.session_id("room-1")
-        await session.send("second", room="room-1")
+    with backends_created_by():
+        async with acp_adapter(
+            fake_agent, fake_agent_config(inject_band_tools=True)
+        ) as session:
+            await session.send("first", room="room-1")
+            first = session.session_id("room-1")
+            await session.send("second", room="room-1")
 
-        assert session.session_id("room-1") == first
+            assert session.session_id("room-1") == first
 
 
 @pytest.mark.asyncio
@@ -616,11 +618,15 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
         fake_agent, fake_agent_config(inject_band_tools=True)
     ) as session:
         await session.send("before the crash", room="room-1")
-        crashed_url = band_mcp_url(fake_agent, session.session_id("room-1"))
+        stale_session = session.session_id("room-1")
+        crashed_url = band_mcp_url(fake_agent, stale_session)
         await crash_backend(session.adapter._mcp)
 
         reply = await session.send("after the crash", room="room-1")
         live_url = band_mcp_url(fake_agent, session.session_id("room-1"))
+        await session.adapter._drain_background_tasks()
+
+        assert fake_agent.closed_sessions == [stale_session]
 
     assert reply.texts == ["Reply from the agent"]
     assert "error" not in reply.outline

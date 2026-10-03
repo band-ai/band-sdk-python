@@ -102,9 +102,9 @@ class LocalMCPServer:
 
     Lifecycle is an async context manager (``async with LocalMCPServer(...)
     as server:``); ``start()``/``stop()`` remain as the escape hatch for
-    non-lexical lifetimes (``acp/client_adapter.py`` holds its server across
-    method scopes and genuinely needs them) -- they're the context manager's
-    own halves, not a second code path.
+    non-lexical lifetimes (``BandMCPBackend`` in ``backends.py`` holds its
+    server across method scopes and genuinely needs them) -- they're the
+    context manager's own halves, not a second code path.
     """
 
     def __init__(

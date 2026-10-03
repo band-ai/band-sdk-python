@@ -24,7 +24,7 @@ from tests.mcpclient import crash_backend, served_tool_names
 
 
 @pytest.fixture(autouse=True)
-def patch_mcp_backend() -> Iterator[None]:
+def fake_band_mcp_backends() -> Iterator[None]:
     """Run the real Band MCP backend instead of the suite's fake."""
     yield
 

@@ -715,12 +715,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         """Start the shared MCP backend and register it with OpenCode."""
         async with self._mcp_lifecycle_lock:
             backend = await self._mcp.ensure()
-            url = backend.endpoint(BandMCPTransport.SSE)
-            if self._registration == McpRegistration(client=client, url=url):
+            registration = McpRegistration(
+                client=client, url=backend.endpoint(BandMCPTransport.SSE)
+            )
+            if self._registration == registration:
                 return
             try:
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name, url=url
+                    name=self._mcp_server_name, url=registration.url
                 )
             except Exception:
                 logger.exception(
@@ -738,7 +740,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
             async with self._state_lock:
                 if self._client is client:
-                    self._registration = McpRegistration(client=client, url=url)
+                    self._registration = registration
             logger.info(
                 "MCP server %s registered with OpenCode (status=%s)",
                 self._mcp_server_name,
@@ -746,10 +748,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
     async def _shutdown_client(self) -> None:
-        # _register_mcp_backend starts and registers the backend under this
-        # same lock; detaching it under _state_lock alone would let an
-        # in-flight registration finish after this snapshot and leave a live,
-        # unstopped backend that shutdown already decided doesn't exist.
+        # _register_mcp_backend registers under this same lock, so an
+        # in-flight registration can't land after the disconnect below and
+        # leave OpenCode pointing at the server this shutdown stops.
         async with self._mcp_lifecycle_lock:
             async with self._state_lock:
                 # ``on_cleanup`` decides to shut down after removing the last

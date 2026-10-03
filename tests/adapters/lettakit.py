@@ -74,10 +74,19 @@ def make_letta_response(*messages: MagicMock) -> MagicMock:
     return resp
 
 
-def make_mock_mcp_server(server_id: str = "mcp-server-1") -> MagicMock:
-    """Create a mock MCP server response."""
+def make_mock_mcp_server(
+    server_id: str = "mcp-server-1",
+    *,
+    name: str | None = None,
+    url: str | None = None,
+) -> MagicMock:
+    """Create a mock MCP server registration, as Letta stores one."""
     server = MagicMock()
     server.id = server_id
+    if name is not None:
+        server.server_name = name
+    if url is not None:
+        server.config = {"server_url": url}
     return server
 
 

@@ -9,6 +9,7 @@ and agent lifecycle — so each file stays focused on one concern.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -596,9 +597,9 @@ class TestSelfHostedMCPLifecycle:
             config=LettaAdapterConfig(mcp=LettaMCPConfig(server_name="band-compose"))
         )
         mock_client = AsyncMock()
-        stale = make_mock_mcp_server("mcp-stale")
-        stale.server_name = "band-compose"
-        stale.config = {"server_url": "http://dead:1/sse"}
+        stale = make_mock_mcp_server(
+            "mcp-stale", name="band-compose", url="http://dead:1/sse"
+        )
         mock_client.mcp_servers.list.return_value = [stale]
 
         with pytest.raises(RuntimeError, match="points at"):
@@ -612,9 +613,9 @@ class TestSelfHostedMCPLifecycle:
     async def test_register_uses_fresh_name_when_stale_url_is_ephemeral(self) -> None:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
-        stale = make_mock_mcp_server("mcp-stale")
-        stale.server_name = "band-deadname"
-        stale.config = {"server_url": "http://dead:1/sse"}
+        stale = make_mock_mcp_server(
+            "mcp-stale", name="band-deadname", url="http://dead:1/sse"
+        )
         fresh = make_mock_mcp_server("mcp-fresh")
         mock_client.mcp_servers.list.return_value = [stale]
         mock_client.mcp_servers.create.return_value = fresh
@@ -746,8 +747,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._system_prompt = "Test"
 
-        committed = make_mock_mcp_server("mcp-committed")
-        committed.server_name = "band-abc12345"
+        committed = make_mock_mcp_server("mcp-committed", name="band-abc12345")
         # Lookup before create sees nothing; the post-conflict lookup finds
         # the row the first (timed-out) attempt committed.
         mock_client.mcp_servers.list.side_effect = [[], [committed]]
@@ -849,22 +849,39 @@ class TestSelfHostedMCPLifecycle:
         assert adapter._mcp.server_id is None
 
 
+def letta_registering_one_tool() -> AsyncMock:
+    """A Letta client that registers ``mcp-server-1`` exposing one send tool."""
+    client = AsyncMock()
+    client.mcp_servers.list.return_value = []
+    client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-server-1")
+    client.mcp_servers.tools.list.return_value = [
+        make_mock_mcp_tool("t1", BandTool.SEND_MESSAGE)
+    ]
+    return client
+
+
 @asynccontextmanager
 async def registered_on_real_server(
     config: LettaAdapterConfig | None = None,
 ) -> AsyncIterator[tuple[LettaMCPBridge, AsyncMock]]:
     """A self-hosted bridge registered with a mocked Letta, serving a real Band
     MCP server -- the Letta server is the only boundary not run for real."""
-    client = AsyncMock()
-    client.mcp_servers.list.return_value = []
-    client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-server-1")
-    client.mcp_servers.tools.list.return_value = [
-        make_mock_mcp_tool("t1", "band_send_message")
-    ]
+    client = letta_registering_one_tool()
     bridge = LettaAdapter(config=config)._mcp
     async with bridge.backend:
         await bridge.ensure_ready(client)
         yield bridge, client
+
+
+async def registered_on_a_dead_fake_server() -> tuple[LettaMCPBridge, AsyncMock]:
+    """A self-hosted bridge registered with a mocked Letta at a fake server
+    that has since died, for flows that never dial it."""
+    client = letta_registering_one_tool()
+    bridge = LettaAdapter()._mcp
+    dead = await hold_backend(bridge.backend)
+    await bridge.ensure_ready(client)
+    dead.is_running = False
+    return bridge, client
 
 
 def registered_urls(client: AsyncMock) -> list[str]:
@@ -917,9 +934,9 @@ class TestSelfHostedMCPCrash:
         config = LettaAdapterConfig(mcp=LettaMCPConfig(server_name="band-compose"))
         async with registered_on_real_server(config) as (bridge, client):
             (crashed_url,) = registered_urls(client)
-            own_row = make_mock_mcp_server("mcp-server-1")
-            own_row.server_name = "band-compose"
-            own_row.config = {"server_url": crashed_url}
+            own_row = make_mock_mcp_server(
+                "mcp-server-1", name="band-compose", url=crashed_url
+            )
             client.mcp_servers.list.return_value = [own_row]
             await bridge.release(client)
             await crash_backend(bridge.backend)
@@ -932,11 +949,29 @@ class TestSelfHostedMCPCrash:
 
     @pytest.mark.asyncio
     async def test_a_failed_repoint_clears_the_registration(self) -> None:
-        async with registered_on_real_server() as (bridge, client):
-            client.mcp_servers.update.side_effect = RuntimeError("Letta is down")
-            await crash_backend(bridge.backend)
+        bridge, client = await registered_on_a_dead_fake_server()
+        client.mcp_servers.update.side_effect = RuntimeError("Letta is down")
 
-            with pytest.raises(RuntimeError, match="Letta is down"):
+        with (
+            backends_created_by(),
+            pytest.raises(RuntimeError, match="Letta is down"),
+        ):
+            await bridge.ensure_ready(client)
+
+        assert bridge.server_id is None
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_repoint_is_retried_on_the_same_row(self) -> None:
+        """A turn interrupted mid-repoint keeps its registration, still at the
+        dead URL, so the next turn repoints that row instead of trusting it."""
+        bridge, client = await registered_on_a_dead_fake_server()
+        client.mcp_servers.update.side_effect = [asyncio.CancelledError(), None]
+
+        with backends_created_by():
+            with pytest.raises(asyncio.CancelledError):
                 await bridge.ensure_ready(client)
+            await bridge.ensure_ready(client)
 
-            assert bridge.server_id is None
+        assert client.mcp_servers.update.await_count == 2
+        assert client.mcp_servers.create.await_count == 1
+        assert bridge.ready

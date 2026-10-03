@@ -138,12 +138,17 @@ class ClaudeRoom:
         ]
 
     @property
-    def session_band_ports(self) -> list[int | None]:
-        """The Band MCP port each CLI session (any room) was started with, in order."""
+    def session_band_urls(self) -> list[str]:
+        """The Band MCP URL each CLI session (any room) was started with, in order."""
         return [
-            urlsplit(session.options.mcp_servers[BAND_MCP_SERVER_NAME]["url"]).port
+            session.options.mcp_servers[BAND_MCP_SERVER_NAME]["url"]
             for session in self.claude.sessions
         ]
+
+    @property
+    def session_band_ports(self) -> list[int | None]:
+        """The Band MCP port each CLI session (any room) was started with, in order."""
+        return [urlsplit(url).port for url in self.session_band_urls]
 
     async def crash_band_server(self) -> None:
         """The adapter's Band MCP server dies on its own, between turns."""

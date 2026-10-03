@@ -639,8 +639,6 @@ class ACPClientAdapter(
         if self.config.inject_band_tools:
             async with self._session_lock:
                 self._room_tools[room_id] = tools
-            backend = await self._mcp.ensure()
-            await self._drop_stale_session(runtime, room_id, backend)
 
         try:
             session_id, created = await self._get_or_create_session(
@@ -1009,23 +1007,16 @@ class ACPClientAdapter(
             room_bound=True,
         )
 
-    async def _drop_stale_session(
-        self, runtime: ACPRuntime, room_id: str, backend: BandMCPBackend
+    def _retire_stale_session(
+        self, runtime: ACPRuntime, room_id: str, session: RoomSession
     ) -> None:
-        """Retire a room's session built against a Band MCP URL the backend no
-        longer serves, so the next one is created on the live URL.
+        """Close a session built against a Band MCP URL the backend no longer
+        serves; the room gets a fresh one on the live URL.
 
         A fresh session rather than ``session/load`` with new MCP servers:
         how an agent treats reloading a session that is still live is
         undefined. The caller replays the transcript into the new session.
         """
-        band_url = backend.endpoint(runtime.agent_mcp_transport, room_id)
-        async with self._session_lock:
-            session = self._room_to_session.get(room_id)
-            if session is None or session.band_url == band_url:
-                return
-            del self._room_to_session[room_id]
-            self._bootstrapped_sessions.discard(session.session_id)
         logger.info(
             "Band MCP server replaced; replacing ACP session %s for room %s",
             session.session_id,
@@ -1055,12 +1046,19 @@ class ACPClientAdapter(
     ) -> tuple[str, bool]:
         """This room's ACP session id, plus whether it was created just now.
 
-        A just-created session is fresh and holds no conversation context;
-        the caller owes it a transcript replay.
+        A session is reused only while it dials the room's current Band MCP
+        URL. A just-created session is fresh and holds no conversation
+        context; the caller owes it a transcript replay.
         """
+        band_server = await self._session_band_server(room_id)
+        band_url = band_server.url if band_server is not None else None
         async with self._session_lock:
-            if (session := self._room_to_session.get(room_id)) is not None:
-                return session.session_id, False
+            stale = self._room_to_session.get(room_id)
+            if stale is not None and stale.band_url == band_url:
+                return stale.session_id, False
+            if stale is not None:
+                del self._room_to_session[room_id]
+                self._bootstrapped_sessions.discard(stale.session_id)
             initializer = self._session_initializers.get(room_id)
             if (
                 initializer is not None
@@ -1075,12 +1073,17 @@ class ACPClientAdapter(
             if initializer is None:
                 initializer = SessionInitializer(
                     task=asyncio.create_task(
-                        self._initialize_session(runtime, room_id, history),
+                        self._initialize_session(
+                            runtime, room_id, history, band_server
+                        ),
                         name=f"acp-session:{room_id}",
                     )
                 )
                 self._session_initializers[room_id] = initializer
             initializer.waiters += 1
+
+        if stale is not None:
+            self._retire_stale_session(runtime, room_id, stale)
 
         try:
             return await asyncio.shield(initializer.task)
@@ -1110,9 +1113,10 @@ class ACPClientAdapter(
         runtime: ACPRuntime,
         room_id: str,
         history: ACPClientSessionState | None,
+        band_server: LocalMcpServerConfig | None,
     ) -> tuple[str, bool]:
         """Restore or create one room session outside the shared state lock."""
-        mcp = await self._session_mcp_servers(room_id)
+        mcp = self._session_mcp_servers(band_server)
         restored_session_id = await self._restore_session(
             runtime,
             room_id,
@@ -1274,12 +1278,20 @@ class ACPClientAdapter(
             await asyncio.gather(*pending, return_exceptions=True)
             self._background_tasks.difference_update(pending)
 
-    async def _session_mcp_servers(self, room_id: str) -> SessionMcpServers:
+    async def _session_band_server(self, room_id: str) -> LocalMcpServerConfig | None:
+        """The Band MCP server a room's session dials; ``None`` when Band tools
+        aren't injected."""
+        if not self.config.inject_band_tools:
+            return None
+        return await self._get_or_start_band_mcp_server(room_id)
+
+    def _session_mcp_servers(
+        self, band_server: LocalMcpServerConfig | None
+    ) -> SessionMcpServers:
         """The MCP configuration supplied when creating or loading a session."""
         servers: list[object] = list(self.config.mcp_servers)
-        if not self.config.inject_band_tools:
+        if band_server is None:
             return SessionMcpServers(servers=servers, band_url=None)
-        band_server = await self._get_or_start_band_mcp_server(room_id)
         return SessionMcpServers(
             servers=[*servers, band_server], band_url=band_server.url
         )

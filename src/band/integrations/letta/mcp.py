@@ -93,9 +93,14 @@ class LettaMCPBridge:
     @property
     def ready(self) -> bool:
         """Whether the tool path is registered, discovered, and (self-hosted)
-        still being served."""
+        registered at the URL of a server that is still running."""
+        if self.server_id is None:
+            return False
         backend = self.backend.current
-        return self.server_id is not None and (backend is None or backend.is_running)
+        return backend is None or (
+            backend.is_running
+            and self._last_server_url == self.advertised_url(backend.local_server.port)
+        )
 
     @property
     def silent_reporting_tools(self) -> frozenset[str]:
@@ -110,10 +115,11 @@ class LettaMCPBridge:
         """Make the Band MCP tool path available to the Letta server.
 
         External mode registers the configured server once.  Self-host mode
-        starts the in-process ``LocalMCPServer`` (reusing a still-running one
-        after ``release``) and registers its advertised URL under a fresh
-        unique name (see ``LettaMCPConfig.server_name``).  Idempotent once
-        ready.
+        starts the in-process server (reusing a still-running one after
+        ``release``, replacing a dead one) and registers its advertised URL
+        under a fresh unique name (see ``LettaMCPConfig.server_name``), or
+        repoints the existing registration at a replacement's URL.
+        Idempotent once ready.
         """
         if self.ready:
             return
@@ -133,7 +139,7 @@ class LettaMCPBridge:
         backend = await self.backend.ensure()
         server_url = self.advertised_url(backend.local_server.port)
         if self.server_id is not None:
-            await self._repoint(client, self.server_id, server_url)
+            await self._point_registration_at(client, self.server_id, server_url)
             return
         await self.register(
             client,
@@ -146,8 +152,9 @@ class LettaMCPBridge:
 
         Uses lookup-or-create to handle adapter restarts where the MCP server
         name is already registered in Letta.  An adopted registration must point
-        at the same ``server_url`` — otherwise a crash-restart can wire agents
-        to a dead port, or two instances can cross-delete each other's row.
+        at the same ``server_url``, or at this process's own last URL, which is
+        repointed — otherwise a replaced backend can wire agents to a dead
+        port, or two instances can cross-delete each other's row.
         """
         try:
             effective_name = server_name
@@ -218,8 +225,7 @@ class LettaMCPBridge:
         del client  # no server call — see docstring
         if self._config.mode == "external":
             return
-        self.server_id = None
-        self.tool_ids = []
+        self._forget_registration()
 
     async def reregister(self, client: Any) -> None:
         """Re-register from scratch to recover tool ids that died in the org.
@@ -230,9 +236,12 @@ class LettaMCPBridge:
         tools.  Drops the cache and runs ``ensure_ready``, which registers a new
         server against the still-running backend and rediscovers its tools.
         """
+        self._forget_registration()
+        await self.ensure_ready(client)
+
+    def _forget_registration(self) -> None:
         self.server_id = None
         self.tool_ids = []
-        await self.ensure_ready(client)
 
     def resolve_send_tools(self, tool_names: list[str]) -> None:
         """Derive the send/event tool names from the server's discovered tools.
@@ -321,28 +330,24 @@ class LettaMCPBridge:
             f"(omit mcp.server_name)."
         )
 
-    async def _repoint(self, client: Any, server_id: str, server_url: str) -> None:
-        """Point the registration at a replacement self-hosted server.
+    async def _point_registration_at(
+        self, client: Any, server_id: str, server_url: str
+    ) -> None:
+        """Rewrite an existing registration's URL in place.
 
         Letta resolves an MCP tool's server by name and reads its URL on every
         call, so updating the row reconnects every attached tool with no new
         tool ids or re-attach -- unlike a fresh registration, which retags
-        the org's tool rows.
+        the org's tool rows. A failed update forgets the registration (its row
+        may be gone), so the next ``ensure_ready`` registers afresh.
         """
         try:
-            await self._point_registration_at(client, server_id, server_url)
+            await client.mcp_servers.update(
+                server_id, config=self._registration_config(server_url)
+            )
         except Exception:
-            self.server_id = None
-            self.tool_ids = []
+            self._forget_registration()
             raise
-
-    async def _point_registration_at(
-        self, client: Any, server_id: str, server_url: str
-    ) -> None:
-        """Rewrite an existing registration's URL in place."""
-        await client.mcp_servers.update(
-            server_id, config=self._registration_config(server_url)
-        )
         self._last_server_url = server_url
         logger.info("Repointed MCP server registration %s at %s", server_id, server_url)
 

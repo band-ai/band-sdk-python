@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
 
-from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
+from band.runtime.tools import BandTool
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 from tests.mcpclient import advertised_arguments, mcp_session, room_endpoint_path
 
@@ -25,10 +25,7 @@ async def test_rooms_dial_their_own_band_endpoint_on_one_server(
     await room.send("hi")
     await other_room.send("hi")
 
-    endpoints = [
-        session.options.mcp_servers[BAND_MCP_SERVER_NAME]["url"]
-        for session in room.claude.sessions
-    ]
+    endpoints = room.session_band_urls
     async with mcp_session(endpoints[0]) as session:
         advertised = await advertised_arguments(session, BandTool.SEND_MESSAGE)
     urls = [urlsplit(endpoint) for endpoint in endpoints]

@@ -38,7 +38,8 @@ class BandMCPBackend:
     """A Band MCP server (both transports) and the tool names it exposes.
 
     Never restarted: its URLs stay fixed for its whole life, so a URL handed
-    out names exactly one server, and a replacement always serves a new one.
+    out names exactly one server, and a replacement serves a new one whenever
+    its port range has another free port.
     """
 
     allowed_tools: list[str]
@@ -84,6 +85,8 @@ class BandMCPBackendSettings:
     interface; see ``LocalMCPServer`` for the non-loopback caveat.
     ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
     rarely reused, for callers whose MCP client dials across a network proxy.
+    The OS may still hand a replacement its dead predecessor's port, so a
+    caller relying on a replacement's URL changing scans a range instead.
     """
 
     tool_definitions: Sequence[ToolDefinition]
