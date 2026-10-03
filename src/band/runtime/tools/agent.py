@@ -33,7 +33,7 @@ from band.client.rest import (
 )
 from band.config.settings import RuntimeSettings
 from band.core.content import has_visible_content
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, RoomExecutionStoppedError
 from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
@@ -459,17 +459,38 @@ class AgentTools(AgentToolsProtocol):
         Returns:
             Fern EventCreatedResponse model (Pydantic), serialized to dict by
             execute_tool_call() at the adapter boundary, or ``None`` if
-            *content* had no visible characters and the send was refused.
+            *content* had no visible characters and the send was refused, or
+            if the room is stopped on the platform (no API call is made).
         """
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
 
-        return await post_event(
-            rest=self.rest,
-            room_id=self.room_id,
-            request=ChatEventRequest(
-                content=content, message_type=message_type, metadata=metadata
-            ),
-        )
+        if self._ctx is not None and self._ctx.is_stopped:
+            # The platform rejects a stopped room's event posts; skip the call
+            # instead of making one 403 per remaining chunk of the turn.
+            logger.debug(
+                "Room %s is stopped; not posting %s event",
+                self.room_id,
+                message_type,
+            )
+            return None
+        try:
+            return await post_event(
+                rest=self.rest,
+                room_id=self.room_id,
+                request=ChatEventRequest(
+                    content=content, message_type=message_type, metadata=metadata
+                ),
+            )
+        except RoomExecutionStoppedError:
+            # The platform stopped this room's execution without this process
+            # seeing the stop signal (it can be issued while this run is
+            # offline). With an execution context, adopt the platform's state
+            # instead of retrying; without one there is no state to adopt, so
+            # the rejection surfaces to the caller as the typed error.
+            if self._ctx is None:
+                raise
+            self._ctx.mark_stopped_by_platform()
+            return None
 
     async def send_failure(self, failure: band_sdk_core.AgentFailure) -> Any:
         """
