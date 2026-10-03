@@ -330,6 +330,14 @@ jobs:
         PYTHONPATH: .
       run: uv run python .github/scripts/record-backends-environment.py
 
+    - name: Upload the OpenCode server log (opencode)
+      if: always() && matrix.lane == 'backends'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: opencode-serve-${{ matrix.os }}
+        path: artifacts/opencode-serve.log
+        if-no-files-found: ignore
+
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
       run: docker rm -f letta-server || true

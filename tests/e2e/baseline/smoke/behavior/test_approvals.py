@@ -26,6 +26,7 @@ Run with:
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -56,6 +57,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     running_provisioned_agent,
@@ -89,6 +91,9 @@ PATIENT_WAIT_S = THREE_BARRIERS.deadline_s * 2
 REFUSING = tuple(a for a, dialect in DIALECTS.items() if dialect.refusal)
 REMEMBERING = tuple(a for a, dialect in DIALECTS.items() if dialect.session_approval)
 ASKING = tuple(a for a, dialect in DIALECTS.items() if dialect.question)
+# The adapters' turn-phase records are content-free INFO lines; a failing cell's
+# captured log then shows where its turn stopped.
+ADAPTER_LOGGER = "band.adapters"
 
 
 @asynccontextmanager
@@ -108,9 +113,12 @@ async def approval_room(
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
-    with tempfile.TemporaryDirectory(
-        prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
-    ) as workdir:
+    with (
+        sdk_logs_at(ADAPTER_LOGGER, logging.INFO),
+        tempfile.TemporaryDirectory(
+            prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
+        ) as workdir,
+    ):
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
         setup = AgentSetup(root, wait_timeout_s, approvers)

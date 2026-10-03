@@ -852,6 +852,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             case QuestionAskedEvent():
                 await room_state.approvals.on_question_asked(event.properties)
             case SessionErrorEvent():
+                logger.info(
+                    "OpenCode turn: session.error room=%s session=%s",
+                    room_state.room_id,
+                    event.session_id,
+                )
                 if room_state.turn is not None:
                     room_state.turn.last_error_message = describe_error(
                         event.properties.error
@@ -928,7 +933,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             state.status == OpencodeToolStatus.COMPLETED
             and settles_turn_reply(tool_name, custom_effects=self._custom_effects)
             and room_state.turn is not None
+            and not room_state.turn.replied_via_room_tool
         ):
+            logger.info(
+                "OpenCode turn: replied via %s room=%s session=%s",
+                tool_name,
+                room_state.room_id,
+                room_state.turn.session_id,
+            )
             room_state.turn.replied_via_room_tool = True
 
         if Emit.TOOL_CALLS not in self.features.emit:
@@ -1303,6 +1315,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         simply empty there.
         """
         total = sum(turn.usage_by_message.values(), TurnUsage())
+        logger.info(
+            "OpenCode turn: usage session=%s messages=%d empty=%s",
+            turn.session_id,
+            len(turn.usage_by_message),
+            total.is_empty,
+        )
         await self.emit_usage(turn.tools, total)
 
     async def _report_tool_call(

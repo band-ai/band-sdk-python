@@ -299,6 +299,13 @@ class RoomApprovals:
             return
         entry = registration.entry
         self._known_permission_ids.add(request_id)
+        logger.info(
+            "OpenCode permission asked room=%s request=%s permission=%s mode=%s",
+            self._ports.room_id,
+            request_id,
+            pending.permission,
+            self._config.approval_mode,
+        )
 
         if self._config.approval_mode == "auto_accept":
             await self._reply_permission(pending, "once")
@@ -718,6 +725,12 @@ class RoomApprovals:
 
     async def _expire_permission(self, entry: DecisionEntry[PendingPermission]) -> None:
         reply = self._config.approval_timeout_reply
+        logger.info(
+            "OpenCode permission expired room=%s request=%s reply=%s",
+            self._ports.room_id,
+            entry.token,
+            reply,
+        )
         if await self._send_permission_reply(entry, reply) and (
             tools := self._ports.tools()
         ):
@@ -727,6 +740,11 @@ class RoomApprovals:
             )
 
     async def _expire_question(self, entry: DecisionEntry[PendingQuestion]) -> None:
+        logger.info(
+            "OpenCode question expired room=%s request=%s",
+            self._ports.room_id,
+            entry.token,
+        )
         if await self._send_question_reject(entry) and (tools := self._ports.tools()):
             await tools.send_event(
                 f"OpenCode question `{entry.token}` timed out and was rejected.",

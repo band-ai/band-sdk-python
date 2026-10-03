@@ -32,6 +32,10 @@ JSON
 # tools, so in the repo checkout a weak free model wanders into the source instead of
 # replying. An empty cwd keeps it on task.
 workdir="$(mktemp -d)"
+# Under the checkout, where the e2e workflow uploads it: the server's own loop,
+# permission and session records explain a turn the adapter logs can't.
+serve_log="$PWD/artifacts/opencode-serve.log"
+mkdir -p "$(dirname "$serve_log")"
 mkdir -p ~/.config/opencode
 printf '%s\n' "$OPENCODE_CONFIG_JSON" > ~/.config/opencode/opencode.json
 # Also drop a project-local config in the serve cwd: the native opencode on the
@@ -39,7 +43,7 @@ printf '%s\n' "$OPENCODE_CONFIG_JSON" > ~/.config/opencode/opencode.json
 # cwd-local opencode.json on every platform — so this is the portable placement.
 printf '%s\n' "$OPENCODE_CONFIG_JSON" > "$workdir/opencode.json"
 ( cd "$workdir" && nohup opencode serve --hostname 127.0.0.1 --port 4096 \
-    >/tmp/opencode-serve.log 2>&1 & )
+    --print-logs --log-level INFO >"$serve_log" 2>&1 & )
 ready=false
 for _ in $(seq 1 30); do
   # --max-time bounds each attempt: without it, a server that accepts the
@@ -54,7 +58,7 @@ done
 # would go green with a dead server and the lane would fail opaquely at test time.
 if [ "$ready" != true ]; then
   echo "OpenCode server did not become healthy on :4096" >&2
-  cat /tmp/opencode-serve.log 2>/dev/null | tail -50 || true
+  tail -50 "$serve_log" 2>/dev/null || true
   exit 1
 fi
 {
