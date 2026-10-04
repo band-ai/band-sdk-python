@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 import pytest
 from band_rest import ChatMessage
 
-from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
 from band.client.streaming import MessageCreatedPayload
 from band.core.types import MessageType
 from tests.e2e.baseline.agents import Adapter
@@ -168,14 +167,6 @@ class ApprovalRoom:
                     pytest.fail(
                         f"Unexpected follow-up approvals: {unexpected_requests}"
                     )
-                if self._opencode_missing_text_reply(since):
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Approval no-text fallback adapter=%s requests=%s",
-                        self.adapter_id,
-                        sorted(self.handled_requests),
-                    )
-                    pytest.fail("OpenCode ended the approval turn without a text reply")
         logger.log(
             APPROVAL_LOG_LEVEL,
             "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
@@ -236,14 +227,8 @@ class ApprovalRoom:
                     closing_reply=closing_reply,
                 )
                 or bool(self._unhandled_requests(self.capture.messages.since(since)))
-                or self._opencode_missing_text_reply(since)
             ),
             deadline_s=self.budget.deadline_s,
-        )
-
-    def _opencode_missing_text_reply(self, since: int) -> bool:
-        return self.adapter_id is Adapter.OPENCODE and any(
-            NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
         )
 
     def said_since(self, since: int) -> list[str]:

@@ -51,7 +51,13 @@ class Turn:
         self._ledger.note_reported()
 
     def detach(self) -> None:
-        self._detached = True
+        """Move a judged turn's verdict to the adapter's real end of the turn.
+
+        A turn ``on_event`` does not judge stays attached, so the adapter's
+        ``if turn.detached`` report never fires for it.
+        """
+        if self.judged:
+            self._detached = True
 
     @property
     def detached(self) -> bool:

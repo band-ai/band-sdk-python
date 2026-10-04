@@ -556,6 +556,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         return self._inner
 
     @property
+    def judges_turns(self) -> bool:
+        """The brain answers each turn, so whether it is judged is the brain's."""
+        return self._inner.judges_turns
+
+    @property
     def transport(self) -> SlackTransport:
         """Which inbound transport this adapter was configured with."""
         return self.config.transport

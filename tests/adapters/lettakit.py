@@ -8,15 +8,21 @@ by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
 
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from pytest_httpx import HTTPXMock
+from typing_extensions import Unpack
 
-from band.core.types import PlatformMessage
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
+from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.letta.prompts import render_tool_enforcement
+from band.integrations.mcp.engine import build_resolved_band_mcp_tool_registrations
+from band.runtime.tools import CHAT_ID_FIELD_NAME
 
 
 def make_platform_message(
@@ -74,6 +80,59 @@ def make_letta_response(*messages: MagicMock) -> MagicMock:
     resp = MagicMock()
     resp.messages = list(messages)
     return resp
+
+
+def ready_letta_adapter(
+    config: LettaAdapterConfig | None = None,
+    *,
+    room_id: str = "room-1",
+    **features: Unpack[FeatureKwargs],
+) -> tuple[LettaAdapter, AsyncMock]:
+    """An adapter past startup: client set, MCP path registered, and a Letta
+    agent already bound to ``room_id``. Returns it with its mock client."""
+    adapter = LettaAdapter(config, **features)
+    client = AsyncMock()
+    adapter._client = client
+    adapter._system_prompt = "Test"
+    adapter._mcp.server_id = "mcp-server-1"
+    adapter._rooms[room_id] = RoomContext(agent_id="agent-1")
+    return adapter, client
+
+
+def scripted_letta_turn(
+    adapter: LettaAdapter,
+    *,
+    room_id: str,
+    tool_calls: Sequence[tuple[str, dict[str, Any]]] = (),
+    final_text: str = "",
+) -> Callable[..., Awaitable[MagicMock]]:
+    """A self-hosted Letta agent's turn, as a ``messages.create`` side effect.
+
+    Each tool call runs through the adapter's real Band MCP registrations (the
+    path Letta's MCP client reaches), then the turn's messages come back as
+    Letta's response.
+    """
+    registrations = {
+        registration.name: registration
+        for registration in build_resolved_band_mcp_tool_registrations(
+            get_tools=adapter._get_room_tools,
+            capabilities=adapter.features.capabilities,
+        )
+    }
+
+    async def create(**_kwargs: Any) -> MagicMock:
+        messages: list[MagicMock] = []
+        for name, arguments in tool_calls:
+            messages.append(make_tool_call_message(name, json.dumps(arguments)))
+            result = await registrations[name].execute(
+                {**arguments, CHAT_ID_FIELD_NAME: room_id}
+            )
+            messages.append(make_tool_return_message(name, result))
+        if final_text:
+            messages.append(make_assistant_message(final_text))
+        return make_letta_response(*messages)
+
+    return create
 
 
 def make_mock_mcp_server(server_id: str = "mcp-server-1") -> MagicMock:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import itertools
 import json
 from datetime import UTC, datetime
@@ -13,21 +14,24 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
-from band.converters.claude_sdk import (
-    SESSION_ID_METADATA_KEY,
-    ClaudeSDKSessionState,
+from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
+from band.core.turn import Turn
+from band.core.types import (
+    AgentInput,
+    ApprovalMode,
+    HistoryProvider,
+    MessageType,
+    PlatformMessage,
 )
-from band.core.types import ApprovalMode, MessageType, PlatformMessage
-from band.runtime.tools import MCP_TOOL_PREFIX, missing_reply_error
-from band.testing import FakeAgentTools
+from band.runtime.tools import MCP_TOOL_PREFIX
+from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude
 from tests.baseline.decisions import ModelDecision
 
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
-# What a turn that ended without a reply going out must say; tests assert it
-# by substring rather than re-deriving it.
-MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
+# What the runtime reports for a turn that ended without completing.
+MISSING_REPLY_TEXT = MISSING_REPLY_FAILURE[1]
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
 
@@ -42,6 +46,24 @@ def with_approvals(
 APPROVER = {"id": "u1", "name": "Bob", "handle": "@bob"}
 
 
+def said(sender_name: str, content: str) -> dict[str, Any]:
+    """One earlier room message, as raw platform history."""
+    return {
+        "message_type": MessageType.TEXT,
+        "role": "user",
+        "sender_name": sender_name,
+        "content": content,
+    }
+
+
+def recorded_session(session_id: str) -> dict[str, Any]:
+    """The task event a room persisted for a Claude session, as raw history."""
+    return {
+        "message_type": MessageType.TASK,
+        "metadata": {SESSION_ID_METADATA_KEY: session_id},
+    }
+
+
 class ClaudeRoom:
     """A Claude SDK room driven end to end: people post messages, the scripted
     CLI answers them through the real SDK client, and the test reads what the
@@ -53,18 +75,23 @@ class ClaudeRoom:
         self.adapter = adapter
         self.claude = claude
         self.room_id = room_id
-        self.tools = self.fresh_tools()
-        self._message_ids = itertools.count(1)
-        self._bootstrapped = False
-
-    def fresh_tools(self) -> FakeAgentTools:
-        """A new view of this room, like the tools the runtime builds per message."""
-        return FakeAgentTools(
-            room_id=self.room_id,
+        # The room's shared log: every message's tools post into it.
+        self.tools = FakeAgentTools(
+            room_id=room_id,
             participants=[
                 {**APPROVER, "role": "member", "status": "active", "type": "User"}
             ],
         )
+        self._message_ids = itertools.count(1)
+        self._bootstrapped = False
+
+    def fresh_tools(self) -> FakeAgentTools:
+        """The tools the runtime builds for one message: their own turn
+        ledger, posting into the room's shared log (a shallow copy shares its
+        lists, holds and observers; a fault set on ``self.tools`` is copied)."""
+        tools = copy.copy(self.tools)
+        tools.turn = Turn()
+        return tools
 
     @property
     def chat(self) -> list[str]:
@@ -160,34 +187,42 @@ class ClaudeRoom:
         content: str,
         *,
         sender: dict[str, str] = APPROVER,
-        history: str = "",
+        history: tuple[dict[str, Any], ...] = (),
         session_id: str | None = None,
         tools: FakeAgentTools | None = None,
     ) -> None:
-        """Deliver one room message; returns once the adapter hands the turn
-        back (it finished, or parked on a human).
+        """Deliver one room message through the runtime's entry point, so the
+        turn is judged as in production; returns once the adapter hands the
+        turn back (it finished, or parked on a human).
 
-        ``tools`` stands in for the fresh tools the runtime builds per message.
+        ``history`` is the room's raw history, ``session_id`` a Claude session
+        it persisted, and ``tools`` the message's own tools (``fresh_tools()``
+        by default, as the runtime builds per message).
         """
         bootstrap, self._bootstrapped = not self._bootstrapped, True
-        await self.adapter.on_message(
-            PlatformMessage(
-                id=f"msg-{next(self._message_ids)}",
+        raw_history = [*history]
+        if session_id is not None:
+            raw_history.append(recorded_session(session_id))
+        await self.adapter.on_event(
+            AgentInput(
+                msg=PlatformMessage(
+                    id=f"msg-{next(self._message_ids)}",
+                    room_id=self.room_id,
+                    content=content,
+                    sender_id=sender["id"],
+                    sender_type="User",
+                    sender_name=sender["name"],
+                    message_type="text",
+                    metadata={},
+                    created_at=datetime.now(UTC),
+                ),
+                tools=tools or self.fresh_tools(),
+                history=HistoryProvider(raw=raw_history),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=bootstrap,
                 room_id=self.room_id,
-                content=content,
-                sender_id=sender["id"],
-                sender_type="User",
-                sender_name=sender["name"],
-                message_type="text",
-                metadata={},
-                created_at=datetime.now(UTC),
-            ),
-            tools or self.tools,
-            ClaudeSDKSessionState(text=history, session_id=session_id),
-            None,
-            None,
-            is_session_bootstrap=bootstrap,
-            room_id=self.room_id,
+            )
         )
 
     def send_in_background(self, content: str) -> asyncio.Task[None]:

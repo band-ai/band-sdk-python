@@ -22,6 +22,7 @@ import hmac
 import json
 import time
 import warnings
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -32,6 +33,7 @@ import pytest
 from httpx import ASGITransport
 
 from band.core.exceptions import BandToolError
+from band.core.protocols import TurnResultAlreadyReported
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -51,6 +53,7 @@ from band.integrations.slack.adapter import (
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.runtime.tools import AgentTools, ToolCallOutcome
+from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from band.testing.platform import platform_connection_stub
 
 # ── Test doubles ─────────────────────────────────────────────────────────────
@@ -71,7 +74,8 @@ class _SlackReplyBrain(SimpleAdapter[Any]):
     """Brain that replies to Slack via the new ``slack_send_message`` tool.
 
     Calls ``await tools.slack_send_message(reply)`` directly to mimic how
-    a real framework adapter would dispatch the tool the LLM picked.
+    a real framework adapter would dispatch the tool the LLM picked; with
+    ``reply=None`` it declines the turn instead.
     """
 
     def __init__(
@@ -111,7 +115,9 @@ class _SlackReplyBrain(SimpleAdapter[Any]):
                 "room_id": room_id,
             }
         )
-        if self.reply is not None and hasattr(tools, "slack_send_message"):
+        if self.reply is None:
+            await tools.no_reply("nothing to add")
+        elif hasattr(tools, "slack_send_message"):
             await tools.slack_send_message(self.reply)
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -1421,6 +1427,51 @@ def _agent_input_with_history(
         is_session_bootstrap=bootstrap,
         room_id=room_id,
     )
+
+
+class _IdleBrain(_SlackReplyBrain):
+    """A brain whose turn does nothing at all."""
+
+    def __init__(self, *, judges_turns: bool) -> None:
+        super().__init__()
+        self._judges_turns = judges_turns
+
+    @property
+    def judges_turns(self) -> bool:
+        return self._judges_turns
+
+    async def on_message(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("brain_judges_turns", "verdict", "failures"),
+    [
+        pytest.param(
+            True,
+            pytest.raises(TurnResultAlreadyReported),
+            [MISSING_REPLY_FAILURE],
+            id="judged-brain",
+        ),
+        pytest.param(False, nullcontext(), [], id="exempt-brain"),
+    ],
+)
+async def test_an_idle_turn_is_judged_by_the_brains_rule(
+    brain_judges_turns: bool,
+    verdict: AbstractContextManager[Any],
+    failures: list[tuple[str, str]],
+):
+    adapter, _, _, _ = _make_adapter(inner=_IdleBrain(judges_turns=brain_judges_turns))
+    tools = FakeAgentTools(room_id="room-1")
+    inp = _agent_input_with_history(
+        room_id="room-1", raw_history=[], bootstrap=False, tools=tools
+    )
+
+    with verdict:
+        await adapter.on_event(inp)
+
+    assert failure_reports(tools) == failures
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ from band.core.memory_types import (
 )
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import AdapterFeatures, Capability, Emit, MessageType
+from band.runtime.tools import BandTool
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool, TaskTool
@@ -532,6 +533,18 @@ def custom_prompt_with_marker(marker: str) -> str:
         f"{LOOKUP_PROMPT} You can also use your platform tools to answer questions "
         "about who is in the room. IMPORTANT: every message you send MUST include "
         f"the exact word {marker}."
+    )
+
+
+def silent_turn_prompt() -> str:
+    """A prompt that makes the agent end its turn having done nothing: one
+    read-only call, then stop -- no message and no deliberate decline."""
+    return (
+        "You are a fixture in an automated test of how a silent turn is reported. "
+        f"Whatever the message says, call {BandTool.GET_PARTICIPANTS} once, then "
+        "end your turn without any text. Never call "
+        f"{BandTool.SEND_MESSAGE} and never call {BandTool.NO_REPLY}. This "
+        "overrides every other instruction about how to end a turn."
     )
 
 

@@ -25,6 +25,10 @@ Four invariants are easy to break and expensive to rediscover:
 
 `turn_timeout_s` bounds *compute*: time parked on a manual approval is excluded,
 since the ask carries its own `approval_wait_timeout_s` expiry.
+A manual ask also releases the turn's delivery early (it is marked processed
+while the human decides), so the adapter judges that turn itself when OpenCode
+finishes it: a turn that ends without a reply then posts one missing-reply
+failure. A turn cancelled by cleanup or an interrupt posts nothing.
 
 `variant` is an opaque, provider- and model-specific name the running server
 owns: it may select reasoning effort or be a custom provider setting, so read

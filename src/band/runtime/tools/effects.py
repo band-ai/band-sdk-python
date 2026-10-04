@@ -1,9 +1,7 @@
 """What a finished tool call does to the turn's reply obligation.
 
-One ``TurnEffect`` per tool answers both questions an adapter asks after a call:
-did the turn do work (``is_terminal_success``: an empty final answer is then
-benign) and is its reply settled (``settles_turn_reply``: no fallback text may be
-relayed).
+Every tool call records its ``TurnEffect`` on the turn's ledger
+(``band.core.turn.Turn``), which band-sdk-core's rule then judges.
 """
 
 from __future__ import annotations
@@ -42,47 +40,3 @@ def turn_effect(
     if band_tool in _BAND_EFFECTS:
         return _BAND_EFFECTS[band_tool]
     return (custom_effects or {}).get(tool_name, TurnEffect.OBSERVE)
-
-
-def settles_turn_reply(
-    tool_name: str, *, custom_effects: Mapping[str, TurnEffect] | None = None
-) -> bool:
-    """Whether a successful call of ``tool_name`` is the turn's reply.
-
-    True for a room post or ``band_no_reply``'s deliberate silence, and for a
-    custom tool that declared either. Bridge adapters relay the model's plain text
-    only when no call settled the reply, so the reply is delivered exactly once. A
-    miss only costs a duplicate reply (the pre-suppression behavior), never a
-    wrong post.
-    """
-    return turn_effect(tool_name, custom_effects=custom_effects).settles_reply
-
-
-def is_terminal_success(
-    tool_name: str | None,
-    *,
-    succeeded: bool,
-    custom_effects: Mapping[str, TurnEffect] | None = None,
-) -> bool:
-    """Whether a finished tool call counts as terminal productive work.
-
-    Single source of truth shared by the tool-only adapters (claude_sdk, crewai,
-    pydantic-ai, strands) to decide whether an empty final model response is
-    *benign* (the agent already did its work this turn) or a genuine no-response
-    failure. Terminal work is a call that did not fail and whose ``turn_effect``
-    did work.
-
-    Observing tools never count -- fetching state (``READ_ONLY_TOOL_NAMES``) or
-    narrating (``EVENT_TOOL_NAMES``: band_send_event posts a thought/error/task
-    event) is not a chat reply or a durable requested action. Custom tools are
-    **not** terminal by default: the SDK cannot know whether a bare custom tool is a
-    lookup or a side-effecting action, so it fails loud — an empty final after only
-    an undeclared custom tool surfaces as a no-response error rather than being
-    silently swallowed. A custom tool that genuinely completes the turn declares
-    its effect (see ``runtime.custom_tools.declares_turn_effect``).
-    """
-    return (
-        succeeded
-        and tool_name is not None
-        and turn_effect(tool_name, custom_effects=custom_effects).did_work
-    )

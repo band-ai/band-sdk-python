@@ -42,6 +42,7 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import report_unsettled_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
@@ -1092,6 +1093,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     final_text=result.final_text,
                     duration_s=_turn_duration_s,
                 )
+                # A turn wound down by room cleanup was aborted, not missed.
+                if tools.turn.detached and room_id not in self._closing_rooms:
+                    await report_unsettled_turn(tools)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             except TurnResultAlreadyReported:
@@ -1113,10 +1117,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 raise
 
-    def _release_turn(self, room_id: str) -> None:
-        """Let on_message return while the room's turn waits on a human."""
+    def _release_turn(self, room_id: str, tools: AgentToolsProtocol) -> None:
+        """Let on_message return while the room's turn waits on a human; the
+        turn is then judged at its real end, not when on_message returns."""
         release = self._turn_release.get(room_id)
         if release is not None and not release.done():
+            tools.turn.detach()
             release.set_result(None)
 
     def _forget_turn(self, room_id: str, task: asyncio.Task[None]) -> None:
@@ -2691,7 +2697,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     )
                     raise
 
-            self._release_turn(room_id)
+            self._release_turn(room_id, tools)
             decision = await registry.wait(
                 entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
             )

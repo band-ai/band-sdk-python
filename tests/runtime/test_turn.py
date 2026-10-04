@@ -8,18 +8,22 @@ uses: registry dispatch, a direct method call, and ``deliver_reply``.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
-import band_sdk_core
 import pytest
 from pydantic import BaseModel
 
 from band.core.delivery import deliver_reply
-from band.core.protocols import TURN_FAILURE_PROVIDER
 from band.core.turn import report_unsettled_turn
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import declares_turn_effect, execute_custom_tool
 from band.runtime.tools import AgentTools, BandTool, TurnEffect
-from band.testing.fake_tools import FakeAgentTools, reported_failures
+from band.testing.fake_tools import (
+    MISSING_REPLY_FAILURE,
+    FakeAgentTools,
+    failure_reports,
+    reported_failures,
+)
 
 ALICE = {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"}
 
@@ -146,9 +150,7 @@ class TestReportUnsettledTurn:
         assert await report_unsettled_turn(tools) is True
         assert await report_unsettled_turn(tools) is False
 
-        assert [(f["provider"], f["message"]) for f in reported_failures(tools)] == [
-            (TURN_FAILURE_PROVIDER, band_sdk_core.missing_reply_message())
-        ]
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
     async def test_a_complete_turn_reports_nothing(self) -> None:
         tools = FakeAgentTools()
@@ -163,3 +165,36 @@ class TestReportUnsettledTurn:
         tools.turn.settle()
 
         assert await report_unsettled_turn(tools) is False
+
+
+class TestDetach:
+    def test_a_judged_turn_detaches(self) -> None:
+        tools = FakeAgentTools()
+        tools.turn.judged = True
+
+        tools.turn.detach()
+
+        assert tools.turn.detached
+
+    def test_an_unjudged_turn_never_detaches(self) -> None:
+        """A contact-hub turn parked on a decision is never reported later."""
+        tools = FakeAgentTools()
+
+        tools.turn.detach()
+
+        assert not tools.turn.detached
+
+
+async def test_a_detached_report_never_marks_the_contexts_next_message(
+    mock_rest_client: Any,
+) -> None:
+    ctx = MagicMock(participants=[ALICE], agent_id="agent-1", hub_room_id=None)
+    ctx.link.rest = mock_rest_client
+    tools = AgentTools.from_context(ctx)
+    tools.turn.judged = True
+    tools.turn.detach()
+
+    assert await report_unsettled_turn(tools) is True
+
+    mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
+    ctx.note_turn_failure_reported.assert_not_called()

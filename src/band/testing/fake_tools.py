@@ -49,7 +49,11 @@ from band.client.rest import (
 )
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
-from band.core.protocols import FailureMetadataKey, to_failure_event
+from band.core.protocols import (
+    TURN_FAILURE_PROVIDER,
+    FailureMetadataKey,
+    to_failure_event,
+)
 from band.core.task_types import (
     TaskAssignmentStatus,
     TaskLifecycleState,
@@ -1192,3 +1196,12 @@ def reported_failures(tools: FakeAgentTools) -> list[dict[str, Any]]:
         for e in events_of_type(tools, MessageType.ERROR)
         if FailureMetadataKey.FAILURE in e["metadata"]
     ]
+
+
+# The one failure a missing-reply verdict reports, as ``failure_reports`` lists it.
+MISSING_REPLY_FAILURE = (TURN_FAILURE_PROVIDER, band_sdk_core.missing_reply_message())
+
+
+def failure_reports(tools: FakeAgentTools) -> list[tuple[str, str]]:
+    """Every failure reported via ``send_failure``, as ``(provider, message)``."""
+    return [(f["provider"], f["message"]) for f in reported_failures(tools)]

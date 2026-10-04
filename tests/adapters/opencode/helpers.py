@@ -16,9 +16,7 @@ from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import (
-    PlatformMessage,
-)
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.mcp.engine import EmbeddedResolver
 from band.integrations.opencode import (
     ApprovalReply,
@@ -26,7 +24,7 @@ from band.integrations.opencode import (
     OpencodeQuestionRequest,
 )
 from band.integrations.opencode.types import OpencodeSessionState
-from band.runtime.tools import TOOL_DEFINITIONS, BandTool
+from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
@@ -225,6 +223,22 @@ def event_session_error(session_id: str, message: str) -> RawOpencodeEvent:
 
 def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
     return cast(AgentToolsProtocol, tools)
+
+
+def agent_input(content: str, tools: FakeAgentTools) -> AgentInput:
+    """What the runtime hands ``on_event`` for one room message."""
+    return AgentInput(
+        msg=make_platform_message(content=content),
+        tools=tools_protocol(tools),
+        history=HistoryProvider(raw=[]),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+
+#: The runtime's report of a turn that neither replied, declined nor worked.
 
 
 class RaisingSendTools(FakeAgentTools):
@@ -440,7 +454,7 @@ class FakeMCPBackend:
             await self._stop_release.wait()
 
     def band_tool_call(
-        self, tool: BandTool, arguments: dict[str, Any], *, room_id: str = "room-1"
+        self, tool: str, arguments: dict[str, Any], *, room_id: str = "room-1"
     ) -> ServerStep:
         """The model calling a band tool over MCP, dispatched to the room's
         tools exactly as the embedded MCP server does."""

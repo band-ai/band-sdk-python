@@ -19,11 +19,7 @@ from typing_extensions import Unpack
 
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.core.adapterconfig import BaseAdapterConfig
-from band.core.protocols import (
-    GENERIC_PROVIDER_FAILURE_MESSAGE,
-    AgentToolsProtocol,
-    TurnResultAlreadyReported,
-)
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.crewai import (
@@ -34,7 +30,7 @@ from band.integrations.crewai import (
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import BandTool, missing_reply_error
+from band.runtime.tools import BandTool
 
 if TYPE_CHECKING:
     from crewai import Agent as CrewAIAgent
@@ -51,10 +47,10 @@ _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = Conte
     "_current_room_context", default=None
 )
 
-# Per-turn marker for whether the agent already delivered a reply via
-# band_send_message. Set in on_message, read by the tool wrappers (through
-# _get_context) and the error handler. Shared by reference so the mark is
-# visible across CrewAI's sync-to-async tool execution boundary.
+# Per-turn tool activity: whether any tool ran and what band_send_message
+# posted. Set in on_message, written by the tool wrappers (through
+# _get_context). Shared by reference so the marks are visible across CrewAI's
+# sync-to-async tool execution boundary.
 _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
@@ -416,19 +412,15 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             )
 
         except Exception as e:
-            # An empty response is benign only once some tool ran this turn.
-            # Reaching here with no tool activity means the first-call retry
-            # also came back empty (or this was a different failure), which is
-            # indistinguishable from a genuine provider failure and must keep
-            # failing the delivery so the platform retries it.
-            if not (_is_empty_llm_response(e) and reply_tracker.any_tool_ran):
+            # An empty completion is how a tool-only turn ends; whether the
+            # turn is complete is the shared verdict's call, not this error's.
+            if not _is_empty_llm_response(e):
                 logger.exception("Error processing message")
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
-            # Keep the exception text: it is the only record that CrewAI raised,
-            # and this turn is no longer marked failed for the runtime to log.
+            # Keep the exception text: it is the only record that CrewAI raised.
             logger.debug("Room %s: CrewAI returned no text: %s", room_id, e)
             result = None
 
@@ -447,25 +439,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                     "content": final_text,
                 }
             )
-
-        if not reply_tracker.did_productive_work:
-            logger.warning(
-                "Room %s: CrewAI turn produced nothing for the room", room_id
-            )
-            detail = missing_reply_error(
-                "CrewAI",
-                detail=(
-                    "Repeated tool failures may also have exhausted "
-                    f"max_iter={self.config.max_iter}."
-                ),
-            )
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            if not reply_tracker.any_tool_ran:
-                # Some tool activity (even read-only) means the turn did what it
-                # was asked and correctly had nothing left to say -- report but
-                # don't fail the delivery. Only true silence, no tool call at
-                # all, is a genuine no-response failure worth a retry.
-                raise TurnResultAlreadyReported(detail)
 
         logger.info(
             "Room %s: CrewAI turn over for %s (output=%s chars, history=%s)",
@@ -491,11 +464,10 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         """Retry a first-call empty completion once before giving up.
 
         CrewAI raises the identical ValueError whether the model correctly has
-        nothing left to say (fine once a tool has run -- handled by the
-        caller) or the turn's very first call came back empty. The second case
-        has run no tool yet, so there is nothing to duplicate: one immediate
-        retry absorbs a single-call fluke instead of failing the whole
-        delivery and leaving CrewAI to improvise on a cold redelivery.
+        nothing left to say after its tool calls or the turn's very first call
+        came back empty. The second case has run no tool yet, so there is
+        nothing to duplicate: one immediate retry absorbs a single-call fluke
+        instead of ending the turn with nothing done.
         """
         try:
             return await agent.kickoff_async(prompt)

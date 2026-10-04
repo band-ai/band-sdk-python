@@ -167,7 +167,7 @@ class TurnState:
     reasonings: dict[str, str] = field(default_factory=dict)
     # Summed across the turn's per-call assistant.usage events; emitted once.
     usage: TurnUsage = field(default_factory=TurnUsage)
-    # Non-fatal trouble the turn hit, reported when it ends without a reply.
+    # Non-fatal trouble the turn hit, logged when it ends without a reply.
     incidents: list[str] = field(default_factory=list)
 
 
@@ -484,23 +484,18 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
             await self._emit_thoughts(turn, tools)
 
-            # Session errors raise out of send_and_wait, so a None here
-            # with no room output means the model genuinely said nothing.
-            if final_text is None and not tools.turn.replied:
-                # Incidents carry session text, so they stay in this one log line
-                # and out of the error the runtime logs and reports to the platform.
-                logger.warning(
-                    "Room %s: Copilot turn produced no reply (incidents: %s)",
-                    room_id,
-                    "; ".join(turn.incidents) or "none reported",
-                )
-                await tools.send_failure(AgentFailure(_PROVIDER, "no assistant reply"))
-                raise RuntimeError("Copilot turn produced no reply")
-
             try:
                 await relay_reply(tools, final_text, mentions=[turn.sender_mention])
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
+            if not tools.turn.complete:
+                # The runtime reports the missing reply; incidents carry session
+                # text, so they stay in this log line and out of that report.
+                logger.warning(
+                    "Room %s: Copilot turn ended without a reply (incidents: %s)",
+                    room_id,
+                    "; ".join(turn.incidents) or "none reported",
+                )
 
             await self._persist_session_id(room_id, tools)
 

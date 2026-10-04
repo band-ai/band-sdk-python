@@ -226,6 +226,11 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # top of the checkpointer's already-stored state.
         self._bootstrapped_rooms: OrderedDict[str, None] = OrderedDict()
 
+    @property
+    def judges_turns(self) -> bool:
+        """A static ``graph=`` never receives Band tools, so it cannot reply."""
+        return self.graph_factory is not None
+
     def _additional_tools_for_turn(self, turn: Turn) -> list[Any]:
         """The caller's extra tools as LangChain tools for one room turn.
 

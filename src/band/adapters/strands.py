@@ -38,7 +38,6 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
-    TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -69,9 +68,7 @@ from band.runtime.tools import (
     get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
-    is_terminal_success,
     iter_tool_definitions,
-    missing_reply_error,
     redact_tool_call_args,
     serialize_tool_result,
     validate_tool_arguments,
@@ -134,7 +131,7 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
 
 
 def _result_text(result: ToolResult) -> str:
-    """Flatten a tool result for execution events and terminal-state policy."""
+    """Flatten a tool result for execution events and failure detection."""
     parts: list[str] = []
     image_count = 0
     image_index: int | None = None
@@ -335,7 +332,7 @@ class PlatformToolBridge(StrandsToolBridge):
 
 
 class BandTurnHooks(HookProvider):
-    """Emit execution events and record whether a turn completed useful work."""
+    """Emit execution events and record native tools' declared turn effects."""
 
     def __init__(
         self,
@@ -347,7 +344,6 @@ class BandTurnHooks(HookProvider):
         self._tools = tools
         self._emit_execution = emit_execution
         self._custom_effects = custom_effects
-        self.terminal_fired = False
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         del kwargs
@@ -374,10 +370,10 @@ class BandTurnHooks(HookProvider):
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
             name, output
         )
-        if is_terminal_success(
-            name, succeeded=succeeded, custom_effects=self._custom_effects
-        ):
-            self.terminal_fired = True
+        # Native Strands tools run outside execute_custom_tool, so their
+        # declared effect is recorded here.
+        if succeeded and (effect := self._custom_effects.get(name)):
+            self._tools.turn.record(effect)
         if not self._emit_execution:
             return
         await self._emit_event(
@@ -592,7 +588,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run one room turn and surface a missing tool-based reply."""
+        """Run one room turn through the Strands agent loop."""
         room_history = self._history_for_turn(
             room_id, history, is_session_bootstrap=is_session_bootstrap
         )
@@ -618,13 +614,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             tools=tools,
             hooks=hooks,
         )
-        if not hooks.terminal_fired:
-            logger.warning(
-                "Room %s: Strands turn produced nothing for the room", room_id
-            )
-            detail = missing_reply_error("Strands")
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,

@@ -48,7 +48,6 @@ from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     iter_tool_definitions,
     redact_tool_call_args,
-    settles_turn_reply,
     turn_effect,
 )
 
@@ -561,7 +560,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         Returns the list of assistant text parts collected during the turn.
         """
         final_text_parts: list[str] = []
-        settled_reply = False  # an MCP call posted the reply or declined to
         for resp_msg in response_messages:
             match getattr(resp_msg, "message_type", None):
                 case "assistant_message":
@@ -575,8 +573,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         if tool_call
                         else "unknown"
                     )
-                    if settles_turn_reply(tool_name):
-                        settled_reply = True
                     # ToolCall.arguments is a JSON string (letta_client's own
                     # wire shape); parse it so redact_tool_call_args can
                     # replace band_send_room_file's content field -- reporting
@@ -620,9 +616,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # to relaying the assistant text so the user still sees a response —
         # loudly, because a turn landing here means the MCP tool path went unused
         # (a dead tool path would otherwise hide behind green relays).  With
-        # auto_relay disabled, the unused tool path fails loud as an error event
-        # instead.
-        if settled_reply:
+        # auto_relay disabled the text is dropped and the turn verdict decides.
+        if tools.turn.replied:
             logger.debug(
                 "Room %s: Agent settled its reply via a Band tool, skipping auto-relay",
                 room_id,
@@ -636,12 +631,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
                 self._mcp.send_message_tool,
             )
-            detail = (
-                f"Letta agent did not call {self._mcp.send_message_tool} "
-                "(auto-relay disabled); its reply was dropped"
-            )
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
         else:
             final_text = "\n\n".join(final_text_parts)
             mentions = [reply_to_sender_id] if reply_to_sender_id else None

@@ -13,6 +13,7 @@ from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
+from band.core.turn import report_unsettled_turn
 from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -281,6 +282,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
             )
+            # on_event already returned for a detached turn, so it is judged
+            # here, at its real end; a failed or cancelled turn never gets here.
+            if tools.turn.detached:
+                await report_unsettled_turn(tools)
         finally:
             self._cursor_profile.bind_session(None)
             if self._active_turn is turn:
@@ -326,7 +331,12 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         decision -- the runtime's own interrupt only cancels the task that
         already returned once the decision prompt was posted. Matches
         on_cleanup's choice not to hard-cancel the turn itself: waking its
-        pending decision is enough for it to wind down on its own."""
+        pending decision is enough for it to wind down on its own. The
+        interrupt ends that turn, so it is settled and never reported as a
+        missing reply."""
+        turn = self._active_turn
+        if turn is not None and turn.room_id == room_id:
+            turn.tools.turn.settle()
         self._cancel_room_decisions(room_id)
 
     async def cleanup_all(self, *, final: bool = True) -> None:
@@ -497,6 +507,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             # the room needs its queue back the instant a decision is
             # outstanding, whether or not the prompt itself landed.
             if not turn.release.done():
+                turn.tools.turn.detach()
                 turn.release.set_result(None)
 
         result = await self._pending_decisions.wait(

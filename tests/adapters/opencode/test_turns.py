@@ -13,7 +13,7 @@ from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_REQUESTED_TEMPLATE,
 )
-from band.core.protocols import FAILURE_CODE_TIMEOUT
+from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.core.types import (
     Capability,
     Emit,
@@ -21,12 +21,19 @@ from band.core.types import (
 from band.integrations.opencode import ApprovalReply, parse_opencode_event
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
-from band.testing import FakeAgentTools, events_of_type, reported_failures
+from band.testing import (
+    MISSING_REPLY_FAILURE,
+    FakeAgentTools,
+    events_of_type,
+    failure_reports,
+    reported_failures,
+)
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     FakeMCPBackend,
     FakeOpencodeClient,
     TaskEventFailingTools,
+    agent_input,
     event_message_updated,
     event_message_updated_with_tokens,
     event_part_delta,
@@ -363,26 +370,36 @@ async def test_does_not_echo_user_text_parts_as_assistant_output(
             ]
         ]
     )
-    adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(provider_id="openai", model_id="gpt-5.5"),
-        client_factory=lambda _config: fake_client,
-    )
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(content="user prompt text"),
-        tools_protocol(tools),
-        OpencodeSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
+    with pytest.raises(TurnResultAlreadyReported):
+        await adapter.on_event(agent_input("user prompt text", tools))
 
-    assert tools.messages_sent[0]["content"] == (
-        "OpenCode completed the turn without a text reply."
+    assert tools.messages_sent == []
+    assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+
+async def test_a_reply_that_cannot_be_posted_is_reported_once(
+    make_adapter, tools
+) -> None:
+    """The delivery failure is the turn's report; the verdict adds no second."""
+    tools.send_message_error = RuntimeError("no one to mention")
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-assistant"),
+                event_text_part("sess-1", "msg-assistant", "pong"),
+                event_session_idle("sess-1"),
+            ]
+        ]
     )
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_event(agent_input("ping", tools))
+
+    assert [provider for provider, _ in failure_reports(tools)] == ["opencode"]
 
 
 async def test_ignores_reasoning_deltas_and_relays_final_text_only(

@@ -7,8 +7,9 @@ This file contains PydanticAI-specific behavior: agent creation, tool registrati
 stream event handling, execution reporting, and custom tools.
 """
 
+import contextlib
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,6 +59,7 @@ from band.adapters.pydantic_ai import (
     _is_output_retries_exhausted,
     _is_replayable_history_message,
 )
+from band.core.exceptions import BandToolError
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -91,9 +93,15 @@ from band.runtime.tools import (
     get_tool_description,
     platform_args_schema,
 )
-from band.testing import FakeAgentTools
+from band.testing import (
+    MISSING_REPLY_FAILURE,
+    FakeAgentTools,
+    failure_reports,
+    reported_failures,
+)
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
+from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
 
 def make_stream_events(
@@ -766,6 +774,37 @@ def _tool_returns(result: Any) -> list[Any]:
     return [part.content for part in _parts(result, ToolReturnPart)]
 
 
+def _streamed_tool_calls(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
+    """A streaming model (what ``on_message`` drives) making ``calls``, one per
+    request, then ending with nothing left to say."""
+    pending = list(calls)
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if pending:
+            name, args = pending.pop(0)
+            yield {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
+        else:
+            yield ""
+
+    return FunctionModel(stream_function=stream)
+
+
+async def _run_on_message(
+    adapter: PydanticAIAdapter, msg: PlatformMessage, tools: FakeAgentTools
+) -> None:
+    await adapter.on_message(
+        msg=msg,
+        tools=tools,
+        history=[],
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id=tools.room_id,
+    )
+
+
 class TestAdvertisedToolSchemas:
     """Per-argument text fidelity is asserted in test_tool_text_drift.
 
@@ -1388,35 +1427,23 @@ class TestOnMessage:
             mock_create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_reports_failure_when_no_terminal_tool_ran(
-        self, sample_message, mock_tools, mock_pydantic_agent
+    async def test_a_turn_that_never_replied_is_reported_by_the_verdict(
+        self, mock_pydantic_agent
     ):
-        """A clean run that never called a reply/terminal tool is a silently
-        dropped turn — must still surface as a failure, even without an
-        exception."""
+        """A clean run that never replied, declined or acted is a silently
+        dropped turn — the shared verdict reports it, even without an exception."""
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
-
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_stream_events(result_messages=[])
         )
+        tools = FakeAgentTools(room_id=ROOM_ID)
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+            await adapter.on_event(turn_input(tools))
 
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "pydantic_ai"
-        assert "band_send_message" in failure.message
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
 
 class TestOnCleanup:
@@ -1913,27 +1940,19 @@ class TestExecutionReporting:
 def make_raising_stream(
     error: BaseException,
     *,
-    tool_result: bool,
-    tool_name: str = "band_send_message",
-    tool_content: Any = None,
+    work: Callable[[], Awaitable[object]] | None = None,
 ):
-    """Run stream (async CM, as 2.x returns) that fires a tool result, then raises.
+    """Run stream (async CM, as 2.x returns) that does ``work``, then raises.
 
-    ``tool_name``/``tool_content`` let a test pick a read-only tool or an error
-    result to verify those do not count as terminal productive work.
+    ``work`` stands in for the tool calls the run made through the room's
+    tools, so the turn's ledger sees exactly what those calls did.
     """
 
     async def stream():
-        if tool_result:
-            event = MagicMock(spec=FunctionToolResultEvent)
-            event.part = MagicMock()
-            event.part.tool_name = tool_name
-            event.part.content = (
-                {"id": "msg_1"} if tool_content is None else tool_content
-            )
-            event.tool_call_id = "call_1"
-            yield event
+        if work is not None:
+            await work()
         raise error
+        yield  # an async generator, like the real event stream
 
     @asynccontextmanager
     async def events() -> AsyncIterator[AsyncIterator]:
@@ -1969,24 +1988,25 @@ class TestEmptyFinalAnswer:
 
     @pytest.mark.asyncio
     async def test_empty_output_after_tool_is_benign(
-        self, sample_message, mock_tools, mock_pydantic_agent
+        self, sample_message, mock_pydantic_agent
     ):
-        """Output-retry exhaustion after a tool ran is swallowed."""
+        """Output-retry exhaustion after the turn replied is swallowed."""
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
+        tools = FakeAgentTools(room_id="room-123")
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
                 UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
-                tool_result=True,
+                work=lambda: tools.send_message("hi", ["@Alice"]),
             )
         )
 
         # Must not raise: the reply already went out via the tool this turn.
         await adapter.on_message(
             msg=sample_message,
-            tools=mock_tools,
+            tools=tools,
             history=[],
             participants_msg=None,
             contacts_msg=None,
@@ -2005,11 +2025,11 @@ class TestEmptyFinalAnswer:
             isinstance(part, UserPromptPart) and "Hello, agent!" in str(part.content)
             for part in preserved[-1].parts
         )
-        mock_tools.send_failure.assert_not_awaited()
+        assert reported_failures(tools) == []
 
     @pytest.mark.asyncio
     async def test_empty_output_preserves_full_captured_turn(
-        self, sample_message, mock_tools, mock_pydantic_agent
+        self, sample_message, mock_pydantic_agent
     ):
         """The swallow persists the whole captured turn — not just the user prompt —
         so a later 'what did you just say?' has the agent's reply in context."""
@@ -2017,11 +2037,12 @@ class TestEmptyFinalAnswer:
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
+        tools = FakeAgentTools(room_id="room-xyz")
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
                 UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
-                tool_result=True,
+                work=lambda: tools.send_message("hi", ["@Alice"]),
             )
         )
 
@@ -2039,7 +2060,7 @@ class TestEmptyFinalAnswer:
         with patch("band.adapters.pydantic_ai.capture_run_messages", fake_capture):
             await adapter.on_message(
                 msg=sample_message,
-                tools=mock_tools,
+                tools=tools,
                 history=[],
                 participants_msg=None,
                 contacts_msg=None,
@@ -2054,35 +2075,12 @@ class TestEmptyFinalAnswer:
 
     @pytest.mark.asyncio
     async def test_empty_output_without_tool_propagates(
-        self, sample_message, mock_tools, mock_pydantic_agent
+        self, sample_message, mock_pydantic_agent
     ):
         """Same error with no tool executed is a real failure — propagate."""
-        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
-        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
-            await adapter.on_started("TestBot", "Test bot")
-
-        adapter._agent.run_stream_events = MagicMock(
-            return_value=make_raising_stream(
-                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
-                tool_result=False,
-            )
+        await self._assert_exhaustion_propagates(
+            sample_message, mock_pydantic_agent, work=None
         )
-
-        with pytest.raises(UnexpectedModelBehavior):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "pydantic_ai"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_failed_run_still_emits_captured_usage(
@@ -2103,7 +2101,6 @@ class TestEmptyFinalAnswer:
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
                 UnexpectedModelBehavior("Invalid response, unable to find output"),
-                tool_result=True,
             )
         )
 
@@ -2143,35 +2140,27 @@ class TestEmptyFinalAnswer:
 
     @pytest.mark.asyncio
     async def test_unrelated_model_error_propagates_even_after_tool(
-        self, sample_message, mock_tools, mock_pydantic_agent
+        self, sample_message, mock_pydantic_agent
     ):
-        """The swallow is narrow: other model errors still surface after a tool."""
+        """The swallow is narrow: other model errors still surface after a reply."""
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
+        tools = FakeAgentTools(room_id="room-123")
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
                 UnexpectedModelBehavior("Invalid response, unable to find output"),
-                tool_result=True,
+                work=lambda: tools.send_message("hi", ["@Alice"]),
             )
         )
 
         with pytest.raises(UnexpectedModelBehavior):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+            await _run_on_message(adapter, sample_message, tools)
 
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "pydantic_ai"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert failure_reports(tools) == [
+            ("pydantic_ai", GENERIC_PROVIDER_FAILURE_MESSAGE)
+        ]
 
     @pytest.mark.asyncio
     async def test_generic_provider_error_reports_and_propagates(
@@ -2186,7 +2175,6 @@ class TestEmptyFinalAnswer:
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
                 RuntimeError("provider connection reset"),
-                tool_result=False,
             )
         )
 
@@ -2208,67 +2196,93 @@ class TestEmptyFinalAnswer:
 
     @pytest.mark.asyncio
     async def test_empty_output_after_read_only_tool_propagates(
-        self, sample_message, mock_tools, mock_pydantic_agent
+        self, sample_message, mock_pydantic_agent
     ):
         """A read-only lookup is not terminal work — output-validation exhaustion
         after only a lookup is a genuine no-response failure and must propagate."""
-        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
-        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
-            await adapter.on_started("TestBot", "Test bot")
+        tools = FakeAgentTools(room_id="room-123")
 
-        adapter._agent.run_stream_events = MagicMock(
-            return_value=make_raising_stream(
-                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
-                tool_result=True,
-                tool_name="band_lookup_peers",
-                tool_content=[{"id": "peer_1"}],
-            )
+        await self._assert_exhaustion_propagates(
+            sample_message, mock_pydantic_agent, tools=tools, work=tools.lookup_peers
         )
-
-        with pytest.raises(UnexpectedModelBehavior):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
 
     @pytest.mark.asyncio
     async def test_empty_output_after_failed_band_tool_propagates(
-        self, sample_message, mock_tools, mock_pydantic_agent
+        self, sample_message, mock_pydantic_agent
     ):
-        """A band tool that returned an "Error ..." string did no work — exhausting
-        output validation afterward is a genuine failure and must propagate."""
+        """A band tool that raised did no work — exhausting output validation
+        afterward is a genuine failure and must propagate."""
+        tools = FakeAgentTools(room_id="room-123")
+
+        async def rejected_send() -> None:
+            # The band tool wrapper turns this raise into an error string for
+            # the model; the turn records nothing either way.
+            with contextlib.suppress(BandToolError):
+                await tools.send_message("hi", mentions=[])
+
+        await self._assert_exhaustion_propagates(
+            sample_message, mock_pydantic_agent, tools=tools, work=rejected_send
+        )
+
+    @staticmethod
+    async def _assert_exhaustion_propagates(
+        sample_message: PlatformMessage,
+        mock_pydantic_agent: MagicMock,
+        *,
+        work: Callable[[], Awaitable[object]] | None,
+        tools: FakeAgentTools | None = None,
+    ) -> None:
+        """Output-retry exhaustion after ``work`` fails the turn as a provider error."""
+        tools = tools or FakeAgentTools(room_id="room-123")
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
-
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
                 UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
-                tool_result=True,
-                tool_name="band_send_message",
-                tool_content="Error sending message: no mentions",
+                work=work,
             )
         )
 
         with pytest.raises(UnexpectedModelBehavior):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+            await _run_on_message(adapter, sample_message, tools)
+
+        assert failure_reports(tools) == [
+            ("pydantic_ai", GENERIC_PROVIDER_FAILURE_MESSAGE)
+        ]
 
 
 class TestCustomTools:
     """Tests for custom tool support (PydanticAI-native functions)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("declared", "reported"), [(True, []), (False, [MISSING_REPLY_FAILURE])]
+    )
+    async def test_native_tool_counts_only_the_effect_it_declared(
+        self, declared: bool, reported: list
+    ):
+        """A native tool runs outside the portable custom-tool path, so its
+        declared effect still has to reach the turn; an undeclared one only
+        observes."""
+
+        async def finish(ctx: RunContext[AgentToolsProtocol], note: str) -> str:
+            """Finish the task."""
+            return "done"
+
+        if declared:
+            declares_turn_effect(TurnEffect.ACT)(finish)
+        adapter = PydanticAIAdapter(
+            PydanticAIAdapterConfig(model="test"), additional_tools=[finish]
+        )
+        await adapter.on_started("Probe", "probe")
+        adapter._agent.model = _streamed_tool_calls(("finish", {"note": "go"}))
+        tools = FakeAgentTools(room_id=ROOM_ID)
+
+        with contextlib.suppress(TurnResultAlreadyReported):
+            await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == reported
 
     def test_accepts_additional_tools_parameter(self):
         """Adapter accepts list of callables."""

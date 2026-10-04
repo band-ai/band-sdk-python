@@ -69,7 +69,10 @@ failure fails that room turn visibly instead of falling back.
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
   session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
   replies post through `send_notice`, so they never count as the model's reply, and a
-  `/cursor` message settles its own turn without reaching the agent.
+  `/cursor` message settles its own turn without reaching the agent. A turn parked on a
+  decision releases its message early (`tools.turn.detach()`), so it is judged when the
+  ACP turn completes normally; a failed or cancelled turn is never reported as a missing
+  reply.
   The adapter does not pick a plan/agent mode itself; a caller selects one through
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`

@@ -511,7 +511,9 @@ class AgentTools(AgentToolsProtocol):
             logger.exception("send_failure could not post the failure event")
             return {"ok": False, "error": str(exc)}
         self.turn.note_reported()
-        if self._ctx is not None:
+        # A detached turn reports after its delivery was released, while the
+        # context may already be processing a later message.
+        if self._ctx is not None and not self.turn.detached:
             self._ctx.note_turn_failure_reported()
         return response
 

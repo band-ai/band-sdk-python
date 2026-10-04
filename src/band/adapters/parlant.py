@@ -32,7 +32,6 @@ from band.integrations.parlant.server import running_parlant_server
 from band.integrations.parlant.tools import (
     create_parlant_tools,
     set_session_tools,
-    was_message_sent,
 )
 
 if TYPE_CHECKING:
@@ -141,6 +140,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+
+    @property
+    def judges_turns(self) -> bool:
+        """Parlant's own engine owns its replies, so its turns are not judged."""
+        return False
 
     def __init__(
         self,
@@ -650,8 +654,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         1. A preamble message (tagged with __preamble__) - acknowledgment before tool execution
         2. Final message(s) after tool execution
 
-        If the send_message tool was called during processing, we don't need to
-        forward Parlant's response (it would be a duplicate or empty).
+        If a Band tool already replied or declined this turn, Parlant's response
+        is not forwarded (it would be a duplicate or empty).
 
         Waiting is bounded by a total budget, polling in shorter windows and
         retrying on an empty window so a slow (cold-start) turn is still answered.
@@ -665,7 +669,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return
 
         app = self._app
-        session_id_str = str(session_id)
         from parlant.core.async_utils import (  # type: ignore[missing-import]  # noqa: PLC0415
             Timeout,
         )
@@ -708,7 +711,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 logger.exception(
                     "Room %s: Error waiting for update", room_id
                 )  # Check if message was sent via tool before giving up
-                if was_message_sent(session_id_str):
+                if tools.turn.replied:
                     logger.debug(
                         "Room %s: Message was sent via tool, error is acceptable",
                         room_id,
@@ -718,7 +721,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             if not has_update:
                 # Empty poll window. If a tool already sent the reply we're done;
                 # otherwise keep waiting until the budget — don't drop a slow turn.
-                if was_message_sent(session_id_str):
+                if tools.turn.replied:
                     logger.debug(
                         "Room %s: No new events but message was sent via tool, OK",
                         room_id,
@@ -803,12 +806,12 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                         )
                         continue
 
-                    # Check if message was already sent via the send_message tool
-                    # If so, don't send Parlant's response (would be duplicate/empty)
-                    # Also don't mark as final - Parlant may still have more tool calls
-                    if was_message_sent(session_id_str):
+                    # The turn already replied or declined (a Band tool, or an
+                    # earlier relay), so this response would duplicate it. Not
+                    # final either: Parlant may still have more tool calls.
+                    if tools.turn.replied:
                         logger.debug(
-                            "Room %s: Message already sent via tool, skipping Parlant response: %s...",
+                            "Room %s: Turn already replied, skipping Parlant response: %s...",
                             room_id,
                             message_content[:50],
                         )
@@ -839,7 +842,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 return
 
             # Check if message was sent via tool (tool execution may happen without final message)
-            if was_message_sent(session_id_str):
+            if tools.turn.replied:
                 logger.debug(
                     "Room %s: Message sent via tool, no need to wait for final message",
                     room_id,
@@ -857,7 +860,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         # stalls the post-preamble generation. We do NOT forward the preamble as the
         # reply: that would make the turn look answered when the agent actually failed
         # the user. Give up honestly; the turn produced no answer.
-        if was_message_sent(session_id_str):
+        if tools.turn.replied:
             logger.info(
                 "Room %s: Response budget elapsed but message was sent via tool, OK",
                 room_id,

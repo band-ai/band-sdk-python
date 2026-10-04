@@ -7,7 +7,7 @@ import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -56,7 +56,7 @@ async def test_a_room_left_mid_turn_can_be_rejoined_with_a_fresh_session(
     with pytest.raises(asyncio.CancelledError):
         await message
 
-    await room.send("I'm back", history="[Bob]: long job")
+    await room.send("I'm back", history=(said("Bob", "long job"),))
 
     assert len(room.claude.sessions) == 2
     assert "[Bob]: long job" in room.claude.prompts[-1]

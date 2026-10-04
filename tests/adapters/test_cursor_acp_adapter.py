@@ -22,13 +22,13 @@ from band.adapters.cursor_acp import (
     CursorACPAdapterConfig,
     CursorTurn,
 )
+from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import PlatformMessage
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
-from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.types import ACPToolCall
-from band.testing import FakeAgentTools
+from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import launch_for, pair_in_process
 
@@ -39,7 +39,7 @@ class DecisionTools(FakeAgentTools):
     and signal once a pending decision is visible in the room.
 
     Decision prompts and replies are the adapter's own posts, so they go
-    through ``send_notice``; it honors ``hold_message`` like ``send_message``.
+    through ``send_notice``.
     """
 
     def __init__(self) -> None:
@@ -49,11 +49,6 @@ class DecisionTools(FakeAgentTools):
     async def send_notice(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> object:
-        if (held := self._take_held_message(content)) is not None:
-            held.sending.set()
-            await held.released.wait()
-            if held.error is not None:
-                raise held.error
         result = await super().send_notice(content, mentions)
         self.prompt_sent.set()
         return result
@@ -114,33 +109,40 @@ def decision_token(prompt: str) -> str:
     return match[1]
 
 
+def said(tools: FakeAgentTools) -> list[str]:
+    return [cast(str, sent["content"]) for sent in tools.messages_sent]
+
+
 class CursorRoom:
     """A Cursor room whose ``agent acp`` peer is a scripted in-process ACP
-    agent: messages go through the adapter as Band delivers them."""
+    agent: each message goes through ``on_event`` with its own tools, as the
+    runtime delivers it, so every turn is judged."""
 
     def __init__(self, adapter: CursorACPAdapter, agent: FakeACPAgent) -> None:
         self.adapter = adapter
         self.agent = agent
-        self.tools = FakeAgentTools(room_id="room-1")
         self._bootstrapped = False
 
-    @property
-    def chat(self) -> list[str]:
-        return [cast(str, sent["content"]) for sent in self.tools.messages_sent]
-
-    async def send(self, content: str, *, tools: FakeAgentTools | None = None) -> None:
-        """Deliver ``content``; ``tools`` stands in for the message's own
-        per-event tools, which default to the room's shared ones."""
+    async def send(self, content: str) -> FakeAgentTools:
+        """Deliver ``content``; return the tools its turn posted through."""
+        tools = FakeAgentTools(room_id="room-1")
         bootstrap, self._bootstrapped = not self._bootstrapped, True
-        await self.adapter.on_message(
-            room_message(content),
-            tools or self.tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=bootstrap,
-            room_id="room-1",
+        await self.adapter.on_event(
+            AgentInput(
+                msg=room_message(content),
+                tools=tools,
+                history=HistoryProvider(raw=[]),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=bootstrap,
+                room_id="room-1",
+            )
         )
+        return tools
+
+    async def turns_finished(self) -> None:
+        """Wait for every turn still running after its message returned."""
+        await asyncio.gather(*self.adapter._background_tasks, return_exceptions=True)
 
 
 # The adapter's ACP runtime lives on the loop that started it, so setup, the
@@ -916,21 +918,42 @@ class TestCursorACPAdapterDecisions:
             .will_ask_permission(title="shell", allow_option_id="allow-once")
             .will_say("ran it")
         )
-        ran = room.tools.hold_message("ran it")
 
-        await room.send("run it")
-        [prompt] = room.chat
-        await room.send(f"/cursor select {decision_token(prompt)} allow-once")
-        async with ran:
-            pass
+        turn = await room.send("run it")
+        [prompt] = said(turn)
+        reply = await room.send(f"/cursor select {decision_token(prompt)} allow-once")
+        await turn.until_said("ran it")
 
         assert room.agent.approved is True
-        assert room.chat[-1] == (
+        assert said(reply) == [
             f"Cursor permission decision `{decision_token(prompt)}` resolved."
+        ]
+
+
+class TestCursorACPAdapterDetachedTurn:
+    """A turn parked on a decision releases its message early, so it is
+    judged at its real end instead of when ``on_event`` returns."""
+
+    @pytest.mark.asyncio
+    async def test_a_detached_turn_that_ends_with_nothing_is_reported_after_release(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
+        room = await cursor_room(
+            FakeACPAgent().will_ask_permission(
+                title="shell", allow_option_id="allow-once"
+            )
         )
 
+        # on_event returning normally is what keeps the delivery PROCESSED.
+        turn = await room.send("run it")
+        [prompt] = said(turn)
+        assert failure_reports(turn) == []
 
-class TestCursorACPAdapterControlMessages:
+        await room.send(f"/cursor deny {decision_token(prompt)}")
+        await room.turns_finished()
+
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
+
     @pytest.mark.asyncio
     async def test_a_decision_reply_settles_on_its_own_tools(
         self, cursor_room: Callable[..., Awaitable[CursorRoom]]
@@ -943,20 +966,73 @@ class TestCursorACPAdapterControlMessages:
             .will_ask_permission(title="shell", allow_option_id="allow-once")
             .will_say("ran it")
         )
-        await room.send("run it")
-        [prompt] = room.chat
-        reply_tools = FakeAgentTools(room_id="room-1")
+        turn = await room.send("run it")
+        [prompt] = said(turn)
 
-        await room.send(
-            f"/cursor select {decision_token(prompt)} allow-once", tools=reply_tools
+        reply = await room.send(f"/cursor select {decision_token(prompt)} allow-once")
+        await room.turns_finished()
+
+        assert reply.turn.complete
+        assert not reply.turn.replied
+        assert failure_reports(reply) == []
+        assert said(turn) == [prompt, "ran it"]
+        assert failure_reports(turn) == []
+
+    @pytest.mark.asyncio
+    async def test_a_turn_cancelled_by_cleanup_is_not_judged(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
+        room = await cursor_room(
+            FakeACPAgent().will_ask_permission(
+                title="shell", allow_option_id="allow-once"
+            )
         )
-        await room.tools.until_said("ran it")
+        turn = await room.send("run it")
 
-        assert reply_tools.turn.complete
-        assert not reply_tools.turn.replied
-        assert room.chat == [prompt, "ran it"]
-        assert room.adapter._room_tools["room-1"] is room.tools
+        await room.adapter.on_cleanup("room-1")
+        await room.turns_finished()
 
+        # The stopped connection fails the turn with the ACP error it raised.
+        assert MISSING_REPLY_FAILURE not in failure_reports(turn)
+
+    @pytest.mark.asyncio
+    async def test_an_interrupted_detached_turn_is_not_reported(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
+        """A room /stop ends the parked turn; the adapter settled it."""
+        room = await cursor_room(
+            FakeACPAgent().will_ask_permission(
+                title="shell", allow_option_id="allow-once"
+            )
+        )
+        turn = await room.send("run it")
+
+        await room.adapter.on_interrupt("room-1", ControlMode.STOP)
+        await room.turns_finished()
+
+        assert failure_reports(turn) == []
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_detached_turn_posts_nothing(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
+        room = await cursor_room(
+            FakeACPAgent().will_ask_permission(
+                title="shell", allow_option_id="allow-once"
+            )
+        )
+        turn = await room.send("run it")
+        [prompt] = said(turn)
+
+        for task in room.adapter._background_tasks:
+            task.cancel()
+        await room.turns_finished()
+
+        assert said(turn) == [prompt]
+        assert failure_reports(turn) == []
+
+
+class TestCursorACPAdapterControlMessages:
     @pytest.mark.asyncio
     async def test_bare_cursor_lists_pending_decisions(self) -> None:
         tools = DecisionTools()

@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ThinkingPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext
@@ -46,7 +47,6 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
-    TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -68,10 +68,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    band_tool_errored,
     image_block_placeholder,
-    is_terminal_success,
-    missing_reply_error,
     redact_tool_call_args,
 )
 
@@ -164,15 +161,16 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     pydantic-ai flattens a single Pydantic-model parameter into the tool's arguments,
     so the wrapper keeps the ``(args: InputModel)`` registration shape after a
     leading ``RunContext``, whose deps are the room's tools, so each call records
-    its effect on that room's turn. Execution is routed through the shared ``invoke_validated_custom_tool`` so the CustomToolDef
-    contract matches every other adapter: async handlers are awaited and
+    its effect on that room's turn. Execution is routed through the shared
+    ``invoke_validated_custom_tool`` so the CustomToolDef contract matches every
+    other adapter: async handlers are awaited and
     zero-argument handlers (empty InputModel) are called without args — a plain sync
     passthrough would hand pydantic-ai an unawaited coroutine or raise TypeError for
     those. pydantic-ai has already validated ``args`` into the InputModel, so the
     instance is passed through directly — a dump/re-validate round-trip would break
     models using field aliases. The wrapper carries the stable tool name (derived
     from the model) and its declared turn effect, so the tool name and the
-    terminal-tool contract match the tuple adapters exactly.
+    turn effect match the tuple adapters exactly.
     """
     input_model, handler = tool_def
 
@@ -314,9 +312,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             _custom_tool_def_to_callable(tool) if isinstance(tool, tuple) else tool
             for tool in (additional_tools or [])
         ]
-        # Effects the custom tools declared on their function. Only these let an
-        # empty final response be treated as benign; an undeclared custom tool
-        # does not (fail-loud — see is_terminal_success).
+        # Effects the custom tools declared on their function; an undeclared
+        # custom tool only observes, so it cannot complete a turn.
         self._custom_effects = declared_effects(
             (fn.__name__, fn) for fn in self._custom_tools
         )
@@ -461,10 +458,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             user_message[:80],
         )
 
-        # Run agent with streaming to capture tool events. Track whether a
-        # terminal, successful tool ran (excludes read-only lookups and failed
-        # band tools) so we can tell a productive turn from a genuine no-op below.
-        tool_executed = False
+        # Run agent with streaming to capture tool events.
         # pydantic-ai's result.usage is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
@@ -518,18 +512,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
-                        # Custom tools count as terminal only if they declared an
-                        # effect; undeclared customs fail loud. A failed band
-                        # tool (its wrapper returns an "Error " string) is not terminal.
-                        result_name = event.part.tool_name
-                        if is_terminal_success(
-                            result_name,
-                            succeeded=not band_tool_errored(
-                                result_name, event.part.content
-                            ),
-                            custom_effects=self._custom_effects,
+                        # Native custom tools run outside execute_custom_tool, so
+                        # their declared effect is recorded here.
+                        if isinstance(event.part, ToolReturnPart) and (
+                            effect := self._custom_effects.get(event.part.tool_name)
                         ):
-                            tool_executed = True
+                            tools.turn.record(effect)
                         if Emit.TOOL_CALLS in self.features.emit:
                             output = event.part.content
                             if (
@@ -583,7 +571,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # owes pydantic-ai. Allowing `None` — and normalizing blank text into it
             # — ends the ordinary nothing-left-to-say response cleanly, but some
             # other response the run cannot turn into output can still spend the
-            # refused output budget. Once a terminal tool has run (a
+            # refused output budget. Once the turn is complete (a
             # band_send_message reply, a band_store_memory, ...) the work already went
             # out, so that exhaustion is benign — swallow it. Every other exception —
             # a different UnexpectedModelBehavior, or any other type now that this
@@ -593,13 +581,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # pydantic-ai raises the exhausted-retries case as its own distinct type,
             # so the isinstance check (not just the message match) is load-bearing.
             if (
-                tool_executed
+                tools.turn.complete
                 and isinstance(e, UnexpectedModelBehavior)
                 and _is_output_retries_exhausted(e)
             ):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted its output retries after "
-                    "the agent already did productive work this turn; treating as "
+                    "the turn was already complete; treating as "
                     "non-fatal: %s",
                     room_id,
                     e,
@@ -634,17 +622,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     this_run = self._new_run_messages(captured, prior_message_ids)
                     turn_usage = self._usage_from_messages(this_run)
                 await self.emit_usage(tools, turn_usage)
-
-        # A clean run with no terminal work is a silently dropped reply: the model
-        # either answered in plain text or said nothing at all. Surface it as an
-        # error (mirrors the crewai adapter) instead of letting it vanish.
-        if not tool_executed:
-            logger.warning(
-                "Room %s: Pydantic AI turn produced nothing for the room", room_id
-            )
-            detail = missing_reply_error("Pydantic AI")
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

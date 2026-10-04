@@ -17,6 +17,7 @@ from typing import Any, ClassVar, cast
 import pytest
 from pydantic import BaseModel
 
+from tests.framework_conformance.turnprobes import turn_input
 from tests.strandskit import text, tool_call, tool_result
 
 pytest.importorskip("strands", reason="strands extra not installed")
@@ -57,11 +58,13 @@ from band.core.types import (
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect, get_tool_description
 from band.testing import (
+    MISSING_REPLY_FAILURE,
     ErrorTurn,
     FakeAgentTools,
     ScriptedStrandsModel,
     ScriptedTurn,
     ToolTurn,
+    failure_reports,
     reported_failures,
 )
 
@@ -132,6 +135,11 @@ async def _run_message(
         is_session_bootstrap=is_session_bootstrap,
         room_id=room_id,
     )
+
+
+async def _run_turn(adapter: StrandsAdapter, tools: FakeAgentTools) -> None:
+    """Run one turn through ``on_event``, where the shared turn verdict lives."""
+    await adapter.on_event(turn_input(tools, msg=_make_msg(ROOM)))
 
 
 def _tool_results(adapter: StrandsAdapter, room_id: str = ROOM) -> list[str]:
@@ -507,12 +515,7 @@ class TestOnMessage:
         await _run_message(adapter, tools, history=[])
         after_first = list(adapter._message_history[ROOM])
 
-        # The scripted model has no turn left for a second reply, so this
-        # turn ends without calling band_send_message -- irrelevant to what
-        # this test checks (the transcript isn't re-seeded), so only the
-        # failure is asserted here, not suppressed.
-        with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
+        await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
 
         assert adapter._message_history[ROOM][: len(after_first)] == after_first
 
@@ -588,13 +591,10 @@ class TestTurnProductivity:
         adapter = await scripted(SEND_TURN)
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools)
+            await _run_turn(adapter, tools)
 
         assert tools.messages_sent == []
-        failures = reported_failures(tools)
-        assert len(failures) == 1
-        assert failures[0]["provider"] == "strands"
-        assert "band_send_message" in failures[0]["message"]
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
         # The shared bridge returns a normalized, model-visible tool failure.
         assert any(
             text.startswith("Error executing band_send_message:")
@@ -613,8 +613,7 @@ class TestTurnProductivity:
         tools = FailingTools(room_id=ROOM)
         adapter = await scripted(SEND_TURN, emit=Emit.TOOL_CALLS)
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools)
+        await _run_message(adapter, tools)
 
         rehydrated = StrandsHistoryConverter(agent_name="Bot").convert(
             [
@@ -637,13 +636,46 @@ class TestTurnProductivity:
         adapter = await scripted(ToolTurn("band_lookup_peers", {}))
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools)
+            await _run_turn(adapter, tools)
 
         assert _tool_results(adapter)  # the lookup did run and succeed
         assert tools.messages_sent == []
-        failure = reported_failures(tools)[0]
-        assert failure["provider"] == "strands"
-        assert "band_send_message" in failure["message"]
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    @pytest.mark.asyncio
+    async def test_declared_native_tool_completes_the_turn(self, tools, scripted):
+        """A native Strands tool runs outside the portable custom-tool path, so its
+        declared effect still has to reach the turn."""
+
+        @declares_turn_effect(TurnEffect.ACT)
+        @strands_tool
+        def native_finish(note: str) -> str:
+            """Finish the task natively."""
+            return "done"
+
+        adapter = await scripted(
+            ToolTurn("native_finish", {"note": "go"}), additional_tools=[native_finish]
+        )
+
+        await _run_turn(adapter, tools)
+
+        assert failure_reports(tools) == []
+
+    @pytest.mark.asyncio
+    async def test_undeclared_native_tool_only_observes(self, tools, scripted):
+        @strands_tool
+        def native_peek(note: str) -> str:
+            """Peek at something."""
+            return "seen"
+
+        adapter = await scripted(
+            ToolTurn("native_peek", {"note": "go"}), additional_tools=[native_peek]
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, tools)
+
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
     @pytest.mark.asyncio
     async def test_invalid_tool_arguments_are_answered_not_raised(
@@ -652,8 +684,7 @@ class TestTurnProductivity:
         """A malformed call is the model's mistake to correct, not a turn-ending crash."""
         adapter = await scripted(ToolTurn("band_send_message", {"mentions": ["@x"]}))
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools)
+        await _run_message(adapter, tools)
 
         assert tools.messages_sent == []
         assert _tool_results(adapter) == [
@@ -674,8 +705,7 @@ class TestTurnProductivity:
             ToolTurn("boom", {"note": "go"}), additional_tools=[(BoomInput, boom)]
         )
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools)
+        await _run_message(adapter, tools)
 
         assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
 
@@ -875,8 +905,7 @@ class TestSendRoomFileArgsRedaction:
         )
         await adapter.on_started("Bot", "A bot")
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await _run_message(adapter, tools)
+        await _run_message(adapter, tools)
 
         tool_calls = [
             json.loads(e["content"])

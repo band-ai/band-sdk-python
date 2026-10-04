@@ -27,6 +27,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import report_unsettled_turn
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -66,7 +67,6 @@ from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "opencode"
-NO_TEXT_REPLY_MESSAGE = "OpenCode completed the turn without a text reply."
 
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
@@ -1061,16 +1061,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 logger.exception(
                     "Failed to report the OpenCode timeout for room %s", room_id
                 )
-                await self._report_delivery_failure(room_state.room_id, turn)
+                await self._report_delivery_failure(turn)
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
+                await self._judge_detached_turn(turn)
                 await self._emit_turn_usage(turn)
             except Exception:
                 logger.exception(
                     "Failed to deliver the OpenCode turn result for room %s", room_id
                 )
-                await self._report_delivery_failure(room_state.room_id, turn)
+                await self._report_delivery_failure(turn)
         finally:
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
@@ -1082,6 +1083,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 expected_turn=turn,
                 expected_task=asyncio.current_task(),
             )
+
+    @staticmethod
+    async def _judge_detached_turn(turn: TurnState) -> None:
+        """Judge a turn released early to wait on a human, since ``on_event``
+        returned before it ended."""
+        if turn.tools.turn.detached:
+            await report_unsettled_turn(turn.tools)
 
     async def _abort_turn(self, turn: TurnState, reason: str) -> None:
         """Best-effort: tell OpenCode to stop working on this room's session."""
@@ -1098,23 +1106,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn := owner():
             await self._abort_turn(turn, reason)
 
-    async def _report_delivery_failure(self, room_id: str, turn: TurnState) -> None:
+    @staticmethod
+    async def _report_delivery_failure(turn: TurnState) -> None:
         """Tell the room the turn finished but its result could not be posted.
 
-        An event needs no mentions, so it still lands when the reply itself was
-        rejected for having none.
+        A failure event needs no mentions, so it still lands when the reply
+        itself was rejected for having none, and it marks the turn reported.
         """
-        try:
-            await turn.tools.send_event(
+        await turn.tools.send_failure(
+            AgentFailure(
+                _PROVIDER,
                 "OpenCode finished the turn but the result could not be posted "
                 "to the room.",
-                "error",
             )
-        except Exception:
-            logger.exception(
-                "Failed to report the OpenCode delivery failure for room %s",
-                room_id,
-            )
+        )
 
     async def _await_turn(self, turn: TurnState) -> None:
         """Await turn completion, but don't charge human-approval time to the
@@ -1154,7 +1159,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._resolve_future(turn.turn_release_future)
 
     def _release_turn_wait_for_owner(self, owner: TurnOwner) -> None:
+        """Release ``on_message`` early while the turn waits on a human."""
         if turn := owner():
+            turn.tools.turn.detach()
             self._release_turn_wait_for(turn)
 
     def _resolve_turn(self, turn: TurnState) -> None:
@@ -1248,16 +1255,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         # An error is still surfaced after a tool reply -- it is not a text reply.
         try:
-            if await relay_reply(turn.tools, text, turn.pending_mentions):
-                return
-            if turn.last_error_message:
+            relayed = await relay_reply(turn.tools, text, turn.pending_mentions)
+            if not relayed and turn.last_error_message:
                 await turn.tools.send_failure(
                     AgentFailure(_PROVIDER, turn.last_error_message)
-                )
-            elif not turn.tools.turn.replied:
-                await turn.tools.send_notice(
-                    NO_TEXT_REPLY_MESSAGE,
-                    mentions=turn.pending_mentions,
                 )
         finally:
             turn.pending_mentions = []

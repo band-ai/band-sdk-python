@@ -18,7 +18,12 @@ from band.core.model_catalog import (
     ModelSelection,
     check_model_selection,
 )
-from band.core.protocols import AgentToolsProtocol, HistoryConverter
+from band.core.protocols import (
+    AgentToolsProtocol,
+    HistoryConverter,
+    TurnResultAlreadyReported,
+)
+from band.core.turn import report_unsettled_turn
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -30,6 +35,7 @@ from band.core.types import (
     PlatformConnection,
     PlatformMessage,
     TurnUsage,
+    is_contact_hub_turn,
 )
 from band.core.validation import listing
 from band.logging_config import trace_context_scope
@@ -364,6 +370,16 @@ class SimpleAdapter(ABC, Generic[H]):
 
     # --- FrameworkAdapter protocol implementation ---
 
+    @property
+    def judges_turns(self) -> bool:
+        """Whether ``on_event`` judges each turn by core's turn-outcome rule.
+
+        ``False`` for an adapter whose turns are not the model's to answer
+        through Band tools: a bridge to another agent, or a framework engine
+        that owns its own replies.
+        """
+        return True
+
     async def on_event(self, inp: AgentInput) -> None:
         """Implements FrameworkAdapter.on_event().
 
@@ -371,7 +387,10 @@ class SimpleAdapter(ABC, Generic[H]):
         that calls the per-adapter ``on_message`` override), so this is where
         the turn's trace-context correlation window opens -- every log line
         emitted anywhere during this turn's processing picks it up via
-        ``band.logging_config``'s log filter.
+        ``band.logging_config``'s log filter -- and where the turn is judged.
+        A turn that ended without completing is reported once, then raised as
+        ``TurnResultAlreadyReported`` so the runtime marks it FAILED without
+        a second report. A detached turn is judged at its real end instead.
         """
         with trace_context_scope():
             # Convert history if converter is set
@@ -382,6 +401,10 @@ class SimpleAdapter(ABC, Generic[H]):
                 # Adapters without converters should type as SimpleAdapter[HistoryProvider]
                 converted_history = inp.history
 
+            turn = inp.tools.turn
+            turn.judged = self.judges_turns and not is_contact_hub_turn(
+                sender_type=inp.msg.sender_type, sender_id=inp.msg.sender_id
+            )
             await self.on_message(
                 msg=inp.msg,
                 tools=inp.tools,
@@ -391,3 +414,9 @@ class SimpleAdapter(ABC, Generic[H]):
                 is_session_bootstrap=inp.is_session_bootstrap,
                 room_id=inp.room_id,
             )
+            if (
+                turn.judged
+                and not turn.detached
+                and await report_unsettled_turn(inp.tools)
+            ):
+                raise TurnResultAlreadyReported("turn ended without a reply")

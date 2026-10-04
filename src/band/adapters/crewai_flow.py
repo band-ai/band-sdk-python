@@ -1574,6 +1574,12 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
+    @property
+    def judges_turns(self) -> bool:
+        """The Flow owns its visible writes (reserve-send-confirm), and a turn
+        that only advances orchestration state owes no reply."""
+        return False
+
     def __init__(
         self,
         config: CrewAIFlowAdapterConfig | None = None,

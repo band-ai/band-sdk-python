@@ -19,6 +19,16 @@ text. `tests/framework_conformance/test_tool_text_drift.py` is the drift
 guard; an adapter that builds its own tool schemas sets `advertised_arg_text`
 on its test config so the guard can read what the model actually sees.
 
+## Turn Outcome
+
+`SimpleAdapter.on_event` judges every turn with band-sdk-core's rule: a turn
+that replied, declined via `band_no_reply`, did real work, was settled by the
+adapter, or already reported a failure completes; anything else is reported
+once and marked FAILED. Adapters never judge turns themselves. Post an
+adapter's own messages with `send_notice` (never `send_message`, which counts as
+the reply) and relay a model's final text only through `relay_reply`. See
+[docs/turn-outcome.md](docs/turn-outcome.md).
+
 ## Adapter Constructor Shape
 
 Every adapter is built as `XAdapter(config: XAdapterConfig | None = None, *,

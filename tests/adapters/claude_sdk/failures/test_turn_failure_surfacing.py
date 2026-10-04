@@ -15,7 +15,7 @@ from band.adapters.claude_sdk import (
     TurnResultAlreadyReported,
 )
 from band.core.types import Emit
-from tests.adapters.claude_sdk.fakecli import EndTurn, Raw, Thinking
+from tests.adapters.claude_sdk.fakecli import EndTurn, Thinking
 from tests.adapters.claude_sdk.helpers import (
     MISSING_REPLY_TEXT,
     SEND_MESSAGE_MCP_NAME,
@@ -181,69 +181,6 @@ async def test_a_declined_reply_explains_the_silence_only_if_the_room_was_told(
         APPROVAL_RESOLVED_TEMPLATE.format(token="a-1", decision="decline"),
     ]
     assert room.failures == [MISSING_REPLY_TEXT]
-
-
-async def test_tool_traffic_the_cli_carries_outside_assistant_calls_still_counts(
-    claude_room: OpenRoom,
-) -> None:
-    """A subagent's nested reply arrives in a user envelope (with
-    ``is_error`` omitted, which means success), and a result can ride in the
-    assistant message itself; either one answers the turn."""
-    room = await claude_room()
-    room.claude.script(
-        [
-            Raw(
-                {
-                    "type": "user",
-                    "parent_tool_use_id": "toolu_task",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_nested",
-                                "name": SEND_MESSAGE_MCP_NAME,
-                                "input": {},
-                            },
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_nested",
-                                "content": "sent",
-                            },
-                        ]
-                    },
-                }
-            )
-        ],
-        [
-            Raw(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "model": "claude-fake",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_inline",
-                                "name": SEND_MESSAGE_MCP_NAME,
-                                "input": {},
-                            },
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_inline",
-                                "content": "sent",
-                                "is_error": False,
-                            },
-                        ],
-                    },
-                }
-            )
-        ],
-    )
-
-    await room.send("delegate it")
-    await room.send("answer inline")
-
-    assert room.failures == []
 
 
 async def test_band_no_reply_ends_the_turn_quietly(claude_room: OpenRoom) -> None:
