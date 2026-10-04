@@ -31,7 +31,7 @@ except ImportError as e:
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import Capability
-from band.integrations.mcp.engine import extend_with_chat_id
+from band.integrations.mcp.engine import extend_with_chat_id, room_turn
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -278,10 +278,8 @@ def _build_custom_sdk_tool(
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
             tool_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
-            tools = get_tools(_room_id(args, include_room_id=include_room_id))
-            result = await execute_custom_tool(
-                tool_def, tool_args, turn=tools.turn if tools is not None else None
-            )
+            turn = room_turn(get_tools, _room_id(args, include_room_id=include_room_id))
+            result = await execute_custom_tool(tool_def, tool_args, turn=turn)
             return _make_result(result)
         except Exception as error:
             logger.exception("Custom tool %s failed", tool_name)

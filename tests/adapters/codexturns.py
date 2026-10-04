@@ -196,11 +196,11 @@ def event_request(request_id: int, method: str, params: dict[str, Any]) -> RpcEv
     )
 
 
-def turn_completed(turn_id: str = "turn-1") -> RpcEvent:
+def turn_completed(turn_id: str = "turn-1", *, status: str = "completed") -> RpcEvent:
     """The notification that ends a scripted turn."""
     return event_notification(
         "turn/completed",
-        {"turn": {"id": turn_id, "status": "completed", "items": [], "error": None}},
+        {"turn": {"id": turn_id, "status": status, "items": [], "error": None}},
     )
 
 

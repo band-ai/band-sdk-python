@@ -275,7 +275,7 @@ class TestCustomToolTurnEffect:
 
         await run_message(adapter, tools)
 
-        relayed = [m["content"] for m in tools.messages_sent] == ["Closing text"]
+        relayed = tools.chat == ["Closing text"]
         assert relayed is closing_text_relayed
         assert tools.turn.complete
 

@@ -50,7 +50,6 @@ from band.client.rest import (
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
 from band.core.protocols import (
-    TURN_FAILURE_PROVIDER,
     FailureMetadataKey,
     to_failure_event,
 )
@@ -60,7 +59,7 @@ from band.core.task_types import (
     TaskListState,
     task_ref,
 )
-from band.core.turn import Turn
+from band.core.turn import MISSING_REPLY, Turn
 from band.core.types import (
     Capability,
     ContactRequestAction,
@@ -1120,6 +1119,11 @@ class FakeAgentTools:
 
     # --- Assertion helpers ---
 
+    @property
+    def chat(self) -> list[str]:
+        """The content of every message posted to the room, in order."""
+        return [m["content"] for m in self.messages_sent]
+
     def assert_message_sent(
         self,
         *,
@@ -1199,7 +1203,7 @@ def reported_failures(tools: FakeAgentTools) -> list[dict[str, Any]]:
 
 
 # The one failure a missing-reply verdict reports, as ``failure_reports`` lists it.
-MISSING_REPLY_FAILURE = (TURN_FAILURE_PROVIDER, band_sdk_core.missing_reply_message())
+MISSING_REPLY_FAILURE = (MISSING_REPLY.provider, MISSING_REPLY.message)
 
 
 def failure_reports(tools: FakeAgentTools) -> list[tuple[str, str]]:

@@ -21,7 +21,12 @@ from band.core.types import (
 )
 from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod, RpcEvent
 from band.testing import FakeAgentTools
-from tests.adapters.codexturns import RecordedRequests, await_released_turn
+from tests.adapters.codexturns import (
+    RecordedRequests,
+    await_released_turn,
+    final_text,
+    turn_completed,
+)
 
 
 def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessage:
@@ -199,22 +204,11 @@ def _request(request_id: int, method: str, params: dict[str, Any]) -> RpcEvent:
     )
 
 
-def _turn_completed() -> RpcEvent:
-    return _notify(
-        "turn/completed",
-        {"turn": {"id": "turn-1", "status": "completed", "items": [], "error": None}},
-    )
-
-
 def _answered_turn() -> list[RpcEvent]:
     """A turn whose final text the adapter relays as its reply."""
-    return [
-        _notify("item/agentMessage/delta", {"itemId": "m", "delta": "Done."}),
-        _turn_completed(),
-    ]
+    return [final_text("Done."), turn_completed()]
 
 
-@pytest.mark.asyncio
 async def test_on_event_uses_converter_history_to_resume_thread() -> None:
     tools = _ToolSchemaFakeTools()
     fake_client = _FakeCodexClient(events=_answered_turn())

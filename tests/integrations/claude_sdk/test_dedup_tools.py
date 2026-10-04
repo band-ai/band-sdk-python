@@ -14,6 +14,7 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
+from band.testing import FakeAgentTools
 
 
 def _make_inner() -> MagicMock:
@@ -519,3 +520,51 @@ class TestInnerSendFailure:
         await wrapper.send_message("hi", ["alice"])  # dedup hit
 
         assert calls[0] == 2
+
+
+class GatedSendTools(FakeAgentTools):
+    """Tools whose send stays in flight until ``gate`` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> Any:
+        await self.gate.wait()
+        return await super().send_message(content, mentions)
+
+
+class TestDedupedSendRepliesForItsTurn:
+    """A suppressed duplicate still answers the turn that sent it, since the
+    original already reached the room."""
+
+    @pytest.mark.asyncio
+    async def test_a_cached_duplicate_replies_for_the_next_turn(self):
+        wrapper = DedupingAgentTools(FakeAgentTools())
+        await wrapper.send_message("hi", ["alice"])
+
+        next_turn = FakeAgentTools()
+        await wrapper.update_inner(next_turn)
+        await wrapper.send_message("hi", ["alice"])
+
+        assert next_turn.messages_sent == []
+        assert next_turn.turn.replied
+
+    @pytest.mark.asyncio
+    async def test_a_duplicate_joining_an_in_flight_send_replies_for_its_turn(self):
+        first_turn = GatedSendTools()
+        wrapper = DedupingAgentTools(first_turn)
+        original = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+
+        next_turn = FakeAgentTools()
+        await wrapper.update_inner(next_turn)
+        duplicate = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+        first_turn.gate.set()
+        await asyncio.gather(original, duplicate)
+
+        assert next_turn.messages_sent == []
+        assert next_turn.turn.replied

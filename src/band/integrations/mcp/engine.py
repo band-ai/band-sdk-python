@@ -506,7 +506,7 @@ def build_tool_registration(
 RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
 
-def _room_turn(get_tools: RoomToolResolver | None, chat_id: str | None) -> Turn | None:
+def room_turn(get_tools: RoomToolResolver | None, chat_id: str | None) -> Turn | None:
     """The turn of the room ``chat_id`` names, if the tool is room-bound."""
     if get_tools is None or chat_id is None:
         return None
@@ -539,7 +539,7 @@ def build_custom_tool_registration(
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        turn = _room_turn(get_tools, chat_id)
+        turn = room_turn(get_tools, chat_id)
         result = await execute_custom_tool(tool_def, kwargs, turn=turn)
         return _serialize(result)
 

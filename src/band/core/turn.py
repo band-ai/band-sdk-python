@@ -53,8 +53,8 @@ class Turn:
     def detach(self) -> None:
         """Move a judged turn's verdict to the adapter's real end of the turn.
 
-        A turn ``on_event`` does not judge stays attached, so the adapter's
-        ``if turn.detached`` report never fires for it.
+        A turn ``on_event`` does not judge stays attached, so
+        ``judge_detached_turn`` never reports it.
         """
         if self.judged:
             self._detached = True
@@ -73,14 +73,33 @@ class Turn:
         return self._ledger.verdict() == TurnVerdict.Complete
 
 
-async def report_unsettled_turn(tools: AgentToolsProtocol) -> bool:
+#: What a turn that ended without completing reports to the room.
+MISSING_REPLY = AgentFailure(
+    TURN_FAILURE_PROVIDER, band_sdk_core.missing_reply_message()
+)
+
+
+async def report_unsettled_turn(tools: AgentToolsProtocol, *, room_id: str) -> bool:
     """Report a turn that ended without completing; return whether it did.
 
     The one place a missing-reply verdict becomes a room-visible failure.
     """
     if tools.turn.complete:
         return False
-    await tools.send_failure(
-        AgentFailure(TURN_FAILURE_PROVIDER, band_sdk_core.missing_reply_message())
+    logger.warning(
+        "Room %s: turn ended without a reply (detached=%s)",
+        room_id,
+        tools.turn.detached,
     )
+    await tools.send_failure(MISSING_REPLY)
     return True
+
+
+async def judge_detached_turn(tools: AgentToolsProtocol, *, room_id: str) -> None:
+    """Judge a detached turn at the adapter's real end of it.
+
+    ``on_event`` returned before such a turn ended; an attached turn was
+    already judged there.
+    """
+    if tools.turn.detached:
+        await report_unsettled_turn(tools, room_id=room_id)

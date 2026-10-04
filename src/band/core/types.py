@@ -456,30 +456,10 @@ class AdapterFeatures:
         )
 
 
-# --- Constants for synthetic messages (injected by SDK, not from platform) ---
-#
-# These constants define the sender identity for SDK-generated messages that are
-# injected into the event queue but don't originate from the platform WebSocket.
-#
-# Primary use case: ContactEventHandler's HUB_ROOM strategy creates synthetic
-# MessageEvents to route contact events to the hub room for LLM processing.
-# These messages need a consistent sender identity that:
-#   1. Clearly indicates they're system-generated (not from a real user/agent)
-#   2. Can be filtered by preprocessing if needed
-#   3. Are recognizable in UI/logs for debugging
-#
-
-# Sender type for synthetic messages. Matches the platform's "System" type used
-# for other system-generated content.
+# Sender identity of the messages ContactEventHandler's HUB_ROOM strategy
+# injects into the hub room; they never come from the platform.
 SYNTHETIC_SENDER_TYPE = "System"
-
-# Sender ID for synthetic contact event messages. This is a logical identifier
-# (not a UUID) that allows filtering/identification of contact-related synthetic
-# messages. Used in MessageEvent.payload.sender_id for hub room injections.
 SYNTHETIC_CONTACT_EVENTS_SENDER_ID = "contact-events"
-
-# Human-readable sender name displayed in UI/logs for synthetic contact event
-# messages. Used in MessageEvent.payload.sender_name.
 SYNTHETIC_CONTACT_EVENTS_SENDER_NAME = "Contact Events"
 
 

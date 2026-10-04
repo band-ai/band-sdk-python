@@ -13,7 +13,7 @@ from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
-from band.core.turn import report_unsettled_turn
+from band.core.turn import judge_detached_turn
 from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -282,10 +282,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
             )
-            # on_event already returned for a detached turn, so it is judged
-            # here, at its real end; a failed or cancelled turn never gets here.
-            if tools.turn.detached:
-                await report_unsettled_turn(tools)
+            # A failed or cancelled turn never gets here.
+            await judge_detached_turn(tools, room_id=room_id)
         finally:
             self._cursor_profile.bind_session(None)
             if self._active_turn is turn:

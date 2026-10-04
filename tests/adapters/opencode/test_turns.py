@@ -1137,7 +1137,7 @@ async def test_room_posting_tool_reply_suppresses_text_fallback(
 
     await run_single_turn(adapter, tools)
 
-    assert [m["content"] for m in tools.messages_sent] == ["hi"]
+    assert tools.chat == ["hi"]
 
 
 async def test_approval_prompts_never_stand_in_for_the_models_reply(
@@ -1175,7 +1175,7 @@ async def test_approval_prompts_never_stand_in_for_the_models_reply(
     )
     await wait_for(lambda: tools.turn.replied)
 
-    assert [m["content"] for m in tools.messages_sent] == [
+    assert tools.chat == [
         APPROVAL_REQUESTED_TEMPLATE.format(
             permission="bash", patterns="rm -rf tmp", request_id="req-1"
         ),
@@ -1256,7 +1256,7 @@ async def test_busy_message_is_settled_and_leaves_the_turn_its_tools(
     assert [e["content"] for e in events_of_type(busy_tools, "error")] == [
         "OpenCode is still processing the previous request in this room."
     ]
-    assert [m["content"] for m in tools.messages_sent] == ["Done."]
+    assert tools.chat == ["Done."]
 
 
 async def test_non_room_posting_tool_does_not_suppress_text(
@@ -1285,7 +1285,7 @@ async def test_non_room_posting_tool_does_not_suppress_text(
 
     await run_single_turn(adapter, tools)
 
-    assert [m["content"] for m in tools.messages_sent] == ["Ran the command."]
+    assert tools.chat == ["Ran the command."]
 
 
 async def test_task_event_post_failure_does_not_drop_the_turn(make_adapter) -> None:
@@ -1310,9 +1310,7 @@ async def test_task_event_post_failure_does_not_drop_the_turn(make_adapter) -> N
     await run_single_turn(adapter, tools)
 
     assert len(fake_client.prompt_calls) == 1
-    assert [m["content"] for m in tools.messages_sent] == [
-        "Handled despite the event failure."
-    ]
+    assert tools.chat == ["Handled despite the event failure."]
     assert not any(
         "failed while processing" in f["message"].lower()
         for f in reported_failures(tools)

@@ -66,6 +66,20 @@ class TestInitialization:
 
         assert adapter._static_graph is mock_graph
 
+    @pytest.mark.parametrize(
+        ("pattern", "judged"),
+        [
+            pytest.param({"graph_factory": MagicMock()}, True, id="graph-factory"),
+            pytest.param({"graph": MagicMock()}, False, id="static-graph"),
+        ],
+    )
+    def test_only_a_graph_given_band_tools_is_judged(
+        self, pattern: dict[str, Any], judged: bool
+    ):
+        """A static graph never receives Band tools, so judging it would
+        report every turn as a missing reply."""
+        assert LangGraphAdapter(**pattern).judges_turns is judged
+
     def test_raises_without_llm_or_graph(self):
         """Should raise if neither llm nor graph_factory/graph provided."""
         with pytest.raises(ValueError, match="Must provide either llm"):

@@ -7,6 +7,7 @@ uses: registry dispatch, a direct method call, and ``deliver_reply``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -147,16 +148,26 @@ class TestReportUnsettledTurn:
     async def test_a_missing_reply_is_reported_once(self) -> None:
         tools = FakeAgentTools()
 
-        assert await report_unsettled_turn(tools) is True
-        assert await report_unsettled_turn(tools) is False
+        assert await report_unsettled_turn(tools, room_id="room-1") is True
+        assert await report_unsettled_turn(tools, room_id="room-1") is False
 
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    async def test_a_missing_reply_is_logged_for_its_room(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="band.core.turn"):
+            await report_unsettled_turn(FakeAgentTools(), room_id="room-1")
+
+        (record,) = caplog.records
+        assert record.levelno == logging.WARNING
+        assert "room-1" in record.getMessage()
 
     async def test_a_complete_turn_reports_nothing(self) -> None:
         tools = FakeAgentTools()
         await tools.no_reply()
 
-        assert await report_unsettled_turn(tools) is False
+        assert await report_unsettled_turn(tools, room_id="room-1") is False
 
         assert reported_failures(tools) == []
 
@@ -164,7 +175,7 @@ class TestReportUnsettledTurn:
         tools = FakeAgentTools()
         tools.turn.settle()
 
-        assert await report_unsettled_turn(tools) is False
+        assert await report_unsettled_turn(tools, room_id="room-1") is False
 
 
 class TestDetach:
@@ -194,7 +205,7 @@ async def test_a_detached_report_never_marks_the_contexts_next_message(
     tools.turn.judged = True
     tools.turn.detach()
 
-    assert await report_unsettled_turn(tools) is True
+    assert await report_unsettled_turn(tools, room_id="room-1") is True
 
     mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
     ctx.note_turn_failure_reported.assert_not_called()

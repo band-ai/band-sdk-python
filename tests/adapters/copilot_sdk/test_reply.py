@@ -294,4 +294,4 @@ class TestReply:
         await run_message(adapter, tools)
 
         # The tool failed, so the fallback text must reach the room (no silent turn).
-        assert [m["content"] for m in tools.messages_sent] == ["Fallback reply"]
+        assert tools.chat == ["Fallback reply"]

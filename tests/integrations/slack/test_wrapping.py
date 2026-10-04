@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 import warnings
 from contextlib import AbstractContextManager, nullcontext
@@ -41,6 +42,7 @@ from band.core.types import (
     Capability,
     Emit,
     HistoryProvider,
+    MessageType,
     PlatformMessage,
 )
 from band.integrations.slack.adapter import (
@@ -1429,7 +1431,7 @@ def _agent_input_with_history(
     )
 
 
-class _IdleBrain(_SlackReplyBrain):
+class IdleBrain(_SlackReplyBrain):
     """A brain whose turn does nothing at all."""
 
     def __init__(self, *, judges_turns: bool) -> None:
@@ -1462,7 +1464,7 @@ async def test_an_idle_turn_is_judged_by_the_brains_rule(
     verdict: AbstractContextManager[Any],
     failures: list[tuple[str, str]],
 ):
-    adapter, _, _, _ = _make_adapter(inner=_IdleBrain(judges_turns=brain_judges_turns))
+    adapter, _, _, _ = _make_adapter(inner=IdleBrain(judges_turns=brain_judges_turns))
     tools = FakeAgentTools(room_id="room-1")
     inp = _agent_input_with_history(
         room_id="room-1", raw_history=[], bootstrap=False, tools=tools
@@ -1472,6 +1474,26 @@ async def test_an_idle_turn_is_judged_by_the_brains_rule(
         await adapter.on_event(inp)
 
     assert failure_reports(tools) == failures
+
+
+@pytest.mark.asyncio
+async def test_an_idle_slack_originated_turn_is_reported(
+    caplog: pytest.LogCaptureFixture,
+):
+    """A turn that arrives from Slack rather than the platform is judged too,
+    and its reported failure is not logged again as a crash."""
+    adapter, _, _, rest = _make_adapter(
+        inner=IdleBrain(judges_turns=True), room_ids=["room-1"]
+    )
+    await adapter.on_started("MyBot", "")
+
+    with caplog.at_level(logging.WARNING):
+        await _post_slack_event(adapter, adapter.config.apps[0], _mention_event())
+        await adapter.wait_idle()
+
+    (error,) = _posted_events(rest, MessageType.ERROR)
+    assert error.content == MISSING_REPLY_FAILURE[1]
+    assert max(r.levelno for r in caplog.records) == logging.WARNING
 
 
 @pytest.mark.asyncio
@@ -1682,11 +1704,11 @@ async def test_context_event_metadata_includes_slack_room_id():
 # ── Slack context mirroring (audit timeline) ────────────────────────────────
 
 
-def _thought_events(rest: MagicMock) -> list[Any]:
+def _posted_events(rest: MagicMock, message_type: MessageType) -> list[Any]:
     return [
         c.kwargs["event"]
         for c in rest.agent_api_events.create_agent_chat_event.await_args_list
-        if c.kwargs["event"].message_type == "thought"
+        if c.kwargs["event"].message_type == message_type
     ]
 
 
@@ -1715,7 +1737,7 @@ async def test_user_turn_mirrored_as_thought_with_thread_id():
     )
     await adapter.wait_idle()
 
-    thoughts = _thought_events(rest)
+    thoughts = _posted_events(rest, MessageType.THOUGHT)
     assert len(thoughts) == 1
     mirror = thoughts[0]
     assert mirror.message_type == "thought"
@@ -1745,7 +1767,7 @@ async def test_mirroring_disabled_emits_no_thought():
     )
     await adapter.wait_idle()
 
-    assert _thought_events(rest) == []
+    assert _posted_events(rest, MessageType.THOUGHT) == []
     # Only the bootstrap context (task) event is emitted.
     assert rest.agent_api_events.create_agent_chat_event.await_count == 1
     assert (

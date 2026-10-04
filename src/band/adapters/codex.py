@@ -42,7 +42,7 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
-from band.core.turn import report_unsettled_turn
+from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
@@ -1094,8 +1094,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     duration_s=_turn_duration_s,
                 )
                 # A turn wound down by room cleanup was aborted, not missed.
-                if tools.turn.detached and room_id not in self._closing_rooms:
-                    await report_unsettled_turn(tools)
+                if room_id not in self._closing_rooms:
+                    await judge_detached_turn(tools, room_id=room_id)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             except TurnResultAlreadyReported:

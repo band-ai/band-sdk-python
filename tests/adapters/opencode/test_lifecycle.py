@@ -505,7 +505,7 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
         room_id="room-1",
     )
 
-    assert [m["content"] for m in tools.messages_sent] == ["after the interrupt"]
+    assert tools.chat == ["after the interrupt"]
 
     await adapter.on_cleanup("room-1")
 

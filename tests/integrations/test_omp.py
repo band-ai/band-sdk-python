@@ -24,7 +24,6 @@ from band.integrations.omp import (
     omp_provider_env,
     validate_omp_command,
 )
-from band.runtime.tools import TurnEffect, turn_effect
 from tests.paths import CI_SCRIPTS
 
 
@@ -137,7 +136,6 @@ def test_normalize_mcp_title_maps_registered_band_tool() -> None:
     name, args = normalize_omp_mcp_device_call(title, {"chat_id": "r1"}, own)
     assert name == "band_send_message"
     assert args == {"chat_id": "r1"}
-    assert turn_effect(name) is TurnEffect.REPLY
 
 
 def test_normalize_device_call_leaves_unknown_paths() -> None:

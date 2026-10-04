@@ -10,8 +10,10 @@ message history management, tool execution, custom tools, and error handling.
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -30,10 +32,9 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.runtime.custom_tools import declares_turn_effect
-from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 
 def make_usage(inp: int, out: int) -> SimpleNamespace:
@@ -833,10 +834,11 @@ class TestCustomTools:
     """Tests for custom tool support."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
     async def test_custom_tool_records_its_effect_on_the_room_turn(
-        self, sample_message
+        self, sample_message, declare: Callable[..., Any], complete: bool
     ):
-        @declares_turn_effect(TurnEffect.ACT)
+        @declare
         async def file_echo(args: EchoInput) -> str:
             return "filed"
 
@@ -874,7 +876,7 @@ class TestCustomTools:
                 room_id="room-123",
             )
 
-        assert tools.turn.complete
+        assert tools.turn.complete is complete
 
     def test_accepts_additional_tools_parameter(self):
         """Adapter should accept list of (Model, func) tuples."""

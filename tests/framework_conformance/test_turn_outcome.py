@@ -84,7 +84,7 @@ async def run_turn(probe: TurnOutcomeProbe, script: TurnScript) -> TurnResult:
 def observed(tools: FakeAgentTools, verdict: Verdict) -> TurnResult:
     return TurnResult(
         verdict=verdict,
-        messages=[m["content"] for m in tools.messages_sent],
+        messages=tools.chat,
         failures=failure_reports(tools),
     )
 
@@ -158,6 +158,20 @@ async def test_a_tool_reply_suppresses_the_closing_text(framework_id: str) -> No
     )
 
     assert result == TurnResult(Verdict.COMPLETE, messages=[ANSWER], failures=[])
+
+
+#: Registered adapters whose turns are not the model's to answer through Band tools.
+UNJUDGED_FRAMEWORK_IDS = frozenset({"crewai_flow", "parlant"})
+
+
+def test_only_the_declared_adapters_go_unjudged() -> None:
+    unjudged = {
+        cfg.framework_id
+        for cfg in ADAPTER_CONFIGS
+        if not cfg.adapter_factory().judges_turns
+    }
+
+    assert unjudged == UNJUDGED_FRAMEWORK_IDS
 
 
 def test_every_judged_adapter_has_a_probe() -> None:

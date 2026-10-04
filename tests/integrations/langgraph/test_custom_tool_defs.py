@@ -10,10 +10,11 @@ tools pass through).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
 from langchain_core.tools import StructuredTool
 from langchain_core.tools import tool as lc_tool
 from pydantic import BaseModel, Field
@@ -22,9 +23,8 @@ from band.adapters.langgraph import LangGraphAdapter
 from band.core.turn import Turn
 from band.core.types import PlatformMessage
 from band.integrations.langgraph.langchain_tools import custom_tool_def_to_langchain
-from band.runtime.custom_tools import declares_turn_effect
-from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, reported_failures
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 
 class EchoInput(BaseModel):
@@ -77,11 +77,6 @@ class FileInput(BaseModel):
     note: str
 
 
-@declares_turn_effect(TurnEffect.ACT)
-def file_report(args: FileInput) -> str:
-    return "filed"
-
-
 class CallsToolGraph:
     """A graph whose one step calls the named tool, as a real agent graph would."""
 
@@ -96,7 +91,14 @@ class CallsToolGraph:
         yield
 
 
-async def test_custom_tool_records_its_effect_on_the_room_turn() -> None:
+@pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+async def test_custom_tool_records_its_effect_on_the_room_turn(
+    declare: Callable[..., Any], complete: bool
+) -> None:
+    @declare
+    def file_report(args: FileInput) -> str:
+        return "filed"
+
     tools = FakeAgentTools(room_id="room-1")
     adapter = LangGraphAdapter(
         graph_factory=lambda turn_tools: CallsToolGraph(turn_tools, "file"),
@@ -125,4 +127,4 @@ async def test_custom_tool_records_its_effect_on_the_room_turn() -> None:
     )
 
     assert reported_failures(tools) == []
-    assert tools.turn.complete
+    assert tools.turn.complete is complete

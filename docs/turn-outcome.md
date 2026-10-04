@@ -1,9 +1,11 @@
 # Turn outcome
 
 Every message pushed to an agent @mentions it, so every turn owes the room an
-answer: a reply, or a deliberate decision not to reply. `SimpleAdapter.on_event`
-judges each turn with one rule from `band-sdk-core`, shared with the TypeScript
-SDK, and tells the platform honestly whether the delivery succeeded.
+answer: a reply, or a deliberate decision not to reply.
+`SimpleAdapter.run_judged_turn`, which `on_event` and the Slack adapter's
+inbound path both call, judges each turn with one rule from `band-sdk-core`,
+shared with the TypeScript SDK, and tells the platform honestly whether the
+delivery succeeded.
 
 ## The rule
 
@@ -216,18 +218,17 @@ cancelled turn reports nothing:
 ```python
 import asyncio
 
-from band.core.turn import report_unsettled_turn
+from band.core.turn import judge_detached_turn
 from band.testing.fake_tools import FakeAgentTools, reported_failures
 
 
 async def main() -> None:
     tools = FakeAgentTools()
-    tools.turn.judged = True  # set by SimpleAdapter.on_event
+    tools.turn.judged = True  # set by SimpleAdapter.run_judged_turn
     tools.turn.detach()  # released while waiting for an approval
 
     # ...later, on the turn's normal completion path (never a ``finally``):
-    if tools.turn.detached:
-        await report_unsettled_turn(tools)
+    await judge_detached_turn(tools, room_id="room-1")
 
     assert len(reported_failures(tools)) == 1
 

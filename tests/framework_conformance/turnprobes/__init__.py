@@ -16,11 +16,32 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
-from band.runtime.tools import TOOL_DEFINITIONS, ToolCallOutcome, serialize_tool_result
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import (
+    TOOL_DEFINITIONS,
+    ToolCallOutcome,
+    TurnEffect,
+    serialize_tool_result,
+)
 from band.testing.fake_tools import FakeAgentTools
 
 ROOM_ID = "room-turn"
+
+
+def undeclared(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Leave a custom tool's effect undeclared, so its call only observes."""
+    return handler
+
+
+#: A custom tool declared as real work completes the turn; an undeclared one
+#: only observes, so the turn still owes a reply.
+CUSTOM_TOOL_DECLARATIONS = [
+    pytest.param(declares_turn_effect(TurnEffect.ACT), True, id="declared-act"),
+    pytest.param(undeclared, False, id="undeclared-observes"),
+]
 ALICE: dict[str, Any] = {
     "id": "user-alice",
     "name": "Alice",

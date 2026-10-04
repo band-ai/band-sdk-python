@@ -239,9 +239,6 @@ def agent_input(content: str, tools: FakeAgentTools) -> AgentInput:
     )
 
 
-#: The runtime's report of a turn that neither replied, declined nor worked.
-
-
 class RaisingSendTools(FakeAgentTools):
     """FakeAgentTools whose send_notice always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
@@ -276,7 +273,6 @@ class FakeOpencodeClient:
         prompt_event_sequences: list[list[ServerStep]] | None = None,
         reply_permission_events: dict[str, list[ServerStep]] | None = None,
         reply_question_events: dict[str, list[ServerStep]] | None = None,
-        reject_question_events: dict[str, list[ServerStep]] | None = None,
         get_session_missing: set[str] | None = None,
         prompt_exceptions: list[Exception] | None = None,
         serve_registrations: dict[str, str] | None = None,
@@ -301,7 +297,6 @@ class FakeOpencodeClient:
         self._prompt_event_sequences = list(prompt_event_sequences or [])
         self._reply_permission_events = reply_permission_events or {}
         self._reply_question_events = reply_question_events or {}
-        self._reject_question_events = reject_question_events or {}
         self._get_session_missing = get_session_missing or set()
         self._prompt_exceptions = list(prompt_exceptions or [])
         # Popped one at a time per register_mcp_server call; once exhausted,
@@ -374,8 +369,6 @@ class FakeOpencodeClient:
 
     async def reject_question(self, request_id: str) -> None:
         self.question_rejections.append(request_id)
-        for event in self._reject_question_events.get(request_id, []):
-            await self._queue.put(event)
 
     async def abort_session(self, session_id: str) -> None:
         self.aborted_sessions.append(session_id)

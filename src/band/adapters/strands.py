@@ -198,7 +198,11 @@ def _registered_name(tool: StrandsCustomTool) -> str:
 def _custom_tool_effects(
     custom_tools: list[StrandsCustomTool],
 ) -> dict[str, TurnEffect]:
-    """Validate custom tool names and collect the turn effects they declared."""
+    """Validate custom tool names and collect the native tools' declared effects.
+
+    A portable ``(InputModel, handler)`` tool records its own effect through
+    ``execute_custom_tool``.
+    """
     names = [_registered_name(tool) for tool in custom_tools]
     # Strands' registry is last-wins, so a collision would silently replace the
     # platform tool the room depends on.
@@ -206,8 +210,11 @@ def _custom_tool_effects(
     if shadowed:
         raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
 
-    handlers = (tool[1] if isinstance(tool, tuple) else tool for tool in custom_tools)
-    return declared_effects(zip(names, handlers, strict=True))
+    return declared_effects(
+        (name, tool)
+        for name, tool in zip(names, custom_tools, strict=True)
+        if not isinstance(tool, tuple)
+    )
 
 
 def _bind_custom_tools(

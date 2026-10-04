@@ -42,6 +42,9 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from band.runtime.tools.types import BandTool
+from band.runtime.turn import record_tool_result
+
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
 
@@ -157,6 +160,9 @@ class DedupingAgentTools:
         async with self._lock:
             self._evict_expired_locked(now)
             key = (content, _normalize_mentions(mentions))
+            # A deduped send is this turn's reply too: the original already
+            # reached the room, but recorded it on its own turn.
+            turn = self._inner.turn
 
             cached = self._recent_sends.get(key)
             if cached is not None:
@@ -172,6 +178,7 @@ class DedupingAgentTools:
                     len(content),
                     len(key[1]),
                 )
+                record_tool_result(turn, BandTool.SEND_MESSAGE, cached_result)
                 return cached_result
 
             existing = self._in_flight.get(key)
@@ -195,6 +202,8 @@ class DedupingAgentTools:
             raise
 
         await self._finalize_in_flight_send(key, task, now)
+        if existing is not None:
+            record_tool_result(turn, BandTool.SEND_MESSAGE, result)
         return result
 
     # --- transparent passthrough --------------------------------------

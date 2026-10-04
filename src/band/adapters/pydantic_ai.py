@@ -60,9 +60,7 @@ from band.core.types import (
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
-    declared_effect,
     declared_effects,
-    declares_turn_effect,
     get_custom_tool_name,
     invoke_validated_custom_tool,
 )
@@ -155,24 +153,16 @@ def _drop_blank_text(
 
 
 def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
-    """Adapt a portable ``CustomToolDef`` (InputModel, handler) to a native pydantic-ai
-    tool callable — the same custom-tool form the other adapters accept.
+    """Adapt a portable ``CustomToolDef`` to a native pydantic-ai tool callable.
 
-    pydantic-ai flattens a single Pydantic-model parameter into the tool's arguments,
-    so the wrapper keeps the ``(args: InputModel)`` registration shape after a
-    leading ``RunContext``, whose deps are the room's tools, so each call records
-    its effect on that room's turn. Execution is routed through the shared
-    ``invoke_validated_custom_tool`` so the CustomToolDef contract matches every
-    other adapter: async handlers are awaited and
-    zero-argument handlers (empty InputModel) are called without args — a plain sync
-    passthrough would hand pydantic-ai an unawaited coroutine or raise TypeError for
-    those. pydantic-ai has already validated ``args`` into the InputModel, so the
-    instance is passed through directly — a dump/re-validate round-trip would break
-    models using field aliases. The wrapper carries the stable tool name (derived
-    from the model) and its declared turn effect, so the tool name and the
-    turn effect match the tuple adapters exactly.
+    The wrapper takes ``RunContext`` (whose deps are the room's tools), then
+    ``args: InputModel``, which pydantic-ai flattens into the tool's arguments
+    and validates. ``invoke_validated_custom_tool`` runs the handler exactly as
+    every other adapter does and records its declared effect on the room's turn.
+    The validated instance is passed through as is, since a dump/re-validate
+    round-trip would break aliased fields.
     """
-    input_model, handler = tool_def
+    input_model, _ = tool_def
 
     async def native(ctx: RunContext[AgentToolsProtocol], args: Any) -> Any:
         return await invoke_validated_custom_tool(tool_def, args, turn=ctx.deps.turn)
@@ -184,8 +174,6 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
         "args": input_model,
         "return": str,
     }
-    if (effect := declared_effect(handler)) is not None:
-        declares_turn_effect(effect)(native)
     return native
 
 
@@ -312,8 +300,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             _custom_tool_def_to_callable(tool) if isinstance(tool, tuple) else tool
             for tool in (additional_tools or [])
         ]
-        # Effects the custom tools declared on their function; an undeclared
-        # custom tool only observes, so it cannot complete a turn.
+        # Effects the native callables declared; a converted CustomToolDef
+        # declares none, since invoke_validated_custom_tool records its effect.
         self._custom_effects = declared_effects(
             (fn.__name__, fn) for fn in self._custom_tools
         )

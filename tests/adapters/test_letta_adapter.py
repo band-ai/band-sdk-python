@@ -1434,14 +1434,9 @@ class TestExternalToolRecording:
     async def test_streamed_tool_return_records_only_for_external_band_mcp(
         self, mcp_mode: Literal["self_host", "external"], status: str, replied: bool
     ) -> None:
-        adapter = LettaAdapter(
-            config=LettaAdapterConfig(mcp=LettaMCPConfig(mode=mcp_mode))
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode=mcp_mode))
         )
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-        adapter._system_prompt = "Test"
-        adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_return_message(BandTool.SEND_MESSAGE, status=status),
         )

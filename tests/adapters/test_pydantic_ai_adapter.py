@@ -101,7 +101,11 @@ from band.testing import (
 )
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
-from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.framework_conformance.turnprobes import (
+    CUSTOM_TOOL_DECLARATIONS,
+    ROOM_ID,
+    turn_input,
+)
 
 
 def make_stream_events(
@@ -2463,24 +2467,6 @@ class TestPortableCustomToolDef:
         # Normalized to a native callable named from the model (not the handler).
         assert [t.__name__ for t in adapter._custom_tools] == ["lookup"]
 
-    def test_tuple_terminal_marker_is_honored(self):
-
-        class DeployInput(BaseModel):
-            """deploy."""
-
-            target: str
-
-        def deploy(args: DeployInput) -> str:
-            return "done"
-
-        deploy.band_terminal = True  # opt in as a terminal action
-
-        adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4"),
-            additional_tools=[(DeployInput, deploy)],
-        )
-        assert adapter._custom_effects == {"deploy": TurnEffect.ACT}
-
     def test_converted_tuple_flattens_in_pydantic_ai(self):
 
         class LookupInput(BaseModel):
@@ -2550,13 +2536,16 @@ class TestPortableCustomToolDef:
         assert content.startswith("user:")
 
     @pytest.mark.asyncio
-    async def test_declared_tool_records_its_effect_on_the_room_turn(self):
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, declare: Callable[..., Any], complete: bool
+    ):
         class FileInput(BaseModel):
             """File the report."""
 
             note: str
 
-        @declares_turn_effect(TurnEffect.ACT)
+        @declare
         def file_report(args: FileInput) -> str:
             return "filed"
 
@@ -2569,4 +2558,4 @@ class TestPortableCustomToolDef:
 
         await adapter._create_agent().run("go", deps=tools)
 
-        assert tools.turn.complete
+        assert tools.turn.complete is complete

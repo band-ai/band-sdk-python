@@ -67,6 +67,7 @@ from band.testing import (
     failure_reports,
     reported_failures,
 )
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 _INPUT_TOKENS_PER_CALL = 7
 _OUTPUT_TOKENS_PER_CALL = 3
@@ -186,23 +187,6 @@ class TestCustomToolWiring:
         )
         # Declared no effect -> not a terminal action.
         assert adapter._custom_effects == {}
-
-    def test_terminal_marker_captured_from_tuple_handler(self):
-        class DoneInput(BaseModel):
-            """Finish the task."""
-
-            note: str
-
-        async def finish(args: DoneInput) -> str:
-            return "done"
-
-        finish.band_terminal = True  # type: ignore[attr-defined]
-
-        adapter = StrandsAdapter(
-            StrandsAdapterConfig(model="m"), additional_tools=[(DoneInput, finish)]
-        )
-
-        assert adapter._custom_effects == {"done": TurnEffect.ACT}
 
     def test_custom_tool_may_not_shadow_a_platform_tool(self):
         """Strands' registry is last-wins, so a collision must fail at construction."""
@@ -710,15 +694,16 @@ class TestTurnProductivity:
         assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
     async def test_custom_tool_records_its_effect_on_the_room_turn(
-        self, tools, scripted
+        self, tools, scripted, declare: Callable[..., Any], complete: bool
     ):
         class FileInput(BaseModel):
             """File the report."""
 
             note: str
 
-        @declares_turn_effect(TurnEffect.ACT)
+        @declare
         async def file_report(args: FileInput) -> str:
             return "filed"
 
@@ -729,7 +714,7 @@ class TestTurnProductivity:
 
         await _run_message(adapter, tools)
 
-        assert tools.turn.complete
+        assert tools.turn.complete is complete
 
 
 class TestTurnFailure:

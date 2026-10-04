@@ -86,7 +86,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
-from band.core.turn import report_unsettled_turn
+from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     ApprovalMode,
@@ -1323,9 +1323,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         room_id: str,
         tools: AgentToolsProtocol,
     ) -> None:
-        """Register a pending call (to name its result) and narrate it. Shared by both envelopes a call can arrive in — the
-        protocol's assistant messages, and user messages when the call is
-        carried by a subagent/nested tool_use block."""
+        """Register a pending call (to name its result) and narrate it.
+
+        Shared by both envelopes a call can arrive in: the protocol's assistant
+        messages, and user messages carrying a subagent's nested tool_use block.
+        """
         # Bare name for the cross-adapter tool_call record (the SDK
         # namespaces our tools mcp__band__*; see _semantic_tool_name).
         tool_name = self._semantic_tool_name(block.name)
@@ -1398,8 +1400,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             raise TurnResultAlreadyReported(detail)
         if self._declined_the_reply(sdk_message.permission_denials, notified):
             tools.turn.settle()
-        if tools.turn.detached:
-            await report_unsettled_turn(tools)
+        await judge_detached_turn(tools, room_id=room_id)
 
     def _declined_the_reply(
         self, permission_denials: list[Any] | None, notified: set[str] | None

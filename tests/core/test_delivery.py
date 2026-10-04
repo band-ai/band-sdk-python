@@ -43,7 +43,7 @@ class TestDeliverNotice:
 
         await deliver_notice(tools, "No pending approvals.", mentions=["@alice"])
 
-        assert [m["content"] for m in tools.messages_sent] == ["No pending approvals."]
+        assert tools.chat == ["No pending approvals."]
         assert not tools.turn.complete
 
     async def test_wraps_a_send_notice_failure(self) -> None:
@@ -59,7 +59,7 @@ class TestRelayReply:
 
         assert await relay_reply(tools, "the answer", ["@alice"]) is True
 
-        assert [m["content"] for m in tools.messages_sent] == ["the answer"]
+        assert tools.chat == ["the answer"]
         assert tools.turn.replied
 
     async def test_a_tool_reply_suppresses_the_relay(self) -> None:
@@ -68,7 +68,7 @@ class TestRelayReply:
 
         assert await relay_reply(tools, "closing remark", ["@alice"]) is False
 
-        assert [m["content"] for m in tools.messages_sent] == ["already answered"]
+        assert tools.chat == ["already answered"]
 
     async def test_a_decline_suppresses_the_relay(self) -> None:
         tools = FakeAgentTools()

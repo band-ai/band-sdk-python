@@ -67,6 +67,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
+from tests.framework_conformance.turnprobes import undeclared
 from tests.paths import host_absolute_path
 
 
@@ -6668,7 +6669,7 @@ class TestFinalTextRelay:
             ),
         )
 
-        assert [m["content"] for m in turn.tools.messages_sent] == [
+        assert turn.tools.chat == [
             "Approval requested (command: a). Policy decision: accept.",
             "Tests pass.",
         ]
@@ -6676,10 +6677,6 @@ class TestFinalTextRelay:
 
 class StayQuietInput(BaseModel):
     """Say nothing this turn."""
-
-
-def _undeclared(handler: Callable[..., Any]) -> Callable[..., Any]:
-    return handler
 
 
 class TestCustomToolEffect:
@@ -6690,7 +6687,7 @@ class TestCustomToolEffect:
             pytest.param(
                 declares_turn_effect(TurnEffect.DECLINE), [], id="declared-silence"
             ),
-            pytest.param(_undeclared, ["Nothing to add."], id="undeclared"),
+            pytest.param(undeclared, ["Nothing to add."], id="undeclared"),
         ],
     )
     async def test_only_a_declared_tool_settles_the_reply(
@@ -6708,14 +6705,14 @@ class TestCustomToolEffect:
             additional_tools=[(StayQuietInput, declare(stay_quiet))],
         )
 
-        assert [m["content"] for m in turn.tools.messages_sent] == chat
+        assert turn.tools.chat == chat
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("declare", "complete"),
         [
             pytest.param(declares_turn_effect(TurnEffect.ACT), True, id="declared"),
-            pytest.param(_undeclared, False, id="undeclared-observes"),
+            pytest.param(undeclared, False, id="undeclared-observes"),
         ],
     )
     async def test_the_tool_records_its_effect_on_the_turn(
@@ -6730,6 +6727,15 @@ class TestCustomToolEffect:
         )
 
         assert turn.tools.turn.complete is complete
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_turn_is_settled_by_its_notice() -> None:
+    """The notice answers the room, so the turn is not also a missing reply."""
+    turn = await run_codex_turn(events=[turn_completed(status="interrupted")])
+
+    assert turn.tools.chat == ["I stopped before completing this request."]
+    assert turn.tools.turn.complete
 
 
 class TestDetachedTurnOutcome:
@@ -6764,7 +6770,7 @@ class TestDetachedTurnOutcome:
 
         turn, busy, approval = room.deliveries
         assert turn.messages_sent[-1]["content"] == "Tests pass."
-        assert [m["content"] for m in busy.messages_sent] == [TURN_IN_PROGRESS_MESSAGE]
+        assert busy.chat == [TURN_IN_PROGRESS_MESSAGE]
         assert turn.turn.complete and busy.turn.complete and approval.turn.complete
         assert (
             failure_reports(turn)

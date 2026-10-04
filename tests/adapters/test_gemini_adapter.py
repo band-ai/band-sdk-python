@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -15,9 +17,8 @@ from pydantic import BaseModel, Field, ValidationError
 from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Emit, PlatformMessage, ToolEventKey
-from band.runtime.custom_tools import declares_turn_effect
-from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 
 @pytest.fixture
@@ -436,15 +437,16 @@ class TestCustomTools:
         mock_tools.execute_tool_call.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
     async def test_custom_tool_records_its_effect_on_the_room_turn(
-        self, sample_message
+        self, sample_message, declare: Callable[..., Any], complete: bool
     ):
         class FileInput(BaseModel):
             """File the report."""
 
             note: str
 
-        @declares_turn_effect(TurnEffect.ACT)
+        @declare
         async def file_report(inp: FileInput) -> str:
             return "filed"
 
@@ -472,7 +474,7 @@ class TestCustomTools:
                 room_id="room-123",
             )
 
-        assert tools.turn.complete
+        assert tools.turn.complete is complete
 
 
 class TestReadRoomFileImagePassthrough:

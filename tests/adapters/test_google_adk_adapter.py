@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,9 +22,9 @@ from pydantic import BaseModel, Field
 
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
-from band.runtime.custom_tools import declares_turn_effect
-from band.runtime.tools import AgentTools, BandTool, TurnEffect
+from band.runtime.tools import AgentTools, BandTool
 from band.testing import FakeAgentTools
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -760,13 +762,16 @@ class TestCustomTools:
         mock_tools.execute_tool_call.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_custom_tool_records_its_effect_on_the_room_turn(self):
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, declare: Callable[..., Any], complete: bool
+    ):
         class FileInput(BaseModel):
             """File the report."""
 
             note: str
 
-        @declares_turn_effect(TurnEffect.ACT)
+        @declare
         async def file_report(args: FileInput) -> str:
             return "filed"
 
@@ -776,7 +781,7 @@ class TestCustomTools:
 
         await bridge.run_async(args={"note": "go"}, tool_context=MagicMock())
 
-        assert tools.turn.complete
+        assert tools.turn.complete is complete
 
 
 class TestContactsInjection:

@@ -40,11 +40,6 @@ _STAY_QUIET = {"stay_quiet": TurnEffect.DECLINE}
 @pytest.mark.parametrize(
     ("tool", "custom_effects", "effect"),
     [
-        pytest.param(BandTool.SEND_MESSAGE, None, TurnEffect.REPLY, id="post"),
-        pytest.param(BandTool.NO_REPLY, None, TurnEffect.DECLINE, id="no-reply"),
-        pytest.param(BandTool.ADD_PARTICIPANT, None, TurnEffect.ACT, id="action"),
-        pytest.param(BandTool.GET_MEMORY, None, TurnEffect.OBSERVE, id="read-only"),
-        pytest.param(BandTool.SEND_EVENT, None, TurnEffect.OBSERVE, id="narration"),
         pytest.param("weather", _POST_TO_SLACK, TurnEffect.OBSERVE, id="undeclared"),
         pytest.param(
             "post_to_slack", _POST_TO_SLACK, TurnEffect.ACT, id="declared-act"
@@ -54,7 +49,7 @@ _STAY_QUIET = {"stay_quiet": TurnEffect.DECLINE}
         ),
     ],
 )
-def test_turn_effect_of_a_finished_tool_call(
+def test_a_custom_tool_has_only_the_effect_it_declared(
     tool: str, custom_effects: dict[str, TurnEffect] | None, effect: TurnEffect
 ) -> None:
     assert turn_effect(tool, custom_effects=custom_effects) is effect

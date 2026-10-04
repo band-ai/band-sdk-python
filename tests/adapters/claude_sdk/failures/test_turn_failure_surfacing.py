@@ -208,3 +208,18 @@ async def test_band_no_reply_does_not_excuse_a_later_silent_turn(
         await room.send("Are you there?")
 
     assert room.failures == [MISSING_REPLY_TEXT]
+
+
+async def test_a_turn_whose_only_reply_was_deduped_is_not_a_missing_reply(
+    claude_room: OpenRoom,
+) -> None:
+    """The CLI re-sending the previous turn's reply is suppressed as a
+    duplicate, and it still answers the turn that sent it."""
+    room = await claude_room()
+    room.claude.script([room.model_reply("Done.")], [room.model_reply("Done.")])
+
+    await room.send("do it")
+    await room.send("do it again", tools=room.fresh_tools())
+
+    assert room.chat == ["Done."]
+    assert room.failures == []

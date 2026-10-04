@@ -27,7 +27,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import SimpleAdapter
-from band.core.turn import report_unsettled_turn
+from band.core.turn import judge_detached_turn
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -1065,7 +1065,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
-                await self._judge_detached_turn(turn)
+                await judge_detached_turn(turn.tools, room_id=room_state.room_id)
                 await self._emit_turn_usage(turn)
             except Exception:
                 logger.exception(
@@ -1083,13 +1083,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 expected_turn=turn,
                 expected_task=asyncio.current_task(),
             )
-
-    @staticmethod
-    async def _judge_detached_turn(turn: TurnState) -> None:
-        """Judge a turn released early to wait on a human, since ``on_event``
-        returned before it ended."""
-        if turn.tools.turn.detached:
-            await report_unsettled_turn(turn.tools)
 
     async def _abort_turn(self, turn: TurnState, reason: str) -> None:
         """Best-effort: tell OpenCode to stop working on this room's session."""

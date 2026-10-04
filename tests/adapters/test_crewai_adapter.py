@@ -654,7 +654,7 @@ class TestTurnVerdict:
 
         await adapter.on_event(turn_input(tools))
 
-        assert [m["content"] for m in tools.messages_sent] == [ANSWER]
+        assert tools.chat == [ANSWER]
         assert failure_reports(tools) == []
         assert crew.kickoff_async.call_count == 2
 
