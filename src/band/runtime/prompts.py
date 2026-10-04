@@ -39,7 +39,7 @@ BASE_INSTRUCTIONS = f"""
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
-Use `{BandTool.SEND_MESSAGE}(content, mentions)` to respond — a `{BandTool.SEND_MESSAGE}` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `{BandTool.SEND_MESSAGE}`.
+Use `{BandTool.SEND_MESSAGE}(content, mentions)` to respond — a `{BandTool.SEND_MESSAGE}` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `{BandTool.SEND_MESSAGE}`; a turn that ends with the answer written as plain text delivers nothing.
 When the latest message needs no answer from you (it was addressed to someone else, it is an FYI or an acknowledgement, or another participant already answered it), call `{BandTool.NO_REPLY}` instead to end the turn deliberately. End every turn with one of the two.
 {MENTION_IDENTIFIERS}
 
