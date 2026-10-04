@@ -58,7 +58,7 @@ NAME_PREFIX = "e2e-band-"
 # handle truncates (``…-invitable`` -> ``…-invita``) and the self-sourced roster
 # assertions in test_identity_and_roster would fail. The agent-under-test is exempt:
 # it reports its own name as plain text (not a handle), so its adapter-id label
-# (e.g. "pydantic-ai") may push its name past the cap harmlessly.
+# (e.g. "pydantic_ai") may push its name past the cap harmlessly.
 MENTION_HANDLE_CAP = 24
 
 # Longest label a scenario both provisions and asserts by @mention
