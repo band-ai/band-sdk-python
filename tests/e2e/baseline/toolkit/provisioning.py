@@ -5,8 +5,8 @@ pre-configured agent: register an agent (getting its own credentials), create
 rooms, and force-delete everything on teardown. A prefix-guarded orphan sweep
 reaps leftovers from crashed prior runs.
 
-Provisioned agents are named ``e2e-band-{run_id}-{label}`` so the sweep can
-recognise its own resources by prefix and never touch a non-test agent.
+Provisioned agents are named by :func:`agent_name` under ``NAME_PREFIX`` so the
+sweep can recognise its own resources by prefix and never touch a non-test agent.
 """
 
 from __future__ import annotations
@@ -88,8 +88,8 @@ def new_run_id() -> str:
     """Short token identifying a single test session's provisioned resources.
 
     Its length is *derived* from the mention-handle cap (see :func:`run_id_len`) so
-    the longest @mentioned peer name — ``{NAME_PREFIX}{run_id}-{label}`` — still
-    surfaces in full rather than as a truncated handle. The resulting entropy
+    the longest @mentioned peer name (see :func:`agent_name`) still surfaces in
+    full rather than as a truncated handle. The resulting entropy
     (~1M at 5 hex) is ample given the run-id + age guards in ``sweep_orphans``.
     """
     return uuid.uuid4().hex[: run_id_len()]
