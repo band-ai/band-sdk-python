@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TypeVar
 
 import pytest
 from band_rest import ChatMessage
@@ -34,6 +36,22 @@ APPROVAL_LOG_LEVEL = (
     else logging.INFO
 )
 TERMINAL_POLL_INTERVAL_S = 0.5
+# Bounds each platform read in the timeout diagnostic; two reads stay well inside
+# the pytest-timeout backstop margin that follows the soft turn deadline.
+DIAGNOSTIC_READ_TIMEOUT_S = 10.0
+UNKNOWN = "?"
+
+T = TypeVar("T")
+
+
+async def read_or_none(read: Awaitable[T]) -> T | None:
+    """``read``'s result, or None when the platform fails or stalls past the bound."""
+    try:
+        async with asyncio.timeout(DIAGNOSTIC_READ_TIMEOUT_S):
+            return await read
+    except Exception as error:  # noqa: BLE001 -- any failed read leaves the field unknown
+        logger.warning("Approval diagnostic read failed: %s", type(error).__name__)
+        return None
 
 
 class TurnPhase(Enum):
@@ -261,10 +279,13 @@ class ApprovalRoom:
         captured = self.capture.messages.since(since)
         said = self.said_since(since)
         settled = self.dialect.settled(captured, *notices, closing_reply=closing_reply)
-        durable_settled = self.dialect.settled(
-            await self._durable_replies(), *notices, closing_reply=closing_reply
+        durable = await read_or_none(self._durable_replies())
+        durable_settled = (
+            UNKNOWN
+            if durable is None
+            else self.dialect.settled(durable, *notices, closing_reply=closing_reply)
         )
-        usage = await self.capture.usage(sender_id=self.agent.id)
+        usage = await read_or_none(self.capture.usage(sender_id=self.agent.id))
         # Event notices only show up in a post-turn read; assert_shown checks those.
         text_notices_shown = [
             notice.streamed_in(said)
@@ -278,7 +299,7 @@ class ApprovalRoom:
             f"settled={settled} "
             f"durable_settled={durable_settled} "
             f"unhandled_requests={len(self._unhandled_requests(captured))} "
-            f"usage_recorded={bool(usage)}"
+            f"usage_recorded={UNKNOWN if usage is None else bool(usage)}"
         )
 
     async def _durable_replies(self) -> list[ChatMessage]:
