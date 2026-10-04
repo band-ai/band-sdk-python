@@ -294,15 +294,22 @@ def image_round_trip_instruction() -> str:
     )
 
 
+# An event is not a reply, so a turn that only emits events must still end
+# deliberately, or it is reported as a missing reply.
+END_WITHOUT_REPLY = (
+    f"Then end your turn by calling {BandTool.NO_REPLY}. Do not reply with a chat "
+    "message and do not call any other tool."
+)
+
+
 def emit_event_instruction(event_type: MessageType, marker: str) -> str:
     """User message forcing exactly one ``band_send_event`` of ``event_type``
     whose content carries ``marker`` verbatim."""
     return (
         f"Call the tool band_send_event exactly once with "
         f"message_type='{event_type.value}' and content that includes the exact "
-        f"token {marker} (verbatim). That tool call is your ONLY action -- do not "
-        "reply with a chat message and do not call any other tool. A plain-text "
-        "reply does not satisfy this; you must call band_send_event."
+        f"token {marker} (verbatim). A plain-text reply does not satisfy this; "
+        f"you must call band_send_event. {END_WITHOUT_REPLY}"
     )
 
 
@@ -313,9 +320,8 @@ def emit_thoughts_instruction(markers: list[str]) -> str:
     return (
         f"Call the tool band_send_event once for each of these tokens: {tokens}. "
         f"Each call uses message_type='{MessageType.THOUGHT.value}' with content "
-        "containing that exact token verbatim. Those tool calls are your ONLY "
-        "action -- do not reply with a chat message and do not call any other "
-        "tool. A plain-text reply does not satisfy this."
+        "containing that exact token verbatim. A plain-text reply does not "
+        f"satisfy this. {END_WITHOUT_REPLY}"
     )
 
 
@@ -620,8 +626,12 @@ CREATE_CHATROOM = (
 
 def remember_fact_instruction(fact: str) -> str:
     """One burst turn: ask the agent to remember ``fact`` (a unique marker). Terse so a
-    burst of these is cheap; the later spanning recall is what's under test."""
-    return f"Remember this fact for later: {fact}."
+    burst of these is cheap; the later spanning recall is what's under test. It asks
+    for the acknowledgement outright: a turn that says nothing is reported FAILED."""
+    return (
+        f"Remember this fact for later: {fact}. Acknowledge it in one short "
+        f"{BandTool.SEND_MESSAGE} reply."
+    )
 
 
 # Recall probe for the spanning-recall step: asks for the whole set so an early, a
