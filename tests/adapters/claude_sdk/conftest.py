@@ -57,7 +57,12 @@ async def claude_room(
     # so a uvicorn sleep scheduled at virtual T waits ~T of wall time on a
     # fresh CI runner (uptime < T) and hits pytest-timeout.
     loop = asyncio.get_running_loop()
-    reopen_looptime = hasattr(loop, "looptime_enabled") and not loop.looptime_on
-    with loop.looptime_enabled() if reopen_looptime else nullcontext():
+    enable_looptime = getattr(loop, "looptime_enabled", None)
+    already_on = getattr(loop, "looptime_on", True)
+    with (
+        enable_looptime()
+        if enable_looptime is not None and not already_on
+        else nullcontext()
+    ):
         for adapter in adapters:
             await adapter.cleanup_all()
