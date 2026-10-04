@@ -59,3 +59,13 @@ class TaskAssignmentStatus(StrEnum):
     IN_REVIEW = "in_review"
     FAILED = "failed"
     COMPLETED = "completed"
+
+
+def task_ref(id: str) -> str:
+    """A task UUID or board number in the form the platform accepts.
+
+    The tool text names board numbers "#N", but the platform resolves only
+    "N": in a URL path ``#`` starts a fragment, and in a request body
+    (``supersedes_id``) "#N" is rejected as unknown.
+    """
+    return id.removeprefix("#")

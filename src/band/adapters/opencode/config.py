@@ -8,9 +8,9 @@ from pydantic_settings import SettingsConfigDict
 
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.types import ApprovalMode
+from band.integrations.opencode import ApprovalReply
 
 QuestionMode = Literal["manual", "auto_reject"]
-ApprovalReply = Literal["once", "always", "reject"]
 
 
 class OpencodeAdapterConfig(EnvAdapterConfig):

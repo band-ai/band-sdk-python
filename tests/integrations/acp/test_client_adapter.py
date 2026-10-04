@@ -245,6 +245,19 @@ class TestACPClientAdapterShutdown:
         assert runtime._conn is None
 
     @pytest.mark.asyncio
+    async def test_stale_room_cleanup_preserves_a_replacement_runtime(self) -> None:
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
+        failed_runtime = adapter._build_runtime()
+        replacement_runtime = adapter._build_runtime()
+        adapter._runtimes["room-1"] = replacement_runtime
+
+        await adapter.on_cleanup("room-1", expected_runtime=failed_runtime)
+
+        assert adapter._runtimes["room-1"] is replacement_runtime
+
+    @pytest.mark.asyncio
     async def test_restart_after_a_full_stop_allows_backend_creation(
         self, make_acp_transport
     ) -> None:
@@ -515,6 +528,10 @@ class TestACPClientAdapterLocalMcpConfig:
         system_context = adapter._build_system_context("room-123", msg)
 
         assert "Band tools" in system_context
+        assert "one-line plain text summary" in system_context
+        assert "do not post again" in system_context
+        assert "reply exactly once" not in system_context
+        assert "Never both" not in system_context
         assert "Current chat_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
         assert "Use each MCP tool's schema" in system_context
@@ -969,6 +986,184 @@ class TestACPClientAdapterOnMessage:
         failures = reported_failures(tools)
         assert len(failures) == 1
         assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_cancelling_the_turn_cancels_its_prompt(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A cancelled turn stops its prompt on both sides of the ACP connection."""
+        prompt_started = asyncio.Event()
+        prompt_cancelled = asyncio.Event()
+
+        async def endless_prompt(**_: object) -> None:
+            prompt_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                prompt_cancelled.set()
+                raise
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=endless_prompt)
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                FakeAgentTools(),
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await prompt_started.wait()
+
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        assert prompt_cancelled.is_set()
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+
+    @pytest.mark.asyncio
+    async def test_cancelling_the_turn_survives_repeated_cancel(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A second STOP during session/cancel still finishes that cancel."""
+        prompt_started = asyncio.Event()
+        cancel_started = asyncio.Event()
+        release_cancel = asyncio.Event()
+
+        async def endless_prompt(**_: object) -> None:
+            prompt_started.set()
+            await asyncio.Event().wait()
+
+        async def slow_cancel(session_id: str) -> None:
+            cancel_started.set()
+            await release_cancel.wait()
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=endless_prompt)
+        conn.cancel = AsyncMock(side_effect=slow_cancel)
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                FakeAgentTools(),
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await prompt_started.wait()
+        turn.cancel()
+        await cancel_started.wait()
+        turn.cancel()
+        await asyncio.sleep(0)
+        assert not turn.done()
+        release_cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+
+    @pytest.mark.asyncio
+    async def test_timeout_cleanup_survives_outer_cancel(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """STOP during timeout cleanup still finishes session/cancel and failure."""
+        adapter_with_mocks.config = adapter_with_mocks.config.model_copy(
+            update={"turn_timeout_s": 0.05}
+        )
+        cancel_started = asyncio.Event()
+        release_cancel = asyncio.Event()
+
+        async def slow_prompt(**_: object) -> None:
+            await asyncio.Event().wait()
+
+        async def slow_cancel(session_id: str) -> None:
+            cancel_started.set()
+            await release_cancel.wait()
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=slow_prompt)
+        conn.cancel = AsyncMock(side_effect=slow_cancel)
+        tools = FakeAgentTools()
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await cancel_started.wait()
+        turn.cancel()
+        await asyncio.sleep(0)
+        # Bare shield would finish the outer task here while cleanup orphans.
+        assert not turn.done()
+        release_cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
+        assert _MOCK_ROOM not in adapter_with_mocks._runtimes
+
+    @pytest.mark.asyncio
+    async def test_timeout_cleanup_survives_repeated_cancel(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A second STOP during drain still finishes session/cancel and failure."""
+        adapter_with_mocks.config = adapter_with_mocks.config.model_copy(
+            update={"turn_timeout_s": 0.05}
+        )
+        cancel_started = asyncio.Event()
+        release_cancel = asyncio.Event()
+
+        async def slow_prompt(**_: object) -> None:
+            await asyncio.Event().wait()
+
+        async def slow_cancel(session_id: str) -> None:
+            cancel_started.set()
+            await release_cancel.wait()
+
+        conn = self._runtime(adapter_with_mocks)._conn
+        conn.prompt = AsyncMock(side_effect=slow_prompt)
+        conn.cancel = AsyncMock(side_effect=slow_cancel)
+        tools = FakeAgentTools()
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+        )
+        await cancel_started.wait()
+        turn.cancel()
+        await asyncio.sleep(0)
+        turn.cancel()
+        await asyncio.sleep(0)
+        assert not turn.done()
+        release_cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        conn.cancel.assert_awaited_once_with("acp-session-123")
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
+        assert _MOCK_ROOM not in adapter_with_mocks._runtimes
 
     @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(

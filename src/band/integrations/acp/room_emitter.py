@@ -20,6 +20,8 @@ from band.runtime.tools import TurnEffect, settles_turn_reply
 
 logger = logging.getLogger(__name__)
 
+ACP_SESSION_CLOSED_EVENT = "ACP client session"
+
 
 def turn_replied_in_room(
     chunks: list[CollectedChunk],
@@ -217,12 +219,12 @@ class RoomTurnEmitter:
         # Emit.TASK_EVENTS).
         await send_event_safe(
             self._tools,
-            content="ACP client session",
+            content=ACP_SESSION_CLOSED_EVENT,
             message_type="task",
             metadata={
                 "acp_client_session_id": self._session_id,
                 "acp_client_room_id": self._room_id,
             },
-            log_label="ACP client session",
+            log_label=ACP_SESSION_CLOSED_EVENT,
         )
         return False

@@ -8,6 +8,7 @@ DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
 DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisions."
 
 ROOM_COMMAND = "/cursor"
+CURSOR_CLI_BINARY = "agent"
 
 
 class CursorCommandWord(StrEnum):
@@ -26,6 +27,11 @@ PERMISSION_REQUESTED_TEMPLATE = (
     f"Reply `{ROOM_COMMAND} {CursorCommandWord.SELECT} {{token}} <option-id>` "
     f"or `{ROOM_COMMAND} {CursorCommandWord.DENY} {{token}}`. "
     "Available options: {options}"
+)
+PLAN_REQUESTED_TEMPLATE = (
+    "{plan} needs approval. "
+    f"Reply `{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
+    f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
 )
 DECISION_RESOLVED_TEMPLATE = "Cursor {kind} decision `{token}` resolved."
 DECISION_TIMED_OUT_TEMPLATE = (

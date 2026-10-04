@@ -14,11 +14,12 @@ import asyncio
 import codecs
 import re
 import string
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from band_rest import ChatMessage
 
@@ -70,7 +71,7 @@ from band.adapters.opencode.approvals import (
 )
 from band.client.streaming import MessageCreatedPayload
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import MessageType
+from band.core.types import ApprovalMode, Capability, MessageType
 from band.integrations.acp.cursor import (
     DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
@@ -82,12 +83,19 @@ from band.integrations.acp.cursor import (
 )
 from band.integrations.codex.types import CodexApprovalMethod
 from band.runtime.formatters import strip_leading_mentions
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
-from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
+from tests.e2e.baseline.toolkit.builders import (
+    codex_config_kwargs,
+    cursor_config_kwargs,
+)
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
+
+if TYPE_CHECKING:
+    from band.adapters.cursor_acp import CursorACPAdapter
 
 SHELL_PROMPT = "Keep responses short. Use your shell tool when asked."
 # Poll cadence for Notice.assert_shown's event read (see its docstring): there's
@@ -199,6 +207,17 @@ def template_pattern(template: str, *, token: str = "token") -> re.Pattern[str]:
     return re.compile("".join(parts) + "$", re.DOTALL | re.MULTILINE)
 
 
+def find_requests(
+    pattern: re.Pattern[str], messages: Sequence[MessageCreatedPayload | ChatMessage]
+) -> list[re.Match[str]]:
+    """Every distinct ``pattern`` request among ``messages``, in order, by token."""
+    found: dict[str, re.Match[str]] = {}
+    for message in messages:
+        for match in pattern.finditer(message.content or ""):
+            found.setdefault(match["token"], match)
+    return list(found.values())
+
+
 @dataclass(frozen=True)
 class Notice:
     """The adapter's confirmation of an outcome: a chat message the capture streams,
@@ -308,14 +327,10 @@ class ApprovalDialect:
         return next(iter(self.find_requests(messages)), None)
 
     def find_requests(
-        self, messages: list[MessageCreatedPayload | ChatMessage]
+        self, messages: Sequence[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:
         """Every distinct approval request among ``messages``, in order."""
-        found: dict[str, re.Match[str]] = {}
-        for message in messages:
-            for match in self.request.finditer(message.content or ""):
-                found.setdefault(match["token"], match)
-        return list(found.values())
+        return find_requests(self.request, messages)
 
     def settled(
         self,
@@ -427,26 +442,48 @@ def _codex_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
             return Notice(CODEX_TIMED_OUT.format(token=token, decision="decline"))
 
 
-def _cursor(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
+def cursor_test_adapter(
+    settings: BaselineSettings,
+    setup: AgentSetup,
+    *,
+    approval_mode: ApprovalMode = "manual",
+    workspace_for_room: WorkspaceResolver | None = None,
+    custom_section: str = SHELL_PROMPT,
+    capabilities: set[Capability] | None = None,
+    inject_band_tools: bool = True,
+) -> CursorACPAdapter:
     from band.adapters.cursor_acp import (  # noqa: PLC0415
         CursorACPAdapter,
         CursorACPAdapterConfig,
     )
 
     config_kwargs: dict[str, Any] = {
-        "api_key": settings.backends.cursor_api_key,
-        "custom_section": SHELL_PROMPT,
-        "cwd": str(setup.workdir),
-        "approval_mode": "manual",
-        # Only the permission is under test; other decisions resolve themselves.
-        "question_mode": "auto_first",
+        **cursor_config_kwargs(settings, prompt=custom_section),
+        "approval_mode": approval_mode,
         "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
+        "inject_band_tools": inject_band_tools,
+        # Cursor saves an "allow always" grant to its config dir, which would
+        # let later cells run that command unasked.
+        "env": {
+            "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
+        },
     }
-    if settings.backends.cursor_command.strip():
-        config_kwargs["command"] = tuple(settings.backends.cursor_command.split())
-    return CursorACPAdapter(config=CursorACPAdapterConfig(**config_kwargs))
+    return CursorACPAdapter(
+        config=CursorACPAdapterConfig(**config_kwargs),
+        # Not ``cwd``: that roots a per-room child dir, while the cells read
+        # their effects straight from ``setup.workdir``.
+        workspace_for_room=workspace_for_room or (lambda _room_id: str(setup.workdir)),
+        capabilities=capabilities,
+    )
+
+
+def cursor_approval_adapter(
+    settings: BaselineSettings, setup: AgentSetup
+) -> CursorACPAdapter:
+    # Band MCP replies need a separate Cursor permission after the shell decision.
+    return cursor_test_adapter(settings, setup, inject_band_tools=False)
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:
@@ -583,7 +620,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         workdir_root=lambda settings: settings.backends.codex_cwd,
     ),
     Adapter.CURSOR_ACP: ApprovalDialect(
-        build=_cursor,
+        build=cursor_approval_adapter,
         request=template_pattern(PERMISSION_REQUESTED_TEMPLATE),
         reply=_cursor_reply,
         notice=_cursor_notice,

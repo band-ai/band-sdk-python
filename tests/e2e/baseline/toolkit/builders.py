@@ -123,7 +123,7 @@ def _build_copilot_sdk(
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
-    # ask_user / base_directory / a shared client are bespoke knobs exercised by
+    # ask_user / a shared client are bespoke knobs exercised by
     # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
     from copilot import (  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
         ProviderConfig,
@@ -134,10 +134,14 @@ def _build_copilot_sdk(
         CopilotSDKAdapterConfig,
     )
 
-    return CopilotSDKAdapter(
+    # A per-cell COPILOT_HOME, as copilot_acp gets: host hooks and extensions
+    # in ~/.copilot otherwise steer or deny the turn under test.
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-sdk-")
+    adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
             use_logged_in_user=False,
+            base_directory=copilot_home_dir(sandbox.name),
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
@@ -148,6 +152,8 @@ def _build_copilot_sdk(
         ),
         **feature_kwargs(features),
     )
+    weakref.finalize(adapter, sandbox.cleanup)
+    return adapter
 
 
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
@@ -616,17 +622,25 @@ def _build_omp_acp(
     )
 
 
+def cursor_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str, Any]:
+    """``CursorACPAdapterConfig`` kwargs shared by the matrix builder and the
+    bespoke Cursor workflow and approval adapters, so the key and command
+    override stay in one place. Questions always resolve on their own."""
+    config_kwargs: dict[str, Any] = {
+        "api_key": s.backends.cursor_api_key,
+        "custom_section": prompt or "",
+        "question_mode": "auto_first",
+    }
+    if s.backends.cursor_command.strip():
+        config_kwargs["command"] = tuple(s.backends.cursor_command.split())
+    return config_kwargs
+
+
 @adapter(
     Adapter.CURSOR_ACP,
     requires=[Dep.CURSOR_CLI],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
-    e2e_pending=(
-        "no way to run Cursor CLI live in CI: it has no BYOK provider knob "
-        "(unlike copilot_acp's COPILOT_PROVIDER_* env vars), so it needs "
-        "either a real Cursor account API key or a full AWS Bedrock setup, "
-        "neither of which is provisioned"
-    ),
 )
 def _build_cursor_acp(
     s: BaselineSettings,
@@ -641,19 +655,15 @@ def _build_cursor_acp(
     )
 
     sandbox = tempfile.mkdtemp(prefix="band-e2e-cursor-acp-")
-    config_kwargs: dict[str, Any] = {
-        "api_key": s.backends.cursor_api_key,
-        "custom_section": prompt or "",
+    config_kwargs = {
+        **cursor_config_kwargs(s, prompt=prompt),
         "cwd": sandbox,
         # Nothing in the baseline matrix answers /cursor prompts, so a
         # decision request must resolve on its own or the cell stalls for
         # decision_timeout_s and then fails or denies.
         "approval_mode": "auto_accept",
-        "question_mode": "auto_first",
         "plan_mode": "auto_accept",
     }
-    if s.backends.cursor_command.strip():
-        config_kwargs["command"] = tuple(s.backends.cursor_command.split())
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),

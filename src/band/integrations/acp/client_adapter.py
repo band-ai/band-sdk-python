@@ -13,7 +13,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, ClassVar, Generic, TypeAlias
@@ -637,7 +637,7 @@ class ACPClientAdapter(
             # An unanswered set may have left a dead connection the runtime
             # never replaces; only a fresh runtime lets the next turn retry.
             if isinstance(error, ACPConfigUnreachableError):
-                await self.on_cleanup(room_id)
+                await self.on_cleanup(room_id, expected_runtime=runtime)
             await self._report_config_error(tools, error)
             return
         runtime.reset_session(session_id)
@@ -686,27 +686,41 @@ class ACPClientAdapter(
                     room_id=room_id,
                     session_id=session_id,
                 )
-                prompt_task = asyncio.create_task(
-                    runtime.prompt(
-                        session_id=session_id,
-                        prompt_text=prompt_text,
-                        on_chunk=emitter.emit,
+                turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
+                try:
+                    async with turn_deadline:
+                        await runtime.prompt(
+                            session_id=session_id,
+                            prompt_text=prompt_text,
+                            on_chunk=emitter.emit,
+                        )
+                except asyncio.CancelledError:
+                    # Cancelling the local request leaves the agent running the
+                    # prompt; it only stops on session/cancel.
+                    await self._await_shielded(
+                        asyncio.create_task(
+                            self._cancel_agent_turn(
+                                runtime, room_id=room_id, session_id=session_id
+                            )
+                        )
                     )
-                )
-                done, _ = await asyncio.wait(
-                    {prompt_task}, timeout=self.config.turn_timeout_s
-                )
-                if not done:
-                    prompt_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await prompt_task
-                    await self._handle_turn_timeout(
-                        runtime, room_id=room_id, session_id=session_id, tools=tools
+                    raise
+                except TimeoutError:
+                    if not turn_deadline.expired():
+                        raise
+                    await self._await_shielded(
+                        asyncio.create_task(
+                            self._handle_turn_timeout(
+                                runtime,
+                                room_id=room_id,
+                                session_id=session_id,
+                                tools=tools,
+                            )
+                        )
                     )
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self.config.turn_timeout_s}s"
                     ) from None
-                await prompt_task
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -734,10 +748,7 @@ class ACPClientAdapter(
             room_id,
             session_id,
         )
-        try:
-            await runtime.cancel_turn(session_id)
-        except Exception:
-            logger.exception("ACP turn cancellation failed (room=%s)", room_id)
+        await self._cancel_agent_turn(runtime, room_id=room_id, session_id=session_id)
         await self.on_cleanup(room_id)
         await tools.send_failure(
             AgentFailure(
@@ -746,6 +757,29 @@ class ACPClientAdapter(
                 FAILURE_CODE_TIMEOUT,
             )
         )
+
+    @staticmethod
+    async def _await_shielded(task: asyncio.Task[None]) -> None:
+        """Wait for ``task`` through outer cancels without cancelling it."""
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+            raise
+
+    @staticmethod
+    async def _cancel_agent_turn(
+        runtime: ACPRuntime, *, room_id: str, session_id: str
+    ) -> None:
+        """Tell the agent to stop this room's prompt; best effort."""
+        try:
+            await runtime.cancel_turn(session_id)
+        except Exception:
+            logger.exception("ACP turn cancellation failed (room=%s)", room_id)
 
     def _install_turn_handlers(
         self,
@@ -906,9 +940,10 @@ class ACPClientAdapter(
             f"You are connected to Band using the Band tools.\n"
             f"Use the Band tools for any visible room action. If you post a "
             f"message with a Band tool, your plain text output is not also "
-            f"posted; otherwise your plain text reply is delivered to the "
-            f"room on your behalf. Never both — reply exactly once, and do "
-            f"not narrate the tool calls you are about to make.\n"
+            f"posted, so end your turn with a one-line plain text summary "
+            f"and do not post again; otherwise your plain text reply is "
+            f"delivered to the room on your behalf. Do not narrate the tool "
+            f"calls you are about to make.\n"
             f"\n"
             f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
             f"Current requester name: {requester_name}\n"
@@ -1405,8 +1440,15 @@ class ACPClientAdapter(
             sections.append(live_message)
         return "\n\n".join(sections)
 
-    async def on_cleanup(self, room_id: str) -> None:
+    async def on_cleanup(
+        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
+    ) -> None:
         async with self._session_lock:
+            if (
+                expected_runtime is not None
+                and self._runtimes.get(room_id) is not expected_runtime
+            ):
+                return
             session_id = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)

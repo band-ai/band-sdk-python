@@ -238,8 +238,18 @@ _TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
         CodexItemType.WEB_SEARCH,
         CodexItemType.IMAGE_VIEW,
         CodexItemType.COLLAB_AGENT_TOOL_CALL,
-        CodexItemType.DYNAMIC_TOOL_CALL,
     }
+)
+
+# Tools Codex asks the adapter to run (item/tool/call). The adapter reports them
+# there, with the real result, so their item/completed is the same call again.
+_REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.DYNAMIC_TOOL_CALL}
+)
+
+# The prompt and the reply; the reply's text is read by the turn loop.
+_MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
 )
 
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
@@ -2404,8 +2414,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        # Skip known non-actionable types
-        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
+        if item_type in _REQUESTED_TOOL_ITEM_TYPES or item_type in _MESSAGE_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -2426,8 +2435,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return CodexAdapter._extract_image_view(item)
             case CodexItemType.COLLAB_AGENT_TOOL_CALL:
                 return CodexAdapter._extract_collab_agent_tool_call(item)
-            case CodexItemType.DYNAMIC_TOOL_CALL:
-                return CodexAdapter._extract_dynamic_tool_call(item)
             case _:
                 return CodexToolItem(item_type, {}, "completed")
 
@@ -2508,51 +2515,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             item.get("result"), default="completed", raw_fallback=True
         )
         return CodexToolItem(name, collab_args, output)
-
-    @staticmethod
-    def _extract_dynamic_tool_call(item: dict[str, Any]) -> CodexToolItem:
-        tool = item.get("tool") or item.get("name") or item.get("toolName")
-        if isinstance(tool, dict):
-            tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
-        name = str(tool or "dynamic_tool")
-
-        raw_args = (
-            item.get("arguments")
-            if "arguments" in item
-            else item.get("args")
-            if "args" in item
-            else item.get("input")
-            if "input" in item
-            else item.get("inputJson", {})
-        )
-        args = CodexAdapter._coerce_tool_args(raw_args)
-
-        output = CodexAdapter._stringify_tool_output(
-            item.get("result"),
-            item.get("output"),
-            item.get("content"),
-            item.get("error"),
-            item.get("contentItems"),
-            default=str(item.get("status", "completed")),
-        )
-        return CodexToolItem(name, args, output)
-
-    @staticmethod
-    def _coerce_tool_args(value: Any) -> dict[str, Any]:
-        """Return a dict for Codex tool args across protocol variants."""
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return {"input": value}
-            if isinstance(parsed, dict):
-                return parsed
-            return {"input": parsed}
-        if value is None:
-            return {}
-        return {"input": value}
 
     @staticmethod
     def _stringify_tool_output(

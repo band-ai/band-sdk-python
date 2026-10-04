@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 """Record the backends lane's environment for the scorecard evidence.
 
-Writes the validated Copilot CLI version, the OS and the BYOK model, read from
-the same settings the builder uses so the record can't drift from the run.
+Writes backend CLI versions and non-secret run metadata.
 """
 
 from __future__ import annotations
@@ -12,26 +11,56 @@ import pathlib
 import platform
 import shutil
 import subprocess
+import tempfile
 
+from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from tests.e2e.baseline.settings import BaselineSettings
 
+# This runs in an always() step ahead of the scorecard uploads; a stalled CLI
+# must not hold it until the job timeout.
+VERSION_TIMEOUT_S = 30
 
-def copilot_cli_version() -> str:
-    if (cli := shutil.which("copilot")) is None:
-        return "unavailable"
-    # On Windows the npm shim is copilot.cmd, a batch file CreateProcess can't
-    # run without cmd.exe; the command is a resolved local path plus a literal
-    # flag, so shell=True carries no injection risk.
-    completed = subprocess.run(
-        f'"{cli}" --version', shell=True, capture_output=True, text=True, check=False
-    )
-    return completed.stdout.strip()
+
+def cli_version(binary: str, *args: str) -> str:
+    """``binary [args] --version``; ``args`` lead a runtime launched directly."""
+    if (cli := shutil.which(binary)) is None:
+        return "not found"
+    command = " ".join(f'"{part}"' for part in (cli, *args))
+    # Resolved local paths plus a literal flag, so shell=True carries no
+    # injection risk; it lets Windows .cmd shims launch through cmd.exe.
+    # A file, not a pipe: the timeout kills only the shell, and on Windows a pipe
+    # still held by the shim's grandchild would block run() past the timeout.
+    with tempfile.TemporaryFile("w+") as output:
+        try:
+            completed = subprocess.run(
+                f"{command} --version",
+                shell=True,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=VERSION_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            return f"timed out after {VERSION_TIMEOUT_S}s"
+        output.seek(0)
+        version = output.read().strip()
+    if completed.returncode != 0:
+        return f"exited {completed.returncode}"
+    return version or "empty version output"
+
+
+def cursor_launch(command: str) -> list[str]:
+    """The Cursor launch argv without its ``acp`` subcommand."""
+    argv = command.split() or [CURSOR_CLI_BINARY]
+    return argv[:-1] if argv[-1] == "acp" else argv
 
 
 def main() -> None:
     settings = BaselineSettings()
     metadata = {
-        "copilot_cli": copilot_cli_version(),
+        "copilot_cli": cli_version("copilot"),
+        "cursor_cli": cli_version(*cursor_launch(settings.backends.cursor_command)),
         "os": platform.platform(),
         "copilot_auth": {
             "mode": "byok",
