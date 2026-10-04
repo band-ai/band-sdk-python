@@ -47,6 +47,7 @@ from band.core.task_types import (
     TaskIncludeOption,
     TaskLifecycleState,
     TaskListState,
+    task_ref,
     validate_include,
 )
 from band.core.tool_filter import sanitize_tool_schema
@@ -480,10 +481,13 @@ class AgentTools(AgentToolsProtocol):
         """
         content, metadata = to_failure_event(failure)
         try:
-            return await self.send_event(content, MessageType.ERROR, metadata)
+            response = await self.send_event(content, MessageType.ERROR, metadata)
         except Exception as exc:
             logger.exception("send_failure could not post the failure event")
             return {"ok": False, "error": str(exc)}
+        if self._ctx is not None:
+            self._ctx.note_turn_failure_reported()
+        return response
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         """
@@ -1495,7 +1499,7 @@ class AgentTools(AgentToolsProtocol):
         if detail is not None:
             kwargs["detail"] = detail
         if supersedes_id is not None:
-            kwargs["supersedes_id"] = supersedes_id
+            kwargs["supersedes_id"] = task_ref(supersedes_id)
         response = await self.rest.agent_api_chat_tasks.create_chat_task(
             chat_id=self.room_id,
             subject=subject,
@@ -1522,7 +1526,7 @@ class AgentTools(AgentToolsProtocol):
         validate_include(include)
         response = await self.rest.agent_api_chat_tasks.get_chat_task(
             chat_id=self.room_id,
-            id=id,
+            id=task_ref(id),
             include=include,
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
@@ -1585,7 +1589,7 @@ class AgentTools(AgentToolsProtocol):
             kwargs["state"] = state
         response = await self.rest.agent_api_chat_tasks.update_chat_task(
             chat_id=self.room_id,
-            id=id,
+            id=task_ref(id),
             request_options=DEFAULT_REQUEST_OPTIONS,
             **kwargs,
         )
@@ -1613,7 +1617,7 @@ class AgentTools(AgentToolsProtocol):
         )
         response = await self.rest.agent_api_chat_tasks.get_chat_task_history(
             chat_id=self.room_id,
-            id=id,
+            id=task_ref(id),
             cursor=cursor,
             limit=limit,
             request_options=DEFAULT_REQUEST_OPTIONS,

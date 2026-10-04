@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 LangGraph agent with memory tools enabled.
@@ -28,7 +28,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 from band import Agent, configure_logging
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 from band.core.types import Capability
 
 configure_logging(logging.INFO)
@@ -39,17 +39,19 @@ async def main() -> None:
     load_dotenv()
 
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(
+            custom_section=(
+                "Actively look for durable information worth remembering. "
+                "When a user states a preference, profile detail, standing instruction, "
+                "important project fact, or reusable workflow, call `band_store_memory` "
+                "before replying. Use memory sparingly: do not store one-off requests, "
+                "temporary chat context, or sensitive information unless the user clearly "
+                "asks you to remember it. After storing a memory, briefly acknowledge "
+                "what you saved and continue helping the user."
+            )
+        ),
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
-        custom_section=(
-            "Actively look for durable information worth remembering. "
-            "When a user states a preference, profile detail, standing instruction, "
-            "important project fact, or reusable workflow, call `band_store_memory` "
-            "before replying. Use memory sparingly: do not store one-off requests, "
-            "temporary chat context, or sensitive information unless the user clearly "
-            "asks you to remember it. After storing a memory, briefly acknowledge "
-            "what you saved and continue helping the user."
-        ),
         capabilities=Capability.MEMORY,
     )
 

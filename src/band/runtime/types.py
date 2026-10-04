@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from band.core.types import ConflictPolicy
 
@@ -144,6 +145,11 @@ class SessionConfig:
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
+    # Post an `error` event when a message fails its final attempt and the
+    # adapter didn't report it; otherwise the room can't tell it from a message
+    # never received.
+    report_turn_failures_to_room: bool = True
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
@@ -256,6 +262,14 @@ ParticipantAddedCallback = Callable[[str, "ParticipantAddedEvent"], Awaitable[No
 ParticipantRemovedCallback = Callable[[str, "ParticipantRemovedEvent"], Awaitable[None]]
 
 
+def _require_uuid(name: str, value: str) -> None:
+    """The platform answers a non-UUID id with a 422 only once the agent runs."""
+    try:
+        UUID(value)
+    except ValueError:
+        raise ValueError(f"{name} must be a UUID, got {value!r}") from None
+
+
 @dataclass
 class ContactEventConfig:
     """Configuration for contact event handling.
@@ -314,3 +328,5 @@ class ContactEventConfig:
         """Validate configuration after initialization."""
         if self.strategy == ContactEventStrategy.CALLBACK and self.on_event is None:
             raise ValueError("CALLBACK strategy requires on_event callback")
+        if self.hub_task_id is not None:
+            _require_uuid("hub_task_id", self.hub_task_id)

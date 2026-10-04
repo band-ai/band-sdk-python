@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Self
 
 from band_sdk_core import is_authorized_sender
+from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
@@ -15,6 +16,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
+    ACPClientAdapterConfig,
     ACPPermissionRequest,
 )
 from band.integrations.acp.client_profiles import (
@@ -25,17 +27,21 @@ from band.integrations.acp.client_profiles import (
     parse_cursor_questions,
 )
 from band.integrations.acp.client_runtime import (
+    ALLOW_ALWAYS_KIND,
     ACPRuntime,
+    option_id_of_kind,
     permission_option_ids,
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import (
+    CURSOR_CLI_BINARY,
     DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
     DECISION_TIMED_OUT_TEMPLATE,
     DECISION_UNAUTHORIZED_MESSAGE,
     PERMISSION_REQUESTED_TEMPLATE,
+    PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
 )
@@ -45,57 +51,68 @@ from band.runtime.decisions import (
     DecisionEntry,
     DecisionRegistry,
     Timeout,
-    sender_allowlist,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.workspaces import WorkspaceResolver, workspace_resolver_for
+from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
+DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = (CURSOR_CLI_BINARY, "acp")
+CursorAuthMethod = Literal["cursor_login"]
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
 _INVALID_DECISION = object()
 
 
-@dataclass(frozen=True)
-class CursorACPAdapterConfig:
-    """Runtime configuration for Cursor's ``agent acp`` backend.
+class CursorACPAdapterConfig(ACPClientAdapterConfig):
+    """Settings for Cursor's ``agent acp`` backend.
 
-    ``cwd`` is a compatibility alias for a workspace root; prefer
-    ``workspace_for_room`` for new code.
+    Inherits every :class:`ACPClientAdapterConfig` setting.
+
+    Attributes:
+        command: The ``agent acp`` launch command.
+        auth_method: ACP ``authenticate`` method; off by default. Cursor reads
+            ``api_key``, ``auth_token`` or a stored ``agent login`` without
+            it, and never answers ``authenticate`` when no login is stored.
+        api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
+            exclusive with ``auth_token``.
+        auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
+        approval_mode: How Cursor's permission requests are decided;
+            ``"manual"`` asks the room.
+        question_mode: How Cursor's questions are answered; ``"manual"`` asks
+            the room.
+        plan_mode: How Cursor's plans are settled; ``"manual"`` asks the room.
+        decision_timeout_s: Seconds a manual decision waits before it is
+            cancelled. It runs inside the turn, so it must be shorter than
+            ``turn_timeout_s``.
+        turn_timeout_s: Turn deadline, with headroom above
+            ``decision_timeout_s``.
+        max_pending_decisions: Open manual decisions kept; the oldest is
+            dropped when a new one would exceed it.
+        decision_authorized_senders: Sender ids allowed to resolve decisions.
+            ``None`` admits any room participant.
     """
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
-    cwd: str | None = None
-    workspace_for_room: WorkspaceResolver | None = None
-    env: dict[str, str] | None = None
-    api_key: str | None = None
-    auth_token: str | None = None
-    custom_section: str = ""
-    inject_band_tools: bool = True
-    mcp_servers: list[dict[str, object]] | None = None
-    resolve_session_config: SessionConfigResolver | None = None
+    auth_method: CursorAuthMethod | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    auth_token: str | None = Field(default=None, repr=False)
     approval_mode: ApprovalMode = "manual"
     question_mode: QuestionMode = "manual"
     plan_mode: PlanMode = "manual"
-    decision_timeout_s: float = 300.0
-    # A manual decision wait runs inside the turn, bounded by turn_timeout_s
-    # (see ACPClientAdapter.on_message) -- default headroom above
-    # decision_timeout_s so a decision can't be silently truncated by the
-    # turn deadline before its own timeout fires.
-    turn_timeout_s: float = 900.0
-    max_pending_decisions: int = 10
+    decision_timeout_s: PositiveFloat = 300.0
+    turn_timeout_s: PositiveFloat = 900.0
+    max_pending_decisions: PositiveInt = 10
     decision_authorized_senders: frozenset[str] | None = None
 
-    def __post_init__(self) -> None:
-        # Accept any collection of sender ids, as plain membership once did.
-        object.__setattr__(
-            self,
-            "decision_authorized_senders",
-            sender_allowlist(self.decision_authorized_senders),
-        )
+    @model_validator(mode="after")
+    def _check_auth_and_decision_deadline(self) -> Self:
+        if self.api_key and self.auth_token:
+            raise ValueError("set either api_key or auth_token, not both")
+        if self.decision_timeout_s >= self.turn_timeout_s:
+            raise ValueError("decision_timeout_s must be less than turn_timeout_s")
+        return self
 
 
 @dataclass
@@ -107,6 +124,11 @@ class CursorTurn:
     requester_id: str | None
     release: asyncio.Future[None]
     session_id: str | None = None
+    # Cursor sends parallel tool calls' permission requests together and does
+    # not apply an "allow always" to one already outstanding, so the room is
+    # asked one at a time and a granted tool settles its queued repeats.
+    permission_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    always_allowed: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -120,7 +142,7 @@ class PendingDecision:
     multi_select: frozenset[str] = frozenset()
 
 
-class CursorACPAdapter(ACPClientAdapter):
+class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     """Band adapter for Cursor's native ACP stdio server."""
 
     def __init__(
@@ -128,59 +150,42 @@ class CursorACPAdapter(ACPClientAdapter):
         config: CursorACPAdapterConfig | None = None,
         *,
         additional_tools: list[CustomToolDef] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
+        resolve_session_config: SessionConfigResolver | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
+        """Bridge Band rooms to Cursor's ``agent acp``.
+
+        Args:
+            config: The Cursor command, auth and decision settings.
+            additional_tools: Custom tools served next to the Band tools.
+            workspace_for_room: Maps a room id to its absolute workspace;
+                exclusive with ``config.cwd``.
+            resolve_session_config: Picks session config options.
+        """
         config = config or CursorACPAdapterConfig()
-        self._validate_config(config)
-        self._config = config
         self._cursor_profile = CursorACPClientProfile(self._resolve_extension_method)
         self._turn_lock = asyncio.Lock()
         self._active_turn: CursorTurn | None = None
         self._pending_decisions: DecisionRegistry[PendingDecision] = DecisionRegistry(
             max_pending=config.max_pending_decisions
         )
-        env = self._cursor_env(config)
-        workspace_for_room = workspace_resolver_for(
-            config.cwd, config.workspace_for_room
-        )
         super().__init__(
-            command=list(config.command),
-            workspace_for_room=workspace_for_room,
-            env=env,
-            auth_method="cursor_login",
-            profile=self._cursor_profile,
+            config,
             additional_tools=additional_tools,
-            custom_section=config.custom_section,
-            inject_band_tools=config.inject_band_tools,
-            mcp_servers=config.mcp_servers,
-            resolve_session_config=config.resolve_session_config,
+            workspace_for_room=workspace_for_room,
+            profile=self._cursor_profile,
+            resolve_session_config=resolve_session_config,
             resolve_permission=self._resolve_cursor_permission,
-            turn_timeout_s=config.turn_timeout_s,
             **features,
         )
 
-    @staticmethod
-    def _validate_config(config: CursorACPAdapterConfig) -> None:
-        if not config.command:
-            raise ValueError("Cursor ACP command must not be empty")
-        if config.api_key and config.auth_token:
-            raise ValueError("set either api_key or auth_token, not both")
-        if config.decision_timeout_s <= 0:
-            raise ValueError("decision_timeout_s must be greater than zero")
-        if config.decision_timeout_s >= config.turn_timeout_s:
-            raise ValueError("decision_timeout_s must be less than turn_timeout_s")
-        if config.max_pending_decisions <= 0:
-            raise ValueError("max_pending_decisions must be greater than zero")
-
-    @staticmethod
-    def _cursor_env(config: CursorACPAdapterConfig) -> dict[str, str] | None:
-        """Build the subprocess environment without overriding explicit variables."""
-        env = dict(config.env or {})
-        if config.api_key:
-            env.setdefault("CURSOR_API_KEY", config.api_key)
-        if config.auth_token:
-            env.setdefault("CURSOR_AUTH_TOKEN", config.auth_token)
-        return env or None
+    def _credential_env(self) -> dict[str, str]:
+        credentials = {
+            "CURSOR_API_KEY": self.config.api_key,
+            "CURSOR_AUTH_TOKEN": self.config.auth_token,
+        }
+        return {name: value for name, value in credentials.items() if value}
 
     async def on_message(
         self,
@@ -331,7 +336,7 @@ class CursorACPAdapter(ACPClientAdapter):
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
-        match self._config.approval_mode:
+        match self.config.approval_mode:
             case "auto_accept":
                 return select_allow_option_id(request.options)
             case "auto_decline":
@@ -340,19 +345,33 @@ class CursorACPAdapter(ACPClientAdapter):
                 turn = self._active_turn_for(request.room_id, request.session_id)
                 if turn is None:
                     return None
-                choices = {"permission": permission_option_ids(request.options)}
-                result = await self._wait_for_decision(
-                    kind="permission",
-                    turn=turn,
-                    choices=choices,
-                    prompt=PERMISSION_REQUESTED_TEMPLATE.format(
-                        tool=request.tool_call.name,
-                        # _wait_for_decision fills the token in once it's minted.
-                        token="{token}",
-                        options=", ".join(sorted(choices["permission"])) or "none",
-                    ),
-                )
-                return result if isinstance(result, str) else None
+                async with turn.permission_lock:
+                    return await self._ask_room_permission(turn, request)
+
+    async def _ask_room_permission(
+        self, turn: CursorTurn, request: ACPPermissionRequest
+    ) -> str | None:
+        tool = request.tool_call.name
+        always = option_id_of_kind(request.options, ALLOW_ALWAYS_KIND)
+        if tool in turn.always_allowed and always is not None:
+            return always
+        choices = {"permission": permission_option_ids(request.options)}
+        result = await self._wait_for_decision(
+            kind="permission",
+            turn=turn,
+            choices=choices,
+            prompt=PERMISSION_REQUESTED_TEMPLATE.format(
+                tool=tool,
+                # _wait_for_decision fills the token in once it's minted.
+                token="{token}",
+                options=", ".join(sorted(choices["permission"])) or "none",
+            ),
+        )
+        if not isinstance(result, str):
+            return None
+        if result == always:
+            turn.always_allowed.add(tool)
+        return result
 
     async def _resolve_extension_method(
         self, method: str, params: dict[str, object]
@@ -382,7 +401,7 @@ class CursorACPAdapter(ACPClientAdapter):
             question.id: tuple(option_id for option_id, _ in question.options)
             for question in questions
         }
-        match self._config.question_mode:
+        match self.config.question_mode:
             case "auto_first":
                 return self._answered_questions(
                     {
@@ -416,7 +435,7 @@ class CursorACPAdapter(ACPClientAdapter):
     async def _resolve_plan(
         self, turn: CursorTurn, params: dict[str, object]
     ) -> dict[str, object]:
-        match self._config.plan_mode:
+        match self.config.plan_mode:
             case "auto_accept":
                 return {"outcome": {"outcome": "accepted"}}
             case "auto_decline":
@@ -427,10 +446,10 @@ class CursorACPAdapter(ACPClientAdapter):
                 result = await self._wait_for_decision(
                     kind="plan",
                     turn=turn,
-                    prompt=(
-                        f"{description} needs approval. Reply "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
+                    prompt=PLAN_REQUESTED_TEMPLATE.format(
+                        plan=description,
+                        # _wait_for_decision fills the token in once it's minted.
+                        token="{token}",
                     ),
                 )
                 return (
@@ -480,7 +499,7 @@ class CursorACPAdapter(ACPClientAdapter):
                 turn.release.set_result(None)
 
         result = await self._pending_decisions.wait(
-            entry, future, timeout_s=self._config.decision_timeout_s
+            entry, future, timeout_s=self.config.decision_timeout_s
         )
         if result is Timeout.TIMED_OUT:
             await self._notify_decision_timeout(turn, kind, entry.token)
@@ -531,7 +550,7 @@ class CursorACPAdapter(ACPClientAdapter):
             )
             return True
         if not is_authorized_sender(
-            self._config.decision_authorized_senders, msg.sender_id
+            self.config.decision_authorized_senders, msg.sender_id
         ):
             reply = DECISION_UNAUTHORIZED_MESSAGE
         elif self._pending_decisions.try_claim(token) is None:

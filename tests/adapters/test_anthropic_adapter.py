@@ -20,7 +20,7 @@ from anthropic import APIStatusError
 from anthropic.types import TextBlock, ToolUseBlock
 from pydantic import BaseModel, Field
 
-from band.adapters.anthropic import AnthropicAdapter
+from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import (
     USAGE_EVENT_TYPE,
@@ -78,13 +78,28 @@ def mock_tools():
 class TestInitialization:
     """Tests for adapter initialization."""
 
-    def test_system_prompt_override(self):
-        """Should use custom system_prompt if provided."""
-        adapter = AnthropicAdapter(
-            system_prompt="You are a custom assistant.",
-        )
+    def test_provider_key_authenticates_the_client(self):
+        with patch("band.adapters.anthropic.AsyncAnthropic") as client_cls:
+            AnthropicAdapter(AnthropicAdapterConfig(provider_key="sk-test-key"))
 
-        assert adapter.system_prompt == "You are a custom assistant."
+        client_cls.assert_called_once_with(api_key="sk-test-key")
+
+    def test_rejects_non_positive_max_tokens(self):
+        with pytest.raises(ValueError, match="max_tokens"):
+            AnthropicAdapterConfig(max_tokens=0)
+
+    @pytest.mark.asyncio
+    async def test_requests_use_configured_model_and_max_tokens(self):
+        adapter = AnthropicAdapter(
+            AnthropicAdapterConfig(model="claude-test-model", max_tokens=123)
+        )
+        create = AsyncMock()
+        adapter.client = MagicMock(messages=MagicMock(create=create))
+
+        await adapter._call_anthropic(messages=[], tools=[])
+
+        assert create.call_args.kwargs["model"] == "claude-test-model"
+        assert create.call_args.kwargs["max_tokens"] == 123
 
 
 class TestOnStarted:
@@ -103,7 +118,11 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt_when_provided(self):
         """Should use custom system_prompt instead of rendered one."""
-        adapter = AnthropicAdapter(system_prompt="Custom prompt here.")
+        adapter = AnthropicAdapter(
+            AnthropicAdapterConfig(
+                system_prompt="Custom prompt here.", custom_section="Be terse."
+            )
+        )
 
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
 

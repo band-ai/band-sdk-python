@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
+from band.core.adapterconfig import EnvAdapterConfig
 from band.core.types import ApprovalMode
+from band.integrations.opencode import ApprovalReply
 
 QuestionMode = Literal["manual", "auto_reject"]
-ApprovalReply = Literal["once", "always", "reject"]
 
 
-class OpencodeAdapterConfig(BaseSettings):
+class OpencodeAdapterConfig(EnvAdapterConfig):
     """Runtime configuration for OpenCode sessions.
 
     Every field can be set explicitly (highest priority) or via an
@@ -21,14 +22,8 @@ class OpencodeAdapterConfig(BaseSettings):
     over the environment.
     """
 
-    # extra="forbid" (not the usual settings "ignore"): this config is
-    # commonly built with many explicit kwargs, so a typo'd field name
-    # must fail construction instead of silently vanishing.
     model_config = SettingsConfigDict(
         env_prefix="OPENCODE_",
-        case_sensitive=False,
-        extra="forbid",
-        env_ignore_empty=True,
     )
 
     base_url: str = "http://127.0.0.1:4096"

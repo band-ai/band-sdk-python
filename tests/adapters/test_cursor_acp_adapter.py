@@ -26,11 +26,11 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.client_types import ACPClientSessionState
-from band.integrations.acp.session_config import ACPConfigRequest
+from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.types import ACPToolCall
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
-from tests.integrations.acp.acp_toolkit.harness import pair_in_process
+from tests.integrations.acp.acp_toolkit.harness import launch_for, pair_in_process
 
 
 class DecisionTools(FakeAgentTools):
@@ -150,77 +150,123 @@ async def cursor_room() -> AsyncIterator[Callable[..., Awaitable[CursorRoom]]]:
         await adapter.stop()
 
 
-class TestCursorACPAdapterConstruction:
-    def test_uses_cursor_acp_and_the_current_extension_profile(self) -> None:
-        adapter = CursorACPAdapter()
+def cursor_in(
+    workspace_root: Path, config: CursorACPAdapterConfig | None = None
+) -> CursorACPAdapter:
+    """A Cursor adapter whose room workspaces live under ``workspace_root``."""
+    return CursorACPAdapter(
+        config, workspace_for_room=lambda room_id: str(workspace_root / room_id)
+    )
 
-        assert adapter._command == list(DEFAULT_CURSOR_ACP_COMMAND)
-        assert adapter._auth_method == "cursor_login"
-        assert adapter._profile is adapter._cursor_profile
 
-    def test_auth_convenience_values_do_not_override_explicit_env(self) -> None:
-        adapter = CursorACPAdapter(
-            CursorACPAdapterConfig(
-                api_key="shortcut",
-                env={"CURSOR_API_KEY": "environment"},
-            )
+class TestCursorACPAdapterConfig:
+    @pytest.mark.parametrize(
+        ("settings", "error"),
+        [
+            ({"api_key": "a", "auth_token": "b"}, "either api_key or auth_token"),
+            ({"command": ()}, "requires a command"),
+            (
+                {"auth_method": "api_key"},
+                "auth_method\n  Input should be 'cursor_login'",
+            ),
+            (
+                {"decision_timeout_s": 0.0},
+                "decision_timeout_s\n  Input should be greater than 0",
+            ),
+            (
+                {"max_pending_decisions": 0},
+                "max_pending_decisions\n  Input should be greater than 0",
+            ),
+            (
+                {"decision_timeout_s": 300.0, "turn_timeout_s": 300.0},
+                "decision_timeout_s must be less than turn_timeout_s",
+            ),
+            (
+                {"decision_timeout_s": 900.0},
+                "decision_timeout_s must be less than turn_timeout_s",
+            ),
+        ],
+        ids=[
+            "ambiguous-auth",
+            "empty-command",
+            "foreign-auth-method",
+            "non-positive-decision-timeout",
+            "non-positive-max-pending",
+            "decision-timeout-equals-turn-timeout",
+            "decision-timeout-reaching-the-default-turn-timeout",
+        ],
+    )
+    def test_rejects_invalid_settings(
+        self, settings: dict[str, object], error: str
+    ) -> None:
+        with pytest.raises(ValueError, match=error):
+            CursorACPAdapterConfig.model_validate(settings)
+
+    def test_authorized_senders_load_from_any_list_of_ids(self) -> None:
+        config = CursorACPAdapterConfig.model_validate(
+            {"decision_authorized_senders": ["owner", "owner", "admin"]}
         )
 
-        assert adapter._env == {"CURSOR_API_KEY": "environment"}
+        assert config.decision_authorized_senders == frozenset({"owner", "admin"})
 
-    def test_rejects_ambiguous_auth(self) -> None:
-        with pytest.raises(ValueError, match="either api_key or auth_token"):
-            CursorACPAdapter(CursorACPAdapterConfig(api_key="a", auth_token="b"))
-
-    def test_rejects_an_empty_command(self) -> None:
-        with pytest.raises(ValueError, match="command must not be empty"):
-            CursorACPAdapter(CursorACPAdapterConfig(command=()))
-
-    def test_rejects_a_non_positive_decision_timeout(self) -> None:
-        with pytest.raises(ValueError, match="decision_timeout_s must be greater"):
-            CursorACPAdapter(CursorACPAdapterConfig(decision_timeout_s=0.0))
-
-    def test_rejects_a_non_positive_max_pending_decisions(self) -> None:
-        with pytest.raises(ValueError, match="max_pending_decisions must be greater"):
-            CursorACPAdapter(CursorACPAdapterConfig(max_pending_decisions=0))
-
-    def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
-        adapter = CursorACPAdapter(CursorACPAdapterConfig(cwd=str(tmp_path)))
-
-        assert adapter._workspace("room-a") == str(tmp_path / "room-a")
-
-    def test_rejects_ambiguous_workspace_config(self, tmp_path: Path) -> None:
+    def test_cwd_and_a_workspace_resolver_are_exclusive(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="either cwd or workspace_for_room"):
             CursorACPAdapter(
-                CursorACPAdapterConfig(
-                    cwd=str(tmp_path),
-                    workspace_for_room=lambda room_id: str(tmp_path / room_id),
-                )
+                CursorACPAdapterConfig(cwd=str(tmp_path)),
+                workspace_for_room=lambda room_id: str(tmp_path / room_id),
             )
 
-    def test_rejects_a_decision_timeout_that_does_not_fit_inside_the_turn_timeout(
-        self,
+
+class TestCursorACPAdapterLaunch:
+    @pytest.mark.asyncio
+    async def test_launches_agent_acp_without_authenticate(
+        self, tmp_path: Path
     ) -> None:
-        with pytest.raises(ValueError, match="decision_timeout_s.*turn_timeout_s"):
-            CursorACPAdapter(
-                CursorACPAdapterConfig(decision_timeout_s=300.0, turn_timeout_s=300.0)
-            )
+        adapter = cursor_in(tmp_path)
 
-    def test_turn_timeout_s_is_a_typed_config_field(self) -> None:
-        adapter = CursorACPAdapter(CursorACPAdapterConfig(turn_timeout_s=1800.0))
+        launch = await launch_for(adapter)
 
-        assert adapter._turn_timeout_s == 1800.0
+        assert launch.command == DEFAULT_CURSOR_ACP_COMMAND
+        assert launch.auth_method is None
+        assert adapter._profile is adapter._cursor_profile
 
-    def test_forwards_the_live_session_catalog_resolver(self) -> None:
-        async def resolve(request: ACPConfigRequest) -> dict[str, str]:
-            del request
-            return {"model": "advertised-model"}
+    @pytest.mark.parametrize(
+        ("config", "env"),
+        [
+            pytest.param(
+                CursorACPAdapterConfig(api_key="key"),
+                {"CURSOR_API_KEY": "key"},
+                id="api-key",
+            ),
+            pytest.param(
+                CursorACPAdapterConfig(auth_token="token", env={"OTHER": "x"}),
+                {"OTHER": "x", "CURSOR_AUTH_TOKEN": "token"},
+                id="auth-token-merged-into-env",
+            ),
+            pytest.param(
+                CursorACPAdapterConfig(
+                    api_key="shortcut", env={"CURSOR_API_KEY": "environment"}
+                ),
+                {"CURSOR_API_KEY": "environment"},
+                id="env-wins-over-api-key",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_credentials_reach_the_agent_environment(
+        self, config: CursorACPAdapterConfig, env: dict[str, str], tmp_path: Path
+    ) -> None:
+        launch = await launch_for(cursor_in(tmp_path, config))
 
-        adapter = CursorACPAdapter(
-            CursorACPAdapterConfig(resolve_session_config=resolve)
-        )
+        assert launch.env == env
 
-        assert adapter._resolve_session_config is resolve
+    @pytest.mark.asyncio
+    async def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+        adapter = CursorACPAdapter(CursorACPAdapterConfig(cwd=str(tmp_path)))
+
+        launch = await launch_for(adapter, "room-a")
+
+        assert launch.cwd == str(tmp_path / "room-a")
 
 
 class TestCursorACPAdapterDecisions:
@@ -554,6 +600,51 @@ class TestCursorACPAdapterDecisions:
         assert await pending == "allow-once"
 
     @pytest.mark.asyncio
+    async def test_an_always_grant_settles_a_parallel_repeat_without_asking(
+        self,
+    ) -> None:
+        tools = DecisionTools()
+        adapter = CursorACPAdapter()
+        adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
+
+        def request(call_id: str) -> ACPPermissionRequest:
+            return ACPPermissionRequest(
+                room_id="room-1",
+                session_id="session-1",
+                tool_call=ACPToolCall(call_id, "`echo x >> out.txt`", {}),
+                options=(
+                    PermissionOption(
+                        optionId="allow-once", name="Allow once", kind="allow_once"
+                    ),
+                    PermissionOption(
+                        optionId="allow-always",
+                        name="Allow always",
+                        kind="allow_always",
+                    ),
+                ),
+            )
+
+        first = asyncio.create_task(adapter._resolve_cursor_permission(request("a")))
+        repeat = asyncio.create_task(adapter._resolve_cursor_permission(request("b")))
+        await tools.prompt_sent.wait()
+        [token] = adapter._pending_decisions
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=f"/cursor select {token} allow-always", sender_id="user-1"
+                ),
+            ),
+            tools,
+            "room-1",
+        )
+
+        assert await asyncio.gather(first, repeat) == ["allow-always"] * 2
+        asks = [message for message in tools.messages if "needs permission" in message]
+        assert len(asks) == 1
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("plan_mode", "outcome"),
         [("auto_accept", "accepted"), ("auto_decline", "rejected")],
@@ -562,7 +653,7 @@ class TestCursorACPAdapterDecisions:
         self, plan_mode: str, outcome: str
     ) -> None:
         adapter = CursorACPAdapter(
-            CursorACPAdapterConfig(plan_mode=cast(object, plan_mode))  # type: ignore[arg-type]
+            CursorACPAdapterConfig.model_validate({"plan_mode": plan_mode})
         )
 
         result = await adapter._resolve_plan(
@@ -584,6 +675,9 @@ class TestCursorACPAdapterDecisions:
         )
         await tools.prompt_sent.wait()
         token = next(iter(adapter._pending_decisions))
+        assert tools.messages == [
+            PLAN_REQUESTED_TEMPLATE.format(plan="Plan", token=token)
+        ]
 
         await adapter._handle_control_message(
             cast(

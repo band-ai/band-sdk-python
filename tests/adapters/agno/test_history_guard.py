@@ -26,7 +26,7 @@ from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_inpu
 class TestDetection:
     async def test_warns_and_flags_when_db_and_history_enabled(self, make_agno_agent):
         agent = make_agno_agent(add_history_to_context=True, db=object())
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
 
         # Detection runs against the runtime agent at startup, not in __init__.
         with pytest.warns(UserWarning, match="manages its own conversation history"):
@@ -46,7 +46,7 @@ class TestDetection:
         self, make_agno_agent, add_history_to_context, db
     ):
         agent = make_agno_agent(add_history_to_context=add_history_to_context, db=db)
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # any history warning would fail here

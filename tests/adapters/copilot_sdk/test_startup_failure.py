@@ -56,15 +56,13 @@ class TestStartupFailure:
     async def test_byok_does_not_require_github_auth(self):
         client = self.UnauthenticatedClient()
         adapter = CopilotSDKAdapter(
-            CopilotSDKAdapterConfig(
-                model="claude-haiku-4-5",
-                provider=ProviderConfig(
-                    type="anthropic",
-                    base_url="https://api.anthropic.com",
-                    api_key="test-provider-key",
-                ),
-            ),
+            CopilotSDKAdapterConfig(model="claude-haiku-4-5"),
             client_factory=lambda: client,
+            provider=ProviderConfig(
+                type="anthropic",
+                base_url="https://api.anthropic.com",
+                api_key="test-provider-key",
+            ),
         )
 
         await adapter.on_started("Copilot Agent", "desc")

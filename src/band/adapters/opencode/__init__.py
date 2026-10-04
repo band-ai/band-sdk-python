@@ -9,10 +9,10 @@ from __future__ import annotations
 from band.adapters.opencode.adapter import OpencodeAdapter
 from band.adapters.opencode.config import (
     ApprovalMode,
-    ApprovalReply,
     OpencodeAdapterConfig,
     QuestionMode,
 )
+from band.integrations.opencode import ApprovalReply
 
 __all__ = [
     "ApprovalMode",

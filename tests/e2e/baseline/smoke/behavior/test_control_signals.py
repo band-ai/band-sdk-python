@@ -56,14 +56,12 @@ async def test_stop_cancels_then_play_replays(
         assert ControlMode.STOP in control.received_control_modes
         assert mid not in control.completed_message_ids
 
-        await user_ops.play_agent(room_id)
+        play_response = await user_ops.play_agent(room_id)
         try:
             await capture.wait_for_processed(mid, agent.id)
         except TimeoutError as exc:
             raise TimeoutError(
-                f"{exc}; SDK received modes: "
-                f"{[mode.value for mode in control.received_control_modes]}; "
-                f"handler completed messages: {control.completed_message_ids}"
+                f"{exc}; PLAY response: {play_response}; {control.diagnostics()}"
             ) from None
 
     assert mid in control.completed_message_ids, (

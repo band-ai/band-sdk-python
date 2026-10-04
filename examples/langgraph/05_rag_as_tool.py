@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Example: Using the standalone Agentic RAG graph with Band platform.
@@ -40,7 +40,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from standalone_rag import create_rag_graph
 
 from band import Agent, configure_logging
-from band.adapters import LangGraphAdapter
+from band.adapters import LangGraphAdapter, LangGraphAdapterConfig
 from band.integrations.langgraph import graph_as_tool
 
 configure_logging(logging.INFO)
@@ -114,10 +114,10 @@ User: "tell nvidia about reward hacking"
 
     # Create adapter with RAG tool
     adapter = LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=rag_instructions),
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4")),
         checkpointer=InMemorySaver(),
         additional_tools=[rag_tool],
-        custom_section=rag_instructions,
     )
 
     logger.info("Starting agent with RAG tool...")

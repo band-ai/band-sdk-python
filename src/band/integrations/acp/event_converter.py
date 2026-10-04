@@ -15,9 +15,14 @@ from acp import (
     update_plan,
     update_tool_call,
 )
+from acp.schema import AgentMessageChunk
+from band_sdk_core import AgentFailure
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
-from band.core.types import PlatformMessage, is_usage_event
+from band.core.redaction import redact_credentials
+from band.core.types import MessageType, PlatformMessage, is_usage_event
+from band.integrations.acp.failure import decode_failure
+from band.integrations.acp.types import ACPServerUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +35,9 @@ class EventConverter:
     """
 
     @staticmethod
-    def convert(msg: PlatformMessage) -> Any | None:
+    def convert(
+        msg: PlatformMessage, *, failure: AgentFailure | None = None
+    ) -> Any | None:
         """Convert a PlatformMessage to an ACP session_update chunk.
 
         Args:
@@ -41,17 +48,22 @@ class EventConverter:
             is not mappable.
         """
         match msg.message_type:
-            case "text":
+            case MessageType.TEXT:
                 return update_agent_message_text(msg.content)
-            case "thought":
+            case MessageType.THOUGHT:
                 return update_agent_thought_text(msg.content)
-            case "tool_call":
+            case MessageType.TOOL_CALL:
                 return EventConverter._convert_tool_call(msg)
-            case "tool_result":
+            case MessageType.TOOL_RESULT:
                 return EventConverter._convert_tool_result(msg)
-            case "error":
-                return update_agent_message_text(f"[Error] {msg.content}")
-            case "task":
+            case MessageType.ERROR:
+                failure = failure or decode_failure(msg)
+                return AgentMessageChunk(
+                    sessionUpdate=ACPServerUpdate.AGENT_MESSAGE_CHUNK,  # type: ignore[bad-argument-type]  # ACP schema types the discriminator as a Literal.
+                    content=text_block(f"[Error] {redact_credentials(msg.content)}"),
+                    field_meta=failure.to_extension_data(),
+                )
+            case MessageType.TASK:
                 # Usage records ride task events (USAGE_EVENT_TYPE) but are not
                 # lifecycle tasks — don't render them as a (never-completing) plan
                 # entry in the editor. No ACP cost widget yet, so skip them.

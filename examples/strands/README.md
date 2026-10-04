@@ -15,17 +15,19 @@ platform through `StrandsAdapter`.
 ## Picking a model
 
 Strands has **no provider-prefix string shorthand**: a bare string means a Bedrock
-model id. Any other provider is constructed explicitly.
+model id. Any other provider is constructed explicitly and passed as `llm=`.
 
 ```python notest
 from strands.models import BedrockModel
 from strands.models.openai import OpenAIModel
 
-from band.adapters import StrandsAdapter
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
 
-StrandsAdapter(model=OpenAIModel(model_id="gpt-5.4-mini"))  # OpenAI
-StrandsAdapter(model="us.anthropic.claude-sonnet-4-5-20250929-v1:0")  # Bedrock id
-StrandsAdapter(model=BedrockModel(model_id="...", region_name="us-east-1"))
+StrandsAdapter(llm=OpenAIModel(model_id="gpt-5.4-mini"))  # OpenAI
+StrandsAdapter(
+    StrandsAdapterConfig(model="us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+)  # Bedrock id
+StrandsAdapter(llm=BedrockModel(model_id="...", region_name="us-east-1"))
 ```
 
 Providers beyond `openai` need their own Strands extra (e.g.
@@ -48,9 +50,11 @@ Providers beyond `openai` need their own Strands extra (e.g.
 from band.core.types import Capability, Emit
 
 StrandsAdapter(
-    model=model,
-    custom_section="Appended to the SDK-rendered Band prompt (recommended)",
-    system_prompt="Replaces it entirely — you own the tool contract then",
+    StrandsAdapterConfig(
+        custom_section="Appended to the SDK-rendered Band prompt (recommended)",
+        system_prompt="Replaces it entirely — you own the tool contract then",
+    ),
+    llm=model,
     additional_tools=[(WeatherInput, get_weather), native_strands_tool],
     emit=Emit.TOOL_CALLS | Emit.USAGE,
     capabilities=Capability.MEMORY | Capability.CONTACTS,

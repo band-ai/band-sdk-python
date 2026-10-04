@@ -28,16 +28,13 @@ backend via `ACPClientAdapter`.
 
 ## `copilot_docker/` — Copilot-in-a-container deployments
 
-Copilot runs in a container behind `socat`, the Band SDK connects over **TCP**, and Band
-tools are served by a `band-mcp` (SSE) server. `ACPClientAdapter` no longer accepts
-`host`/`port` (a remote process cannot be proven to serve a single room), so the
-`client.py` in both folders fails at construction. To run Copilot isolated from the host,
-use `copilot_sandbox/` below.
+The Band SDK starts one Copilot ACP process per room inside Docker and speaks ACP over
+its **stdio**; Band tools are served by a `band-mcp` (SSE) server inside Docker.
 
 | Folder | Topology |
 |--------|----------|
-| `compose/` | Multi-service: `copilot` + `band-mcp` on one compose network |
-| `colocated/` | Single container running both `copilot` and `band-mcp` |
+| `compose/` | Multi-service: `copilot` + `band-mcp` services; one `docker compose exec -T` per room |
+| `colocated/` | One image with `copilot` + `band-mcp`; one `docker run -i --rm` container per room |
 
 ## `copilot_sandbox/` — Copilot in a Docker sandbox (sbx), over stdio
 

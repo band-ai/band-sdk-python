@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Literal, Self, cast
 
 from acp.schema import (
     AcceptElicitationResponse,
@@ -15,13 +14,14 @@ from acp.schema import (
     ElicitationFormCapabilities,
     PermissionOption,
 )
-from pydantic import JsonValue
+from pydantic import Field, JsonValue, field_validator, model_validator
 from typing_extensions import Unpack
 
+from band.core.model_catalog import ModelSelection
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
-    DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
+    ACPClientAdapterConfig,
     PermissionResolver,
     SpawnProcess,
 )
@@ -48,9 +48,10 @@ from band.integrations.omp import (
     omp_command_in_workspace,
     omp_elicitation_call_id,
     omp_provider_env,
+    validate_omp_command,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
+from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -91,50 +92,48 @@ class OmpACPCollectingClient(ACPCollectingClient):
         return chunk
 
 
-@dataclass(frozen=True)
-class OmpACPAdapterConfig:
-    """Runtime configuration for OMP over ACP (stdio only).
+class OmpACPAdapterConfig(ACPClientAdapterConfig):
+    """Settings for OMP over ACP (stdio only).
 
-    ``model`` selects OMP's model. With ``api_key``, the same ``model`` also picks
-    the provider key env var the key is passed in, merged over ``env``.
+    Inherits every :class:`ACPClientAdapterConfig` setting except ``model``.
 
-    ``cwd`` is a compatibility alias for a workspace root; prefer
-    ``workspace_for_room`` for new code.
+    Attributes:
+        approval_mode: OMP's native approval mode, appended to ``command``.
+            ``"yolo"`` gives the agent full access to its host.
+        command: The ``omp acp`` launch command; approval flags other than
+            ``approval_mode`` are rejected.
+        model: OMP's provider-qualified model (e.g. ``openai/gpt-5.4-mini``),
+            passed as OMP's ``--model`` launch flag rather than selected from
+            the session's catalog.
+        api_key: Passed in the env var of ``model``'s provider; needs ``model``.
+            An explicit ``env`` entry for that var wins.
+        use_unstable_protocol: Always on: OMP asks for tool approval through
+            unstable elicitation forms.
     """
 
-    # Full access is opt-in; CLI approval flags in command remain forbidden.
     approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
     model: str | None = None
-    api_key: str | None = field(default=None, repr=False)
-    cwd: str | None = None
-    workspace_for_room: WorkspaceResolver | None = None
-    env: dict[str, str] | None = None
-    custom_section: str = ""
-    inject_band_tools: bool = True
-    mcp_servers: list[dict[str, Any]] | None = None
-    resolve_session_config: SessionConfigResolver | None = None
-    resolve_permission: PermissionResolver | None = None
-    turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
+    api_key: str | None = Field(default=None, repr=False)
+    use_unstable_protocol: Literal[True] = True
 
-    def __post_init__(self) -> None:
+    @field_validator("command")
+    @classmethod
+    def _reject_unsafe_flags(cls, command: tuple[str, ...]) -> tuple[str, ...]:
+        validate_omp_command(command)
+        return command
+
+    @model_validator(mode="after")
+    def _api_key_needs_model(self) -> Self:
         if self.api_key is not None and self.model is None:
             raise ValueError(
-                "OmpACPAdapterConfig.api_key needs model: the provider-qualified "
-                "model picks which provider key env var carries the key"
+                "api_key needs model: the provider-qualified model picks which "
+                "provider key env var carries the key"
             )
-
-    def child_env(self) -> dict[str, str] | None:
-        """``env`` with the selected model's provider key, when ``api_key`` is set."""
-        if self.api_key is None or self.model is None:
-            return self.env
-        return {
-            **(self.env or {}),
-            **omp_provider_env(model=self.model, api_key=self.api_key),
-        }
+        return self
 
 
-class OmpACPAdapter(ACPClientAdapter):
+class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
     """Thin ``ACPClientAdapter`` specialization for ``omp acp`` (stdio)."""
 
     def __init__(
@@ -142,35 +141,50 @@ class OmpACPAdapter(ACPClientAdapter):
         config: OmpACPAdapterConfig | None = None,
         *,
         additional_tools: list[CustomToolDef] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
+        resolve_session_config: SessionConfigResolver | None = None,
+        resolve_permission: PermissionResolver | None = None,
         spawn_process: SpawnProcess | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
+        """Bridge Band rooms to ``omp acp``.
+
+        Args:
+            config: The OMP command, approval mode and bridge settings.
+            additional_tools: Custom tools served next to the Band tools.
+            workspace_for_room: Maps a room id to its absolute workspace;
+                exclusive with ``config.cwd``.
+            resolve_session_config: Picks session config options.
+            resolve_permission: Chooses a permission option per tool call and
+                per OMP approval form.
+            spawn_process: Rejected: a custom transport cannot guarantee one
+                process per room.
+        """
         config = config or OmpACPAdapterConfig()
-        workspace_for_room = config.workspace_for_room
-        if config.cwd is not None:
-            if workspace_for_room is not None:
-                raise ValueError("set either cwd or workspace_for_room, not both")
-            workspace_for_room = create_room_workspace_resolver(config.cwd)
         super().__init__(
-            command=finalize_omp_command(
-                config.command,
-                model=config.model,
-                approval_mode=config.approval_mode,
-            ),
-            env=config.child_env(),
-            workspace_for_room=workspace_for_room,
-            mcp_servers=config.mcp_servers,
+            config,
             additional_tools=additional_tools,
-            inject_band_tools=config.inject_band_tools,
-            custom_section=config.custom_section,
-            resolve_session_config=config.resolve_session_config,
-            resolve_permission=config.resolve_permission,
+            workspace_for_room=workspace_for_room,
+            resolve_session_config=resolve_session_config,
+            resolve_permission=resolve_permission,
             client_capabilities=_OMP_FORM_CAPABILITIES,
-            use_unstable_protocol=True,
             spawn_process=spawn_process,
-            turn_timeout_s=config.turn_timeout_s,
             **features,
         )
+        self._omp_command = finalize_omp_command(
+            config.command, model=config.model, approval_mode=config.approval_mode
+        )
+
+    @property
+    def model_selection(self) -> ModelSelection:
+        """OMP gets ``config.model`` as a launch flag, so only the effort is
+        selected per session."""
+        return super().model_selection.model_copy(update={"model": None})
+
+    def _credential_env(self) -> dict[str, str]:
+        if self.config.api_key is None or self.config.model is None:
+            return {}
+        return omp_provider_env(model=self.config.model, api_key=self.config.api_key)
 
     def _runtime_client_factory(self) -> OmpACPCollectingClient:
         return OmpACPCollectingClient(
@@ -180,14 +194,14 @@ class OmpACPAdapter(ACPClientAdapter):
 
     def _spawn_command(self, workspace: str | None) -> list[str]:
         if workspace is None:
-            return self._command
+            return list(self._omp_command)
         # omp's own --cwd flag ("Directory to start in (overrides the launch
         # cwd)") gives the same per-room isolation _spawn_cwd would otherwise
         # provide via the subprocess-level cwd -- confirmed live: a bash
         # tool's `pwd`/`ls` inside the session reports this directory, not
         # the subprocess's actual launch dir. See _spawn_cwd for why that
         # path is avoided instead.
-        return omp_command_in_workspace(self._command, workspace)
+        return omp_command_in_workspace(self._omp_command, workspace)
 
     def _spawn_cwd(self, workspace: str | None) -> str | None:
         del workspace

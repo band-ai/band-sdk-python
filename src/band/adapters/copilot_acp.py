@@ -13,9 +13,9 @@ Authentication is flexible — the CLI resolves credentials in this order:
 documented path for headless/containers), then a stored ``copilot login`` (OS
 keychain, or ``<COPILOT_HOME>/config.json``, default ``~/.copilot``), then an
 authenticated ``gh`` CLI, then BYOK (own LLM keys — no GitHub token needed).
-For the **stdio** transport, pass whatever your chosen method needs via ``env``
-(``github_token`` is a convenience that sets ``GITHUB_TOKEN``); leave both unset
-to use the CLI's ambient login.
+Pass whatever your chosen method needs via ``env`` (``github_token`` is a
+convenience that sets ``GITHUB_TOKEN``); leave both unset to use the CLI's
+ambient login.
 
 Band tools reach Copilot over MCP. When co-located with the SDK, keep
 ``inject_band_tools=True`` (a loopback HTTP/SSE MCP server). For a remote Copilot
@@ -25,61 +25,40 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import Any
-
+from pydantic import Field
 from typing_extensions import Unpack
 
-from band.core.model_catalog import ModelSelection
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
-    DEFAULT_TURN_TIMEOUT_SECONDS,
     ACPClientAdapter,
+    ACPClientAdapterConfig,
     PermissionResolver,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
-from band.workspaces import WorkspaceResolver, workspace_resolver_for
-
-logger = logging.getLogger(__name__)
+from band.workspaces import WorkspaceResolver
 
 DEFAULT_COPILOT_COMMAND: tuple[str, ...] = ("copilot", "--acp")
 
 
-@dataclass(frozen=True)
-class CopilotACPAdapterConfig:
-    """Runtime configuration for the Copilot CLI ACP backend.
+class CopilotACPAdapterConfig(ACPClientAdapterConfig):
+    """Settings for the Copilot CLI ACP backend.
 
-    ``command`` selects the room-owned stdio process. ``cwd`` is a compatibility
-    alias for a workspace root; prefer ``workspace_for_room`` for new code.
+    Inherits every :class:`ACPClientAdapterConfig` setting. ``model`` and
+    ``reasoning_effort`` are only advertised by GitHub-hosted sessions; under
+    BYOK the provider env (``COPILOT_MODEL``) picks the model.
+
+    Attributes:
+        command: The ``copilot`` launch command.
+        github_token: Sets ``GITHUB_TOKEN`` for the CLI unless ``env``
+            already does.
     """
 
     command: tuple[str, ...] = DEFAULT_COPILOT_COMMAND
-    host: str | None = None
-    port: int | None = None
-    cwd: str | None = None
-    workspace_for_room: WorkspaceResolver | None = None
-    github_token: str | None = None
-    # Arbitrary environment for the spawned CLI (stdio): any auth method Copilot
-    # supports — COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN, BYOK provider keys, etc.
-    # Merged over github_token; ignored for TCP (the server owns its environment).
-    env: dict[str, str] | None = None
-    custom_section: str = ""
-    inject_band_tools: bool = True
-    mcp_servers: list[dict[str, Any]] | None = None
-    resolve_session_config: SessionConfigResolver | None = None
-    resolve_permission: PermissionResolver | None = None
-    turn_timeout_s: float = DEFAULT_TURN_TIMEOUT_SECONDS
-    # Selected from each session's advertised catalog; a value it does not
-    # offer fails the turn. Only GitHub-hosted sessions advertise these; under
-    # BYOK the provider env (COPILOT_MODEL) picks the model. Exclusive with
-    # resolve_session_config.
-    model: str | None = None
-    reasoning_effort: str | None = None
+    github_token: str | None = Field(default=None, repr=False)
 
 
-class CopilotACPAdapter(ACPClientAdapter):
+class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
     """Band adapter for the GitHub Copilot CLI over ACP.
 
     A thin specialization of :class:`ACPClientAdapter` that presets the Copilot
@@ -91,59 +70,35 @@ class CopilotACPAdapter(ACPClientAdapter):
         config: CopilotACPAdapterConfig | None = None,
         *,
         additional_tools: list[CustomToolDef] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
+        resolve_session_config: SessionConfigResolver | None = None,
+        resolve_permission: PermissionResolver | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
+        """Bridge Band rooms to ``copilot --acp``.
+
+        Args:
+            config: The Copilot command, auth and bridge settings.
+            additional_tools: Custom tools served next to the Band tools.
+            workspace_for_room: Maps a room id to its absolute workspace;
+                exclusive with ``config.cwd``.
+            resolve_session_config: Picks session config options; exclusive
+                with ``config.model`` and ``config.reasoning_effort``.
+            resolve_permission: Chooses a permission option per tool call.
+        """
         config = config or CopilotACPAdapterConfig()
-        use_tcp = config.host is not None or config.port is not None
-
-        # command (stdio) and host/port (TCP) are mutually exclusive. Since command
-        # has a default, a caller who sets BOTH a non-default command and host/port
-        # is misconfigured — fail loudly rather than silently dropping the command.
-        if use_tcp and tuple(config.command) != DEFAULT_COPILOT_COMMAND:
-            raise ValueError("set either command (stdio) or host/port (TCP), not both")
-
-        # A rejected remote transport owns its environment, so any auth supplied
-        # with it is ignored after this warning.
-        if use_tcp and (config.github_token or config.env):
-            logger.warning(
-                "github_token/env are ignored over TCP: the already-running "
-                "copilot --acp server owns its own environment; configure auth on "
-                "that server instead."
-            )
-
-        # Auth/env for the spawned CLI (stdio only; a TCP server owns its own env).
-        # Pass any method's env via config.env; github_token is a convenience for
-        # GITHUB_TOKEN (an explicit env entry wins). None => the CLI's ambient login.
-        env: dict[str, str] | None = None
-        if not use_tcp:
-            env = dict(config.env or {})
-            if config.github_token:
-                env.setdefault("GITHUB_TOKEN", config.github_token)
-            env = env or None
-
-        workspace_for_room = workspace_resolver_for(
-            config.cwd, config.workspace_for_room
+        super().__init__(
+            config,
+            additional_tools=additional_tools,
+            workspace_for_room=workspace_for_room,
+            resolve_session_config=resolve_session_config,
+            resolve_permission=resolve_permission,
+            **features,
         )
 
-        common: dict[str, Any] = {
-            "env": env,
-            "workspace_for_room": workspace_for_room,
-            "mcp_servers": config.mcp_servers,
-            "additional_tools": additional_tools,
-            "inject_band_tools": config.inject_band_tools,
-            "custom_section": config.custom_section,
-            "resolve_session_config": config.resolve_session_config,
-            "model_selection": ModelSelection(
-                model=config.model, reasoning_effort=config.reasoning_effort
-            ),
-            "resolve_permission": config.resolve_permission,
-            "turn_timeout_s": config.turn_timeout_s,
-        }
-
-        if use_tcp:
-            super().__init__(host=config.host, port=config.port, **common, **features)
-        else:
-            super().__init__(command=list(config.command), **common, **features)
+    def _credential_env(self) -> dict[str, str]:
+        token = self.config.github_token
+        return {"GITHUB_TOKEN": token} if token else {}
 
 
 __all__ = [

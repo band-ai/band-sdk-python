@@ -75,11 +75,13 @@ The whole change is three files. For Anthropic:
 ```diff
  # main.py — swap the adapter (the EchoAdapter class and its imports can go)
 -from band.core.simple_adapter import SimpleAdapter
-+from band.adapters.anthropic import AnthropicAdapter
++from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
  ...
      agent = Agent.create(
 -        adapter=EchoAdapter(),
-+        adapter=AnthropicAdapter(system_prompt="You are a helpful Band agent."),
++        adapter=AnthropicAdapter(
++            AnthropicAdapterConfig(system_prompt="You are a helpful Band agent.")
++        ),
 ```
 
 ```bash

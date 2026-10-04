@@ -54,7 +54,8 @@ MCPTransportKind = Literal["http", "sse"]
 # ``{"outcome": {"outcome": "cancelled"}}`` (see ``acp.schema`` AllowedOutcome /
 # DeniedOutcome). There is no ``"allowed"`` literal — emitting one makes a
 # spec-strict agent (e.g. codex-acp) fail to parse the response and abort the turn.
-_ALLOW_OPTION_KINDS = ("allow_once", "allow_always")
+ALLOW_ALWAYS_KIND = "allow_always"
+_ALLOW_OPTION_KINDS = ("allow_once", ALLOW_ALWAYS_KIND)
 
 
 def _resolve_option_id(option: object) -> str | None:
@@ -90,6 +91,22 @@ def permission_option_ids(options: object) -> tuple[str, ...]:
     )
 
 
+def option_id_of_kind(options: object, kind: str) -> str | None:
+    """The ``optionId`` of the first offered option of ``kind``, else None."""
+    if not isinstance(options, (list, tuple)):
+        return None
+    for option in options:
+        option_kind = (
+            option.get("kind")
+            if isinstance(option, Mapping)
+            else getattr(option, "kind", None)
+        )
+        option_id = _resolve_option_id(option)
+        if option_kind == kind and option_id is not None:
+            return option_id
+    return None
+
+
 def select_allow_option_id(options: object) -> str | None:
     """The ``optionId`` of an allow option offered in a permission request, else None.
 
@@ -97,22 +114,9 @@ def select_allow_option_id(options: object) -> str | None:
     when the agent offered no allow option, so the caller cancels rather than
     guessing (selecting a reject option would silently deny).
     """
-    if not isinstance(options, (list, tuple)):
-        return None
-    candidates: list[tuple[object, str]] = []
-    for option in options:
-        kind = (
-            option.get("kind")
-            if isinstance(option, Mapping)
-            else getattr(option, "kind", None)
-        )
-        option_id = _resolve_option_id(option)
-        if option_id is not None:
-            candidates.append((kind, option_id))
-    for preferred in _ALLOW_OPTION_KINDS:
-        for kind, option_id in candidates:
-            if kind == preferred:
-                return option_id
+    for kind in _ALLOW_OPTION_KINDS:
+        if (option_id := option_id_of_kind(options, kind)) is not None:
+            return option_id
     return None
 
 
@@ -371,6 +375,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
         async def narrate(action: Awaitable[None]) -> None:
             async with self._session_lock(session_id):
+                await self._close_open_run(session_id)
                 await action
 
         return narrate
@@ -473,7 +478,14 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             metadata=metadata,
             from_raw=from_raw,
             echo=echo,
+            tool=self._call_revision(update),
         )
+
+    def _call_revision(self, update: object) -> ACPToolCall | None:
+        """The call identity a ``tool_call_update`` revises, when it reports one."""
+        if not (getattr(update, "title", None) or getattr(update, "raw_input", None)):
+            return None
+        return ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
 
     # Chunk kinds that arrive as a stream of deltas for one logical message, so a
     # run of them is coalesced into a single chunk (agents emit one delta per token
@@ -489,6 +501,14 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         finalizes when the call reaches a terminal status. Finalizing a chunk both
         buffers it (for get_collected_chunks) and posts it to the sink, in order.
         """
+        if chunk.chunk_type == ChunkType.TOOL_RESULT:
+            revision, chunk.tool = chunk.tool, None
+            if (
+                isinstance(revision, ACPToolCall)
+                and self._revise_held_call(session_id, revision)
+                and _carries_no_result(chunk)
+            ):
+                return
         if isinstance(chunk.tool, ACPToolCall) and chunk.tool.tool_call_id:
             self._tool_calls.setdefault(session_id, {})[chunk.tool.tool_call_id] = (
                 chunk.tool
@@ -502,10 +522,29 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             self._open_runs[session_id] = chunk
             return
         await self._close_open_run(session_id)
-        if chunk.chunk_type == ChunkType.TOOL_RESULT:
-            await self._ingest_tool_result(session_id, chunk)
-        else:
-            await self._finalize(session_id, chunk)
+        match chunk.chunk_type:
+            case ChunkType.TOOL_RESULT:
+                await self._ingest_tool_result(session_id, chunk)
+            case ChunkType.TOOL_CALL if _awaits_input(chunk):
+                # Named by a later tool_call_update (Cursor's "MCP: tool"), so it
+                # is held like an open run until then.
+                self._open_runs[session_id] = chunk
+            case _:
+                await self._finalize(session_id, chunk)
+
+    def _revise_held_call(self, session_id: str, revision: ACPToolCall) -> bool:
+        """Apply ``revision`` to the held input-less call it names, if any."""
+        held = self._open_runs.get(session_id)
+        if (
+            held is None
+            or not isinstance(held.tool, ACPToolCall)
+            or held.tool.tool_call_id != revision.tool_call_id
+        ):
+            return False
+        held.tool, held.content = revision, revision.name
+        held.metadata["raw_input"] = revision.arguments
+        self._tool_calls.setdefault(session_id, {})[revision.tool_call_id] = revision
+        return True
 
     async def _close_open_run(self, session_id: str) -> None:
         """Finalize the open text/thought run, if any — a boundary was reached."""
@@ -1070,7 +1109,7 @@ class ACPRuntime:
         return self.get_collected_chunks(session_id)
 
     async def cancel_turn(self, session_id: str) -> None:
-        """Tell the agent to stop a timed-out room's prompt."""
+        """Tell the agent to stop a room's in-flight prompt."""
         conn = await self.ensure_connection(can_respawn=False)
         await conn.cancel(session_id)
 
@@ -1175,3 +1214,15 @@ class ACPRuntime:
         return error.code == -32002 or (
             "session" in str(error).lower() and "not found" in str(error).lower()
         )
+
+
+def _awaits_input(chunk: CollectedChunk) -> bool:
+    """True for a pending tool_call reported before its input."""
+    return chunk.metadata.get(
+        "status"
+    ) == ToolStatus.PENDING and not chunk.metadata.get("raw_input")
+
+
+def _carries_no_result(chunk: CollectedChunk) -> bool:
+    """True for a tool_call_update frame that only revised its call's identity."""
+    return chunk.metadata.get("status") is None and not chunk.content

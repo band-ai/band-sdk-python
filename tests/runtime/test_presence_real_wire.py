@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from band.platform.link import BandLink
 from band.runtime.presence import RoomPresence
-from band.testing import fake_phoenix_server
+from band.testing import JoinOutcome, fake_phoenix_server
 from tests.runtime.conftest import chat_row
 
 
@@ -105,3 +105,24 @@ async def test_reconnect_reconciles_room_membership_over_a_real_socket_drop() ->
             assert joined == ["room-3"]
             assert resynced == ["room-2"]
             assert set(presence.roster.tracked_room_ids()) == {"room-2", "room-3"}
+
+
+async def test_a_room_whose_join_crashes_is_joined_without_a_reconnect() -> None:
+    """The platform can answer a room join with an error under load; the room
+    must still be joined over the same connection, not wait for a reconnect."""
+    outcomes = {"chat_room:room-1": [JoinOutcome.REJECTED, JoinOutcome.OK]}
+    async with fake_phoenix_server(join_outcomes=outcomes) as server:
+        link = make_link(server.url)
+        link.rest.agent_api_chats.list_agent_chats = listing("room-1")
+
+        async with running_presence(link) as presence:
+            joined = asyncio.Event()
+            presence.on_room_joined = AsyncMock(side_effect=lambda *_: joined.set())
+
+            await presence.start()
+            assert presence.roster.tracked_room_ids() == []
+
+            await asyncio.wait_for(joined.wait(), timeout=10)
+
+            assert presence.roster.tracked_room_ids() == ["room-1"]
+            assert "chat_room:room-1" in server.joined_topics

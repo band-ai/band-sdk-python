@@ -26,30 +26,25 @@ Run with:
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import re
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
-from band_rest import ChatMessage
 
-from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
-from band.client.streaming import MessageCreatedPayload
-from band.core.types import MessageType
+from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
 from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
+    UNATTENDED_POLICIES,
     AgentSetup,
-    ApprovalDialect,
-    Notice,
     Outcome,
+    UnattendedPolicy,
     appending_command,
     command_request,
     commands_request,
@@ -60,21 +55,12 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 )
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
-from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
-    ProvisionedAgent,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
-logger = logging.getLogger(__name__)
-APPROVAL_LOG_LEVEL = (
-    logging.WARNING
-    if BaselineSettings().run.first_attempt_diagnostics
-    else logging.INFO
-)
-TERMINAL_POLL_INTERVAL_S = 0.5
 
 
 def readback_commands(target: Path) -> frozenset[str]:
@@ -105,211 +91,6 @@ REMEMBERING = tuple(a for a, dialect in DIALECTS.items() if dialect.session_appr
 ASKING = tuple(a for a, dialect in DIALECTS.items() if dialect.question)
 
 
-@dataclass
-class ApprovalRoom:
-    """One manual-approval agent in its own room, driven by the room's humans."""
-
-    agent: ProvisionedAgent
-    adapter_id: Adapter
-    room_id: str
-    capture: ReplyCapture
-    dialect: ApprovalDialect
-    user_ops: UserOps
-    budget: SlowTurnBudget
-    handled_requests: set[str] = field(default_factory=set)
-
-    async def say(self, text: str, *, sender: UserOps | None = None) -> int:
-        """Post ``text`` to the agent; return a cursor at what came before it."""
-        cursor = self.capture.messages.snapshot()
-        await (sender or self.user_ops).send_message(
-            self.room_id, text, mention_id=self.agent.id, mention_name=self.agent.name
-        )
-        return cursor
-
-    async def decide(self, outcome: Outcome, request: re.Match[str]) -> int:
-        """Answer one request as the room owner."""
-        cursor = await self.say(self.dialect.reply(outcome, request))
-        self.handled_requests.add(request["token"])
-        logger.log(
-            APPROVAL_LOG_LEVEL,
-            "Approval decision adapter=%s request=%s permission=%s outcome=%s",
-            self.adapter_id,
-            request["token"],
-            request.groupdict().get("permission", ""),
-            outcome,
-        )
-        return cursor
-
-    def expect_timeout(self, request: re.Match[str]) -> None:
-        """Account for an unanswered request whose expiry notice is expected."""
-        self.handled_requests.add(request["token"])
-
-    async def requests(self, count: int, *, since: int = 0) -> list[re.Match[str]]:
-        """The first ``count`` approval requests posted after ``since``."""
-        asked = await self.capture.wait_until(
-            lambda msgs: len(self.dialect.find_requests(msgs[since:])) >= count,
-            deadline_s=self.budget.deadline_s,
-        )
-        return self.dialect.find_requests(asked[since:])[:count]
-
-    async def shown(self, text: str, *, since: int) -> None:
-        """Wait until an agent message after ``since`` shows ``text``."""
-        await self.capture.wait_until(
-            lambda msgs: any(text in (m.content or "") for m in msgs[since:]),
-            deadline_s=self.budget.deadline_s,
-        )
-
-    async def closed(
-        self,
-        *notices: Notice,
-        since: int,
-        closing_reply: str,
-        allowed_followup_commands: frozenset[str] = frozenset(),
-    ) -> None:
-        """Decline extra requests and wait for the decided turn to close."""
-        expected_notices = list(notices)
-        unexpected_requests: list[str] = []
-        known_followups = 0
-        async with asyncio.timeout(self.budget.deadline_s):
-            while True:
-                await self._wait_for_reply_or_request(
-                    since, expected_notices, closing_reply
-                )
-                pending = self._unhandled_requests(self.capture.messages.since(since))
-                if not pending and self.dialect.settled(
-                    self.capture.messages.since(since),
-                    *expected_notices,
-                    closing_reply=closing_reply,
-                ):
-                    if self.adapter_id is Adapter.CURSOR_ACP:
-                        break
-                    # These adapters persist usage only after their model turn ends.
-                    if not await self.capture.usage(sender_id=self.agent.id):
-                        await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
-                        continue
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Approval terminal usage adapter=%s requests=%s",
-                        self.adapter_id,
-                        sorted(self.handled_requests),
-                    )
-                    durable = [
-                        message
-                        for message in await self.user_ops.list_messages(
-                            self.room_id, message_type=MessageType.TEXT
-                        )
-                        if message.sender_id == self.agent.id
-                    ]
-                    pending = self._unhandled_requests(durable)
-                    if not pending and self.dialect.settled(
-                        durable, *expected_notices, closing_reply=closing_reply
-                    ):
-                        break
-                    if not pending:
-                        await asyncio.sleep(TERMINAL_POLL_INTERVAL_S)
-                        continue
-                for request in pending:
-                    readback = (
-                        self.dialect.shell_command(request) in allowed_followup_commands
-                        and known_followups == 0
-                    )
-                    if readback:
-                        known_followups += 1
-                    else:
-                        unexpected_requests.append(request["token"])
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Declining follow-up approval adapter=%s request=%s permission=%s",
-                        self.adapter_id,
-                        request["token"],
-                        request.groupdict().get("permission", ""),
-                    )
-                    await self.decide(Outcome.DECLINE, request)
-                    expected_notices.append(
-                        self.dialect.notice(Outcome.DECLINE, request)
-                    )
-                if unexpected_requests:
-                    pytest.fail(
-                        f"Unexpected follow-up approvals: {unexpected_requests}"
-                    )
-                if self._opencode_missing_text_reply(since):
-                    logger.log(
-                        APPROVAL_LOG_LEVEL,
-                        "Approval no-text fallback adapter=%s requests=%s",
-                        self.adapter_id,
-                        sorted(self.handled_requests),
-                    )
-                    pytest.fail("OpenCode ended the approval turn without a text reply")
-        logger.log(
-            APPROVAL_LOG_LEVEL,
-            "Approval turn closed adapter=%s requests=%s final_reply_length=%s",
-            self.adapter_id,
-            sorted(self.handled_requests),
-            len(self.said_since(since)[-1]),
-        )
-        for notice in expected_notices:
-            await notice.assert_shown(self.capture, self.agent.id)
-        if self.adapter_id in (Adapter.CLAUDE_SDK, Adapter.OPENCODE):
-            calls = await self.capture.tool_calls(sender_id=self.agent.id)
-            results = await self.capture.tool_results(sender_id=self.agent.id)
-            for call in calls:
-                if call.name.casefold() not in ("bash", "powershell"):
-                    continue
-                logger.log(
-                    APPROVAL_LOG_LEVEL,
-                    "Approval shell call adapter=%s request=%s tool=%s arg_keys=%s",
-                    self.adapter_id,
-                    call.tool_call_id,
-                    call.name,
-                    sorted(call.args),
-                )
-            for result in results:
-                if result.name.casefold() not in ("bash", "powershell"):
-                    continue
-                logger.log(
-                    APPROVAL_LOG_LEVEL,
-                    "Approval shell result adapter=%s request=%s tool=%s error=%s output_length=%s",
-                    self.adapter_id,
-                    result.tool_call_id,
-                    result.name,
-                    result.is_error,
-                    len(result.output),
-                )
-
-    def _unhandled_requests(
-        self, messages: list[MessageCreatedPayload | ChatMessage]
-    ) -> list[re.Match[str]]:
-        return [
-            request
-            for request in self.dialect.find_requests(messages)
-            if request["token"] not in self.handled_requests
-        ]
-
-    async def _wait_for_reply_or_request(
-        self, since: int, notices: list[Notice], closing_reply: str
-    ) -> None:
-        await self.capture.wait_until(
-            lambda _msgs: (
-                self.dialect.settled(
-                    self.capture.messages.since(since),
-                    *notices,
-                    closing_reply=closing_reply,
-                )
-                or bool(self._unhandled_requests(self.capture.messages.since(since)))
-                or self._opencode_missing_text_reply(since)
-            ),
-            deadline_s=self.budget.deadline_s,
-        )
-
-    def _opencode_missing_text_reply(self, since: int) -> bool:
-        return self.adapter_id is Adapter.OPENCODE and any(
-            NO_TEXT_REPLY_MESSAGE in reply for reply in self.said_since(since)
-        )
-
-    def said_since(self, since: int) -> list[str]:
-        return [m.content or "" for m in self.capture.messages.since(since)]
-
-
 @asynccontextmanager
 async def approval_room(
     cell: AdapterCell,
@@ -320,8 +101,10 @@ async def approval_room(
     budget: SlowTurnBudget,
     wait_timeout_s: float = PATIENT_WAIT_S,
     approvers: frozenset[str] | None = None,
+    build: Callable[[BaselineSettings, AgentSetup], SimpleAdapter[Any]] | None = None,
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
-    """Run the cell's agent in manual approval mode in a fresh room and workdir."""
+    """Run the cell's agent in a fresh room and workdir: in manual approval mode,
+    or as ``build`` makes it."""
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
@@ -331,7 +114,7 @@ async def approval_room(
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
         setup = AgentSetup(root, wait_timeout_s, approvers)
-        adapter = dialect.build(cell.settings, setup)
+        adapter = (build or dialect.build)(cell.settings, setup)
         async with running_provisioned_agent(
             adapter, cell.resources, label=f"approval-{label}"
         ) as agent:
@@ -559,3 +342,47 @@ async def test_a_question_is_answered_in_free_text_from_the_room(
             deadline_s=BUDGET.deadline_s,
         )
         await notice.assert_shown(room.capture, room.agent.id)
+
+
+@per_adapter(Adapter.CLAUDE_SDK)
+@pytest.mark.parametrize("policy", UNATTENDED_POLICIES, ids=lambda p: p.name)
+@pytest.mark.timeout(extra=BUDGET.extra_s)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_host_config_policy_settles_tool_use_with_nobody_asked(
+    cell: AdapterCell,
+    policy: UnattendedPolicy,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """A host's plain-data config decides alone: auto_accept runs the write and
+    auto_decline refuses it, each announcing its decision; dontAsk refuses a
+    write the default mode would allow, announcing nothing. No one is asked."""
+    marker, done = unique_marker("policy"), unique_marker("closed")
+    async with approval_room(
+        cell,
+        user_ops,
+        reply_capture,
+        label=policy.name,
+        budget=BUDGET,
+        build=policy.build,
+    ) as (room, workdir):
+        target = workdir / "policy.txt"
+        start, message_id = await room.post(policy.request(marker, target, done=done))
+        await room.capture.wait_for_processed(
+            message_id, room.agent.id, deadline_s=BUDGET.deadline_s
+        )
+        await room.capture.wait_until(
+            lambda _msgs: policy.settled(room.said_since(start), done),
+            deadline_s=BUDGET.deadline_s,
+        )
+
+        # The tool was really attempted, so a missing file is the policy's doing.
+        tool_calls = await room.capture.tool_calls(sender_id=room.agent.id)
+        tool_calls.assert_fired(policy.tool)
+        said = room.said_since(start)
+        assert room.dialect.find_requests(room.capture.messages.since(start)) == []
+        assert policy.decisions(said) == policy.announced
+        if policy.runs:
+            assert target.read_text().strip() == marker
+        else:
+            assert not target.exists(), f"{policy.name} still wrote the file"

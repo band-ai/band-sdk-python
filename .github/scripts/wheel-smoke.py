@@ -78,6 +78,7 @@ def assert_band_wrappers_run() -> None:
     content, metadata = to_failure_event(band_sdk_core.AgentFailure("smoke", ""))
     assert content == "smoke failed without an error message."
     assert metadata["failure"]["provider"] == "smoke"
+    assert band_sdk_core.AgentFailure("smoke", "failed").to_extension_data()
 
 
 def main() -> None:

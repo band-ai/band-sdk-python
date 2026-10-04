@@ -9,11 +9,10 @@ The ``ParlantAdapter`` owns the server lifecycle (ports, boot, teardown):
 
     import parlant.sdk as p
     from band import Agent
-    from band.adapters import ParlantAdapter
+    from band.adapters import ParlantAdapter, ParlantAdapterConfig
 
     adapter = ParlantAdapter(
-        name="Assistant",
-        description="A helpful assistant",
+        ParlantAdapterConfig(name="Assistant", description="A helpful assistant"),
         nlp_service=p.NLPServices.openai,
     )
     adapter.add_guideline(

@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.2.4](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.3...band-mcp-v2.2.4) (2026-10-01)
+
+
+### Bug Fixes
+
+* **band-mcp:** leave the band-client-rest pin to band-sdk ([#718](https://github.com/band-ai/band-sdk-python/issues/718)) ([70ce454](https://github.com/band-ai/band-sdk-python/commit/70ce45464019642aec6382e08c35de29209d9d88))
+
+## [2.2.3](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.2...band-mcp-v2.2.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 3.3.0 ([#716](https://github.com/band-ai/band-sdk-python/issues/716)) ([45a3230](https://github.com/band-ai/band-sdk-python/commit/45a32309dc59d7873c0686038cee4bdc8e25ea95))
+
+## [2.2.2](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.1...band-mcp-v2.2.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 3.2.0 ([#660](https://github.com/band-ai/band-sdk-python/issues/660)) ([4148de6](https://github.com/band-ai/band-sdk-python/commit/4148de6e86d4744b901c253f42afc8dc577175b2))
+* bump band-mcp's band-sdk floor to 3.2.1 ([#674](https://github.com/band-ai/band-sdk-python/issues/674)) ([e55f2a0](https://github.com/band-ai/band-sdk-python/commit/e55f2a0894c0186da54895b1b87f03783b807fd4))
+
 ## [2.2.1](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.0...band-mcp-v2.2.1) (2026-09-24)
 
 

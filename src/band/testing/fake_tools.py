@@ -49,8 +49,13 @@ from band.client.rest import (
 )
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
-from band.core.protocols import to_failure_event
-from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
+from band.core.protocols import FailureMetadataKey, to_failure_event
+from band.core.task_types import (
+    TaskAssignmentStatus,
+    TaskLifecycleState,
+    TaskListState,
+    task_ref,
+)
 from band.core.types import (
     Capability,
     ContactRequestAction,
@@ -904,8 +909,9 @@ class FakeAgentTools:
         return {"attachment": deepcopy(attachment), "message_id": message.id}
 
     def _find_task(self, id: str) -> dict[str, Any]:
+        ref = task_ref(id)
         task = next(
-            (t for t in self.tasks if t["id"] == id or str(t["number"]) == id), None
+            (t for t in self.tasks if t["id"] == ref or str(t["number"]) == ref), None
         )
         if task is None:
             raise RuntimeError(f"Failed to find task {id!r} - no response data")
@@ -1159,7 +1165,7 @@ def reported_failures(tools: FakeAgentTools) -> list[dict[str, Any]]:
     the ``send_failure`` shape, and that isn't what this helper reports on.
     """
     return [
-        e["metadata"]["failure"]
+        e["metadata"][FailureMetadataKey.FAILURE]
         for e in events_of_type(tools, MessageType.ERROR)
-        if "failure" in e["metadata"]
+        if FailureMetadataKey.FAILURE in e["metadata"]
     ]

@@ -15,6 +15,7 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pytest
 from acp import RequestError
@@ -28,7 +29,12 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
+from tests.integrations.acp.acp_toolkit import (
+    FakeACPAgent,
+    acp_adapter,
+    fake_agent_config,
+    live_line,
+)
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -375,7 +381,9 @@ async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("send the reply", room="room-1")
 
     assert reply.outline == ["tool_call", "message", "tool_result", "task"]
@@ -398,7 +406,9 @@ async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("do the work", room="room-1")
 
     assert reply.outline == ["tool_call", "thought", "tool_result", "task"]
@@ -429,7 +439,9 @@ async def test_permissioned_band_mcp_turn_has_one_causal_transcript(fake_agent) 
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("send the reply", room="room-1")
 
     assert reply.outline == ["tool_call", "message", "tool_result", "task"]
@@ -469,7 +481,9 @@ async def test_turn_events_post_in_causal_order(fake_agent) -> None:
         },
     )
 
-    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
         reply = await session.send("weather in SF?", room="room-1")
 
     assert reply.outline == [
@@ -736,6 +750,83 @@ async def test_prefixed_band_post_suppresses_text_and_narrates_canonically(
     assert reply.tool_call_names == ["band_send_message"]
     assert reply.tool_result_names == ["band_send_message"]
     assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+def codex_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
+    """codex-acp's MCP tool call: a display title, the identity in ``rawInput``."""
+    return {
+        "title": f"mcp.{server}.{tool}",
+        "raw_input": {"server": server, "tool": tool, "arguments": arguments},
+    }
+
+
+@pytest.mark.asyncio
+async def test_codex_band_post_is_the_one_reply_and_narrates_its_own_arguments(
+    fake_agent,
+) -> None:
+    """codex-acp names an MCP call only in ``rawInput``; reading its display
+    title instead left the reply unrecognized, so the held text posted too."""
+    fake_agent.will_call_tool(
+        "tc-1",
+        **codex_mcp_call("band", "band_send_message", content="The answer."),
+        result='{"id": "msg-1"}',
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == []
+    assert reply.tool_call_names == ["band_send_message"]
+    assert reply.tool_call_args == [{"content": "The answer."}]
+
+
+@pytest.mark.asyncio
+async def test_codex_call_to_another_servers_same_named_tool_is_not_a_reply(
+    fake_agent,
+) -> None:
+    fake_agent.will_call_tool(
+        "tc-1",
+        **codex_mcp_call("other", "band_send_message", content="elsewhere"),
+        result="ok",
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == ["The answer."]
+    assert reply.tool_call_names == ["other-band_send_message"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_mcp_call_narrates_under_the_name_it_reports_late(
+    fake_agent,
+) -> None:
+    """Cursor opens an MCP call as a nameless ``MCP: tool`` placeholder; posting
+    that left Band tool calls unrecognizable in the room."""
+    fake_agent.will_call_mcp_tool_named_late(
+        "tc-1", "band", "band_list_contacts", arguments={"chat_id": "c1"}, result="[]"
+    ).will_say("No contacts.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("contacts?")
+
+    assert reply.tool_call_names == ["band_list_contacts"]
+    assert reply.tool_call_args == [{"chat_id": "c1"}]
+    assert reply.tool_result_names == ["band_list_contacts"]
+    assert reply.outline == ["tool_call", "tool_result", "message", "task"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_band_post_named_late_is_the_one_reply(fake_agent) -> None:
+    fake_agent.will_call_mcp_tool_named_late(
+        "tc-1",
+        "band",
+        "band_send_message",
+        arguments={"content": "The answer."},
+        result='{"id": "msg-1"}',
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == []
+    assert reply.tool_call_names == ["band_send_message"]
 
 
 @pytest.mark.asyncio

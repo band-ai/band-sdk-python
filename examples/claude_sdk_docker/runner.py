@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]>=1.2.0", "pyyaml"]
+# dependencies = ["band-sdk[claude_sdk]>=4.0.0", "pyyaml"]
 # ///
 """
 YAML-based agent runner for Band Claude SDK.
@@ -26,7 +26,7 @@ import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, LogSettings
-from band.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.types import Emit
 
 
@@ -222,13 +222,15 @@ async def main() -> None:
 
     # Create adapter
     adapter = ClaudeSDKAdapter(
-        model=model,
-        fallback_model=fallback_model,
-        custom_section=final_prompt,
-        max_thinking_tokens=thinking_tokens,
-        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
+        ClaudeSDKAdapterConfig(
+            model=model,
+            fallback_model=fallback_model,
+            custom_section=final_prompt,
+            max_thinking_tokens=thinking_tokens,
+            cwd=workspace,
+        ),
         additional_tools=custom_tools if custom_tools else None,
-        cwd=workspace,
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 
     # Create agent
