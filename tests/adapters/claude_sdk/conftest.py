@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import nullcontext
 from typing import Any
 from unittest.mock import patch
 
@@ -51,5 +53,11 @@ async def claude_room(
         return ClaudeRoom(adapter, claude, room_id)
 
     yield open_room
-    for adapter in adapters:
-        await adapter.cleanup_all()
+    # looptime is only on for the test body. Teardown runs on the real clock,
+    # so a uvicorn sleep scheduled at virtual T waits ~T of wall time on a
+    # fresh CI runner (uptime < T) and hits pytest-timeout.
+    loop = asyncio.get_running_loop()
+    reopen_looptime = hasattr(loop, "looptime_enabled") and not loop.looptime_on
+    with loop.looptime_enabled() if reopen_looptime else nullcontext():
+        for adapter in adapters:
+            await adapter.cleanup_all()
