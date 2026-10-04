@@ -245,6 +245,19 @@ class TestACPClientAdapterShutdown:
         assert runtime._conn is None
 
     @pytest.mark.asyncio
+    async def test_stale_room_cleanup_preserves_a_replacement_runtime(self) -> None:
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
+        failed_runtime = adapter._build_runtime()
+        replacement_runtime = adapter._build_runtime()
+        adapter._runtimes["room-1"] = replacement_runtime
+
+        await adapter.on_cleanup("room-1", expected_runtime=failed_runtime)
+
+        assert adapter._runtimes["room-1"] is replacement_runtime
+
+    @pytest.mark.asyncio
     async def test_restart_after_a_full_stop_allows_backend_creation(
         self, make_acp_transport
     ) -> None:

@@ -637,7 +637,7 @@ class ACPClientAdapter(
             # An unanswered set may have left a dead connection the runtime
             # never replaces; only a fresh runtime lets the next turn retry.
             if isinstance(error, ACPConfigUnreachableError):
-                await self.on_cleanup(room_id)
+                await self.on_cleanup(room_id, expected_runtime=runtime)
             await self._report_config_error(tools, error)
             return
         runtime.reset_session(session_id)
@@ -1440,8 +1440,15 @@ class ACPClientAdapter(
             sections.append(live_message)
         return "\n\n".join(sections)
 
-    async def on_cleanup(self, room_id: str) -> None:
+    async def on_cleanup(
+        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
+    ) -> None:
         async with self._session_lock:
+            if (
+                expected_runtime is not None
+                and self._runtimes.get(room_id) is not expected_runtime
+            ):
+                return
             session_id = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
