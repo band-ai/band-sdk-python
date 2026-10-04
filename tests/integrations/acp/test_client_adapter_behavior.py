@@ -14,6 +14,7 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -27,6 +28,7 @@ from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
     SYSTEM_UPDATE_PREFIX,
+    SessionInitializer,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.mcp import BandMCPBackendStoppedError
@@ -652,6 +654,32 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
     assert reply.texts == ["Reply from the agent"]
     assert "error" not in reply.outline
     assert urlsplit(live_url).port != urlsplit(crashed_url).port
+
+
+@pytest.mark.asyncio
+async def test_a_retired_sessions_unreleased_setup_is_never_reused(fake_agent) -> None:
+    """A turn that finished creating the room's session may not have released
+    its setup yet; the next turn, after the Band URL went stale, must not be
+    handed that retired session."""
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("before the crash", room="room-1")
+        retired = session.session_id("room-1")
+        unreleased = asyncio.create_task(_finished_setup(retired))
+        await unreleased
+        session.adapter._session_initializers["room-1"] = SessionInitializer(
+            task=unreleased, waiters=1
+        )
+        await crash_backend(session.adapter._mcp)
+
+        await session.send("after the crash", room="room-1")
+
+        assert session.session_id("room-1") != retired
+
+
+async def _finished_setup(session_id: str) -> tuple[str, bool]:
+    return session_id, True
 
 
 @pytest.mark.asyncio

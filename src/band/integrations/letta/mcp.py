@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
 
@@ -343,15 +344,18 @@ class LettaMCPBridge:
         Letta resolves an MCP tool's server by name and reads its URL on every
         call, so updating the row reconnects every attached tool with no new
         tool ids or re-attach -- unlike a fresh registration, which retags
-        the org's tool rows. A failed update forgets the registration (its row
-        may be gone), so the next ``ensure_ready`` registers afresh.
+        the org's tool rows. A failed update keeps the registration so the next
+        ``ensure_ready`` retries the same row; only a 404 (the row is gone)
+        forgets it, so a transient error never leaves a second ``band-xxxx``
+        row behind.
         """
         try:
             await client.mcp_servers.update(
                 server_id, config=self._registration_config(server_url)
             )
-        except Exception:
-            self._forget_registration()
+        except Exception as error:
+            if getattr(error, "status_code", None) == HTTPStatus.NOT_FOUND:
+                self._forget_registration()
             raise
         self._last_server_url = server_url
         logger.info("Repointed MCP server registration %s at %s", server_id, server_url)

@@ -1062,13 +1062,8 @@ class ACPClientAdapter(
                 # Never restore: the persisted id may be the one being retired.
                 history = None
             initializer = self._session_initializers.get(room_id)
-            if (
-                initializer is not None
-                and initializer.task.done()
-                and (
-                    initializer.task.cancelled()
-                    or initializer.task.exception() is not None
-                )
+            if initializer is not None and self._is_spent(
+                initializer, published_session_retired=stale is not None
             ):
                 self._session_initializers.pop(room_id)
                 initializer = None
@@ -1089,6 +1084,21 @@ class ACPClientAdapter(
             return await asyncio.shield(initializer.task)
         finally:
             await self._release_session_initializer(room_id, initializer)
+
+    @staticmethod
+    def _is_spent(
+        initializer: SessionInitializer, *, published_session_retired: bool
+    ) -> bool:
+        """Whether a finished setup can't serve the next turn: it failed, or it
+        built the very session that was just retired."""
+        task = initializer.task
+        if not task.done():
+            return False
+        return (
+            published_session_retired
+            or task.cancelled()
+            or task.exception() is not None
+        )
 
     async def _release_session_initializer(
         self,

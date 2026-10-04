@@ -176,30 +176,58 @@ async def test_a_command_without_a_running_loop_returns_at_once(
 
 
 @pytest.mark.parametrize(
-    "request_during_stop",
+    "teardown",
     [
-        pytest.param(lambda m: m.cleanup_session("room-1"), id="queued-behind-stop"),
-        pytest.param(lambda m: m.get_or_create_session("room-1"), id="new-session"),
+        pytest.param(lambda m: m.cleanup_session("room-1"), id="cleanup_session"),
+        pytest.param(lambda m: m.invalidate_session("room-1"), id="invalidate_session"),
+        pytest.param(lambda m: m.cleanup_all(), id="cleanup_all"),
     ],
 )
-async def test_a_request_racing_stop_fails_instead_of_hanging(
+async def test_a_teardown_racing_stop_succeeds(
     mock_options: ClaudeAgentOptions,
-    request_during_stop: Callable[[ClaudeSessionManager], Awaitable[object]],
+    teardown: Callable[[ClaudeSessionManager], Awaitable[None]],
 ) -> None:
-    """A request made while ``stop`` runs must fail, never wait forever on a
-    future nothing will resolve, nor start a new session on a stopping manager."""
+    """Stop already tears every session down, so a teardown queued behind it
+    has nothing left to fail on and must not raise during shutdown."""
+    manager = ClaudeSessionManager(mock_options)
+    await manager.start()
+
+    async with asyncio.timeout(1):
+        stopped, torn_down = await asyncio.gather(
+            manager.stop(), teardown(manager), return_exceptions=True
+        )
+
+    assert (stopped, torn_down) == (None, None)
+
+
+async def test_a_session_request_racing_stop_fails_instead_of_hanging(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    """A new session can't start on a stopping manager, and its caller must
+    not wait forever on a future nothing will resolve."""
     manager = ClaudeSessionManager(mock_options)
     await manager.start()
 
     async with asyncio.timeout(1):
         stopped, requested = await asyncio.gather(
             manager.stop(),
-            request_during_stop(manager),
+            manager.get_or_create_session("room-1"),
             return_exceptions=True,
         )
 
     assert stopped is None
     assert isinstance(requested, ClaudeSessionManagerStoppedError)
+
+
+async def test_stop_finishes_even_if_session_cleanup_raises(
+    mock_options: ClaudeAgentOptions,
+) -> None:
+    manager = ClaudeSessionManager(mock_options)
+    await manager.start()
+    manager._do_cleanup_all = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+
+    async with asyncio.timeout(1):
+        await manager.stop()
 
 
 async def start_slow_to_stop(options: ClaudeAgentOptions) -> ClaudeSessionManager:

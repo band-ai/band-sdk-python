@@ -587,6 +587,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Created in on_started.
         self._session_manager: ClaudeSessionManager | None = None
+
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
 
         # Per-room tools: the adapter's own sends use them directly, while the

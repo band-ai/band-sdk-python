@@ -144,12 +144,18 @@ class ClaudeSessionManager:
         logger.info("ClaudeSessionManager background task stopped")
 
     def _fail_pending_commands(self) -> None:
-        """Fail every command still queued once the loop has exited, so no
-        caller waits forever on a future nothing will resolve."""
+        """Settle every command still queued once the loop has exited, so no
+        caller waits forever on a future nothing will resolve. Teardown
+        commands succeed (stop already tore every session down); only a
+        ``create`` can't be honoured."""
         while not self._command_queue.empty():
             cmd = self._command_queue.get_nowait()
-            if cmd.result_future and not cmd.result_future.done():
+            if cmd.result_future is None or cmd.result_future.done():
+                continue
+            if cmd.action == "create":
                 cmd.result_future.set_exception(ClaudeSessionManagerStoppedError())
+            else:
+                cmd.result_future.set_result(None)
 
     async def _run_session_loop(self) -> None:
         """Background task that processes all session commands."""
@@ -183,7 +189,10 @@ class ClaudeSessionManager:
                         cmd.result_future.set_result(None)
 
                 elif cmd.action == "stop":
-                    await self._do_cleanup_all()
+                    try:
+                        await self._do_cleanup_all()
+                    except Exception:
+                        logger.exception("Error cleaning up sessions on stop")
                     break
 
                 self._command_queue.task_done()

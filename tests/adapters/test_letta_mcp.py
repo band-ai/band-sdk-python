@@ -945,7 +945,11 @@ class TestSelfHostedMCPCrash:
             assert await serves_band_tools(registered_urls(client)[-1])
 
     @pytest.mark.asyncio
-    async def test_a_failed_repoint_clears_the_registration(self) -> None:
+    async def test_a_transient_repoint_failure_is_retried_on_the_same_row(
+        self,
+    ) -> None:
+        """Registering afresh would leave a second ``band-xxxx`` row and retag
+        the org's tool rows, which repointing exists to avoid."""
         bridge, client = await registered_on_a_dead_fake_server()
         client.mcp_servers.update.side_effect = RuntimeError("Letta is down")
 
@@ -953,6 +957,22 @@ class TestSelfHostedMCPCrash:
             backends_created_by(),
             pytest.raises(RuntimeError, match="Letta is down"),
         ):
+            await bridge.ensure_ready(client)
+        assert bridge.server_id == "mcp-server-1"
+
+        client.mcp_servers.update.side_effect = None
+        with backends_created_by():
+            await bridge.ensure_ready(client)
+
+        assert client.mcp_servers.create.await_count == 1
+        assert bridge.ready
+
+    @pytest.mark.asyncio
+    async def test_a_repoint_of_a_deleted_row_registers_afresh(self) -> None:
+        bridge, client = await registered_on_a_dead_fake_server()
+        client.mcp_servers.update.side_effect = _stale_tool_error("no such server")
+
+        with backends_created_by(), pytest.raises(Exception, match="no such server"):
             await bridge.ensure_ready(client)
         assert bridge.server_id is None
 
