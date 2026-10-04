@@ -32,9 +32,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.tools import Tool
-from mcp.server.lowlevel.server import request_ctx
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ImageContent
 from pydantic import AliasChoices, BaseModel, Field, create_model, field_validator
@@ -73,17 +72,19 @@ MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 ROOM_PATH_PARAM = "room_id"
 
 
-def _connection_room_id() -> str:
+def _room_id_from_context(ctx: Context) -> str:
     """Return the room of the endpoint the current MCP request arrived on.
 
-    Read per request, never cached per MCP session: the room belongs to the
-    request path, and stdio or in-memory sessions carry no HTTP request.
+    Read per request via FastMCP's public ``Context``, never cached per MCP
+    session: the room belongs to the request path, and stdio or in-memory
+    sessions carry no HTTP request.
     """
     try:
-        request = request_ctx.get().request
-    except LookupError:
+        request = ctx.request_context.request
+    except ValueError:
         request = None
-    room_id = request.path_params.get(ROOM_PATH_PARAM) if request is not None else None
+    path_params = getattr(request, "path_params", None) if request is not None else None
+    room_id = path_params.get(ROOM_PATH_PARAM) if path_params else None
     if not room_id:
         raise ValueError(
             "This Band tool takes its room from a room-bound MCP endpoint, "
@@ -99,12 +100,16 @@ class MCPToolRegistration:
     ``input_model`` already carries whatever room-field extension or pin the
     owning factory decided on -- the engine never inspects tool identity to
     make that call, it just wires whatever the factory handed it.
+
+    ``room_from_connection`` asks the FastMCP dispatch wrapper to inject the
+    room from the request ``Context`` before ``execute`` runs.
     """
 
     name: str
     description: str
     input_model: type[BaseModel]
     execute: MCPToolExecutor
+    room_from_connection: bool = False
 
 
 @dataclass(frozen=True)
@@ -454,11 +459,30 @@ def _make_dispatch_function(
     ``registration.input_model`` (a real Pydantic model) rather than on a
     hand-built schema dict; ``_build_mcp_tool`` sanitizes the schema this
     produces afterward.
+
+    Room-bound tools take an injected ``ctx: Context`` parameter so the room
+    is read from FastMCP's public request context rather than a low-level
+    MCP ContextVar import.
     """
-    signature = _build_handler_signature(registration.input_model)
+    parameters = list(
+        _build_handler_signature(registration.input_model).parameters.values()
+    )
+    if registration.room_from_connection:
+        parameters.insert(
+            0,
+            inspect.Parameter(
+                "ctx",
+                kind=inspect.Parameter.KEYWORD_ONLY,
+                annotation=Context,
+            ),
+        )
+    signature = inspect.Signature(parameters=parameters, return_annotation=str)
 
     async def _dispatch(**kwargs: Any) -> str:
         try:
+            if registration.room_from_connection:
+                ctx = kwargs.pop("ctx")
+                kwargs[CHAT_ID_FIELD_NAME] = _room_id_from_context(ctx)
             return await registration.execute(kwargs)
         except (ValueError, BandToolError):
             raise
@@ -513,9 +537,8 @@ def build_tool_registration(
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
-        room_id = _connection_room_id() if room_from_connection else pinned_room_id
-        if room_id is not None:
-            kwargs[CHAT_ID_FIELD_NAME] = room_id
+        if pinned_room_id is not None:
+            kwargs[CHAT_ID_FIELD_NAME] = pinned_room_id
         validated = validate_tool_arguments(definition.name, input_model, kwargs)
         chat_id = (
             validated.pop(CHAT_ID_FIELD_NAME, None)
@@ -532,6 +555,7 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
+        room_from_connection=room_from_connection,
     )
 
 

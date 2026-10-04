@@ -6,6 +6,8 @@ request, which only a real server carries.
 
 from __future__ import annotations
 
+import ast
+
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import TextContent
@@ -27,6 +29,7 @@ from tests.mcpclient import (
     started_backend,
     tool_arguments,
 )
+from tests.paths import SRC_ROOT
 
 ROOM_A = "room-a"
 ROOM_B = "room-b"
@@ -165,3 +168,26 @@ async def test_room_bound_tool_without_an_http_request_fails_clearly(
     assert isinstance(block, TextContent)
     assert "room-bound MCP endpoint" in block.text
     assert rooms[ROOM_A].memories == []
+
+
+def test_engine_reads_room_from_fastmcp_context_not_lowlevel_request_ctx() -> None:
+    """Room binding must stay on FastMCP's public Context surface."""
+    tree = ast.parse(
+        (SRC_ROOT / "integrations/mcp/engine.py").read_text(encoding="utf-8")
+    )
+    mcp_imports = [
+        (
+            node.module,
+            [alias.name for alias in node.names],
+        )
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        and node.module.startswith("mcp")
+    ]
+
+    assert ("mcp.server.fastmcp", ["Context", "FastMCP"]) in mcp_imports
+    assert not any(
+        module == "mcp.server.lowlevel.server" or "request_ctx" in names
+        for module, names in mcp_imports
+    )
