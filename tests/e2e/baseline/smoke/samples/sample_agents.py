@@ -639,11 +639,13 @@ def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
     """Peer-initiated delegation: drive one agent to ask peer ``peer_name`` to confirm
     the value it just remembered, then report that reply — so it emits a real routing
     mention of the peer whose body carries the value it recalled from its own context,
-    and the peer responds."""
+    and the peer responds. The message must ask a question: a bare token reads as an
+    FYI, which the peer may rightly decline with band_no_reply."""
     return (
         "Recall the complete value token from my previous message. "
-        f"{peer_name} did not receive that message. First send the exact token "
-        f"to {peer_name} with band_send_message(content containing the token, "
-        f"mentions=['{peer_id}']). Do not address that first message to me. "
+        f"{peer_name} did not receive that message. First ask {peer_name} to "
+        f"confirm the exact token with {BandTool.SEND_MESSAGE}(content containing "
+        f"the token and asking {peer_name} to confirm it, mentions=['{peer_id}']). "
+        "Do not address that first message to me. "
         "Wait for the peer's response, then report it back to me."
     )
