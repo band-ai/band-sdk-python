@@ -304,12 +304,18 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self._cursor_profile.bind_session(session_id)
         return session_id, created
 
-    async def on_cleanup(self, room_id: str) -> None:
+    async def on_cleanup(
+        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
+    ) -> None:
+        if expected_runtime is not None:
+            async with self._session_lock:
+                if self._runtimes.get(room_id) is not expected_runtime:
+                    return
         # Wakes any decision _run_turn is parked on; the task itself keeps
         # running detached and winds down on its own (via _on_background_task_done)
         # once the runtime this stops out from under it closes the connection.
         self._cancel_room_decisions(room_id)
-        await super().on_cleanup(room_id)
+        await super().on_cleanup(room_id, expected_runtime=expected_runtime)
 
     def _forget_session(self, session_id: str) -> None:
         self._cursor_profile.forget_session(session_id)
