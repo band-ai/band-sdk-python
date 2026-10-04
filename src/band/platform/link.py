@@ -593,3 +593,6 @@ class BandLink:
         self, room_id: str
     ) -> list[PlatformMessage]:
         return await self._messages.get_stale_processing_messages(self.rest, room_id)
+
+    async def get_actionable_messages(self, room_id: str) -> list[PlatformMessage]:
+        return await self._messages.get_actionable_messages(self.rest, room_id)

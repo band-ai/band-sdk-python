@@ -39,3 +39,25 @@ The generated client's empty-body shortcut runs before status classification in
 pinned `band-client-rest` 0.0.41 and remains in released 0.0.46. Public raw response
 status preserves the distinction without accessing generated private fields or
 adding another HTTP client. Real-client HTTP transport tests pin this boundary.
+
+## Retained failed messages and recovery
+
+The platform's `/next` endpoint returns the oldest delivery that is not processed,
+including failed and processing deliveries. Exhausting the SDK's local retry budget
+does not remove that message from the platform. The SDK preserves its failed status
+and diagnostic information rather than acknowledging unsuccessful work as processed.
+
+When a retained, locally skipped head prevents `/next` from advancing, startup and
+idle recovery use `BandLink.get_actionable_messages(room_id)` to collect pending,
+failed, and processing deliveries. Recovery completes pagination before changing
+delivery statuses, deduplicates message IDs, and processes eligible work oldest first.
+It starts with the current cursor-based API, prefers a usable cursor over legacy
+page counts, and also accepts legacy page metadata when no cursor is supplied.
+An incomplete listing, transport failure, or unusable continuation cursor is a
+recovery failure, not proof that the room is drained.
+
+An eligible message that is in flight, cannot be claimed, still needs its processed
+acknowledgement, or fails within its remaining retry budget keeps its FIFO position
+and blocks newer work until recovery can advance. Locally completed messages are
+not executed again. Startup recovery includes older pending and failed deliveries
+alongside stale processing work so a crash-recovery sweep does not overtake them.

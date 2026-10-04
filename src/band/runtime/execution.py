@@ -1240,6 +1240,15 @@ class ExecutionContext:
         )
 
         try:
+            sync_marker = self._first_ws_msg_id
+            # Stale recovery uses the same ordered snapshot as skipped-head
+            # recovery, so newer processing deliveries cannot overtake pending work.
+            if not await self._recover_stale_processing_messages():
+                return False
+            if self._stopped or (
+                sync_marker is not None and self._first_ws_msg_id is None
+            ):
+                return True
             while True:  # Cancellation handles exit
                 next_msg = await self._get_next_message()
 
@@ -1251,13 +1260,14 @@ class ExecutionContext:
                     self._sync_complete = True
                     return True
 
-                if self._retry_tracker.is_permanently_failed(next_msg.id):
-                    logger.warning(
-                        "ExecutionContext %s: Skipping permanently failed message %s",
-                        self.room_id,
-                        next_msg.id,
+                if self._backlog_message_is_skipped(next_msg):
+                    await self._process_backlog_message(next_msg)
+                    synchronized = await self._recover_actionable_backlog(
+                        sync_to_websocket=True
                     )
-                    break
+                    if synchronized:
+                        self._sync_complete = True
+                    return synchronized
 
                 if next_msg.id == self._first_ws_msg_id:
                     logger.info(
@@ -1266,7 +1276,10 @@ class ExecutionContext:
                         next_msg.id,
                     )
                     result = await self._process_backlog_message(next_msg)
-                    if result == BacklogProcessResult.ADVANCED:
+                    if (
+                        result == BacklogProcessResult.ADVANCED
+                        and self._backlog_message_is_skipped(next_msg)
+                    ):
                         # Remove all WS copies of the sync-point message while
                         # preserving the relative order of other queued events.
                         self._drain_duplicate_from_queue(next_msg.id)
@@ -1299,12 +1312,12 @@ class ExecutionContext:
                     break
 
                 if self._retry_tracker.is_permanently_failed(next_msg.id):
-                    logger.warning(
-                        "ExecutionContext %s: Message %s permanently failed",
-                        self.room_id,
-                        next_msg.id,
+                    synchronized = await self._recover_actionable_backlog(
+                        sync_to_websocket=True
                     )
-                    break
+                    if synchronized:
+                        self._sync_complete = True
+                    return synchronized
 
         except Exception:
             logger.exception("ExecutionContext %s: Sync error", self.room_id)
@@ -1313,6 +1326,70 @@ class ExecutionContext:
         logger.debug("ExecutionContext %s: Synchronization complete", self.room_id)
         self._sync_complete = True
         return True
+
+    def _backlog_message_is_skipped(self, msg: PlatformMessage) -> bool:
+        """Whether advancing past this delivery cannot replay eligible work."""
+        return (
+            self._retry_tracker.is_permanently_failed(msg.id)
+            or self.claims.is_completed(self.room_id, msg.id)
+            or self._delivery_status_for_agent(msg.metadata) == DeliveryStatus.PROCESSED
+            or bool(
+                self._agent_id
+                and is_self_echo(
+                    sender_id=msg.sender_id or "",
+                    sender_type=msg.sender_type or "",
+                    agent_id=self._agent_id,
+                )
+            )
+        )
+
+    async def _recover_actionable_backlog(
+        self, *, sync_to_websocket: bool = False
+    ) -> bool:
+        """Drain one complete FIFO snapshot without re-polling a retained /next head."""
+        messages = await self.link.get_actionable_messages(self.room_id)
+        for msg in messages:
+            if self._stopped:
+                return True
+            result = await self._process_backlog_message(msg)
+            if result == BacklogProcessResult.RETRY_LATER:
+                return False
+            if self._stopped:
+                return True
+            if not self._backlog_message_is_skipped(msg):
+                # A retryable handler failure remains eligible and must keep
+                # its FIFO position until it succeeds or exhausts its budget.
+                return False
+            if sync_to_websocket and msg.id == self._first_ws_msg_id:
+                self._drain_duplicate_from_queue(msg.id)
+                self._first_ws_msg_id = None
+                self._sync_complete = True
+                return True
+        return True
+
+    async def _recover_stale_processing_messages(self) -> bool:
+        """
+        Recover messages stuck in 'processing' state from a previous crash.
+
+        The presence of stale processing work triggers a complete actionable
+        snapshot. Processing only the stale subset could otherwise run newer
+        messages ahead of older pending or failed deliveries.
+
+        Skipped while stopped: stopped work must remain replayable on resume,
+        not be resurrected by reconnect recovery.
+        """
+        if self._stopped:
+            logger.debug(
+                "ExecutionContext %s: stopped, skipping stale-processing recovery",
+                self.room_id,
+            )
+            return True
+
+        stale_messages = await self.link.get_stale_processing_messages(self.room_id)
+        if not stale_messages:
+            return True
+
+        return await self._recover_actionable_backlog(sync_to_websocket=True)
 
     async def _get_next_message(self) -> PlatformMessage | None:
         """
@@ -1342,13 +1419,9 @@ class ExecutionContext:
                 if next_msg is None:
                     break
 
-                if self._retry_tracker.is_permanently_failed(next_msg.id):
-                    logger.warning(
-                        "ExecutionContext %s: Skipping permanently failed message %s during resync",
-                        self.room_id,
-                        next_msg.id,
-                    )
-                    break
+                if self._backlog_message_is_skipped(next_msg):
+                    await self._process_backlog_message(next_msg)
+                    return await self._recover_actionable_backlog()
 
                 logger.info(
                     "ExecutionContext %s: Catching up missed message %s via /next resync",
@@ -1380,7 +1453,7 @@ class ExecutionContext:
                     break
 
                 if self._retry_tracker.is_permanently_failed(next_msg.id):
-                    break
+                    return await self._recover_actionable_backlog()
 
         except Exception:
             logger.exception(

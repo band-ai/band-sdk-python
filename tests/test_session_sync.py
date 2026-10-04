@@ -55,6 +55,7 @@ def mock_link():
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.get_actionable_messages = AsyncMock(return_value=[])
     return link
 
 
@@ -362,7 +363,8 @@ class TestCrashRecovery:
     async def test_recovers_single_stale_message(self, ctx, mock_link):
         """Should process a single stale message from crash recovery."""
         stale_msg = make_message("stale-001")
-        mock_link.get_next_message.side_effect = [stale_msg, None]
+        mock_link.get_stale_processing_messages.return_value = [stale_msg]
+        mock_link.get_actionable_messages.return_value = [stale_msg]
 
         assert await ctx._synchronize_with_next()
 
@@ -377,7 +379,8 @@ class TestCrashRecovery:
             make_message("stale-002"),
             make_message("stale-003"),
         ]
-        mock_link.get_next_message.side_effect = [*stale_msgs, None]
+        mock_link.get_stale_processing_messages.return_value = stale_msgs
+        mock_link.get_actionable_messages.return_value = stale_msgs
 
         assert await ctx._synchronize_with_next()
 
