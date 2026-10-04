@@ -777,9 +777,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        self._room_tools[room_id] = tools
-        await self._bind_mcp_tools(room_id, tools)
-
         # Approval flow: track notify target and intercept local commands
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
@@ -798,6 +795,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         args=args,
                         sender=sender,
                     )
+                    tools.turn.settle()
                     return
                 elif cmd == ClaudeSDKCommand.STATUS:
                     await self._handle_status_command(
@@ -805,6 +803,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         room_id=room_id,
                         sender=sender,
                     )
+                    tools.turn.settle()
                     return
 
         # A prior turn's background task (see _run_turn) may still be running
@@ -814,11 +813,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # OpencodeAdapter's own "still processing" guard).
         running_turn = self._turn_tasks.get(room_id)
         if running_turn is not None and not running_turn.done():
-            await tools.send_message(
+            await tools.send_notice(
                 "Still processing the previous request in this room.",
                 mentions=[msg.sender_id] if msg.sender_id else None,
             )
+            tools.turn.settle()
             return
+
+        # Bound only once this message runs a turn: a command or busy message
+        # must not take over the in-flight turn's tools, which its approval
+        # prompts and MCP tool calls still post through.
+        self._room_tools[room_id] = tools
+        await self._bind_mcp_tools(room_id, tools)
 
         # The manager only resumes when it has to create the client: on
         # bootstrap, or after a retired client (see _retire_client).
@@ -1721,7 +1727,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         whether a missing-reply guard still applies.
         """
         try:
-            await tools.send_message(message, mentions=mentions)
+            await tools.send_notice(message, mentions=mentions)
             return True
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
@@ -1803,7 +1809,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         mention = [requester["id"]] if requester else None
         if tools:
             try:
-                await tools.send_message(
+                await tools.send_notice(
                     APPROVAL_REQUESTED_TEMPLATE.format(summary=summary, token=token),
                     mentions=mention,
                 )
@@ -1932,7 +1938,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # --- /approvals: list pending ---
         if command == ClaudeSDKCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
-                await tools.send_message("No pending approvals.", mentions=mention)
+                await tools.send_notice("No pending approvals.", mentions=mention)
                 return
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
@@ -1941,12 +1947,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 lines.append(
                     f"- `{entry.token}`: {entry.payload.summary} ({age_s}s ago)"
                 )
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await tools.send_notice("\n".join(lines), mentions=mention)
             return
 
         # --- /approve [token] | /decline [token] ---
         if not is_authorized_sender(self._approvals.authorized_senders, sender["id"]):
-            await tools.send_message(
+            await tools.send_notice(
                 APPROVAL_UNAUTHORIZED_MESSAGE,
                 mentions=mention,
             )
@@ -1957,12 +1963,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if not token:
             match open_tokens:
                 case []:
-                    await tools.send_message("No pending approvals.", mentions=mention)
+                    await tools.send_notice("No pending approvals.", mentions=mention)
                     return
                 case [only]:
                     token = only
                 case _:
-                    await tools.send_message(
+                    await tools.send_notice(
                         "Multiple pending approvals — please specify a token: "
                         + format_tokens(open_tokens),
                         mentions=mention,
@@ -1970,7 +1976,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                     return
 
         if (selected := pending.get(token)) is None:
-            await tools.send_message(
+            await tools.send_notice(
                 APPROVAL_UNKNOWN_TOKEN_TEMPLATE.format(
                     token=token, available=format_tokens(open_tokens) or "none"
                 ),
@@ -1979,7 +1985,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             return
 
         if pending.try_claim(token) is None:
-            await tools.send_message(
+            await tools.send_notice(
                 f"Approval `{token}` is no longer pending.", mentions=mention
             )
             return
@@ -2015,7 +2021,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             f"- active_sessions: {session_count}",
             f"- session_id: `{session_id}`",
         ]
-        await tools.send_message("\n".join(lines), mentions=[sender["id"]])
+        await tools.send_notice("\n".join(lines), mentions=[sender["id"]])
 
     # ------------------------------------------------------------------
     # Approval helpers

@@ -89,7 +89,7 @@ def question_delivered_answer(rendered_question: str) -> UserInputResponse:
     return freeform_answer(QUESTION_DELIVERED_ANSWER.format(rendered=rendered_question))
 
 
-def delivery_failed_answer(error: Exception) -> UserInputResponse:
+def delivery_failed_answer(error: BaseException) -> UserInputResponse:
     """The answer when posting the question to the room failed."""
     return freeform_answer(DELIVERY_FAILED_ANSWER.format(error=error))
 

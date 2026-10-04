@@ -51,6 +51,8 @@ class TestReply:
         sent = tools.messages_sent[0]
         assert sent["content"] == "Hi Alice!"
         assert sent["mentions"] == [{"id": "user-1", "name": "Alice"}]
+        # The relayed final text is the turn's reply.
+        assert tools.turn.complete
 
     @pytest.mark.asyncio
     async def test_send_message_failure_is_not_reported_as_provider_failure(self):

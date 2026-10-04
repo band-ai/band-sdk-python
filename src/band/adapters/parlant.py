@@ -22,7 +22,7 @@ from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import (
     DeliveryFailedError,
-    deliver_reply,
+    relay_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
@@ -823,10 +823,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                             room_id,
                             message_content[:100],
                         )
-                        await deliver_reply(
+                        if await relay_reply(
                             tools, message_content, mentions=[sender_name]
-                        )
-                        logger.info("Room %s: Message sent successfully", room_id)
+                        ):
+                            logger.info("Room %s: Message sent successfully", room_id)
                     else:
                         logger.warning(
                             "Room %s: Empty message content in event",

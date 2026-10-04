@@ -597,7 +597,9 @@ class CrewAIFlowCustomTools:
         input_data = dict(arguments or kwargs)
         await self._report_call(name, input_data)
         try:
-            result = await execute_custom_tool(tool, input_data)
+            result = await execute_custom_tool(
+                tool=tool, arguments=input_data, turn=self._tools.turn
+            )
         except Exception as exc:
             await self._report_result(name, str(exc), is_error=True)
             raise

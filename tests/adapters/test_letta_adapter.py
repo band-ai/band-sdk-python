@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1403,6 +1403,51 @@ class TestSendToolResolution:
         )
 
         assert len(tools.messages_sent) == 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Turn recording of out-of-process tool calls
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestExternalToolRecording:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mcp_mode", "status", "replied"),
+        [
+            pytest.param("external", "success", True, id="external-success"),
+            pytest.param("external", "error", False, id="external-error"),
+            # Self-hosted calls run on the room's own tools, which record them.
+            pytest.param("self_host", "success", False, id="self-host"),
+        ],
+    )
+    async def test_streamed_tool_return_records_only_for_external_band_mcp(
+        self, mcp_mode: Literal["self_host", "external"], status: str, replied: bool
+    ) -> None:
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(mcp=LettaMCPConfig(mode=mcp_mode))
+        )
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_return_message(BandTool.SEND_MESSAGE, status=status),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.turn.replied is replied
 
 
 # ──────────────────────────────────────────────────────────────────────

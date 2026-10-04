@@ -15,7 +15,7 @@ from typing_extensions import Unpack
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
 from band.core.delivery import (
     DeliveryFailedError,
-    deliver_reply,
+    relay_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -49,6 +49,7 @@ from band.runtime.tools import (
     iter_tool_definitions,
     redact_tool_call_args,
     settles_turn_reply,
+    turn_effect,
 )
 
 __all__ = [
@@ -602,7 +603,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         },
                     )
                 case "tool_return_message":
-                    tool_name = getattr(resp_msg, "tool_name", "unknown")
+                    tool_name = getattr(resp_msg, "name", None) or "unknown"
+                    self._record_external_tool_return(tools, tool_name, resp_msg)
                     await self._report_execution_event(
                         tools,
                         "tool_result",
@@ -648,9 +650,20 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
                 self._mcp.send_message_tool,
             )
-            await deliver_reply(tools, final_text, mentions=mentions)
+            await relay_reply(tools, final_text, mentions=mentions)
 
         return final_text_parts
+
+    def _record_external_tool_return(
+        self, tools: AgentToolsProtocol, tool_name: str, resp_msg: Any
+    ) -> None:
+        """Record an external band-mcp call's effect on the turn.
+
+        A self-hosted call runs on this room's own tools, which record it
+        themselves; an external server's call is visible only in the stream.
+        """
+        if self.config.mcp.mode == "external" and resp_msg.status == "success":
+            tools.turn.record(turn_effect(tool_name))
 
     async def _report_execution_event(
         self,

@@ -19,6 +19,7 @@ from band.converters.langchain import LangChainHistoryConverter, LangChainMessag
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import Turn
 from band.core.types import (
     Capability,
     Emit,
@@ -175,25 +176,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         )
         self.config = config or LangGraphAdapterConfig()
 
-        # Accept the SDK's portable custom-tool form: convert any CustomToolDef
-        # (InputModel, handler) tuples in additional_tools to LangChain tools — the
-        # same shape every other adapter takes — while passing ready-made LangChain
-        # tools through untouched. Done once here so both the simple and advanced
-        # patterns get a uniform tool list, and a tool written once works across
-        # adapters (LangChain would otherwise reject a bare tuple).
-        if additional_tools:
-            normalized: list[Any] = []
-            for item in additional_tools:
-                if isinstance(
-                    item, tuple
-                ):  # a band CustomToolDef (InputModel, handler)
-                    normalized.extend(
-                        langchain_tools.custom_tool_defs_to_langchain([item])
-                    )
-                else:  # already a LangChain tool / callable
-                    normalized.append(item)
-            additional_tools = normalized
-
         uses_simple_pattern = (
             llm is not None and graph_factory is None and graph is None
         )
@@ -213,19 +195,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             if checkpointer is None:
                 checkpointer = InMemorySaver()
 
-            additional = additional_tools or []
-
-            def factory(band_tools: list[Any]) -> Pregel:
-                all_tools = band_tools + additional
+            def factory(turn_tools: list[Any]) -> Pregel:
                 return create_agent(
                     model=llm,
-                    tools=all_tools,
+                    tools=turn_tools,
                     checkpointer=checkpointer,
                 )
 
             graph_factory = factory
-            # Clear additional_tools since they're now baked into the factory
-            additional_tools = []
 
         if not graph_factory and not graph:
             raise ValueError(
@@ -248,6 +225,20 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # reconnects that re-deliver bootstrap don't duplicate messages on
         # top of the checkpointer's already-stored state.
         self._bootstrapped_rooms: OrderedDict[str, None] = OrderedDict()
+
+    def _additional_tools_for_turn(self, turn: Turn) -> list[Any]:
+        """The caller's extra tools as LangChain tools for one room turn.
+
+        Portable ``CustomToolDef`` tuples are converted here, per turn, so each
+        call records its effect on that room's turn; ready-made LangChain tools
+        pass through untouched.
+        """
+        return [
+            langchain_tools.custom_tool_def_to_langchain(tool, turn=turn)
+            if isinstance(tool, tuple)
+            else tool
+            for tool in self.additional_tools
+        ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched."""
@@ -325,14 +316,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
         try:
-            # Get LangChain tools
-            lc_tools = (
-                langchain_tools.agent_tools_to_langchain(
-                    tools,
-                    features=self.features,
-                )
-                + self.additional_tools
-            )
+            lc_tools = langchain_tools.agent_tools_to_langchain(
+                tools,
+                features=self.features,
+            ) + self._additional_tools_for_turn(tools.turn)
 
             # Build or get graph
             if self.graph_factory:

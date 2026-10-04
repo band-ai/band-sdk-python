@@ -568,7 +568,10 @@ class RoomApprovals:
         )
 
     async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
-        """Post a room message best-effort.
+        """Post an adapter notice best-effort.
+
+        A notice, never the turn's reply: it posts on the in-flight turn's
+        tools, and counting it would stop that turn relaying the model's answer.
 
         A send failure must never strand the turn or crash the SSE event loop:
         the platform requires at least one mention, so a sender-less turn (no
@@ -578,7 +581,7 @@ class RoomApprovals:
         if (tools := self._ports.tools()) is None:
             return
         try:
-            await tools.send_message(text, mentions=mentions)
+            await tools.send_notice(text, mentions=mentions)
         except Exception:
             logger.exception(
                 "Failed to post approval message to room %s", self._ports.room_id

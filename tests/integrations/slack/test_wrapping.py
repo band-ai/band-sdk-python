@@ -860,15 +860,22 @@ async def test_brain_exception_does_not_break_subsequent_events():
 # ── SlackTeeingTools — new behavior ─────────────────────────────────────────
 
 
-def _make_tee_tools(
-    slack: AsyncMock | None = None,
-) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
+def _make_band_tools() -> AgentTools:
     rest = MagicMock()
     rest.agent_api_events.create_agent_chat_event = AsyncMock()
     rest.agent_api_messages.create_agent_chat_message = AsyncMock(
         return_value=SimpleNamespace(data=SimpleNamespace(id="m"))
     )
-    base = AgentTools(room_id="r1", rest=rest, participants=[])
+    return AgentTools(room_id="r1", rest=rest, participants=[])
+
+
+def _make_tee_tools(
+    slack: AsyncMock | None = None,
+    *,
+    wrap: AgentTools | None = None,
+) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
+    base = wrap or _make_band_tools()
+    rest = base.rest
     if slack is None:
         # Only set defaults when constructing a fresh mock; a caller-provided
         # ``slack`` may have custom side_effects we mustn't overwrite.
@@ -905,6 +912,28 @@ async def test_slack_send_message_returns_error_dict_on_failure():
     result = await tools.slack_send_message("hello")
     assert result["ok"] is False
     assert "kaboom" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chat_post_message", "replied"),
+    [
+        pytest.param(AsyncMock(return_value={"ok": True}), True, id="posted"),
+        pytest.param(AsyncMock(side_effect=RuntimeError("kaboom")), False, id="failed"),
+    ],
+)
+async def test_slack_reply_settles_the_wrapped_turn_only_when_posted(
+    chat_post_message: AsyncMock, replied: bool
+):
+    """The adapter judges the turn on the tools it handed out, not the tee."""
+    slack = AsyncMock()
+    slack.chat_postMessage = chat_post_message
+    band_tools = _make_band_tools()
+    tools, _, _ = _make_tee_tools(slack=slack, wrap=band_tools)
+
+    await tools.execute_tool_call(SLACK_SEND_MESSAGE_TOOL_NAME, {"content": "hi"})
+
+    assert band_tools.turn.replied is replied
 
 
 def test_get_anthropic_tool_schemas_includes_slack_send_message():

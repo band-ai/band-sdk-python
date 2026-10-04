@@ -371,8 +371,7 @@ class SimpleAdapter(ABC, Generic[H]):
         that calls the per-adapter ``on_message`` override), so this is where
         the turn's trace-context correlation window opens -- every log line
         emitted anywhere during this turn's processing picks it up via
-        ``band.logging_config``'s log filter. (``runtime/oneshot.py`` is a
-        separate, non-adapter delivery path and does not go through here.)
+        ``band.logging_config``'s log filter.
         """
         with trace_context_scope():
             # Convert history if converter is set

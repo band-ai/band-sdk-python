@@ -21,12 +21,15 @@ from pydantic import BaseModel, ValidationError
 from band.core.exceptions import BandToolError
 from band.core.memory_types import memory_type_field_description
 from band.core.types import AdapterFeatures, Capability, Emit
-from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import (
+    BandTool,
+    TurnEffect,
     file_content_placeholder,
     image_block_placeholder,
     iter_tool_definitions,
 )
+from band.testing.fake_tools import FakeAgentTools
 
 
 class MockBaseTool:
@@ -818,6 +821,79 @@ class TestMissingContext:
         result = json.loads(result_str)
         assert result["status"] == "error"
         assert "No room context available" in result["message"]
+
+
+# --- Turn ledger: the catalog calls the recording tool methods directly ---
+
+
+class RecordInput(BaseModel):
+    """Record a value."""
+
+    value: str
+
+
+async def record_value(args: RecordInput) -> str:
+    return args.value
+
+
+@declares_turn_effect(TurnEffect.ACT)
+async def record_value_for_real(args: RecordInput) -> str:
+    return args.value
+
+
+@pytest.fixture
+def room_tools() -> FakeAgentTools:
+    return FakeAgentTools()
+
+
+@pytest.fixture
+def crew_tools(builder_mod, room_tools):
+    """The crew's tools by name, bound to ``room_tools`` as the room context."""
+
+    def build(custom_tools: list[Any] | None = None) -> dict[str, Any]:
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=room_tools)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            custom_tools=custom_tools,
+        )
+        return {tool.name: tool for tool in tools}
+
+    return build
+
+
+class TestTurnLedger:
+    def test_send_message_marks_the_turn_replied(self, crew_tools, room_tools):
+        crew_tools()[BandTool.SEND_MESSAGE]._run(content="hi", mentions=["@alice"])
+
+        assert room_tools.turn.replied
+
+    def test_failed_send_then_event_leaves_the_turn_incomplete(
+        self, crew_tools, room_tools
+    ):
+        """A rejected reply followed by narration is still a turn owed a reply."""
+        room_tools.send_message_error = BandToolError("Unknown participant 'user1'")
+        tools = crew_tools()
+
+        tools[BandTool.SEND_MESSAGE]._run(content="hi", mentions=["@user1"])
+        tools[BandTool.SEND_EVENT]._run(content="thinking", message_type="thought")
+
+        assert (room_tools.messages_sent, len(room_tools.events_sent)) == ([], 1)
+        assert not room_tools.turn.complete
+
+    @pytest.mark.parametrize(
+        ("handler", "completes"),
+        [(record_value, False), (record_value_for_real, True)],
+        ids=["undeclared-observes", "declared-act"],
+    )
+    def test_custom_tool_records_its_declared_effect(
+        self, crew_tools, room_tools, handler, completes
+    ):
+        tool_name = get_custom_tool_name(RecordInput)
+
+        crew_tools([(RecordInput, handler)])[tool_name]._run(value="x")
+
+        assert room_tools.turn.complete is completes
 
 
 # --- run_async + nest_asyncio lazy patch ---

@@ -182,6 +182,11 @@ def _format_success_payload(
     return {"status": "success", "result": result}
 
 
+def _room_id(args: dict[str, Any], *, include_room_id: bool) -> str:
+    """The room a tool call targets; ``""`` when its schema carries no room."""
+    return args.get(CHAT_ID_FIELD_NAME, "") if include_room_id else ""
+
+
 async def _maybe_call_tool_result_hook(
     tool_result_hook: ToolResultHook | None,
     tool_name: str,
@@ -212,7 +217,7 @@ def _build_builtin_sdk_tool(
         schema,
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
-        room_id = args.get(CHAT_ID_FIELD_NAME, "") if include_room_id else ""
+        room_id = _room_id(args, include_room_id=include_room_id)
         raw_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
         tools = get_tools(room_id)
         if tools is None:
@@ -258,6 +263,7 @@ def _build_builtin_sdk_tool(
 def _build_custom_sdk_tool(
     tool_def: CustomToolDef,
     *,
+    get_tools: ToolResolver,
     include_room_id: bool,
 ) -> SdkMcpTool[Any]:
     input_model, _ = tool_def
@@ -272,7 +278,10 @@ def _build_custom_sdk_tool(
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
             tool_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
-            result = await execute_custom_tool(tool_def, tool_args)
+            tools = get_tools(_room_id(args, include_room_id=include_room_id))
+            result = await execute_custom_tool(
+                tool_def, tool_args, turn=tools.turn if tools is not None else None
+            )
             return _make_result(result)
         except Exception as error:
             logger.exception("Custom tool %s failed", tool_name)
@@ -306,6 +315,7 @@ def build_band_sdk_tools(
         sdk_tools.append(
             _build_custom_sdk_tool(
                 custom_tool,
+                get_tools=get_tools,
                 include_room_id=include_room_id,
             )
         )

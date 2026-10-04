@@ -55,7 +55,7 @@ from band.integrations.slack.block_kit import (
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.platform.posting import post_event
-from band.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools, TurnEffect
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -151,8 +151,10 @@ class SlackTeeingTools(AgentTools):
             hub_room_id=wrap._hub_room_id,
         )
         # Carry ExecutionContext over so any tool methods that lean on
-        # it (e.g. lookup_peers) keep working.
+        # it (e.g. lookup_peers) keep working, and share the turn so the
+        # adapter judging ``wrap`` sees what the brain did through this tee.
         self._ctx = wrap._ctx
+        self.turn = wrap.turn
         self._slack = slack
         self._binding = binding
         self._write_tool_names: frozenset[str] = (
@@ -216,6 +218,7 @@ class SlackTeeingTools(AgentTools):
                 self._binding.thread_ts,
             )
             return {"ok": False, "error": str(exc)}
+        self.turn.record(TurnEffect.REPLY)
         return {"ok": True}
 
     # ── Schema injection ────────────────────────────────────────────

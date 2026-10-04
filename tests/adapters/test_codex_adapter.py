@@ -49,7 +49,7 @@ from band.integrations.codex.types import (
 )
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
 from band.runtime.decisions import DecisionRegistry
-from band.runtime.tools import ToolCallOutcome, TurnEffect
+from band.runtime.tools import BandTool, ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.adapters.codexturns import RecordedRequests, await_released_turn
 from tests.paths import host_absolute_path
@@ -390,34 +390,40 @@ async def send_bootstrap(
 
 class CodexRoom:
     """A Codex room fed messages one at a time, as Band delivers them: each
-    ``send`` returns once the adapter hands the room back -- its turn done,
-    or parked on a human decision."""
+    ``send`` gets its own tools and returns once the adapter hands the room
+    back -- its turn done, or parked on a human decision."""
 
-    def __init__(
-        self, adapter: CodexAdapter, client: FakeCodexClient, tools: FakeAgentTools
-    ) -> None:
+    def __init__(self, adapter: CodexAdapter, client: FakeCodexClient) -> None:
         self.adapter = adapter
         self.client = client
-        self.tools = tools
-        self._bootstrapped = False
+        self.deliveries: list[FakeAgentTools] = []
 
     @property
     def chat(self) -> list[str]:
-        return [message["content"] for message in self.tools.messages_sent]
+        """Room messages, grouped by the delivery whose tools posted them."""
+        return [
+            message["content"]
+            for tools in self.deliveries
+            for message in tools.messages_sent
+        ]
+
+    @property
+    def events_sent(self) -> list[dict[str, Any]]:
+        return [event for tools in self.deliveries for event in tools.events_sent]
 
     @property
     def turn(self) -> asyncio.Task[None]:
         return self.adapter._turn_tasks[ROOM_ID]
 
     async def send(self, content: str) -> None:
-        bootstrap, self._bootstrapped = not self._bootstrapped, True
+        self.deliveries.append(tools := ToolSchemaFakeTools())
         await self.adapter.on_message(
             make_platform_message(room_id=ROOM_ID, content=content),
-            self.tools,
+            tools,
             CodexSessionState(),
             participants_msg=None,
             contacts_msg=None,
-            is_session_bootstrap=bootstrap,
+            is_session_bootstrap=len(self.deliveries) == 1,
             room_id=ROOM_ID,
         )
 
@@ -442,7 +448,7 @@ async def codex_room() -> AsyncIterator[Callable[..., Awaitable[CodexRoom]]]:
             client, config=CodexAdapterConfig(**{"approval_mode": "manual", **config})
         )
         await adapter.on_started("Agent", "A coding agent")
-        rooms.append(room := CodexRoom(adapter, client, ToolSchemaFakeTools()))
+        rooms.append(room := CodexRoom(adapter, client))
         return room
 
     yield open_room
@@ -705,7 +711,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_auto_approval_responds_even_if_notification_fails(self) -> None:
         class FailingNotifyTools(ToolSchemaFakeTools):
-            async def send_message(
+            async def send_notice(
                 self, content: str, mentions: list[dict[str, str]] | None = None
             ) -> Any:
                 raise RuntimeError("notification failed")
@@ -748,7 +754,7 @@ class TestCodexAdapter:
         self,
     ) -> None:
         class FailingNotifyTools(ToolSchemaFakeTools):
-            async def send_message(
+            async def send_notice(
                 self, content: str, mentions: list[dict[str, str]] | None = None
             ) -> Any:
                 raise RuntimeError("notification failed")
@@ -5139,7 +5145,7 @@ class TestNetworkContext:
 
         [approval_event] = [
             e
-            for e in room.tools.events_sent
+            for e in room.events_sent
             if e["metadata"].get("codex_event_type") == "approval_request"
         ]
         assert approval_event["metadata"]["codex_network_context"] == {
@@ -6043,20 +6049,20 @@ class TestSlashCommandCoverage:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """/help's answer failing to post is Band-side delivery, not a Codex
-        provider failure -- deliver_reply's DeliveryFailedError must be
+        provider failure -- its DeliveryFailedError must be
         recognized and left unreported here. The original cause still
         propagates (the message still fails/retries at the platform level),
         just never misreported as a Codex AgentFailure."""
 
-        class FailingSendMessageTools(ToolSchemaFakeTools):
-            async def send_message(
+        class FailingNoticeTools(ToolSchemaFakeTools):
+            async def send_notice(
                 self, content: str, mentions: list[dict[str, str]] | None = None
             ) -> Any:
                 raise RuntimeError("platform rejected the message")
 
         fake_client = FakeCodexClient()
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = FailingSendMessageTools()
+        tools = FailingNoticeTools()
 
         await adapter.on_started("Agent", "A coding agent")
         with (
@@ -6087,15 +6093,15 @@ class TestSlashCommandCoverage:
         the approval-command path, which runs outside on_message's main
         try/except and needs its own DeliveryFailedError handling."""
 
-        class FailingSendMessageTools(ToolSchemaFakeTools):
-            async def send_message(
+        class FailingNoticeTools(ToolSchemaFakeTools):
+            async def send_notice(
                 self, content: str, mentions: list[dict[str, str]] | None = None
             ) -> Any:
                 raise RuntimeError("platform rejected the message")
 
         fake_client = FakeCodexClient()
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = FailingSendMessageTools()
+        tools = FailingNoticeTools()
 
         await adapter.on_started("Agent", "A coding agent")
         with (
@@ -6788,6 +6794,41 @@ class TestNoReply:
         assert room.chat == ["Second answer"]
 
 
+class TestFinalTextRelay:
+    @pytest.mark.asyncio
+    async def test_a_tool_reply_suppresses_the_final_text(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(
+                    1, BandTool.SEND_MESSAGE, {"content": "Hi", "mentions": ["@a"]}
+                ),
+                _final_text("Hi, again."),
+                _turn_completed(),
+            ]
+        )
+
+        assert turn.tools.messages_sent == []
+
+    @pytest.mark.asyncio
+    async def test_a_policy_notification_never_stands_in_for_the_answer(
+        self,
+    ) -> None:
+        turn = await run_codex_turn(
+            events=[
+                *parked_on_approval(_final_text("Tests pass.")),
+                _turn_completed(),
+            ],
+            config=CodexAdapterConfig(
+                approval_mode="auto_accept", approval_text_notifications=True
+            ),
+        )
+
+        assert [m["content"] for m in turn.tools.messages_sent] == [
+            "Approval requested (command: a). Policy decision: accept.",
+            "Tests pass.",
+        ]
+
+
 class StayQuietInput(BaseModel):
     """Say nothing this turn."""
 
@@ -6823,3 +6864,24 @@ class TestCustomToolEffect:
         )
 
         assert [m["content"] for m in turn.tools.messages_sent] == chat
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("declare", "complete"),
+        [
+            pytest.param(declares_turn_effect(TurnEffect.ACT), True, id="declared"),
+            pytest.param(_undeclared, False, id="undeclared-observes"),
+        ],
+    )
+    async def test_the_tool_records_its_effect_on_the_turn(
+        self, declare: Callable[..., Any], complete: bool
+    ) -> None:
+        async def stay_quiet(args: StayQuietInput) -> str:
+            return "quiet"
+
+        turn = await run_codex_turn(
+            events=[_tool_call_request(1, "stayquiet"), _turn_completed()],
+            additional_tools=[(StayQuietInput, declare(stay_quiet))],
+        )
+
+        assert turn.tools.turn.complete is complete

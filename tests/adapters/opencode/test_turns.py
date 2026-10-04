@@ -9,6 +9,10 @@ import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.opencode.approvals import (
+    APPROVAL_HANDLED_TEMPLATE,
+    APPROVAL_REQUESTED_TEMPLATE,
+)
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import (
     Capability,
@@ -16,9 +20,11 @@ from band.core.types import (
 )
 from band.integrations.opencode import ApprovalReply, parse_opencode_event
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools, reported_failures
+from band.runtime.tools import BandTool
+from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
+    FakeMCPBackend,
     FakeOpencodeClient,
     TaskEventFailingTools,
     event_message_updated,
@@ -1086,17 +1092,18 @@ async def test_turn_completes_when_fallback_reply_send_rejected(
 
 
 async def test_room_posting_tool_reply_suppresses_text_fallback(
-    make_adapter, tools
+    make_adapter, tools, mcp_backend: FakeMCPBackend
 ) -> None:
     """When the model replies via band_send_message, the adapter must not also
-    post the assistant's plain text (double-post). Detection holds without
-    execution reporting: Emit.TOOL_CALLS governs only the tool_call/tool_result
-    narration, not the text-fallback suppression."""
+    post the assistant's plain text (double-post)."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
                 event_message_updated("sess-1", "msg-1"),
                 event_text_part("sess-1", "msg-1", "I sent it via the tool."),
+                mcp_backend.band_tool_call(
+                    BandTool.SEND_MESSAGE, {"content": "hi", "mentions": ["@alice"]}
+                ),
                 event_tool_part(
                     "sess-1",
                     "msg-1",
@@ -1113,9 +1120,126 @@ async def test_room_posting_tool_reply_suppresses_text_fallback(
 
     await run_single_turn(adapter, tools)
 
-    # The tool (not executed by the fake) was the reply; the fallback stays
-    # silent, so the adapter posts no message of its own.
-    assert tools.messages_sent == []
+    assert [m["content"] for m in tools.messages_sent] == ["hi"]
+
+
+async def test_approval_prompts_never_stand_in_for_the_models_reply(
+    make_adapter, tools
+) -> None:
+    """The permission prompt and its confirmation post on the turn's own tools
+    mid-turn. They are adapter notices, so the model's final text is still
+    relayed: the turn ends with exactly one model reply."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-1"),
+                event_permission("sess-1", "req-1"),
+            ]
+        ],
+        reply_permission_events={
+            "req-1": [
+                event_text_part("sess-1", "msg-1", "Approved and done."),
+                event_session_idle("sess-1"),
+            ]
+        },
+    )
+    adapter = make_adapter(fake_client)
+
+    # Returns once the permission ask releases the turn wait.
+    await run_single_turn(adapter, tools, content="run it")
+    await adapter.on_message(
+        make_platform_message(content="approve req-1"),
+        tools_protocol(FakeAgentTools()),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await wait_for(lambda: tools.turn.replied)
+
+    assert [m["content"] for m in tools.messages_sent] == [
+        APPROVAL_REQUESTED_TEMPLATE.format(
+            permission="bash", patterns="rm -rf tmp", request_id="req-1"
+        ),
+        APPROVAL_HANDLED_TEMPLATE.format(request_id="req-1", reply="once"),
+        "Approved and done.",
+    ]
+    assert tools.turn.complete
+
+
+async def test_approval_reply_is_settled_and_leaves_the_turn_its_tools(
+    make_adapter, tools, mcp_backend: FakeMCPBackend
+) -> None:
+    """The approve message runs no model, so its own turn is settled; and the
+    resumed turn's band tool calls still resolve to the turn's tools."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_permission("sess-1", "req-1")]],
+        reply_permission_events={
+            "req-1": [
+                mcp_backend.band_tool_call(
+                    BandTool.SEND_MESSAGE, {"content": "Done.", "mentions": ["@alice"]}
+                ),
+                event_session_idle("sess-1"),
+            ]
+        },
+    )
+    adapter = make_adapter(fake_client)
+    approver_tools = FakeAgentTools()
+
+    await run_single_turn(adapter, tools, content="run it")
+    await adapter.on_message(
+        make_platform_message(content="approve req-1"),
+        tools_protocol(approver_tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await wait_for(lambda: tools.turn.replied)
+
+    assert approver_tools.turn.complete
+    assert approver_tools.messages_sent == []
+    assert tools.messages_sent[-1]["content"] == "Done."
+
+
+async def test_busy_message_is_settled_and_leaves_the_turn_its_tools(
+    make_adapter, tools, mcp_backend: FakeMCPBackend
+) -> None:
+    """A message arriving mid-turn only gets the busy notice, which settles
+    its own turn; the running turn's band tool calls still resolve to the
+    turn's tools."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_message_updated("sess-1", "msg-1")]]
+    )
+    adapter = make_adapter(fake_client)
+    busy_tools = FakeAgentTools()
+    running_turn = asyncio.create_task(run_single_turn(adapter, tools))
+    await wait_for(lambda: len(fake_client.prompt_calls) == 1)
+
+    await adapter.on_message(
+        make_platform_message(content="are you done?"),
+        tools_protocol(busy_tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await fake_client.push_event(
+        mcp_backend.band_tool_call(
+            BandTool.SEND_MESSAGE, {"content": "Done.", "mentions": ["@alice"]}
+        )
+    )
+    await fake_client.push_event(event_session_idle("sess-1"))
+    await running_turn
+
+    assert busy_tools.turn.complete
+    assert [e["content"] for e in events_of_type(busy_tools, "error")] == [
+        "OpenCode is still processing the previous request in this room."
+    ]
+    assert [m["content"] for m in tools.messages_sent] == ["Done."]
 
 
 async def test_non_room_posting_tool_does_not_suppress_text(

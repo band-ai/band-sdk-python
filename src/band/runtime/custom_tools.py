@@ -14,6 +14,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from band.core.turn import Turn
 from band.runtime.tools.types import TurnEffect
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,10 @@ _Handler = TypeVar("_Handler", bound=Callable[..., Any])
 def declares_turn_effect(effect: TurnEffect) -> Callable[[_Handler], _Handler]:
     """Declare what a custom tool's successful call does to the turn's reply.
 
-    ``ACT``: it did real work, so an empty final answer afterwards is benign.
+    ``ACT``: it did real work, so the turn is complete without a reply.
     ``REPLY``: it delivers the answer itself, so no fallback text is relayed.
     ``DECLINE``: silence is the answer, so no fallback text is relayed either.
-    An undeclared custom tool fails loud (see ``runtime.tools.turn_effect``).
+    An undeclared custom tool counts as ``OBSERVE``: the turn still owes a reply.
     """
 
     def declare(handler: _Handler) -> _Handler:
@@ -191,6 +192,8 @@ def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
 async def execute_custom_tool(
     tool: CustomToolDef,
     arguments: dict[str, Any],
+    *,
+    turn: Turn | None,
 ) -> Any:
     """
     Execute custom tool with Pydantic validation.
@@ -198,6 +201,8 @@ async def execute_custom_tool(
     Args:
         tool: (InputModel, callable) tuple
         arguments: Raw arguments dict from LLM
+        turn: The turn to record the tool's declared effect on, or ``None``
+            when the tool is not bound to a room, so it cannot settle a turn.
 
     Returns:
         Tool execution result
@@ -222,12 +227,14 @@ async def execute_custom_tool(
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
-    return await invoke_validated_custom_tool(tool, validated)
+    return await invoke_validated_custom_tool(tool, validated, turn=turn)
 
 
 async def invoke_validated_custom_tool(
     tool: CustomToolDef,
     validated: Any,
+    *,
+    turn: Turn | None,
 ) -> Any:
     """
     Execute a custom tool whose arguments are already a validated InputModel
@@ -237,7 +244,7 @@ async def invoke_validated_custom_tool(
     pydantic-ai validates tool args natively): re-serializing the instance to
     a dict and re-validating would break models using field aliases, so the
     instance is passed through as-is. Async/zero-argument handler semantics
-    match :func:`execute_custom_tool` exactly.
+    match :func:`execute_custom_tool` exactly, and so does ``turn``.
     """
     model, func = tool
 
@@ -255,5 +262,7 @@ async def invoke_validated_custom_tool(
     # coroutine unawaited).
     result = func(*args)
     if inspect.isawaitable(result):
-        return await result
+        result = await result
+    if turn is not None:
+        turn.record(declared_effect(func) or TurnEffect.OBSERVE)
     return result

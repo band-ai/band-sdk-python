@@ -199,6 +199,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         room_id: str,
     ) -> None:
         if await self._handle_control_message(msg, tools, room_id):
+            tools.turn.settle()
             return
 
         # ext_method routing needs _turn_lock held for the whole turn (only
@@ -482,7 +483,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self._resolve_evicted_decision(registration.evicted)
         entry = registration.entry
         try:
-            await turn.tools.send_message(
+            await turn.tools.send_notice(
                 prompt.replace("{token}", entry.token),
                 mentions=_requester_mentions(turn),
             )
@@ -511,7 +512,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn: CursorTurn, kind: DecisionKind, token: str
     ) -> None:
         try:
-            await turn.tools.send_message(
+            await turn.tools.send_notice(
                 DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
                 mentions=_requester_mentions(turn),
             )
@@ -529,7 +530,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             await self._list_decisions(tools, room_id, mentions=mentions)
             return True
         if len(words) < 3:
-            await tools.send_message(
+            await tools.send_notice(
                 f"Use `{ROOM_COMMAND} {CursorCommandWord.DECISIONS}` to list pending "
                 "Cursor decisions.",
                 mentions=mentions,
@@ -538,13 +539,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         action, token = words[1].lower(), words[2]
         pending = self._pending_decisions.get(token)
         if pending is None or pending.room_id != room_id:
-            await tools.send_message(
+            await tools.send_notice(
                 DECISION_NOT_PENDING_TEMPLATE.format(token=token), mentions=mentions
             )
             return True
         result = self._command_result(action, words[3:], pending)
         if result is _INVALID_DECISION:
-            await tools.send_message(
+            await tools.send_notice(
                 f"That command is not valid for Cursor {pending.kind} decision `{token}`.",
                 mentions=mentions,
             )
@@ -558,7 +559,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         else:
             pending.future.set_result(result)
             reply = DECISION_RESOLVED_TEMPLATE.format(kind=pending.kind, token=token)
-        await tools.send_message(reply, mentions=mentions)
+        await tools.send_notice(reply, mentions=mentions)
         return True
 
     def _command_result(
@@ -678,7 +679,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             for entry in self._pending_decisions.unclaimed_in_room(room_id)
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")
-        await tools.send_message(content, mentions=mentions)
+        await tools.send_notice(content, mentions=mentions)
 
 
 def _requester_mentions(turn: CursorTurn) -> list[str] | None:

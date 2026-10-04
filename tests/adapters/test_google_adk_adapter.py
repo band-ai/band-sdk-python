@@ -20,7 +20,9 @@ from pydantic import BaseModel, Field
 
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
-from band.runtime.tools import AgentTools, BandTool
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import AgentTools, BandTool, TurnEffect
+from band.testing import FakeAgentTools
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -756,6 +758,25 @@ class TestCustomTools:
         assert "Echo: Hi" in echo_result
         assert "Sum: 5" in calc_result
         mock_tools.execute_tool_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_records_its_effect_on_the_room_turn(self):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declares_turn_effect(TurnEffect.ACT)
+        async def file_report(args: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = GoogleADKAdapter(additional_tools=[(FileInput, file_report)])
+        (bridge,) = [t for t in adapter._build_adk_tools(tools) if t.name == "file"]
+
+        await bridge.run_async(args={"note": "go"}, tool_context=MagicMock())
+
+        assert tools.turn.complete
 
 
 class TestContactsInjection:

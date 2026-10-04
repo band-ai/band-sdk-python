@@ -54,6 +54,7 @@ from band.core.types import (
     TurnUsage,
     is_usage_event,
 )
+from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect, get_tool_description
 from band.testing import (
     ErrorTurn,
@@ -152,7 +153,8 @@ def _alternates(history: list) -> bool:
 
 
 class TestCustomToolWiring:
-    def test_custom_tool_def_converted_to_bridge(self):
+    @pytest.mark.asyncio
+    async def test_custom_tool_def_converted_to_bridge(self):
         class WeatherInput(BaseModel):
             """Get the weather for a city."""
 
@@ -166,8 +168,7 @@ class TestCustomToolWiring:
             additional_tools=[(WeatherInput, get_weather)],
         )
 
-        assert len(adapter._custom_tools) == 1
-        bridge = adapter._custom_tools[0]
+        bridge = (await _turn_agent(adapter)).tool_registry.registry["weather"]
         assert isinstance(bridge, CustomToolBridge)
         assert bridge.tool_name == "weather"
         assert bridge.tool_spec["description"] == "Get the weather for a city."
@@ -677,6 +678,28 @@ class TestTurnProductivity:
             await _run_message(adapter, tools)
 
         assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, tools, scripted
+    ):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declares_turn_effect(TurnEffect.ACT)
+        async def file_report(args: FileInput) -> str:
+            return "filed"
+
+        adapter = await scripted(
+            ToolTurn("file", {"note": "go"}),
+            additional_tools=[(FileInput, file_report)],
+        )
+
+        await _run_message(adapter, tools)
+
+        assert tools.turn.complete
 
 
 class TestTurnFailure:

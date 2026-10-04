@@ -67,6 +67,38 @@ async def test_a_room_answers_each_gated_tool_while_its_commands_stay_local(
     assert room.failures == []
 
 
+async def test_messages_during_a_parked_turn_settle_on_their_own_tools(
+    claude_room: OpenRoom,
+) -> None:
+    """While a turn waits on an approval, a command or a second request is
+    answered and settled on its own message's tools; the parked turn keeps
+    the tools it started with, and its prompt is never taken for its reply."""
+    room = await claude_room(with_approvals())
+    room.claude.script([LIST_FILES, room.model_reply("Listed.")])
+    status, busy, approve = room.fresh_tools(), room.fresh_tools(), room.fresh_tools()
+
+    await room.send("List the files")
+    prompted_turn_replied = room.tools.turn.replied
+    await room.send("/status", tools=status)
+    await room.send("And the hidden ones?", tools=busy)
+    await room.send("/approve", tools=approve)
+    await room.settled()
+
+    assert prompted_turn_replied is False
+    assert room.chat == [
+        prompt("a-1", "Bash: `ls`"),
+        resolved("a-1", "accept"),
+        "Listed.",
+    ]
+    assert room.tools.turn.replied
+    assert [message["content"] for message in busy.messages_sent] == [
+        "Still processing the previous request in this room."
+    ]
+    assert approve.messages_sent == []
+    for side_turn in (status.turn, busy.turn, approve.turn):
+        assert (side_turn.complete, side_turn.replied) == (True, False)
+
+
 async def test_a_busy_room_evicts_the_oldest_ask_and_asks_for_a_token(
     claude_room: OpenRoom,
 ) -> None:

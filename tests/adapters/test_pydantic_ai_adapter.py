@@ -72,7 +72,11 @@ from band.core.types import (
     PlatformMessage,
     TurnUsage,
 )
-from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    declares_turn_effect,
+    get_custom_tool_name,
+)
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     CHAT_TOOL_NAMES,
@@ -87,6 +91,7 @@ from band.runtime.tools import (
     get_tool_description,
     platform_args_schema,
 )
+from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
@@ -451,7 +456,7 @@ class TestInitialization:
         )
         adapter.agent_name = "TestBot"
 
-        result = await adapter._create_agent().run("go", deps=MagicMock())
+        result = await adapter._create_agent().run("go", deps=FakeAgentTools())
 
         assert result.output is None
         assert posted == ["hi"]
@@ -2403,6 +2408,25 @@ class TestCustomTools:
         assert "room-123" in adapter._message_history
 
 
+def _portable_tool_agent(
+    tool_def: CustomToolDef,
+) -> Agent[AgentToolsProtocol, str]:
+    """A bare agent running one converted ``CustomToolDef`` on pydantic-ai's own path."""
+    agent = Agent(TestModel(), deps_type=AgentToolsProtocol, output_type=str)
+    agent.tool(_custom_tool_def_to_callable(tool_def))
+    return agent
+
+
+async def _run_portable_tool(
+    tool_def: CustomToolDef, tools: FakeAgentTools | None = None
+) -> list[Any]:
+    """Run one converted ``CustomToolDef`` in a room; return what the model saw."""
+    result = await _portable_tool_agent(tool_def).run(
+        "go", deps=tools or FakeAgentTools()
+    )
+    return _tool_returns(result)
+
+
 class TestPortableCustomToolDef:
     """pydantic accepts the portable CustomToolDef (InputModel, handler) tuple form —
     the same custom-tool shape anthropic/crewai/claude_sdk/langgraph take."""
@@ -2424,26 +2448,6 @@ class TestPortableCustomToolDef:
         )
         # Normalized to a native callable named from the model (not the handler).
         assert [t.__name__ for t in adapter._custom_tools] == ["lookup"]
-        # ...and it still delegates to the handler (async — execution routes
-        # through the shared execute_custom_tool).
-        assert await adapter._custom_tools[0](LookupInput(key="alpha")) == "code:alpha"
-
-    @pytest.mark.asyncio
-    async def test_async_handler_is_awaited(self):
-        """An async portable handler must be awaited (not returned as a coroutine) —
-        the same shared-executor path every other adapter uses."""
-
-        class LookupInput(BaseModel):
-            key: str
-
-        async def lookup(args: LookupInput) -> str:
-            return f"code:{args.key}"
-
-        adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4"),
-            additional_tools=[(LookupInput, lookup)],
-        )
-        assert await adapter._custom_tools[0](LookupInput(key="beta")) == "code:beta"
 
     def test_tuple_terminal_marker_is_honored(self):
 
@@ -2473,24 +2477,13 @@ class TestPortableCustomToolDef:
         def lookup(args: LookupInput) -> str:
             return f"code:{args.key}"
 
-        native = _custom_tool_def_to_callable((LookupInput, lookup))
-        agent = Agent(TestModel())
-        agent.tool_plain(native)
-        (tool,) = agent._function_toolset.tools.values()
+        (tool,) = _portable_tool_agent(
+            (LookupInput, lookup)
+        )._function_toolset.tools.values()
         schema = tool.function_schema.json_schema
         # pydantic-ai flattens the single model param into the tool's args.
         assert tool.name == "lookup"
         assert sorted((schema.get("properties") or {}).keys()) == ["key"]
-
-    @staticmethod
-    def _tool_return_contents(result) -> list:
-
-        return [
-            part.content
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
 
     @pytest.mark.asyncio
     async def test_async_handler_tuple_is_awaited_end_to_end(self):
@@ -2506,13 +2499,7 @@ class TestPortableCustomToolDef:
         async def lookup(args: LookupInput) -> str:
             return f"code:{args.key}"
 
-        native = _custom_tool_def_to_callable((LookupInput, lookup))
-        agent = Agent(TestModel(), output_type=str)
-        agent.tool_plain(native)
-
-        result = await agent.run("go")
-
-        (content,) = self._tool_return_contents(result)
+        (content,) = await _run_portable_tool((LookupInput, lookup))
         assert isinstance(content, str)
         assert content.startswith("code:")
 
@@ -2528,13 +2515,7 @@ class TestPortableCustomToolDef:
         def ping() -> str:
             return "pong"
 
-        native = _custom_tool_def_to_callable((PingInput, ping))
-        agent = Agent(TestModel(), output_type=str)
-        agent.tool_plain(native)
-
-        result = await agent.run("go")
-
-        assert self._tool_return_contents(result) == ["pong"]
+        assert await _run_portable_tool((PingInput, ping)) == ["pong"]
 
     @pytest.mark.asyncio
     async def test_aliased_input_model_runs_end_to_end(self):
@@ -2550,12 +2531,28 @@ class TestPortableCustomToolDef:
         def lookup(args: AliasedInput) -> str:
             return f"user:{args.user_id}"
 
-        native = _custom_tool_def_to_callable((AliasedInput, lookup))
-        agent = Agent(TestModel(), output_type=str)
-        agent.tool_plain(native)
-
-        result = await agent.run("go")
-
-        (content,) = self._tool_return_contents(result)
+        (content,) = await _run_portable_tool((AliasedInput, lookup))
         assert isinstance(content, str)
         assert content.startswith("user:")
+
+    @pytest.mark.asyncio
+    async def test_declared_tool_records_its_effect_on_the_room_turn(self):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declares_turn_effect(TurnEffect.ACT)
+        def file_report(args: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools()
+        adapter = PydanticAIAdapter(
+            llm=_scripted_tool_calls(("file", {"note": "go"})),
+            additional_tools=[(FileInput, file_report)],
+        )
+        adapter.agent_name = "TestBot"
+
+        await adapter._create_agent().run("go", deps=tools)
+
+        assert tools.turn.complete

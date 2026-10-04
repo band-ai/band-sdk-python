@@ -114,12 +114,11 @@ async def test_streamed_text_deltas_become_one_message(fake_agent) -> None:
 
 @pytest.mark.asyncio
 async def test_band_tool_call_suppresses_text_fallback(fake_agent) -> None:
-    # Detection-only: the ACP stream *reports* a completed band_send_message call,
-    # but the fake doesn't actually post — will_call_tool only emits the frames — so
-    # this pins the suppression decision (tool-first delivery, matching copilot_sdk /
-    # codex), not the post. The end-to-end "exactly one visible reply" outcome, where
-    # a real band-mcp tool posts, is covered by
-    # test_band_mcp_reply_is_not_replayed_as_acp_tool_events (inject_band_tools=True).
+    # Out-of-process: an external band-mcp posts where the SDK never sees it, so
+    # the turn records the completed call from the ACP stream. will_call_tool only
+    # emits the frames, so this pins the suppression decision, not the post. The
+    # in-process outcome, where a real band-mcp tool posts, is covered by
+    # test_in_process_band_reply_suppresses_text_fallback.
     fake_agent.will_say("Posting the answer to the room now.").will_call_tool(
         "tc-1", "band_send_message", result='{"id": "msg-1"}'
     )
@@ -140,7 +139,7 @@ async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
     # where an MCP client prefixes the server name onto the (legacy) tool name. The
     # in-process LocalMCPServer advertises the SDK-native names, so this prefixed
     # `band-create_agent_chat_message` spelling has no real-post equivalent; this
-    # test pins that settles_turn_reply still matches it.
+    # test pins that its effect still resolves to a reply.
     fake_agent.will_call_tool(
         "tc-1", "band-create_agent_chat_message", result='{"id": "msg-1"}'
     ).will_say("Done — posted the answer.")
@@ -149,6 +148,44 @@ async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
 
     assert reply.texts == []
     assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+@pytest.mark.asyncio
+async def test_in_process_band_reply_suppresses_text_fallback(fake_agent) -> None:
+    """An injected Band tool's post is the turn's one reply; the closing
+    narration is not relayed after it."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "Reply from the agent",
+            "mentions": ["@pat"],
+        },
+    ).will_say("Posted the answer.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("question?", room="room-1")
+
+    assert reply.texts == ["Reply from the agent"]
+
+
+@pytest.mark.asyncio
+async def test_injected_tools_never_settle_from_the_stream(fake_agent) -> None:
+    """With Band tools injected, only the tool that really posts settles the
+    reply: a call the stream merely reports keeps the text fallback."""
+    fake_agent.will_call_tool(
+        "tc-1", "band_send_message", result='{"id": "msg-1"}'
+    ).will_say("The answer is 42.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("question?", room="room-1")
+
+    assert reply.texts == ["The answer is 42."]
 
 
 @pytest.mark.asyncio

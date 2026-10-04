@@ -30,6 +30,9 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import TurnEffect
+from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
 
 
@@ -828,6 +831,50 @@ async def failing_tool(args: EchoInput) -> str:
 
 class TestCustomTools:
     """Tests for custom tool support."""
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, sample_message
+    ):
+        @declares_turn_effect(TurnEffect.ACT)
+        async def file_echo(args: EchoInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = AnthropicAdapter(additional_tools=[(EchoInput, file_echo)])
+        await adapter.on_started("TestBot", "Test bot")
+        call_anthropic = AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[
+                        ToolUseBlock(
+                            type="tool_use",
+                            id="tool-1",
+                            name="echo",
+                            input={"message": "go"},
+                        )
+                    ],
+                    usage=make_usage(1, 1),
+                ),
+                SimpleNamespace(
+                    stop_reason="end_turn", content=[], usage=make_usage(1, 1)
+                ),
+            ]
+        )
+
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert tools.turn.complete
 
     def test_accepts_additional_tools_parameter(self):
         """Adapter should accept list of (Model, func) tuples."""

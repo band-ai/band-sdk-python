@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         TaskLifecycleState,
         TaskListState,
     )
+    from band.core.turn import Turn
     from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
@@ -51,6 +52,11 @@ FAILURE_CODE_TIMEOUT = "timeout"
 GENERIC_PROVIDER_FAILURE_MESSAGE = (
     "Internal error while processing message; see agent logs."
 )
+
+
+# ``AgentFailure.provider`` for a turn failure the runtime reports on the
+# adapter's behalf.
+TURN_FAILURE_PROVIDER = "band-runtime"
 
 
 class FailureMetadataKey(StrEnum):
@@ -150,10 +156,19 @@ class AgentToolsProtocol(Protocol):
     Implementations: AgentTools (default), FakeAgentTools (testing)
     """
 
+    turn: Turn
+    """This turn's ledger; every tool call records its effect here."""
+
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> Any:
-        """Send a message to the chat room."""
+        """Send a message to the chat room. It counts as the turn's reply."""
+        ...
+
+    async def send_notice(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> Any:
+        """Post the adapter's own message; it never counts as the turn's reply."""
         ...
 
     async def send_event(

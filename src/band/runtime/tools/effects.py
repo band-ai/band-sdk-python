@@ -10,26 +10,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from band_sdk_core import band_tool_effects
+
 from band.runtime.tools.registry import (
-    ALL_TOOL_NAMES,
-    EVENT_TOOL_NAMES,
     LEGACY_SEND_MESSAGE_TOOL,
-    READ_ONLY_TOOL_NAMES,
     canonicalize_mcp_tool_name,
 )
 from band.runtime.tools.types import BandTool, TurnEffect
 
-# Every Band tool not listed below is a durable action (ACT).
-# ``band_send_room_file`` also posts a message (the file's attaching message).
+# band-sdk-core owns the effect of every Band tool. The legacy send-message
+# spelling is Python's own alias for band_send_message.
 _BAND_EFFECTS: dict[str, TurnEffect] = {
-    **dict.fromkeys(ALL_TOOL_NAMES, TurnEffect.ACT),
-    **dict.fromkeys(READ_ONLY_TOOL_NAMES | EVENT_TOOL_NAMES, TurnEffect.OBSERVE),
-    **dict.fromkeys(
-        {BandTool.SEND_MESSAGE, BandTool.SEND_ROOM_FILE, LEGACY_SEND_MESSAGE_TOOL},
-        TurnEffect.REPLY,
-    ),
-    BandTool.NO_REPLY: TurnEffect.DECLINE,
+    name: TurnEffect(effect.wire_name) for name, effect in band_tool_effects().items()
 }
+_BAND_EFFECTS[LEGACY_SEND_MESSAGE_TOOL] = _BAND_EFFECTS[BandTool.SEND_MESSAGE]
 
 
 def turn_effect(

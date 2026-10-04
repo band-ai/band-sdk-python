@@ -162,8 +162,9 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     tool callable — the same custom-tool form the other adapters accept.
 
     pydantic-ai flattens a single Pydantic-model parameter into the tool's arguments,
-    so the wrapper keeps the ``(args: InputModel)`` registration shape. Execution is
-    routed through the shared ``invoke_validated_custom_tool`` so the CustomToolDef
+    so the wrapper keeps the ``(args: InputModel)`` registration shape after a
+    leading ``RunContext``, whose deps are the room's tools, so each call records
+    its effect on that room's turn. Execution is routed through the shared ``invoke_validated_custom_tool`` so the CustomToolDef
     contract matches every other adapter: async handlers are awaited and
     zero-argument handlers (empty InputModel) are called without args — a plain sync
     passthrough would hand pydantic-ai an unawaited coroutine or raise TypeError for
@@ -175,12 +176,16 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     """
     input_model, handler = tool_def
 
-    async def native(args: Any) -> Any:
-        return await invoke_validated_custom_tool(tool_def, args)
+    async def native(ctx: RunContext[AgentToolsProtocol], args: Any) -> Any:
+        return await invoke_validated_custom_tool(tool_def, args, turn=ctx.deps.turn)
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
-    native.__annotations__ = {"args": input_model, "return": str}
+    native.__annotations__ = {
+        "ctx": RunContext[AgentToolsProtocol],
+        "args": input_model,
+        "return": str,
+    }
     if (effect := declared_effect(handler)) is not None:
         declares_turn_effect(effect)(native)
     return native
@@ -190,8 +195,8 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     """Whether ``fn`` takes pydantic-ai's ``RunContext`` as its first parameter.
 
     Decides the registration path: ``agent.tool`` handles RunContext-first
-    callables, while ``agent.tool_plain`` handles context-free ones — the shape
-    ``_custom_tool_def_to_callable`` produces. pydantic-ai injects an unannotated
+    callables (including what ``_custom_tool_def_to_callable`` produces), while
+    ``agent.tool_plain`` handles context-free ones. pydantic-ai injects an unannotated
     first parameter as context; a non-RunContext annotation is invalid on the
     former path.
     Annotations are resolved, so a caller using ``from __future__ import

@@ -44,8 +44,7 @@ class TestInitialization:
         )
 
         assert adapter.graph_factory is not None
-        # additional_tools cleared after baking into factory
-        assert adapter.additional_tools == []
+        assert adapter.additional_tools == [mock_tool]
 
     def test_simple_pattern_creates_default_checkpointer(self, mock_llm):
         """The simple path should not silently become stateless."""

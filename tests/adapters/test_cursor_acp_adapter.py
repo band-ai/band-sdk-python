@@ -35,17 +35,26 @@ from tests.integrations.acp.acp_toolkit.harness import launch_for, pair_in_proce
 
 class DecisionTools(FakeAgentTools):
     """Room tools that enforce the real mention contract (unlike a hand-rolled
-    fake, this raises on a mention-less send -- see FakeAgentTools.send_message)
-    and signal once a pending decision is visible in the room."""
+    fake, this raises on a mention-less send -- see FakeAgentTools.send_notice)
+    and signal once a pending decision is visible in the room.
+
+    Decision prompts and replies are the adapter's own posts, so they go
+    through ``send_notice``; it honors ``hold_message`` like ``send_message``.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.prompt_sent = asyncio.Event()
 
-    async def send_message(
+    async def send_notice(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> object:
-        result = await super().send_message(content, mentions)
+        if (held := self._take_held_message(content)) is not None:
+            held.sending.set()
+            await held.released.wait()
+            if held.error is not None:
+                raise held.error
+        result = await super().send_notice(content, mentions)
         self.prompt_sent.set()
         return result
 
@@ -59,12 +68,12 @@ class FailingDecisionTools(DecisionTools):
         super().__init__()
         self._fail_after = fail_after
 
-    async def send_message(
+    async def send_notice(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> object:
         if len(self.messages_sent) >= self._fail_after:
             raise RuntimeError("room delivery failed")
-        return await super().send_message(content, mentions)
+        return await super().send_notice(content, mentions)
 
 
 def _turn(
@@ -119,11 +128,13 @@ class CursorRoom:
     def chat(self) -> list[str]:
         return [cast(str, sent["content"]) for sent in self.tools.messages_sent]
 
-    async def send(self, content: str) -> None:
+    async def send(self, content: str, *, tools: FakeAgentTools | None = None) -> None:
+        """Deliver ``content``; ``tools`` stands in for the message's own
+        per-event tools, which default to the room's shared ones."""
         bootstrap, self._bootstrapped = not self._bootstrapped, True
         await self.adapter.on_message(
             room_message(content),
-            self.tools,
+            tools or self.tools,
             ACPClientSessionState(),
             None,
             None,
@@ -920,6 +931,32 @@ class TestCursorACPAdapterDecisions:
 
 
 class TestCursorACPAdapterControlMessages:
+    @pytest.mark.asyncio
+    async def test_a_decision_reply_settles_on_its_own_tools(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
+        """A decision reply is a whole turn of its own: its notice settles
+        that message's tools, and neither it nor the decision prompt stands
+        in for the parked turn's answer, which still relays there."""
+        room = await cursor_room(
+            FakeACPAgent()
+            .will_ask_permission(title="shell", allow_option_id="allow-once")
+            .will_say("ran it")
+        )
+        await room.send("run it")
+        [prompt] = room.chat
+        reply_tools = FakeAgentTools(room_id="room-1")
+
+        await room.send(
+            f"/cursor select {decision_token(prompt)} allow-once", tools=reply_tools
+        )
+        await room.tools.until_said("ran it")
+
+        assert reply_tools.turn.complete
+        assert not reply_tools.turn.replied
+        assert room.chat == [prompt, "ran it"]
+        assert room.adapter._room_tools["room-1"] is room.tools
+
     @pytest.mark.asyncio
     async def test_bare_cursor_lists_pending_decisions(self) -> None:
         tools = DecisionTools()

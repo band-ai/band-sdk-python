@@ -99,7 +99,6 @@ from band.integrations.mcp.backends import (
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.custom_tools import (
     CustomToolDef,
-    custom_tool_effects,
     get_custom_tool_name,
 )
 from band.runtime.formatters import messages_before
@@ -386,7 +385,6 @@ class ACPClientAdapter(
             config.cwd, workspace_for_room
         )
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._custom_effects = custom_tool_effects(self._custom_tools)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._profile = profile
         self._resolve_session_config = resolve_session_config
@@ -544,8 +542,8 @@ class ACPClientAdapter(
             # is already covered via iter_tool_definitions). Without it, an
             # external band-mcp's MCP-prefixed legacy call
             # (band-create_agent_chat_message) would canonicalize to nothing and
-            # narrate under the raw prefixed name — the one case reply-suppression
-            # (settles_turn_reply) already tolerates.
+            # narrate under the raw prefixed name (turn_effect would still
+            # resolve its effect).
             | {LEGACY_SEND_MESSAGE_TOOL}
         )
         return definitions, names
@@ -668,7 +666,7 @@ class ACPClientAdapter(
         # The emitter posts the turn's events live, in the order the ACP stream
         # delivers them (see RoomTurnEmitter), so narration stays interleaved with
         # the permission pair and any in-room tool post. On a clean turn its
-        # __aexit__ relays the held text (if not already posted) and the session
+        # __aexit__ relays the held text (unless the turn replied) and the session
         # bookkeeping event; on failure it posts nothing and the error is handled
         # below.
         try:
@@ -678,7 +676,8 @@ class ACPClientAdapter(
                 session_id=session_id,
                 room_id=room_id,
                 emit=self.features.emit,
-                custom_effects=self._custom_effects,
+                # Injected Band tools record their own effects in process.
+                records_tool_effects=not self.config.inject_band_tools,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,

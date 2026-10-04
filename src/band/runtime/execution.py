@@ -45,9 +45,10 @@ from band.client.streaming import (
 )
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
     TurnResultAlreadyReported,
 )
-from band.core.types import metadata_to_dict
+from band.core.types import is_contact_hub_turn, metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
@@ -61,8 +62,6 @@ from band.runtime.formatters import build_participants_message, format_history_f
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import (
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-    SYNTHETIC_SENDER_TYPE,
     ConversationContext,
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
@@ -105,11 +104,6 @@ class ExecutionState(StrEnum):
 def _error_label(e: Exception) -> str:
     """Return a non-empty label for an exception, falling back to the class name."""
     return str(e).strip() or type(e).__name__
-
-
-# ``AgentFailure.provider`` for a turn failure the runtime reports on the
-# adapter's behalf.
-_TURN_FAILURE_PROVIDER = "band-runtime"
 
 
 @runtime_checkable
@@ -1967,9 +1961,8 @@ class ExecutionContext:
 
             # Detect synthetic messages (e.g., contact events injected into hub room)
             # These don't exist in the database, so skip all tracking and marking
-            is_synthetic = (
-                payload.sender_type == SYNTHETIC_SENDER_TYPE
-                and payload.sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+            is_synthetic = is_contact_hub_turn(
+                sender_type=payload.sender_type, sender_id=payload.sender_id
             )
             if is_synthetic:
                 logger.debug("Processing synthetic contact event message")
@@ -2051,7 +2044,7 @@ class ExecutionContext:
         # The exception text can carry credentials; it stays in mark_failed
         # and the logs, and the room gets the generic message.
         await AgentTools.from_context(self).send_failure(
-            AgentFailure(_TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
         )
 
     async def _process_event_body(

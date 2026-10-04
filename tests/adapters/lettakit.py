@@ -61,9 +61,11 @@ def make_tool_call_message(
 def make_tool_return_message(
     tool_name: str = "band_send_message",
     tool_return: str = '{"status": "ok"}',
+    status: str = "success",
 ) -> MagicMock:
+    """letta-client's ``ToolReturnMessage`` names the tool in ``name``."""
     return make_letta_message(
-        "tool_return_message", tool_name=tool_name, tool_return=tool_return
+        "tool_return_message", name=tool_name, tool_return=tool_return, status=status
     )
 
 

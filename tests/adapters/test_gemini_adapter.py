@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field, ValidationError
 from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Emit, PlatformMessage, ToolEventKey
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import TurnEffect
+from band.testing import FakeAgentTools
 
 
 @pytest.fixture
@@ -431,6 +434,45 @@ class TestCustomTools:
         assert function_response is not None
         assert function_response.response == {"output": "hello"}
         mock_tools.execute_tool_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, sample_message
+    ):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declares_turn_effect(TurnEffect.ACT)
+        async def file_report(inp: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = GeminiAdapter(additional_tools=[(FileInput, file_report)])
+        await adapter.on_started("TestBot", "Test bot")
+
+        with patch.object(
+            adapter,
+            "_call_gemini",
+            AsyncMock(
+                side_effect=[
+                    _response_with_function_call("file", {"note": "go"}, "call_1"),
+                    _response_with_text(""),
+                ]
+            ),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert tools.turn.complete
 
 
 class TestReadRoomFileImagePassthrough:

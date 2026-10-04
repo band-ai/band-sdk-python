@@ -235,7 +235,9 @@ def _custom_tool(
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             async def execute(tools: AgentToolsProtocol) -> str:
                 await reporter.report_call(tools, tool_name, kwargs)
-                result = await execute_custom_tool(definition, kwargs)
+                result = await execute_custom_tool(
+                    tool=definition, arguments=kwargs, turn=tools.turn
+                )
                 await reporter.report_result(tools, tool_name, result)
                 return json.dumps({"status": "success", "result": result}, default=str)
 

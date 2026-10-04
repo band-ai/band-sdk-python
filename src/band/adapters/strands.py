@@ -42,6 +42,7 @@ from band.core.protocols import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
+from band.core.turn import Turn
 from band.core.types import (
     Capability,
     Emit,
@@ -179,8 +180,13 @@ def _input_schema(input_model: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
-def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
+StrandsCustomTool = Callable[..., Any] | CustomToolDef
+
+
+def _registered_name(tool: StrandsCustomTool) -> str:
     """Return the name Strands registers this tool under."""
+    if isinstance(tool, tuple):
+        return get_custom_tool_name(tool[0])
     if isinstance(tool, AgentTool):
         return tool.tool_name
     name = getattr(tool, "__name__", "")
@@ -192,24 +198,29 @@ def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
     return name
 
 
-def _build_custom_tools(
-    additional_tools: list[Callable[..., Any] | CustomToolDef] | None,
-) -> tuple[list[AgentTool | Callable[..., Any]], dict[str, TurnEffect]]:
-    """Adapt portable custom tools and collect the turn effects they declared."""
-    raw_tools = additional_tools or []
-    converted: list[AgentTool | Callable[..., Any]] = [
-        CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
-        for tool_def in raw_tools
-    ]
-    names = [_registered_name(tool) for tool in converted]
+def _custom_tool_effects(
+    custom_tools: list[StrandsCustomTool],
+) -> dict[str, TurnEffect]:
+    """Validate custom tool names and collect the turn effects they declared."""
+    names = [_registered_name(tool) for tool in custom_tools]
     # Strands' registry is last-wins, so a collision would silently replace the
     # platform tool the room depends on.
     shadowed = sorted(set(names) & ALL_TOOL_NAMES)
     if shadowed:
         raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
 
-    handlers = (raw[1] if isinstance(raw, tuple) else raw for raw in raw_tools)
-    return converted, declared_effects(zip(names, handlers, strict=True))
+    handlers = (tool[1] if isinstance(tool, tuple) else tool for tool in custom_tools)
+    return declared_effects(zip(names, handlers, strict=True))
+
+
+def _bind_custom_tools(
+    custom_tools: list[StrandsCustomTool], turn: Turn
+) -> list[AgentTool | Callable[..., Any]]:
+    """Adapt portable custom tools to Strands for one room turn."""
+    return [
+        CustomToolBridge(tool, turn) if isinstance(tool, tuple) else tool
+        for tool in custom_tools
+    ]
 
 
 class StrandsToolBridge(AgentTool):
@@ -245,8 +256,9 @@ class StrandsToolBridge(AgentTool):
 class CustomToolBridge(StrandsToolBridge):
     """Expose a portable custom tool through Strands' native tool protocol."""
 
-    def __init__(self, tool_def: CustomToolDef):
+    def __init__(self, tool_def: CustomToolDef, turn: Turn):
         self._tool_def = tool_def
+        self._turn = turn
         input_model, _ = tool_def
         name = get_custom_tool_name(input_model)
         super().__init__(name, input_model, input_model.__doc__ or name)
@@ -260,7 +272,7 @@ class CustomToolBridge(StrandsToolBridge):
         del invocation_state, kwargs
         try:
             result = await execute_custom_tool(
-                self._tool_def, dict(tool_use["input"] or {})
+                self._tool_def, dict(tool_use["input"] or {}), turn=self._turn
             )
         except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             yield _tool_result(
@@ -422,7 +434,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         config: StrandsAdapterConfig | None = None,
         *,
         history_converter: StrandsHistoryConverter | None = None,
-        additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
+        additional_tools: list[StrandsCustomTool] | None = None,
         llm: Model | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
@@ -448,7 +460,8 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         self._model: Model | str = model
         self._system_prompt: str | None = None
         self._message_history: dict[str, StrandsMessages] = {}
-        self._custom_tools, self._custom_effects = _build_custom_tools(additional_tools)
+        self._custom_tools = additional_tools or []
+        self._custom_effects = _custom_tool_effects(self._custom_tools)
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render the prompt after the platform supplies agent metadata."""
@@ -474,7 +487,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         overflow, keeping toolUse/toolResult pairs intact. The persisted room
         transcript is therefore capped by the framework, not unbounded.
         """
-        framework_tools = self._build_platform_tools(tools) + self._custom_tools
+        framework_tools = self._build_platform_tools(tools) + _bind_custom_tools(
+            self._custom_tools, tools.turn
+        )
         return Agent(
             model=self._model,
             messages=messages,
