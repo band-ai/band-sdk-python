@@ -6,10 +6,11 @@ import re
 from typing import Any
 
 _REDACTED = "[REDACTED]"
-# Any whitespace but CR/LF: a match crosses at most the one line break before
-# a value, so later diagnostic lines survive.
+# Any whitespace but CR/LF. The gap before a value may span line breaks (blank
+# lines included) but the value itself ends at its line, so later diagnostic
+# lines survive.
 _INLINE_SPACE = r"[^\S\r\n]"
-_VALUE_GAP = rf"{_INLINE_SPACE}*(?:(?:\r\n|\r|\n){_INLINE_SPACE}*)?"
+_VALUE_GAP = rf"{_INLINE_SPACE}*(?:(?:\r\n|\r|\n){_INLINE_SPACE}*)*"
 _SEPARATOR = rf"(?:{_INLINE_SPACE}|[_-])"
 _NAME_SEPARATOR = rf"{_SEPARATOR}?"
 # Names whose ``name: value`` in free text is a credential value.

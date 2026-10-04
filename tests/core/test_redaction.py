@@ -63,7 +63,14 @@ REDACTION_CASES = [
         "token=[REDACTED]\nretry later",
         id="value-next-keeps-later-lines",
     ),
-    pytest.param("password:\n\nnext", "password:\n\nnext", id="blank-line-label"),
+    pytest.param(
+        "api_key:\n\n  sk-abc", "api_key=[REDACTED]", id="value-after-blank-line"
+    ),
+    pytest.param(
+        "password:\n\nnext\nretry later",
+        "password=[REDACTED]\nretry later",
+        id="blank-line-keeps-later-lines",
+    ),
     pytest.param(
         "token: a\r\nretry later\napi key: b\rdone",
         "token=[REDACTED]\r\nretry later\napi key=[REDACTED]\rdone",
@@ -75,6 +82,7 @@ REDACTION_CASES = [
         id="bearer-value-next-line",
     ),
     pytest.param("Bearer\nabc\nnext", "Bearer [REDACTED]\nnext", id="bearer-next"),
+    pytest.param("Bearer\n\nabc123", "Bearer [REDACTED]", id="bearer-after-blank-line"),
     pytest.param("Bearerless: ok", "Bearerless: ok", id="bearer-prefix-word"),
     pytest.param("password:\u00a0s3cr3t", "password=[REDACTED]", id="nbsp-after-delim"),
     pytest.param("token\x0c: s3cr3t", "token=[REDACTED]", id="form-feed-before-delim"),
