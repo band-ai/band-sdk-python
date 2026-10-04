@@ -108,6 +108,8 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # Parks every connect, e.g. to land a shutdown while a session starts.
+        self.connecting: Hold | None = None
         # Modes the account or model can't run; the CLI falls back to
         # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
         self.unavailable_modes: set[ClaudePermissionMode] = set()
@@ -162,6 +164,9 @@ class FakeCLISession(Transport):
         self.alive = True
 
     async def connect(self) -> None:
+        if (hold := self.claude.connecting) is not None:
+            hold.reached.set()
+            await hold.released.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
             raise CLIConnectionError("Claude CLI exited during startup")
 

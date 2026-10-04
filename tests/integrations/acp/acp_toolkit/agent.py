@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -56,8 +57,8 @@ EFFORT_OPTION_ID = "reasoning_effort"
 
 
 @dataclass
-class ReplyGate:
-    """Holds ``set_config_option`` replies: each is applied, then waits."""
+class Gate:
+    """A pause point: ``received`` is set on arrival, then it waits for ``release``."""
 
     received: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
@@ -97,10 +98,12 @@ class FakeACPAgent:
         self._custom: PromptHandler | None = None
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
-        self._reply_gate: ReplyGate | None = None
+        self._reply_gate: Gate | None = None
         self._hangs_up_on_config = False
         # Closes this agent's end of the transport; the harness binds it.
         self.hang_up: Callable[[], None] = lambda: None
+        # Holds the connection's shutdown, as a subprocess slow to exit.
+        self.exit_gate: Gate | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -133,10 +136,15 @@ class FakeACPAgent:
         as a crashed agent process does."""
         self._hangs_up_on_config = True
 
-    def holds_config_replies(self) -> ReplyGate:
+    def holds_config_replies(self) -> Gate:
         """Apply each ``set_config_option`` at once but reply only on release."""
-        self._reply_gate = ReplyGate()
+        self._reply_gate = Gate()
         return self._reply_gate
+
+    def exits_slowly(self) -> Gate:
+        """Hold every connection's shutdown until release."""
+        self.exit_gate = Gate()
+        return self.exit_gate
 
     def advertises_models(
         self,
@@ -380,6 +388,27 @@ class FakeACPAgent:
         )
         return self
 
+    def will_update_cursor_todos(self, *contents: str) -> FakeACPAgent:
+        self._script.append(lambda a, sid: a.update_cursor_todos(sid, *contents))
+        return self
+
+    def keeps_updating_cursor_todos(self) -> asyncio.Event:
+        """Update Cursor's todos on every prompt until the connection drops;
+        the returned event is set once the first update is sent."""
+        updating = asyncio.Event()
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            for index in itertools.count():
+                try:
+                    await a.update_cursor_todos(sid, f"todo {index}")
+                except Exception:  # noqa: BLE001 -- the client hung up
+                    return
+                updating.set()
+                await asyncio.sleep(0)
+
+        self._script.append(_action)
+        return updating
+
     def will_ask_permission(
         self,
         *,
@@ -409,6 +438,16 @@ class FakeACPAgent:
 
     async def say(self, session_id: str, text: str) -> None:
         await self.emit(session_id, update_agent_message_text(text))
+
+    async def update_cursor_todos(self, session_id: str, *contents: str) -> None:
+        """Push Cursor's ``cursor/update_todos`` extension notification."""
+        todos = [
+            {"id": f"t{index}", "content": content, "status": "pending"}
+            for index, content in enumerate(contents)
+        ]
+        await self._conn_for(session_id).ext_notification(
+            "cursor/update_todos", {"sessionId": session_id, "todos": todos}
+        )
 
     def _conn_for(self, session_id: str) -> AgentSideConnection:
         conn = self._conns_by_session.get(session_id, self._current_conn)

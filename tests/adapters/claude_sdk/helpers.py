@@ -7,6 +7,7 @@ import itertools
 import json
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from band.adapters.claude_sdk import (
     ClaudeApprovalOptions,
@@ -18,10 +19,15 @@ from band.converters.claude_sdk import (
     ClaudeSDKSessionState,
 )
 from band.core.types import ApprovalMode, MessageType, PlatformMessage
-from band.runtime.tools import MCP_TOOL_PREFIX, missing_reply_error
+from band.runtime.tools import (
+    BAND_MCP_SERVER_NAME,
+    MCP_TOOL_PREFIX,
+    missing_reply_error,
+)
 from band.testing import FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude
 from tests.baseline.decisions import ModelDecision
+from tests.mcpclient import crash_backend
 
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
@@ -130,6 +136,23 @@ class ClaudeRoom:
             if event["message_type"] == MessageType.TASK
             and SESSION_ID_METADATA_KEY in (event["metadata"] or {})
         ]
+
+    @property
+    def session_band_urls(self) -> list[str]:
+        """The Band MCP URL each CLI session (any room) was started with, in order."""
+        return [
+            session.options.mcp_servers[BAND_MCP_SERVER_NAME]["url"]
+            for session in self.claude.sessions
+        ]
+
+    @property
+    def session_band_ports(self) -> list[int | None]:
+        """The Band MCP port each CLI session (any room) was started with, in order."""
+        return [urlsplit(url).port for url in self.session_band_urls]
+
+    async def crash_band_server(self) -> None:
+        """The adapter's Band MCP server dies on its own, between turns."""
+        await crash_backend(self.adapter._mcp)
 
     def beside(self, room_id: str) -> ClaudeRoom:
         """Another room served by the same adapter."""

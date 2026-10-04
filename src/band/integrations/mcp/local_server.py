@@ -102,9 +102,9 @@ class LocalMCPServer:
 
     Lifecycle is an async context manager (``async with LocalMCPServer(...)
     as server:``); ``start()``/``stop()`` remain as the escape hatch for
-    non-lexical lifetimes (``acp/client_adapter.py`` holds its server across
-    method scopes and genuinely needs them) -- they're the context manager's
-    own halves, not a second code path.
+    non-lexical lifetimes (``BandMCPBackend`` in ``backends.py`` holds its
+    server across method scopes and genuinely needs them) -- they're the
+    context manager's own halves, not a second code path.
     """
 
     def __init__(
@@ -119,6 +119,7 @@ class LocalMCPServer:
         http_path: str = LOCAL_MCP_HTTP_PATH,
         message_path: str = LOCAL_MCP_MESSAGE_PATH,
         room_bound: bool = False,
+        avoid_port: int | None = None,
     ) -> None:
         if port_min > port_max:
             raise ValueError("port_min must be less than or equal to port_max")
@@ -134,6 +135,7 @@ class LocalMCPServer:
         self._http_path = http_path
         self._message_path = message_path
         self._room_bound = room_bound
+        self._avoid_port = avoid_port
         self._tool_registrations = registrations
 
         self._lifecycle_lock = asyncio.Lock()
@@ -151,6 +153,8 @@ class LocalMCPServer:
 
     @property
     def port(self) -> int:
+        """The port the last ``start()`` bound. A stopped server keeps it, so
+        the URLs it handed out still read as the ones it served."""
         if self._port is None:
             raise RuntimeError("Local MCP server has not started")
         return self._port
@@ -253,7 +257,9 @@ class LocalMCPServer:
                 await wait_until_started(
                     uvicorn_server, serve_task, timeout_s=SERVER_START_TIMEOUT_S
                 )
-            except Exception:
+            except BaseException:
+                # Cancellation too: no caller holds a server whose start never
+                # returned, so a serve task left running here could never stop.
                 await self._stop_locked()
                 raise
 
@@ -297,7 +303,6 @@ class LocalMCPServer:
             self._uvicorn_server = None
             self._serve_task = None
             self._socket = None
-            self._port = None
 
     def _build_app(self, mcp: FastMCP) -> Starlette:
         """Mount the engine's SSE + streamable-HTTP routes onto one host app.
@@ -349,15 +354,8 @@ class LocalMCPServer:
             port = reserved_socket.getsockname()[1]
             return _listen(reserved_socket), port
 
-        # Random starting offset, not first-fit from port_min: first-fit
-        # reuses the port a just-stopped sibling freed, and that port's old
-        # consumers (an MCP client subprocess still winding down) keep
-        # sending stale traffic that wedges the new server's transport.
         last_error: OSError | None = None
-        span = self._port_max - self._port_min + 1
-        start = random.randrange(span)
-        for offset in range(span):
-            port = self._port_min + (start + offset) % span
+        for port in self._candidate_ports():
             reserved_socket = _new_reusable_socket()
             try:
                 reserved_socket.bind((self._host, port))
@@ -371,3 +369,17 @@ class LocalMCPServer:
             "Could not find a free localhost MCP port in range "
             f"{self._port_min}-{self._port_max}"
         ) from last_error
+
+    def _candidate_ports(self) -> list[int]:
+        """Every port in range, from a random offset, ``avoid_port`` last.
+
+        Random rather than first-fit from port_min: first-fit reuses the port a
+        just-stopped sibling freed, and that port's old consumers (an MCP
+        client subprocess still winding down) keep sending stale traffic that
+        wedges the new server's transport. ``avoid_port`` is such a port that
+        the caller knows of, taken only when nothing else in range is free.
+        """
+        span = self._port_max - self._port_min + 1
+        start = random.randrange(span)
+        ports = [self._port_min + (start + offset) % span for offset in range(span)]
+        return sorted(ports, key=lambda port: port == self._avoid_port)
