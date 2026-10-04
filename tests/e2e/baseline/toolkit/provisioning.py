@@ -75,6 +75,15 @@ def run_id_len() -> int:
     return MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - MAX_MENTIONED_LABEL_LEN
 
 
+def agent_name(*, run_id: str, label: str) -> str:
+    """The provisioned name for ``label`` in run ``run_id``.
+
+    Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
+    repeating a name, so an adapter-id label must already be in the form they echo.
+    """
+    return f"{NAME_PREFIX}{run_id}-{label.replace('_', '-')}"
+
+
 def new_run_id() -> str:
     """Short token identifying a single test session's provisioned resources.
 
@@ -288,9 +297,6 @@ class ResourceManager:
     def user_ops(self) -> UserOps:
         return self._user_ops
 
-    def _agent_name(self, label: str) -> str:
-        return f"{NAME_PREFIX}{self._run_id}-{label}"
-
     async def provision_agent(
         self, label: str, *, description: str | None = None
     ) -> ProvisionedAgent:
@@ -300,7 +306,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = self._agent_name(label)
+        name = agent_name(run_id=self._run_id, label=label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(

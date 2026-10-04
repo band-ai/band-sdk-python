@@ -41,6 +41,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
+    agent_name,
     new_run_id,
     run_id_len,
     running_members,
@@ -288,6 +289,11 @@ async def test_adopt_room_is_reaped_once_on_teardown() -> None:
     rm.adopt_room("room-abc")  # idempotent — not tracked (or reaped) twice
     await rm.reap_all()
     rm._user_ops.delete_room.assert_awaited_once_with("room-abc")
+
+
+def test_adapter_id_labels_become_names_models_echo_verbatim() -> None:
+    """A model repeating ``omp_acp`` writes ``omp-acp``; the name must already match."""
+    assert agent_name(run_id="ab12c", label="omp_acp") == "e2e-band-ab12c-omp-acp"
 
 
 def test_mentioned_peer_names_fit_handle_cap() -> None:
