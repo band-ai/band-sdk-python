@@ -37,7 +37,6 @@ from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.e2e.baseline.toolkit.provisioning import (
     MAX_MENTIONED_LABEL_LEN,
     MENTION_HANDLE_CAP,
-    NAME_PREFIX,
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
@@ -316,7 +315,7 @@ def test_mentioned_peer_names_fit_handle_cap() -> None:
 
     # The longest label a scenario provisions AND asserts by @mention must fit.
     longest = "x" * MAX_MENTIONED_LABEL_LEN
-    name = f"{NAME_PREFIX}{'a' * length}-{longest}"
+    name = agent_name(run_id="a" * length, label=longest)
     assert len(name) <= MENTION_HANDLE_CAP, (
         f"longest @mentioned peer name {name!r} is {len(name)} chars, over the "
         f"{MENTION_HANDLE_CAP}-char mention-handle cap"
