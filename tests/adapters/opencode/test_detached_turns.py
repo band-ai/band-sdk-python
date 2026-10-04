@@ -16,8 +16,11 @@ from tests.adapters.opencode.helpers import (
     RawOpencodeEvent,
     ServerStep,
     agent_input,
+    event_message_updated,
     event_permission,
+    event_question,
     event_session_idle,
+    event_text_part,
     wait_for,
 )
 
@@ -99,4 +102,33 @@ async def test_a_detached_turn_cancelled_by_cleanup_posts_nothing(
     await park_turn(adapter, tools)
     await adapter.on_cleanup("room-1")
 
+    assert failure_reports(tools) == []
+
+
+async def test_a_rejected_question_hands_the_turn_back_to_the_model(
+    make_adapter, tools
+) -> None:
+    """OpenCode ends a turn on its question-reject route, so the room's
+    `reject` goes back as a declining answer and the model's reply then
+    completes the parked turn."""
+    adapter = make_adapter(
+        FakeOpencodeClient(
+            prompt_event_sequences=[[event_question("sess-1", "q-1", "Which word?")]],
+            reply_question_events={
+                "q-1": [
+                    event_message_updated("sess-1", "msg-1"),
+                    event_text_part("sess-1", "msg-1", "OK, I'll go without one."),
+                    event_session_idle("sess-1"),
+                ]
+            },
+        )
+    )
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_event(agent_input("ask me which word", tools))
+
+    await adapter.on_event(agent_input("reject", FakeAgentTools()))
+    await wait_for(lambda: tools.turn.replied)
+    await adapter.on_cleanup("room-1")
+
+    assert tools.messages_sent[-1]["content"] == "OK, I'll go without one."
     assert failure_reports(tools) == []

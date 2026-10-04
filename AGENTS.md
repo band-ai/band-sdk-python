@@ -104,7 +104,7 @@ confined to an explicit AST-enforced allowlist
 `OpencodeAdapter` maps each Band room to a session on a running `opencode
 serve`. Band tools are never gated behind approval, unlike other tool
 calls — see [docs/adapters/opencode.md](docs/adapters/opencode.md) for this
-and three more invariants that are easy to break.
+and four more invariants that are easy to break.
 
 ## ACP (Agent Client Protocol) Integration
 

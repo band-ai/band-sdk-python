@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import (
+    DECLINED_QUESTION_ANSWER,
     REJECTED_PERMISSION_FEEDBACK,
     ApprovalPorts,
     RoomApprovals,
@@ -32,6 +33,8 @@ from tests.adapters.opencode.helpers import (
     AskFactory,
     FakeOpencodeClient,
     RaisingSendTools,
+    answered_questions,
+    declined_questions,
     event_message_updated,
     event_permission,
     event_question,
@@ -104,12 +107,9 @@ class BlockingReplyClient(FakeOpencodeClient):
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]
     ) -> None:
-        await self._block("question")
+        declined = all(answer == [DECLINED_QUESTION_ANSWER] for answer in answers)
+        await self._block("reject" if declined else "question")
         await super().reply_question(request_id, answers=answers)
-
-    async def reject_question(self, request_id: str) -> None:
-        await self._block("reject")
-        await super().reject_question(request_id)
 
 
 class FailingReplyClient(FakeOpencodeClient):
@@ -118,8 +118,10 @@ class FailingReplyClient(FakeOpencodeClient):
     ) -> None:
         raise RuntimeError("permission reply failed")
 
-    async def reject_question(self, request_id: str) -> None:
-        raise RuntimeError("question rejection failed")
+    async def reply_question(
+        self, request_id: str, *, answers: list[list[str]]
+    ) -> None:
+        raise RuntimeError("question reply failed")
 
 
 async def _ignore_abort() -> None:
@@ -418,7 +420,7 @@ async def test_reject_by_id_targets_a_pending_question_not_a_stale_permission(
     await approvals.on_question_asked(asks.question("q-1"))
 
     assert await approvals.try_handle_reply("reject q-1", "user-1")
-    assert client.question_rejections == ["q-1"]
+    assert declined_questions(client) == ["q-1"]
 
 
 async def test_reject_question_id_is_not_stolen_by_a_pending_permission(
@@ -434,7 +436,7 @@ async def test_reject_question_id_is_not_stolen_by_a_pending_permission(
     await approvals.on_question_asked(asks.question("q-1"))
 
     assert await approvals.try_handle_reply("reject q-1", "user-1")
-    assert client.question_rejections == ["q-1"]
+    assert declined_questions(client) == ["q-1"]
     assert client.permission_replies == []
     assert approvals.awaiting_human()
 
@@ -507,7 +509,7 @@ async def test_bare_reject_with_both_permission_and_question_pending(
 
     assert await approvals.try_handle_reply("reject", "user-1")
     assert client.permission_replies == []
-    assert client.question_rejections == []
+    assert declined_questions(client) == []
     assert (
         "Both an approval and a question are pending"
         in tools.messages_sent[-1]["content"]
@@ -522,7 +524,7 @@ async def test_reject_shared_id_rejects_the_question(asks: AskFactory) -> None:
     await approvals.on_question_asked(asks.question(shared))
 
     assert await approvals.try_handle_reply(f"reject {shared}", "user-1")
-    assert client.question_rejections == [shared]
+    assert declined_questions(client) == [shared]
     assert client.permission_replies == []
 
 
@@ -531,7 +533,7 @@ async def test_named_reject_of_a_never_asked_question_is_not_consumed() -> None:
     approvals = make_room_approvals(client)
 
     assert not await approvals.try_handle_reply("reject never-asked-q", "user-1")
-    assert client.question_rejections == []
+    assert declined_questions(client) == []
 
 
 async def test_named_reject_of_an_already_resolved_question_is_consumed(
@@ -542,10 +544,10 @@ async def test_named_reject_of_an_already_resolved_question_is_consumed(
     approvals = make_room_approvals(client, tools=tools)
     await approvals.on_question_asked(asks.question("q-1"))
     assert await approvals.try_handle_reply("reject q-1", "user-1")
-    client.question_rejections.clear()
+    client.question_replies.clear()
 
     assert await approvals.try_handle_reply("reject q-1", "user-1")
-    assert client.question_rejections == []
+    assert declined_questions(client) == []
     assert "no longer pending" in tools.messages_sent[-1]["content"]
 
 
@@ -576,7 +578,7 @@ async def test_room_traffic_while_a_permission_reply_is_in_flight(
     assert [
         (reply["permission_id"], reply["reply"]) for reply in client.permission_replies
     ] == [("req-1", "once"), ("req-2", "reject")]
-    assert client.question_rejections == ["q-1"]
+    assert declined_questions(client) == ["q-1"]
     assert not approvals.awaiting_human()
 
 
@@ -607,10 +609,12 @@ async def test_room_traffic_while_question_answers_are_in_flight(
     assert await approvals.try_handle_reply("Now", "user-1")
 
     assert first is not None and first.result()
-    assert [
-        (reply["request_id"], reply["answers"]) for reply in client.question_replies
-    ] == [("q-2", [["Bob"]]), ("q-1", [["Alice"]]), ("q-4", [["Now"]])]
-    assert client.question_rejections == ["q-3"]
+    assert answered_questions(client) == [
+        ("q-2", [["Bob"]]),
+        ("q-1", [["Alice"]]),
+        ("q-4", [["Now"]]),
+    ]
+    assert declined_questions(client) == ["q-3"]
     assert not approvals.awaiting_human()
 
 
@@ -636,7 +640,7 @@ async def test_a_redelivered_ask_waits_out_its_own_deadline(asks: AskFactory) ->
     await approvals.on_question_asked(asks.question("q-1"))
     await time_passes(ASK_DEADLINE_S * 2 / 3)
 
-    assert client.permission_replies == client.question_rejections == []
+    assert client.permission_replies == [] and declined_questions(client) == []
     assert await approvals.try_handle_reply("approve req-1", "user-1")
     assert await approvals.try_handle_reply("Alice", "user-1")
     assert [reply["reply"] for reply in client.permission_replies] == ["once"]
@@ -877,7 +881,7 @@ async def test_auto_decline_approval_mode() -> None:
 async def test_auto_reject_question_mode() -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_question("sess-1", "q-1", "What to do?")]],
-        reject_question_events={"q-1": [event_session_idle("sess-1")]},
+        reply_question_events={"q-1": [event_session_idle("sess-1")]},
     )
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(question_mode="auto_reject"),
@@ -896,7 +900,7 @@ async def test_auto_reject_question_mode() -> None:
         room_id="room-1",
     )
 
-    assert fake_client.question_rejections == ["q-1"]
+    assert declined_questions(fake_client) == ["q-1"]
     assert not any(
         "asked question" in m["content"].lower() for m in tools.messages_sent
     )
@@ -914,7 +918,7 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
                 event_question("sess-1", "q-1", "Pick a color"),
             ]
         ],
-        reject_question_events={"q-1": [event_session_idle("sess-1")]},
+        reply_question_events={"q-1": [event_session_idle("sess-1")]},
     )
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(
@@ -941,7 +945,7 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
     await tools.until(lambda: len(events_of_type(tools, "error")) == 2)
 
     assert fake_client.permission_replies == [{**DECLINED, "permission_id": "perm-1"}]
-    assert fake_client.question_rejections == ["q-1"]
+    assert declined_questions(fake_client) == ["q-1"]
     notices = events_of_type(tools, "error")
     assert all("timed out" in notice["content"].lower() for notice in notices)
     assert all("failure" not in notice["metadata"] for notice in notices)
@@ -969,7 +973,7 @@ EXPIRY_CASES = {
     "question": ExpiryCase(
         operation="reject",
         raise_ask=lambda room, asks: room.on_question_asked(asks.question("ask-1")),
-        sent=lambda client: client.question_rejections,
+        sent=declined_questions,
         expired_reply="ask-1",
     ),
 }
@@ -1218,7 +1222,7 @@ async def test_cleanup_with_pending_question() -> None:
     # No question reply should have been sent, but the abandoned session
     # must still be told to stop working.
     assert fake_client.question_replies == []
-    assert fake_client.question_rejections == []
+    assert declined_questions(fake_client) == []
     assert fake_client.aborted_sessions == ["sess-1"]
 
 

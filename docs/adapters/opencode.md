@@ -4,7 +4,7 @@
 `opencode serve`: room messages become prompts, and the server's SSE stream is
 relayed back as room messages, tool narration, and error events.
 
-Four invariants are easy to break and expensive to rediscover:
+Five invariants are easy to break and expensive to rediscover:
 
 - **Band tools are never gated.** A `permission.asked` naming one of the
   adapter's own registered tools is auto-approved with `always` in *every*
@@ -22,6 +22,12 @@ Four invariants are easy to break and expensive to rediscover:
 - **The model is told the current `chat_id` every turn.** The band MCP tools'
   schemas require it, so without the per-turn Room Context block the platform
   tools are uncallable.
+- **A declined ask must hand the turn back to the model.** OpenCode ends the
+  turn on a bare permission reject and on its question-reject route, so the model
+  never replies and the turn is reported as a missing reply. A permission reject
+  carries feedback, and a rejected question (by the room, `auto_reject`, or a
+  timeout) is answered with a decline instead of rejected; either way the model
+  sees the refusal and answers the room.
 
 `turn_timeout_s` bounds *compute*: time parked on a manual approval is excluded,
 since the ask carries its own `approval_wait_timeout_s` expiry.

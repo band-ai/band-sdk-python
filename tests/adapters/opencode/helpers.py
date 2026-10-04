@@ -14,6 +14,7 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
+from band.adapters.opencode.approvals import DECLINED_QUESTION_ANSWER
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -540,3 +541,21 @@ class AskFactory:
 
 def _unique_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}"
+
+
+def _is_decline(reply: dict[str, Any]) -> bool:
+    return all(answer == [DECLINED_QUESTION_ANSWER] for answer in reply["answers"])
+
+
+def declined_questions(client: FakeOpencodeClient) -> list[str]:
+    """Ids of the questions the adapter rejected by answering with the decline."""
+    return [r["request_id"] for r in client.question_replies if _is_decline(r)]
+
+
+def answered_questions(client: FakeOpencodeClient) -> list[tuple[str, list[list[str]]]]:
+    """The room's real answers, as (question id, answers), declines left out."""
+    return [
+        (r["request_id"], r["answers"])
+        for r in client.question_replies
+        if not _is_decline(r)
+    ]

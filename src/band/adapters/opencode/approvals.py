@@ -155,6 +155,13 @@ REJECTED_PERMISSION_FEEDBACK = (
     "This request was declined. Do not retry it or try another way to do the "
     "same thing; reply to the user instead."
 )
+# A rejected question is answered with this, one line per question, rather
+# than sent to POST /question/{id}/reject: that route carries no feedback, so
+# OpenCode ends the turn on it and the model never replies to the room.
+DECLINED_QUESTION_ANSWER = (
+    "The user declined to answer this question. Do not ask it again; continue "
+    "and reply to the user without it."
+)
 
 
 def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -> str:
@@ -670,10 +677,18 @@ class RoomApprovals:
     async def _send_question_reject(
         self, entry: DecisionEntry[PendingQuestion]
     ) -> bool:
-        """Perform the reject I/O for an already-claimed question."""
+        """Perform the reject I/O for an already-claimed question.
+
+        A question with nothing to answer (malformed) is the only one sent to
+        OpenCode's reject route; see ``DECLINED_QUESTION_ANSWER``.
+        """
+        declined = [[DECLINED_QUESTION_ANSWER] for _ in entry.payload.questions]
         try:
             async with self._client_reply("reject question", entry.token) as client:
-                await client.reject_question(entry.token)
+                if declined:
+                    await client.reply_question(entry.token, answers=declined)
+                else:
+                    await client.reject_question(entry.token)
         except ApprovalReplyError:
             return False
         self._forget(self._questions, entry)
