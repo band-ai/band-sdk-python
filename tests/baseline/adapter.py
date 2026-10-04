@@ -21,6 +21,7 @@ class Adapter(StrEnum):
     COPILOT_SDK = "copilot_sdk"
     COPILOT_ACP = "copilot_acp"
     CURSOR_ACP = "cursor_acp"
+    KIRO_ACP = "kiro_acp"
     OMP_ACP = "omp_acp"
     LANGGRAPH = "langgraph"
     PYDANTIC_AI = "pydantic_ai"

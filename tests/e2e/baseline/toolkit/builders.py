@@ -485,16 +485,21 @@ def _build_opencode(
     )
 
 
+def _ensure_subdir(work_dir: str, name: str) -> str:
+    """Create and return the ``name`` subdirectory of ``work_dir``."""
+    home = os.path.join(work_dir, name)
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
 def copilot_home_dir(work_dir: str) -> str:
     """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
 
-    The one place the subdirectory name and its creation live — the registry
-    builder and the bespoke test configs (``test_copilot_acp.py``) all call
-    this rather than each re-picking the name and an os.path/pathlib API.
+    The one place the subdirectory name lives — the registry builder and the
+    bespoke test configs (``test_copilot_acp.py``) all call this rather than
+    each re-picking the name.
     """
-    home = os.path.join(work_dir, "copilot-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "copilot-home")
 
 
 def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
@@ -576,9 +581,7 @@ def _build_copilot_acp(
 
 def omp_agent_home_dir(work_dir: str) -> str:
     """Create and return the ``pi-coding-agent-home`` subdirectory of ``work_dir``."""
-    home = os.path.join(work_dir, "pi-coding-agent-home")
-    os.makedirs(home, exist_ok=True)
-    return home
+    return _ensure_subdir(work_dir, "pi-coding-agent-home")
 
 
 def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
@@ -666,6 +669,51 @@ def _build_cursor_acp(
     }
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
+        additional_tools=_custom_tool_defs(tools),
+        **feature_kwargs(features),
+    )
+
+
+@adapter(
+    Adapter.KIRO_ACP,
+    requires=[Dep.KIRO_CLI],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+    e2e_pending=(
+        "headless KIRO_API_KEY auth needs a paid Kiro subscription this org has "
+        "decided not to purchase, and kiro-cli has no BYOK route around it "
+        "(see docs/acp.md)"
+    ),
+)
+def _build_kiro_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.kiro_acp import (  # noqa: PLC0415 -- isolates the kiro_acp extra from the other frameworks this file builds
+        KiroACPAdapter,
+        KiroACPAdapterConfig,
+    )
+
+    # Hermetic per cell like copilot_acp: a fresh cwd (Kiro reads project config
+    # from it) and a fresh KIRO_HOME (no stray host session/trust state).
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-kiro-acp-")
+
+    config_kwargs: dict[str, Any] = {
+        "custom_section": prompt or "",
+        "cwd": sandbox,
+        "env": {
+            "KIRO_HOME": _ensure_subdir(sandbox, "kiro-home"),
+            "KIRO_API_KEY": s.backends.kiro_api_key,
+        },
+    }
+    if s.backends.kiro_command.strip():
+        config_kwargs["command"] = tuple(s.backends.kiro_command.split())
+
+    return KiroACPAdapter(
+        config=KiroACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )

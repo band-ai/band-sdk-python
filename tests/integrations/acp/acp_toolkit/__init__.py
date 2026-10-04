@@ -30,6 +30,7 @@ from tests.integrations.acp.acp_toolkit.agent import (
 from tests.integrations.acp.acp_toolkit.harness import (
     DEFAULT_ROOM,
     AcpSession,
+    DeniedPermission,
     FakeSpawn,
     Launch,
     Reply,
@@ -47,6 +48,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
 __all__ = [
     "DEFAULT_ROOM",
     "AcpSession",
+    "DeniedPermission",
     "FakeACPAgent",
     "FakeSpawn",
     "Launch",

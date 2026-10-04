@@ -34,6 +34,10 @@ assert adapter.config.command == ("codex-acp",)
   the held text, or the closing `task` event. That event is resume state:
   `ACPClientHistoryConverter` reads `acp_client_session_id` / `acp_client_room_id` from it
   to `session/load` after a restart.
+- **Usage is forwarded as-is** from the `session/prompt` response's `usage`. The unstable
+  spec calls `PromptResponse.usage` per-turn while the `Usage` docs say "across session",
+  so a vendor reporting running totals would be over-counted. The live
+  `test_usage_not_cumulative_across_turns` guards only backends with a CI lane.
 - **Approved permissions are silent.** Only a denied request posts a synthetic
   `tool_call`/`tool_result` pair, and only when `Emit.TOOL_CALLS` is on.
 - **Replay happens once**, only for a freshly minted session (a failed `session/load`
@@ -69,6 +73,13 @@ failure fails that room turn visibly instead of falling back.
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
   as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
+- **Kiro:** stdio only (Kiro documents no remote mode). `KiroACPClientProfile` posts
+  `_kiro.dev/metadata`'s `contextUsagePercentage` as a plan chunk (the field name comes from
+  the `kiro-cli` 2.24 binary, not a live session) and only logs `_kiro.dev/mcp/oauth_request`,
+  since a headless agent cannot complete MCP OAuth. Headless auth needs `KIRO_API_KEY`,
+  which requires a paid subscription with no bring-your-own-key route. The org has not
+  bought one, so the baseline builder is `e2e_pending`: only unit and `FakeACPAgent` wire
+  tests cover Band's side, not `kiro-cli`'s real wire behavior.
 
 ## Server prompt outcomes
 

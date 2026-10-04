@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from enum import StrEnum
+from typing import Protocol, TypeGuard
 
 from band.integrations.acp.types import ChunkType, CollectedChunk
 
@@ -148,7 +149,7 @@ class CursorACPClientProfile:
         method: str,
         params: dict[str, object],
     ) -> dict[str, object]:
-        logger.debug("Cursor ACP extension method: %s", method)
+        logger.debug("Cursor ACP extension method received")
         if method not in {CURSOR_ASK_QUESTION_METHOD, CURSOR_CREATE_PLAN_METHOD}:
             return {}
         if self._resolve_method is not None:
@@ -183,7 +184,7 @@ class CursorACPClientProfile:
         method: str,
         params: dict[str, object],
     ) -> list[CollectedChunk]:
-        logger.debug("Cursor ACP extension notification: %s", method)
+        logger.debug("Cursor ACP extension notification received")
 
         if method == "cursor/update_todos":
             return self._todo_chunks(params)
@@ -284,11 +285,56 @@ class CursorACPClientProfile:
 CURSOR_PROFILE_NAME = "cursor"
 
 
+class KiroExtension(StrEnum):
+    """Kiro's experimental agent-to-client notifications (https://kiro.dev/docs/cli/acp)."""
+
+    MCP_OAUTH_REQUEST = "_kiro.dev/mcp/oauth_request"
+    METADATA = "_kiro.dev/metadata"
+
+
+class KiroACPClientProfile(NoopACPClientProfile):
+    """Kiro CLI-specific ACP extension handling; other ``_kiro.dev/*`` traffic is ignored."""
+
+    async def ext_notification(
+        self,
+        method: str,
+        params: dict[str, object],
+    ) -> list[CollectedChunk]:
+        match method:
+            case KiroExtension.MCP_OAUTH_REQUEST:
+                logger.warning(
+                    "A Kiro MCP server requires OAuth, which a headless agent "
+                    "cannot complete; its tools stay unavailable"
+                )
+            case KiroExtension.METADATA:
+                percent = params.get("contextUsagePercentage")
+                if _is_percentage(percent):
+                    return [
+                        CollectedChunk(
+                            chunk_type=ChunkType.PLAN,
+                            content=f"[Kiro context window] {round(percent)}% used",
+                        )
+                    ]
+        return []
+
+
+def _is_percentage(value: object) -> TypeGuard[int | float]:
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and 0 <= value <= 100
+    )
+
+
+KIRO_PROFILE_NAME = "kiro"
+
+_PROFILE_FACTORIES: dict[str, Callable[[], ACPClientProfile]] = {
+    CURSOR_PROFILE_NAME: CursorACPClientProfile,
+    KIRO_PROFILE_NAME: KiroACPClientProfile,
+}
+
+
 def resolve_acp_client_profile(profile_name: str) -> ACPClientProfile | None:
     """Map a configured profile name to a runtime-specific ACP client profile."""
-    normalized = profile_name.strip().lower()
-    if not normalized:
-        return None
-    if normalized == CURSOR_PROFILE_NAME:
-        return CursorACPClientProfile()
-    return None
+    factory = _PROFILE_FACTORIES.get(profile_name.strip().lower())
+    return factory() if factory else None
