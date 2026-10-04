@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ from typing import Literal, cast
 import pytest
 from pydantic import BaseModel
 
+import band.adapters.opencode.approvals
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import (
     REJECTED_PERMISSION_FEEDBACK,
@@ -56,6 +58,15 @@ ALICE_PARTICIPANT = {
 
 
 ReplyOperation = Literal["permission", "question", "reject"]
+
+
+def approval_phases(caplog: pytest.LogCaptureFixture, logger_name: str) -> list[str]:
+    """The approval lifecycle as logged: each record's text before its fields."""
+    return [
+        record.getMessage().partition(" room=")[0]
+        for record in caplog.records
+        if record.name == logger_name
+    ]
 
 
 @dataclass
@@ -903,10 +914,15 @@ async def test_auto_reject_question_mode() -> None:
 
 
 @pytest.mark.looptime
-async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
+async def test_a_turn_nobody_answers_expires_into_its_timeout_replies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A turn's permission and question go unanswered: at their deadlines the
     permission is rejected and the question dismissed, OpenCode finishes the
-    turn, and the room is told as procedural notices, not agent failures."""
+    turn, and the room is told as procedural notices, not agent failures. Each
+    phase is logged without the ask's command or question text."""
+    approvals_logger = band.adapters.opencode.approvals.__name__
+    caplog.set_level(logging.INFO, logger=approvals_logger)
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -945,6 +961,16 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies() -> None:
     notices = events_of_type(tools, "error")
     assert all("timed out" in notice["content"].lower() for notice in notices)
     assert all("failure" not in notice["metadata"] for notice in notices)
+    assert approval_phases(caplog, approvals_logger) == [
+        "OpenCode permission asked",
+        "OpenCode question asked",
+        "OpenCode permission expired",
+        "OpenCode permission resolved",
+        "OpenCode question expired",
+        "OpenCode question rejected",
+    ]
+    assert "rm -rf tmp" not in caplog.text
+    assert "Pick a color" not in caplog.text
 
     await adapter.on_cleanup("room-1")
 
