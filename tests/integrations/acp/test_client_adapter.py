@@ -246,7 +246,9 @@ class TestACPClientAdapterShutdown:
 
     @pytest.mark.asyncio
     async def test_stale_room_cleanup_preserves_a_replacement_runtime(self) -> None:
-        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", inject_band_tools=False)
+        )
         failed_runtime = adapter._build_runtime()
         replacement_runtime = adapter._build_runtime()
         adapter._runtimes["room-1"] = replacement_runtime
