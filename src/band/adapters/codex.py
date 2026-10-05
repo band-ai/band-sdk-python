@@ -1413,6 +1413,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 if event.method == "transport/closed":
                     result.turn_status = "failed"
                     result.turn_error = "Codex transport closed unexpectedly"
+                    logger.warning(
+                        "Room %s: %s (thread=%s turn=%s)",
+                        room_id,
+                        result.turn_error,
+                        thread_id,
+                        turn_id,
+                    )
                     # Reset client state so _ensure_client_ready() rebuilds
                     # on the next message instead of reusing a dead client.
                     self._client = None

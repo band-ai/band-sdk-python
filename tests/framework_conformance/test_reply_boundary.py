@@ -14,12 +14,10 @@ from __future__ import annotations
 import ast
 from collections import Counter
 
-from tests.paths import REPO_ROOT
-
-SCAN_ROOT = REPO_ROOT / "src" / "band"
+from tests.paths import SRC_ROOT
 
 #: The model's tool implementations, where every reply call is the model's.
-TOOLS_DIR = SCAN_ROOT / "runtime" / "tools"
+TOOLS_DIR = SRC_ROOT / "runtime" / "tools"
 
 REPLY_CALLS = frozenset({"send_message", "deliver_reply", "relay_reply"})
 
@@ -75,8 +73,8 @@ def reply_calls(source: str) -> Counter[str]:
 
 def test_every_reply_call_carries_the_model_words() -> None:
     found = {
-        path.relative_to(SCAN_ROOT).as_posix(): calls
-        for path in SCAN_ROOT.rglob("*.py")
+        path.relative_to(SRC_ROOT).as_posix(): calls
+        for path in SRC_ROOT.rglob("*.py")
         if TOOLS_DIR not in path.parents
         and (calls := reply_calls(path.read_text("utf-8")))
     }

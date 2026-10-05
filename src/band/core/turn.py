@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import band_sdk_core
 from band_sdk_core import AgentFailure, TurnLedger, TurnVerdict
 
-from band.core.protocols import TURN_FAILURE_PROVIDER
+from band.core.protocols import TURN_FAILURE_PROVIDER, TurnResultAlreadyReported
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
@@ -31,8 +31,11 @@ class Turn:
     decision); a judged one is then judged at the adapter's real end of it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, posts_missing_reply: bool = True) -> None:
         self._ledger = TurnLedger()
+        # SessionConfig.report_turn_failures_to_room: the missing reply is a
+        # failure the runtime detects, so the session's opt-out covers it.
+        self.posts_missing_reply = posts_missing_reply
         self.judged = False
         self._detached = False
 
@@ -86,14 +89,27 @@ async def report_unsettled_turn(tools: AgentToolsProtocol, *, room_id: str) -> b
         room_id,
         tools.turn.detached,
     )
-    await tools.send_failure(MISSING_REPLY)
+    if tools.turn.posts_missing_reply:
+        await tools.send_failure(MISSING_REPLY)
     return True
+
+
+def unsettled_turn_error(turn: Turn) -> Exception:
+    """What a reported, unsettled turn raises to the runtime.
+
+    ``TurnResultAlreadyReported`` when the room has the report or the session
+    posts none, so the runtime adds nothing. A report that failed to post
+    raises a plain error instead, so the runtime's own failure report runs.
+    """
+    if turn.complete or not turn.posts_missing_reply:
+        return TurnResultAlreadyReported("turn ended without a reply")
+    return RuntimeError("turn ended without a reply, and its report did not post")
 
 
 async def judge_detached_turn(tools: AgentToolsProtocol, *, room_id: str) -> None:
     """Judge a judged, detached turn at the adapter's real end of it.
 
-    ``on_event`` returned before such a turn ended; an attached turn was
+    ``run_judged_turn`` returned before such a turn ended; an attached turn was
     already judged there, and an unjudged one is never reported.
     """
     if tools.turn.judged and tools.turn.detached:

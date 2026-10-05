@@ -365,6 +365,7 @@ class AgentTools(AgentToolsProtocol):
             agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
+        tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 
     # --- Tool methods ---

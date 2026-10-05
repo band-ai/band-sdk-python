@@ -21,7 +21,7 @@ on its test config so the guard can read what the model actually sees.
 
 ## Turn Outcome
 
-`SimpleAdapter.on_event` judges every turn with band-sdk-core's rule: a turn
+`SimpleAdapter.run_judged_turn` (called by `on_event`) judges every turn with band-sdk-core's rule: a turn
 that replied, declined via `band_no_reply`, did real work, was settled by the
 adapter, or already reported a failure completes; anything else is reported
 once and marked FAILED. Adapters never judge turns themselves. Post an

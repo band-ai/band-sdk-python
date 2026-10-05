@@ -43,7 +43,7 @@ async def run_copilot_sdk_turn(script: TurnScript, tools: FakeAgentTools) -> Non
 
 
 PROBES: dict[str, TurnOutcomeProbe] = (
-    {"copilot_sdk": TurnOutcomeProbe(run=run_copilot_sdk_turn)}
+    {"copilot_sdk": TurnOutcomeProbe(run=run_copilot_sdk_turn, relays=True)}
     if _COPILOT_SDK_AVAILABLE
     else {}
 )

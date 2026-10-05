@@ -3,6 +3,7 @@ a turn that answered the room must stay quiet."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -11,6 +12,7 @@ from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
     APPROVAL_RESOLVED_TEMPLATE,
     ClaudeApprovalOptions,
+    ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
     TurnResultAlreadyReported,
 )
@@ -89,10 +91,11 @@ async def test_the_room_hears_whenever_a_turn_left_it_unanswered(
 
 
 async def test_a_failure_the_cli_reports_reaches_the_room_with_its_status(
-    claude_room: OpenRoom,
+    claude_room: OpenRoom, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``is_error`` wins even when ``subtype`` says success and even after a
-    reply went out; the room gets the CLI's own detail and API status."""
+    reply went out; the room gets the CLI's own detail and API status, and the
+    operator a WARNING for each (the runtime logs it only at DEBUG)."""
     room = await claude_room()
     room.claude.script(
         [EndTurn(is_error=True, result="Not logged in · Please run /login")],
@@ -106,9 +109,15 @@ async def test_a_failure_the_cli_reports_reaches_the_room_with_its_status(
         ],
     )
 
-    for question in ("first", "second"):
-        with pytest.raises(TurnResultAlreadyReported):
-            await room.send(question)
+    with caplog.at_level(logging.WARNING, logger=ClaudeSDKAdapter.__module__):
+        for question in ("first", "second"):
+            with pytest.raises(TurnResultAlreadyReported):
+                await room.send(question)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == [
+        f"Room room-1: {failure['message']}" for failure in room.reported_failures
+    ]
 
     assert room.reported_failures == [
         {

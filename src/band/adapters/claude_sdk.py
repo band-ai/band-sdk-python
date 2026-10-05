@@ -1370,7 +1370,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Close out the turn: persist session id, emit usage, surface failure.
 
         A turn released early for an approval is judged here, at its real end;
-        any other turn is judged by ``on_event`` once ``on_message`` returns.
+        any other turn is judged by ``run_judged_turn`` once ``on_message`` returns.
         """
         logger.info(
             "Room %s: Complete - %sms, $%.4f",
@@ -1394,6 +1394,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 else None
             )
             detail = self._result_error_detail(sdk_message)
+            logger.warning("Room %s: %s", room_id, detail)
             await tools.send_failure(
                 AgentFailure(_PROVIDER, detail, code, sdk_message.errors)
             )

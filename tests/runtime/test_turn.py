@@ -16,7 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from band.core.delivery import deliver_reply
-from band.core.turn import judge_detached_turn, report_unsettled_turn
+from band.core.turn import Turn, judge_detached_turn, report_unsettled_turn
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import declares_turn_effect, execute_custom_tool
 from band.runtime.tools import AgentTools, BandTool, TurnEffect
@@ -163,6 +163,16 @@ class TestReportUnsettledTurn:
         (record,) = caplog.records
         assert record.levelno == logging.WARNING
         assert "room-1" in record.getMessage()
+
+    async def test_a_session_that_reports_no_failures_posts_nothing(self) -> None:
+        """A detached turn reports outside the runtime, so the opt-out is the
+        turn's own to honor."""
+        tools = FakeAgentTools()
+        tools.turn = Turn(posts_missing_reply=False)
+
+        assert await report_unsettled_turn(tools, room_id="room-1") is True
+
+        assert reported_failures(tools) == []
 
     async def test_a_complete_turn_reports_nothing(self) -> None:
         tools = FakeAgentTools()

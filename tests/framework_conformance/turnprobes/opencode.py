@@ -98,5 +98,5 @@ async def settle_opencode(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "opencode": TurnOutcomeProbe(run=run_opencode, settle=settle_opencode),
+    "opencode": TurnOutcomeProbe(run=run_opencode, settle=settle_opencode, relays=True),
 }

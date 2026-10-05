@@ -71,10 +71,12 @@ class TurnScript:
 class TurnOutcomeProbe:
     """``run`` drives one scripted turn. ``settle``, for an adapter with a
     control path, sends a message the adapter answers itself (a status or
-    busy reply) without running the model."""
+    busy reply) without running the model. ``relays`` marks an adapter that
+    posts the model's final text when no tool replied."""
 
     run: Callable[[TurnScript, FakeAgentTools], Awaitable[None]]
     settle: Callable[[FakeAgentTools], Awaitable[None]] | None = None
+    relays: bool = False
 
 
 class DispatchingFakeTools(FakeAgentTools):

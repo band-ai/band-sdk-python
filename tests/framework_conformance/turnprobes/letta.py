@@ -27,4 +27,6 @@ async def run_letta_turn(script: TurnScript, tools: FakeAgentTools) -> None:
     await adapter.on_event(turn_input(tools))
 
 
-PROBES: dict[str, TurnOutcomeProbe] = {"letta": TurnOutcomeProbe(run=run_letta_turn)}
+PROBES: dict[str, TurnOutcomeProbe] = {
+    "letta": TurnOutcomeProbe(run=run_letta_turn, relays=True)
+}

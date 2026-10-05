@@ -208,13 +208,15 @@ toward: the base prompt still says plain text is never delivered, because
 without that line models more often send their closing narration as a second
 `band_send_message` (measured live on gemini-2.5-flash).
 
-`tests/framework_conformance/test_reply_boundary.py` fails if adapter code calls
-`send_message` directly outside the model's reply paths.
+`tests/framework_conformance/test_reply_boundary.py` pins every `send_message`,
+`deliver_reply` and `relay_reply` call outside the tool implementations, per
+file with the reason it carries the model's words, so a new one fails until it
+is justified.
 
 ## Detached turns
 
 An adapter whose turn outlives `on_message` (one parked on a human approval)
-calls `tools.turn.detach()` when it releases the turn early. `on_event` then
+calls `tools.turn.detach()` when it releases the turn early. `run_judged_turn` then
 leaves the verdict to the adapter, which reports at the turn's normal end. A
 cancelled turn reports nothing:
 

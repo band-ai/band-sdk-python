@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,7 +19,11 @@ import band_sdk_core
 import pytest
 
 from band.core.delivery import relay_reply
-from band.core.protocols import TURN_FAILURE_PROVIDER, AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
+    AgentToolsProtocol,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
@@ -131,7 +136,12 @@ def link(mock_rest_client: MagicMock) -> MagicMock:
     return link
 
 
-def run_through(adapter: SimpleAdapter[Any], link: MagicMock) -> ExecutionContext:
+def run_through(
+    adapter: SimpleAdapter[Any],
+    link: MagicMock,
+    *,
+    config: SessionConfig | None = None,
+) -> ExecutionContext:
     preprocessor = DefaultPreprocessor()
 
     async def handler(ctx: ExecutionContext, event: Any) -> None:
@@ -143,9 +153,36 @@ def run_through(adapter: SimpleAdapter[Any], link: MagicMock) -> ExecutionContex
         ROOM_ID,
         link,
         handler,
-        config=SessionConfig(enable_context_hydration=False),
+        config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
     )
+
+
+async def deliver(ctx: ExecutionContext, path: str) -> None:
+    """Deliver one user message live over the socket, or from the backlog."""
+    match path:
+        case "live":
+            await ctx._process_event(
+                make_message_event(room_id=ROOM_ID, sender_id="user-1")
+            )
+        case "backlog":
+            await ctx._process_backlog_message(
+                PlatformMessage(
+                    id="msg-backlog",
+                    room_id=ROOM_ID,
+                    content="@agent hi",
+                    sender_id="user-1",
+                    sender_type="User",
+                    sender_name="User One",
+                    message_type="text",
+                    metadata={},
+                    created_at=datetime.now(UTC),
+                )
+            )
+
+
+async def crash(tools: AgentToolsProtocol) -> None:
+    raise RuntimeError("provider exploded")
 
 
 def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
@@ -181,20 +218,65 @@ async def test_each_turn_outcome_is_reported_honestly(
         assert runtime_failures(link) == [MISSING_REPLY_FAILURE]
 
 
-async def test_a_missing_reply_is_not_logged_as_a_runtime_error(
-    link: MagicMock, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("path", ["live", "backlog"])
+@pytest.mark.parametrize(
+    ("steps", "level", "traceback"),
+    [
+        pytest.param([], logging.DEBUG, False, id="missing-reply"),
+        pytest.param([crash], logging.ERROR, True, id="crash"),
+    ],
+)
+async def test_only_an_unreported_failure_is_logged_as_a_runtime_error(
+    link: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    steps: list[Step],
+    level: int,
+    traceback: bool,
 ) -> None:
-    """A silent turn is an expected verdict, already logged as a WARNING where
-    it was reported, so the runtime adds nothing at ERROR to trip alerting."""
+    """A missing reply was logged as a WARNING where it was reported, so the
+    runtime keeps it out of ERROR alerting; a crash still alerts with its
+    traceback."""
+    ctx = run_through(ScriptedAdapter(steps), link)
+
+    with caplog.at_level(logging.DEBUG, logger=execution_logger):
+        await deliver(ctx, path)
+
+    (record,) = [r for r in caplog.records if r.message.startswith("Error processing")]
+    assert record.levelno == level
+    assert bool(record.exc_info) is traceback
+
+
+async def test_a_missing_reply_that_failed_to_post_falls_back_to_the_runtime_report(
+    link: MagicMock,
+) -> None:
+    """The room still hears about the turn when the verdict's own post fails."""
+    create = link.rest.agent_api_events.create_agent_chat_event
+    create.side_effect = [RuntimeError("transient 503"), create.return_value]
     ctx = run_through(ScriptedAdapter([]), link)
 
-    with caplog.at_level(logging.DEBUG):
-        await ctx._process_event(
-            make_message_event(room_id=ROOM_ID, sender_id="user-1")
-        )
+    await deliver(ctx, "live")
 
-    runtime_levels = {r.levelno for r in caplog.records if r.name == execution_logger}
-    assert logging.ERROR not in runtime_levels
+    link.mark_failed.assert_awaited_once()
+    # Attempted posts, in order: the verdict's (which failed), then the fallback.
+    assert runtime_failures(link) == [
+        MISSING_REPLY_FAILURE,
+        (TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE),
+    ]
+
+
+async def test_a_session_that_reports_no_failures_posts_no_missing_reply(
+    link: MagicMock,
+) -> None:
+    config = SessionConfig(
+        enable_context_hydration=False, report_turn_failures_to_room=False
+    )
+    ctx = run_through(ScriptedAdapter([]), link, config=config)
+
+    await deliver(ctx, "live")
+
+    link.mark_failed.assert_awaited_once()
+    assert runtime_failures(link) == []
 
 
 async def test_an_exempt_adapter_is_never_judged(link: MagicMock) -> None:

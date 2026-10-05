@@ -81,7 +81,7 @@ class RoomTurnEmitter:
 
     async def emit(self, chunk: CollectedChunk) -> None:
         if self._records_tool_effects:
-            self._record_tool_effect(chunk)
+            self._stage_tool_effect(chunk)
         match chunk.chunk_type:
             case ChunkType.TEXT:
                 if chunk.content:
@@ -116,7 +116,7 @@ class RoomTurnEmitter:
                     chunk.chunk_type,
                 )
 
-    def _record_tool_effect(self, chunk: CollectedChunk) -> None:
+    def _stage_tool_effect(self, chunk: CollectedChunk) -> None:
         """Stage a completed tool call's effect for the turn.
 
         An external band-mcp runs where the SDK never sees it, so the stream is

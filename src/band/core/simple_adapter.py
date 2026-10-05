@@ -21,9 +21,8 @@ from band.core.model_catalog import (
 from band.core.protocols import (
     AgentToolsProtocol,
     HistoryConverter,
-    TurnResultAlreadyReported,
 )
-from band.core.turn import report_unsettled_turn
+from band.core.turn import report_unsettled_turn, unsettled_turn_error
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -372,7 +371,7 @@ class SimpleAdapter(ABC, Generic[H]):
 
     @property
     def judges_turns(self) -> bool:
-        """Whether ``on_event`` judges each turn by core's turn-outcome rule.
+        """Whether ``run_judged_turn`` judges each turn by core's turn-outcome rule.
 
         ``False`` for an adapter whose turns are not the model's to answer
         through Band tools: a bridge to another agent, or a framework engine
@@ -446,4 +445,4 @@ class SimpleAdapter(ABC, Generic[H]):
             and not turn.detached
             and await report_unsettled_turn(tools, room_id=room_id)
         ):
-            raise TurnResultAlreadyReported("turn ended without a reply")
+            raise unsettled_turn_error(turn)

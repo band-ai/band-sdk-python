@@ -76,15 +76,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+CYCLE_CANCEL_GRACE_SECONDS = 1.0
+
+
 def _log_turn_error(error: Exception, message: str, *args: object) -> None:
     """Log a failed turn; one whose failure already reached the room was logged
     where it was reported, so it stays out of ERROR alerting."""
     reported = isinstance(error, TurnResultAlreadyReported)
     level = logging.DEBUG if reported else logging.ERROR
     logger.log(level, message, *args, exc_info=not reported)
-
-
-CYCLE_CANCEL_GRACE_SECONDS = 1.0
 
 
 class ResyncRequest:

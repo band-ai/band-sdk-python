@@ -33,3 +33,10 @@ def test_band_tools_match_core() -> None:
 @pytest.mark.parametrize("tool_name", sorted(CORE_EFFECTS))
 def test_turn_effect_matches_core(tool_name: str) -> None:
     assert turn_effect(tool_name) == CORE_EFFECTS[tool_name].wire_name
+
+
+@pytest.mark.parametrize("effect", list(TurnEffect))
+def test_did_work_matches_core_verdict(effect: TurnEffect) -> None:
+    ledger = band_sdk_core.TurnLedger()
+    ledger.record(band_sdk_core.TurnEffect.from_wire_name(effect.value))
+    assert effect.did_work == (ledger.verdict() == band_sdk_core.TurnVerdict.Complete)

@@ -18,9 +18,9 @@ import importlib
 import inspect
 import pkgutil
 from dataclasses import dataclass
-from enum import StrEnum
 
 import pytest
+from band_sdk_core import TurnVerdict
 
 import band
 from band.core.protocols import TurnResultAlreadyReported
@@ -55,23 +55,13 @@ TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
     **toolloop.PROBES,
 }
 
-# Adapters that post the model's final text when no tool replied.
-RELAYING_FRAMEWORK_IDS = frozenset(
-    {"codex", "copilot_sdk", "opencode", "letta", "acp", "cursor_acp"}
-)
-
 ANSWER = "The vault code is 4471-ECHO."
 REPLY = ToolCall(BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": ["@alice"]})
 
 
-class Verdict(StrEnum):
-    COMPLETE = "complete"
-    MISSING_REPLY = "missing_reply"
-
-
 @dataclass(frozen=True)
 class TurnResult:
-    verdict: Verdict
+    verdict: TurnVerdict
     messages: list[str]
     failures: list[tuple[str, str]]
 
@@ -80,13 +70,13 @@ async def run_turn(probe: TurnOutcomeProbe, script: TurnScript) -> TurnResult:
     tools = turn_tools()
     try:
         await probe.run(script, tools)
-        verdict = Verdict.COMPLETE
+        verdict = TurnVerdict.Complete
     except TurnResultAlreadyReported:
-        verdict = Verdict.MISSING_REPLY
+        verdict = TurnVerdict.MissingReply
     return observed(tools, verdict)
 
 
-def observed(tools: FakeAgentTools, verdict: Verdict) -> TurnResult:
+def observed(tools: FakeAgentTools, verdict: TurnVerdict) -> TurnResult:
     return TurnResult(
         verdict=verdict,
         messages=tools.chat,
@@ -101,12 +91,12 @@ COMPLETING_SCRIPTS = {
 }
 
 
-def probe_params(framework_ids: frozenset[str] | None = None) -> list[str]:
-    return sorted(
-        name
-        for name in TURN_OUTCOME_PROBES
-        if framework_ids is None or name in framework_ids
-    )
+def probe_params() -> list[str]:
+    return sorted(TURN_OUTCOME_PROBES)
+
+
+def relaying_probe_params() -> list[str]:
+    return [name for name in probe_params() if TURN_OUTCOME_PROBES[name].relays]
 
 
 @pytest.mark.parametrize("framework_id", probe_params())
@@ -118,7 +108,7 @@ async def test_a_turn_that_answered_or_worked_completes(
         TURN_OUTCOME_PROBES[framework_id], COMPLETING_SCRIPTS[script_name]
     )
 
-    assert result.verdict is Verdict.COMPLETE
+    assert result.verdict == TurnVerdict.Complete
     assert result.failures == []
 
 
@@ -126,7 +116,7 @@ async def test_a_turn_that_answered_or_worked_completes(
 async def test_a_turn_that_did_nothing_is_reported_once(framework_id: str) -> None:
     result = await run_turn(TURN_OUTCOME_PROBES[framework_id], TurnScript())
 
-    assert result.verdict is Verdict.MISSING_REPLY
+    assert result.verdict == TurnVerdict.MissingReply
     assert result.failures == [MISSING_REPLY_FAILURE]
     assert result.messages == []
 
@@ -146,23 +136,23 @@ async def test_an_adapter_settled_turn_completes(framework_id: str) -> None:
     assert reported_failures(tools) == []
 
 
-@pytest.mark.parametrize("framework_id", probe_params(RELAYING_FRAMEWORK_IDS))
+@pytest.mark.parametrize("framework_id", relaying_probe_params())
 async def test_a_relaying_adapter_posts_the_final_text_once(framework_id: str) -> None:
     result = await run_turn(
         TURN_OUTCOME_PROBES[framework_id], TurnScript(final_text=ANSWER)
     )
 
-    assert result == TurnResult(Verdict.COMPLETE, messages=[ANSWER], failures=[])
+    assert result == TurnResult(TurnVerdict.Complete, messages=[ANSWER], failures=[])
 
 
-@pytest.mark.parametrize("framework_id", probe_params(RELAYING_FRAMEWORK_IDS))
+@pytest.mark.parametrize("framework_id", relaying_probe_params())
 async def test_a_tool_reply_suppresses_the_closing_text(framework_id: str) -> None:
     result = await run_turn(
         TURN_OUTCOME_PROBES[framework_id],
         TurnScript((REPLY,), final_text="Anything else?"),
     )
 
-    assert result == TurnResult(Verdict.COMPLETE, messages=[ANSWER], failures=[])
+    assert result == TurnResult(TurnVerdict.Complete, messages=[ANSWER], failures=[])
 
 
 #: Registered adapters whose turns are not the model's to answer through Band tools.
@@ -199,7 +189,9 @@ def band_adapters() -> dict[str, type[SimpleAdapter]]:
             continue
         try:
             importlib.import_module(module.name)
-        except ImportError:
+        except ModuleNotFoundError as missing:
+            if (missing.name or "").startswith("band"):
+                raise
             continue  # an extra this venv lacks; its own lane covers it
     pending, adapters = [SimpleAdapter], {}
     while pending:

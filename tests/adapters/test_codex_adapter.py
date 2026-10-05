@@ -1261,8 +1261,11 @@ class TestCodexAdapter:
         assert turn_start["sandboxPolicy"]["type"] == "externalSandbox"
 
     @pytest.mark.asyncio
-    async def test_transport_closed_event_aborts_turn(self) -> None:
-        """A transport/closed event should end the turn with a failed status."""
+    async def test_transport_closed_event_aborts_turn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A transport/closed event ends the turn with a failure the room sees
+        and a WARNING the operator sees (the runtime logs it only at DEBUG)."""
         events = [
             event_notification(
                 "transport/closed",
@@ -1288,6 +1291,8 @@ class TestCodexAdapter:
         # Adapter should report a failure mentioning the disconnect.
         failures = reported_failures(tools)
         assert any("transport closed" in f["message"].lower() for f in failures)
+        (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert "transport closed" in warning.getMessage()
 
     @pytest.mark.asyncio
     async def test_transport_closed_resets_client_state(self) -> None:
