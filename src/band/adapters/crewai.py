@@ -459,7 +459,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             if reply_tracker.any_tool_ran:
                 return None
             if attempt == 0:
-                logger.info(
+                logger.warning(
                     "Room %s: CrewAI kickoff returned no text before any tool "
                     "ran; retrying",
                     room_id,
