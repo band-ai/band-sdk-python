@@ -645,20 +645,18 @@ RECALL_ALL_FACTS = (
 )
 
 
-def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
-    """Peer-initiated delegation: drive one agent to send peer ``peer_name`` the value
+def delegate_to_peer_instruction(peer_name: str) -> str:
+    """Peer-initiated delegation: drive one agent to send peer ``peer_name`` the note
     it remembered, so it emits a real routing mention of the peer whose body carries
     the value recalled from its own context, and the peer responds.
 
-    The peer never saw the user's message, so the request must be one it can fulfil
-    from the routed message alone: asked to "confirm" a value from a message it cannot
-    see, the peer rightly distrusts the claim and refuses, declines, or answers in
-    plain text. The request also names no user and no later step, because "wait for
-    the reply" reads as permission to end the turn with band_no_reply instead."""
+    The peer never saw the user's message, so the ask must be one it can fulfil from
+    the routed message alone; asked to "confirm" a value it cannot see, it rightly
+    distrusts the claim. The wording is load-bearing for small models: naming the
+    peer as the subject reads as "not for me" (band_no_reply), "token" reads as a
+    secret, and a dictated mention ID contradicts the roster's handle guidance."""
     return (
-        "Recall the complete value token from my previous message. "
-        f"In one {BandTool.SEND_MESSAGE} call with mentions=['{peer_id}'], send "
-        f"{peer_name} exactly this content, with the complete token in place of "
-        '<token>: "Please repeat this token back to me exactly: <token>". '
-        "That message is your whole reply this turn."
+        f"Please send {peer_name} a {BandTool.SEND_MESSAGE} that mentions them, "
+        "includes the complete note from my previous message, and asks them to "
+        "repeat it back to you."
     )

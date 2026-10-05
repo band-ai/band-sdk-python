@@ -2,7 +2,7 @@
 
 The thin L3 delegation slice, across the tool-loop matrix. Two instances A and B of the
 same adapter co-reside via ``cell.run_many(2)``. Turn 1 seeds a value V into B's own
-context. Turn 2 addresses B *directly* (not an orchestrator) — "send A the value V and
+context. Turn 2 addresses B *directly* (not an orchestrator) — "send A the note V and
 ask A to repeat it back" — so the delegation is B's own decision (peer-initiated).
 Load-bearing, floors-only assertions from the one flow:
 
@@ -71,7 +71,7 @@ async def test_peer_initiated_delegation_with_self_recall(
             mark = capture.messages.snapshot()
             deleg_mid = await user_ops.send_message(
                 room_id,
-                delegate_to_peer_instruction(agent_a.name, agent_a.id),
+                delegate_to_peer_instruction(agent_a.name),
                 mention_id=agent_b.id,
                 mention_name=agent_b.name,
             )
