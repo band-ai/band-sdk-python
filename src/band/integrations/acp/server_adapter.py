@@ -148,6 +148,12 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         # Push handler for unsolicited updates
         self._push_handler: ACPPushHandler | None = None
 
+    @property
+    def judges_turns(self) -> bool:
+        """Room messages are peers' answers relayed to the editor, not turns
+        this agent owes a Band reply."""
+        return False
+
     # ── Public accessors (used by ACPServer and ACPPushHandler) ──
     #
     # These accessors read/write dicts guarded by _state_lock. Since they

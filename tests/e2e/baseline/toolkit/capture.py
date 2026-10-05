@@ -262,8 +262,9 @@ class ReplyCapture:
         been captured — that frame is an independent, unordered platform event, so
         to assert on reply text wait on ``wait_for_reply`` instead.
 
-        ``PROCESSED`` is the only success terminal: ``FAILED`` is transient (the
-        platform retries), so we wait through it rather than giving up. On
+        ``PROCESSED`` is the only success terminal: ``FAILED`` is not terminal
+        (``/next`` serves it again, so a new agent context can run it), so we
+        wait through it rather than giving up. On
         timeout the error reports the last status seen and any attempt error, so
         a permanently-failing message is diagnosable instead of opaque.
         """

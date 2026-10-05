@@ -21,7 +21,12 @@ from band.core.types import (
 )
 from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod, RpcEvent
 from band.testing import FakeAgentTools
-from tests.adapters.codexturns import RecordedRequests, await_released_turn
+from tests.adapters.codexturns import (
+    RecordedRequests,
+    await_released_turn,
+    final_text,
+    turn_completed,
+)
 
 
 def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessage:
@@ -199,24 +204,14 @@ def _request(request_id: int, method: str, params: dict[str, Any]) -> RpcEvent:
     )
 
 
-@pytest.mark.asyncio
+def _answered_turn() -> list[RpcEvent]:
+    """A turn whose final text the adapter relays as its reply."""
+    return [final_text("Done."), turn_completed()]
+
+
 async def test_on_event_uses_converter_history_to_resume_thread() -> None:
     tools = _ToolSchemaFakeTools()
-    fake_client = _FakeCodexClient(
-        events=[
-            _notify(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-    )
+    fake_client = _FakeCodexClient(events=_answered_turn())
     adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
     await adapter.on_started("Codex Agent", "Integration test agent")
 
@@ -317,21 +312,7 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
 @pytest.mark.asyncio
 async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
     tools_first = _ToolSchemaFakeTools()
-    fake_client_first = _FakeCodexClient(
-        events=[
-            _notify(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-    )
+    fake_client_first = _FakeCodexClient(events=_answered_turn())
     adapter_first = make_codex_adapter(fake_client_first, config=CodexAdapterConfig())
     await adapter_first.on_started("Codex Agent", "Integration test agent")
     await adapter_first.on_event(
@@ -346,21 +327,7 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
     persisted_history = list(tools_first.events_sent)
 
     tools_second = _ToolSchemaFakeTools()
-    fake_client_second = _FakeCodexClient(
-        events=[
-            _notify(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-    )
+    fake_client_second = _FakeCodexClient(events=_answered_turn())
     adapter_second = make_codex_adapter(fake_client_second, config=CodexAdapterConfig())
     await adapter_second.on_started("Codex Agent", "Integration test agent")
     await adapter_second.on_event(
@@ -384,21 +351,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
     verify turn input contains history context."""
     # --- First session: produce some history ---
     tools_first = _ToolSchemaFakeTools()
-    fake_client_first = _FakeCodexClient(
-        events=[
-            _notify(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-    )
+    fake_client_first = _FakeCodexClient(events=_answered_turn())
     adapter_first = make_codex_adapter(fake_client_first, config=CodexAdapterConfig())
     await adapter_first.on_started("Codex Agent", "Integration test agent")
     await adapter_first.on_event(
@@ -430,19 +383,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
     # --- Second session: resume fails, should inject history ---
     tools_second = _ToolSchemaFakeTools()
     fake_client_second = _FakeCodexClient(
-        events=[
-            _notify(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ],
+        events=_answered_turn(),
         resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
     )
     adapter_second = make_codex_adapter(fake_client_second, config=CodexAdapterConfig())

@@ -12,12 +12,12 @@ from band_sdk_core import AgentFailure, ClaimRegistry, RetryTracker
 from band.client.streaming import MessageMetadata
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
     TurnResultAlreadyReported,
 )
 from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
-    _TURN_FAILURE_PROVIDER,
     BacklogProcessResult,
     Execution,
     ExecutionContext,
@@ -1954,7 +1954,7 @@ class TestTurnFailureReport:
         assert await self._context(mock_link)._process_event(event) is True
 
         mock_link.mark_failed.assert_awaited_once()
-        assert self._reporters(error_events) == [_TURN_FAILURE_PROVIDER]
+        assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
 
     async def test_report_waits_for_the_final_attempt(self, mock_link, error_events):
         """A failure the message will be retried from is not final; only the
@@ -2039,11 +2039,13 @@ class TestTurnFailureReport:
         assert self._reporters(error_events) == ["codex"]
 
         await ctx._process_backlog_message(self._backlog_message("msg-unreported"))
-        assert self._reporters(error_events) == ["codex", _TURN_FAILURE_PROVIDER]
+        assert self._reporters(error_events) == ["codex", TURN_FAILURE_PROVIDER]
 
-    async def test_turn_result_already_reported_is_not_repeated(
+    async def test_an_already_reported_claim_without_a_post_is_still_reported(
         self, mock_link, error_events
     ):
+        """Only a failure post that landed suppresses the runtime's report."""
+
         async def handler(ctx, event):
             raise TurnResultAlreadyReported("reported by a nested handler")
 
@@ -2052,7 +2054,7 @@ class TestTurnFailureReport:
         )
 
         mock_link.mark_failed.assert_awaited_once()
-        error_events.assert_not_awaited()
+        assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
 
     async def test_report_post_failure_is_swallowed(self, mock_link, error_events):
         """The turn is already marked failed; a failed report must not stop

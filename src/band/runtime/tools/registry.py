@@ -617,10 +617,8 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# Event-emitting tools are observational, not terminal work: band_send_event posts a
-# thought/error/task event (narration/status) — not a chat reply or a durable requested
-# action. Like read-only tools, a turn that only sends an event and then yields an empty
-# final answer is a genuine no-response failure, not benign (see is_terminal_success).
+# Event-emitting tools narrate (a thought/error/task event): never a chat reply or a
+# durable requested action.
 EVENT_TOOL_NAMES: frozenset[str] = frozenset({BandTool.SEND_EVENT})
 
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
@@ -669,23 +667,6 @@ def band_tool_errored(tool_name: str | None, content: Any) -> bool:
         and isinstance(content, str)
         and content.startswith("Error ")
     )
-
-
-def missing_reply_error(framework: str, *, detail: str = "") -> str:
-    """The room-visible error for a turn that ended without a reply going out.
-
-    Raised by every adapter that answers through tools, so the wording lives
-    once. Both endings are named because they look identical from the room and
-    are told apart only by the model's last response: a plain-text final answer
-    the adapter cannot post, or no output at all (empty or thinking-only), which
-    is what a model that considers the exchange finished actually returns.
-    """
-    reasons = (
-        f"{framework} finished a turn without calling band_send_message, so "
-        "nothing reached the room. The model either answered in plain text "
-        "instead of using the tool, or returned no output at all."
-    )
-    return f"{reasons} {detail}" if detail else reasons
 
 
 # Fail fast on typos — catch at import time, not in a test run.

@@ -597,7 +597,9 @@ class CrewAIFlowCustomTools:
         input_data = dict(arguments or kwargs)
         await self._report_call(name, input_data)
         try:
-            result = await execute_custom_tool(tool, input_data)
+            result = await execute_custom_tool(
+                tool=tool, arguments=input_data, turn=self._tools.turn
+            )
         except Exception as exc:
             await self._report_result(name, str(exc), is_error=True)
             raise
@@ -1571,6 +1573,12 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     SUPPORTED_CAPABILITIES = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+
+    @property
+    def judges_turns(self) -> bool:
+        """The Flow owns its visible writes (reserve-send-confirm), and a turn
+        that only advances orchestration state owes no reply."""
+        return False
 
     def __init__(
         self,

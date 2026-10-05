@@ -32,10 +32,10 @@ from band.runtime.tools import (
     get_band_tool_category,
     get_tool_description,
     is_image_passthrough_result,
-    is_terminal_success,
     iter_tool_definitions,
     platform_args_schema,
     serialize_tool_result,
+    turn_effect,
     validate_tool_arguments,
 )
 
@@ -248,13 +248,12 @@ async def _dispatch_failed(
         error,
         exc_info=error,
     )
-    if notify_room or not is_terminal_success(definition.name, succeeded=True):
-        # The "Error " prefix is load-bearing: band_tool_errored reads it to
-        # tell a failed Band tool from productive work.
+    if notify_room or not turn_effect(definition.name).did_work:
         message = f"Error executing {definition.name}: {error}"
     else:
-        # The method completed, so this must not look like a failed terminal
-        # action to the adapter even though the result could not be normalized.
+        # The method completed, so the model must not read it as a failure and
+        # redo it (re-posting a message) just because the result could not be
+        # normalized.
         message = (
             f"{definition.name} executed, but its result could not be normalized: "
             f"{error}"

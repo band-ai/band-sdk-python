@@ -607,6 +607,7 @@ class TestStartupRaceCondition:
                     "System prompt was empty during message processing! "
                     "adapter.on_started() was not called before message arrived."
                 )
+                await tools.no_reply()
 
             async def on_cleanup(self, room_id: str) -> None:
                 pass

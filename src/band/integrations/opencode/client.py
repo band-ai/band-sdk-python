@@ -51,8 +51,6 @@ class OpencodeClientProtocol(Protocol):
         self, request_id: str, *, answers: list[list[str]]
     ) -> None: ...
 
-    async def reject_question(self, request_id: str) -> None: ...
-
     async def abort_session(self, session_id: str) -> None: ...
 
     async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]: ...
@@ -186,13 +184,6 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             f"/question/{request_id}/reply",
             params=self._query_params(),
             json={"answers": answers},
-        )
-        response.raise_for_status()
-
-    async def reject_question(self, request_id: str) -> None:
-        response = await self._client.post(
-            f"/question/{request_id}/reject",
-            params=self._query_params(),
         )
         response.raise_for_status()
 

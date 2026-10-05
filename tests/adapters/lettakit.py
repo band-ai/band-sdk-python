@@ -8,16 +8,26 @@ by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
 
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any
-from unittest.mock import MagicMock, create_autospec
+from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 from uuid import uuid4
 
 from letta_client import AsyncLetta
+from letta_client.types.agents.tool_call import ToolCall
+from letta_client.types.agents.tool_call_message import ToolCallMessage
+from letta_client.types.agents.tool_return import ToolReturn
+from letta_client.types.tool_return_message import ToolReturnMessage
 from pytest_httpx import HTTPXMock
+from typing_extensions import Unpack
 
-from band.core.types import PlatformMessage
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
+from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.letta.prompts import render_tool_enforcement
+from band.integrations.mcp.engine import build_resolved_band_mcp_tool_registrations
+from band.runtime.tools import CHAT_ID_FIELD_NAME
 
 
 def make_platform_message(
@@ -52,27 +62,147 @@ def make_assistant_message(content: str = "Hello!") -> MagicMock:
 def make_tool_call_message(
     tool_name: str = "band_send_message",
     arguments: str = '{"content": "Hi", "mentions": ["@alice"]}',
-) -> MagicMock:
-    tool_call = MagicMock()
-    tool_call.name = tool_name
-    tool_call.arguments = arguments
-    return make_letta_message("tool_call_message", tool_call=tool_call)
+) -> ToolCallMessage:
+    return make_grouped_call_message(
+        [ToolCall(name=tool_name, arguments=arguments, tool_call_id=call_id(tool_name))]
+    )
 
 
 def make_tool_return_message(
     tool_name: str = "band_send_message",
     tool_return: str = '{"status": "ok"}',
-) -> MagicMock:
-    return make_letta_message(
-        "tool_return_message", tool_name=tool_name, tool_return=tool_return
+    status: Literal["success", "error"] = "success",
+) -> ToolReturnMessage:
+    return make_grouped_return_message(
+        [
+            ToolReturn(
+                type="tool",
+                tool_return=tool_return,
+                status=status,
+                tool_call_id=call_id(tool_name),
+            )
+        ],
+        name=tool_name,
     )
 
 
-def make_letta_response(*messages: MagicMock) -> MagicMock:
+def call_id(tool_name: str) -> str:
+    return f"call-{tool_name}"
+
+
+def make_grouped_call_message(calls: list[ToolCall]) -> ToolCallMessage:
+    """Letta's shape: ``tool_call`` repeats only the first of ``tool_calls``."""
+    return ToolCallMessage(
+        id=f"message-{calls[0].tool_call_id}",
+        date=datetime.now(UTC),
+        message_type="tool_call_message",
+        tool_call=calls[0],
+        tool_calls=calls,
+    )
+
+
+def make_grouped_return_message(
+    returns: list[ToolReturn], *, name: str
+) -> ToolReturnMessage:
+    """Letta's shape: ``name``/``status``/``tool_call_id`` describe only the
+    first of ``tool_returns``."""
+    first = returns[0]
+    return ToolReturnMessage(
+        id=f"message-return-{first.tool_call_id}",
+        date=datetime.now(UTC),
+        message_type="tool_return_message",
+        name=name,
+        status=first.status,
+        tool_call_id=first.tool_call_id,
+        tool_return=str(first.tool_return),
+        tool_returns=returns,
+    )
+
+
+def make_parallel_tool_messages(
+    results: list[tuple[str, Literal["success", "error"]]],
+    *,
+    reverse_returns: bool,
+) -> tuple[ToolCallMessage, ToolReturnMessage]:
+    calls = [
+        ToolCall(name=name, arguments="{}", tool_call_id=f"call-{index}")
+        for index, (name, _status) in enumerate(results)
+    ]
+    returns = [
+        ToolReturn(
+            type="tool",
+            tool_return="result",
+            status=status,
+            tool_call_id=call.tool_call_id,
+        )
+        for call, (_name, status) in zip(calls, results, strict=True)
+    ]
+    if reverse_returns:
+        returns.reverse()
+    return (
+        make_grouped_call_message(calls),
+        make_grouped_return_message(returns, name=calls[0].name),
+    )
+
+
+def make_letta_response(*messages: Any) -> MagicMock:
     """Create a fake Letta API response."""
     resp = MagicMock()
     resp.messages = list(messages)
     return resp
+
+
+def ready_letta_adapter(
+    config: LettaAdapterConfig | None = None,
+    *,
+    room_id: str = "room-1",
+    **features: Unpack[FeatureKwargs],
+) -> tuple[LettaAdapter, AsyncMock]:
+    """An adapter past startup: client set, MCP path registered, and a Letta
+    agent already bound to ``room_id``. Returns it with its mock client."""
+    adapter = LettaAdapter(config, **features)
+    client = AsyncMock()
+    adapter._client = client
+    adapter._system_prompt = "Test"
+    adapter._mcp.server_id = "mcp-server-1"
+    adapter._rooms[room_id] = RoomContext(agent_id="agent-1")
+    return adapter, client
+
+
+def scripted_letta_turn(
+    adapter: LettaAdapter,
+    *,
+    room_id: str,
+    tool_calls: Sequence[tuple[str, dict[str, Any]]] = (),
+    final_text: str = "",
+) -> Callable[..., Awaitable[MagicMock]]:
+    """A self-hosted Letta agent's turn, as a ``messages.create`` side effect.
+
+    Each tool call runs through the adapter's real Band MCP registrations (the
+    path Letta's MCP client reaches), then the turn's messages come back as
+    Letta's response.
+    """
+    registrations = {
+        registration.name: registration
+        for registration in build_resolved_band_mcp_tool_registrations(
+            get_tools=adapter._get_room_tools,
+            capabilities=adapter.features.capabilities,
+        )
+    }
+
+    async def create(**_kwargs: Any) -> MagicMock:
+        messages: list[Any] = []
+        for name, arguments in tool_calls:
+            messages.append(make_tool_call_message(name, json.dumps(arguments)))
+            result = await registrations[name].execute(
+                {**arguments, CHAT_ID_FIELD_NAME: room_id}
+            )
+            messages.append(make_tool_return_message(name, result))
+        if final_text:
+            messages.append(make_assistant_message(final_text))
+        return make_letta_response(*messages)
+
+    return create
 
 
 def make_mock_mcp_server(

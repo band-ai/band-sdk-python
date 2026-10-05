@@ -20,7 +20,8 @@ from band.integrations.mcp.engine import (
     build_engine,
     build_resolved_band_mcp_tool_registrations,
 )
-from band.runtime.tools import BandTool, iter_tool_definitions
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import BandTool, TurnEffect, iter_tool_definitions
 from band.testing import FakeAgentTools
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
@@ -42,6 +43,7 @@ class LookupInput(BaseModel):
     query: str
 
 
+@declares_turn_effect(TurnEffect.ACT)
 async def lookup(input_data: LookupInput) -> str:
     return input_data.query
 
@@ -99,6 +101,27 @@ async def test_call_lands_in_its_endpoints_room(
 
     assert len(rooms[ROOM_A].memories) == 2
     assert rooms[ROOM_B].memories == []
+
+
+@pytest.mark.timeout(90)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("room_bound", [True, False])
+async def test_custom_tool_records_its_effect_on_its_rooms_turn(
+    rooms: dict[str, FakeAgentTools], room_bound: bool
+) -> None:
+    room_args = {} if room_bound else {"chat_id": ROOM_B}
+    async with (
+        room_backend(rooms, room_bound=room_bound) as backend,
+        mcp_session(
+            backend.endpoint(BandMCPTransport.HTTP, ROOM_B if room_bound else None)
+        ) as session,
+    ):
+        await session.call_tool("lookup", {"query": "q", **room_args})
+
+    assert {room: tools.turn.complete for room, tools in rooms.items()} == {
+        ROOM_A: False,
+        ROOM_B: True,
+    }
 
 
 @pytest.mark.timeout(90)

@@ -140,7 +140,7 @@ class TestTaggedPeer:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert [m["content"] for m in tools.messages_sent] == ["direct final"]
+        assert tools.chat == ["direct final"]
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +673,7 @@ class TestE2ETrace:
         )
         expected = json.loads(fixture_path.read_text())
         actual = {
-            "visible_messages": [m["content"] for m in tools.messages_sent],
+            "visible_messages": tools.chat,
             "task_statuses": [
                 e["metadata"].get(ns, {}).get("status")
                 for e in tools.events_sent

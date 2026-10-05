@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from agno.agent import Agent as AgnoAgent
@@ -16,8 +16,9 @@ from typing_extensions import Unpack
 
 from band.adapters.agno import AgnoAdapter
 from band.core.types import FeatureKwargs, PlatformMessage
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
-from tests.adapters.agno.helpers import CapturingModel, SchemaTools
+from tests.adapters.agno.helpers import CapturingModel, SchemaTools, fake_agno_agent
 
 
 @pytest.fixture(autouse=True)
@@ -44,46 +45,25 @@ def make_agno_agent() -> Callable[..., MagicMock]:
 
     def _make(
         *,
-        update_memory_on_run: bool = False,
-        enable_agentic_memory: bool = False,
-        add_history_to_context: bool = False,
-        db: object | None = None,
+        replies_through: FakeAgentTools | None = None,
         response: RunOutput | None = None,
-        events: list[Any] | None = None,
+        **config: Any,
     ) -> MagicMock:
-        agent = MagicMock(name="agno_agent")
-        agent.update_memory_on_run = update_memory_on_run
-        agent.enable_agentic_memory = enable_agentic_memory
-        # Explicit falsy defaults: a bare MagicMock would expose these as truthy
-        # auto-attributes and spuriously trip the history-management guard.
-        agent.add_history_to_context = add_history_to_context
-        agent.db = db
-        agent.add_tool = MagicMock()
-        # Real Agno agents default additional_context to None; mirror that.
-        agent.additional_context = None
-        # The adapter captures the user's tools at startup, then installs a
-        # callable factory. A bare MagicMock `.tools` is itself callable and would
-        # be mistaken for a user-supplied tools factory, so pin it to a list.
-        agent.tools = []
-        resp = response if response is not None else RunOutput()
-        if events is None:
-            # Non-streaming path (Emit.TOOL_CALLS off): `await agent.arun(...)`.
-            agent.arun = AsyncMock(return_value=resp)
-        else:
-            # Streaming path (Emit.TOOL_CALLS on): the adapter iterates
-            # `agent.arun(stream=True, ...)`, which yields the run events then the
-            # final RunOutput. A bare MagicMock returns an async iterator without
-            # awaiting, matching how the adapter consumes the stream.
-            def _arun(*args: Any, **kwargs: Any) -> Any:
-                async def _stream() -> Any:
-                    for event in events:
-                        yield event
-                    yield resp
+        async def reply() -> None:
+            assert replies_through is not None
+            await replies_through.execute_tool_call(
+                BandTool.SEND_MESSAGE,
+                {
+                    "content": (response and response.content) or "ok",
+                    "mentions": ["@Alice"],
+                },
+            )
 
-                return _stream()
-
-            agent.arun = MagicMock(side_effect=_arun)
-        return agent
+        return fake_agno_agent(
+            response=response,
+            model_turn=reply if replies_through is not None else None,
+            **config,
+        )
 
     return _make
 
@@ -101,6 +81,7 @@ def make_started_adapter(
         add_history_to_context: bool = False,
         db: object | None = None,
         events: list[Any] | None = None,
+        replies_through: FakeAgentTools | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> tuple[AgnoAdapter, MagicMock]:
         agent = make_agno_agent(
@@ -108,6 +89,7 @@ def make_started_adapter(
             add_history_to_context=add_history_to_context,
             db=db,
             events=events,
+            replies_through=replies_through,
         )
         # Most call sites here test something other than narration, and the
         # fake agent's arun() is a plain (non-streaming) AsyncMock unless the

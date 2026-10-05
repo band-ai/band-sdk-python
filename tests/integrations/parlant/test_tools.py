@@ -11,17 +11,15 @@ from band.core.memory_types import enum_values
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.parlant.tools import (
-    _session_message_sent,
     _session_tools,
     create_parlant_tools,
     get_current_tools,
     get_session_tools,
-    mark_message_sent,
     set_current_tools,
     set_session_tools,
-    was_message_sent,
 )
 from band.runtime.tools import TASK_TOOL_NAMES, TOOL_MODELS, ListContactRequestsInput
+from band.testing import FakeAgentTools
 
 try:
     import parlant.sdk  # noqa: F401
@@ -37,7 +35,6 @@ class TestSessionToolsRegistry:
     def setup_method(self):
         """Clear registry before each test."""
         _session_tools.clear()
-        _session_message_sent.clear()
 
     def test_set_session_tools_stores_tools(self):
         """Should store tools for a session."""
@@ -48,14 +45,6 @@ class TestSessionToolsRegistry:
         assert "session-123" in _session_tools
         assert _session_tools["session-123"] is mock_tools
 
-    def test_set_session_tools_initializes_message_sent_flag(self):
-        """Should initialize message_sent flag to False."""
-        mock_tools = MagicMock()
-
-        set_session_tools("session-123", mock_tools)
-
-        assert _session_message_sent["session-123"] is False
-
     def test_set_session_tools_clears_on_none(self):
         """Should clear tools when setting None."""
         mock_tools = MagicMock()
@@ -65,7 +54,6 @@ class TestSessionToolsRegistry:
         set_session_tools("session-123", None)
 
         assert "session-123" not in _session_tools
-        assert "session-123" not in _session_message_sent
 
     def test_get_session_tools_returns_stored_tools(self):
         """Should return stored tools for session."""
@@ -81,45 +69,6 @@ class TestSessionToolsRegistry:
         result = get_session_tools("unknown-session")
 
         assert result is None
-
-
-class TestMessageSentFlag:
-    """Tests for message sent tracking."""
-
-    def setup_method(self):
-        """Clear registry before each test."""
-        _session_tools.clear()
-        _session_message_sent.clear()
-
-    def test_mark_message_sent_sets_flag(self):
-        """Should set message_sent flag to True."""
-        _session_message_sent["session-123"] = False
-
-        mark_message_sent("session-123")
-
-        assert _session_message_sent["session-123"] is True
-
-    def test_was_message_sent_returns_true_when_sent(self):
-        """Should return True when message was sent."""
-        _session_message_sent["session-123"] = True
-
-        result = was_message_sent("session-123")
-
-        assert result is True
-
-    def test_was_message_sent_returns_false_when_not_sent(self):
-        """Should return False when message was not sent."""
-        _session_message_sent["session-123"] = False
-
-        result = was_message_sent("session-123")
-
-        assert result is False
-
-    def test_was_message_sent_returns_false_for_unknown_session(self):
-        """Should return False for unknown session."""
-        result = was_message_sent("unknown-session")
-
-        assert result is False
 
 
 class TestDeprecatedFunctions:
@@ -493,7 +442,6 @@ class TestParlantToolFunctions:
     def setup_method(self):
         """Clear registry and set up mocks before each test."""
         _session_tools.clear()
-        _session_message_sent.clear()
 
     @pytest.fixture
     def mock_tools(self):
@@ -579,16 +527,17 @@ class TestParlantToolFunctions:
         assert "Message sent to Alice, Bob" in result.data
 
     @pytest.mark.asyncio
-    async def test_send_message_marks_message_sent(
-        self, parlant_tools, mock_tools, mock_context
+    async def test_send_message_settles_the_turn_reply(
+        self, parlant_tools, mock_context
     ):
-        """Should mark message as sent after successful send."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        """The adapter reads the turn, so it won't duplicate the tool's reply."""
+        tools = FakeAgentTools()
+        set_session_tools(mock_context.session_id, tools)
 
         send_message = parlant_tools["band_send_message"]
         await send_message(mock_context, "Hello", "Alice")
 
-        assert was_message_sent(mock_context.session_id) is True
+        assert tools.turn.replied
 
     @pytest.mark.asyncio
     async def test_no_reply_calls_tools_no_reply(
@@ -604,17 +553,26 @@ class TestParlantToolFunctions:
         assert "No reply sent" in result.data
 
     @pytest.mark.asyncio
-    async def test_no_reply_marks_message_sent(
+    async def test_no_reply_omits_a_blank_reason(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """Should mark message as sent so the adapter does not duplicate-reply."""
         set_session_tools(mock_context.session_id, mock_tools)
 
         no_reply = parlant_tools["band_no_reply"]
         await no_reply(mock_context, reason="")
 
         mock_tools.no_reply.assert_awaited_once_with(None)
-        assert was_message_sent(mock_context.session_id) is True
+
+    @pytest.mark.asyncio
+    async def test_no_reply_settles_the_turn_reply(self, parlant_tools, mock_context):
+        """A decline settles the turn, so the adapter posts nothing of its own."""
+        tools = FakeAgentTools()
+        set_session_tools(mock_context.session_id, tools)
+
+        no_reply = parlant_tools["band_no_reply"]
+        await no_reply(mock_context, reason="")
+
+        assert tools.turn.replied
 
     @pytest.mark.asyncio
     async def test_send_message_returns_error_without_tools(

@@ -867,7 +867,7 @@ class TestPersistedRunPolicy:
             is_session_bootstrap=False,
         )
 
-        assert [m["content"] for m in tools.messages_sent] == ["first answer"]
+        assert tools.chat == ["first answer"]
         statuses = [
             e["metadata"].get(ns, {}).get("status")
             for e in tools.events_sent

@@ -24,7 +24,6 @@ from band.integrations.omp import (
     omp_provider_env,
     validate_omp_command,
 )
-from band.runtime.tools import settles_turn_reply
 from tests.paths import CI_SCRIPTS
 
 
@@ -137,7 +136,6 @@ def test_normalize_mcp_title_maps_registered_band_tool() -> None:
     name, args = normalize_omp_mcp_device_call(title, {"chat_id": "r1"}, own)
     assert name == "band_send_message"
     assert args == {"chat_id": "r1"}
-    assert settles_turn_reply(name) is True
 
 
 def test_normalize_device_call_leaves_unknown_paths() -> None:

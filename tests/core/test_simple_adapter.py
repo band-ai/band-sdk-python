@@ -30,7 +30,8 @@ class ListHistoryConverter(HistoryConverter[list[str]]):
 
 
 class RecordingAdapter(SimpleAdapter[str]):
-    """Test adapter that records calls for verification."""
+    """Test adapter that records calls for verification, then declines the
+    turn so the verdict stays out of these dispatch tests."""
 
     def __init__(self, *, history_converter: HistoryConverter[str] | None = None):
         super().__init__(history_converter=history_converter)
@@ -59,6 +60,7 @@ class RecordingAdapter(SimpleAdapter[str]):
                 "room_id": room_id,
             }
         )
+        await tools.no_reply()
 
     async def on_cleanup(self, room_id: str) -> None:
         self.cleanup_calls.append(room_id)
@@ -162,6 +164,7 @@ class TestOnEventTraceContext:
                 room_id,
             ):
                 seen.append(TRACE_CONTEXT.get())
+                await tools.no_reply()
 
         adapter = TracingAdapter()
         assert TRACE_CONTEXT.get() is None
@@ -338,6 +341,7 @@ class TestAdapterSubclassing:
                 room_id,
             ):
                 self.received_history = history
+                await tools.no_reply()
 
         adapter = ListAdapter()
         inp = make_agent_input(
@@ -368,6 +372,7 @@ class TestAdapterSubclassing:
                 room_id,
             ):
                 self.received_history = history
+                await tools.no_reply()
 
         adapter = NoConverterAdapter()
         raw = [{"content": "Test"}]

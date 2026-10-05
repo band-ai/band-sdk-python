@@ -27,6 +27,7 @@ from band.core.model_catalog import ModelSelection, ModelSelectionError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability
 from band.runtime.capabilities import FeatureFlag
+from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.formatters import build_participants_message
 from band.runtime.oneshot import (
     OneShotEnvelopeError,
@@ -35,6 +36,7 @@ from band.runtime.oneshot import (
     _lookup_sender_name,
     _parse_inserted_at,
 )
+from band.runtime.tools import TurnEffect
 from tests.catalogs import CatalogAdapter
 from tests.runtime.conftest import ctx_item, make_link_mock, platform_msg
 
@@ -875,6 +877,7 @@ class TestToolCallReplayAcrossCrash:
     async def test_crash_before_mark_processed_replays_the_tool(self) -> None:
         sent_emails: list[str] = []
 
+        @declares_turn_effect(TurnEffect.ACT)
         async def send_email(args: SendEmailInput) -> str:
             sent_emails.append(args.to)
             return "sent"

@@ -138,7 +138,8 @@ class LettaAdapterConfig(EnvAdapterConfig):
         auto_relay: Relay the agent's plain assistant text into the room when
             it did not call the MCP send tool. Keeps the agent responsive when
             the model skips tools, but can mask a dead MCP tool path — disable
-            to make an unused tool path fail loudly (an error event) instead.
+            to drop the text instead, so a turn that neither replied nor did
+            real work is reported as a missing reply.
         delete_agents_on_cleanup: Delete the room's Letta agent on cleanup.
             Off by default: persisted agents are what makes resume-by-id work
             across restarts. Per_room mode only — the shared agent outlives
