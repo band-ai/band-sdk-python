@@ -219,9 +219,11 @@ Parlant joins the non-preamble final segments from one event batch before
 relaying, so recording the fallback reply cannot suppress a later segment of
 that same answer.
 
-For external Letta MCP servers, each successful grouped tool return is matched
-to its call by `tool_call_id` and records that core tool's turn effect. Failed
-returns record nothing; self-hosted tools record their own effects.
+For external Letta MCP servers, the SDK examines the fully buffered response:
+it collects successful grouped return IDs, then records the core turn effect
+of each named call whose `tool_call_id` succeeded. Message order does not
+determine the outcome. Failed returns record nothing; self-hosted tools record
+their own effects.
 
 `tests/framework_conformance/test_reply_boundary.py` pins every `send_message`,
 `deliver_reply` and `relay_reply` call outside the tool implementations, per
