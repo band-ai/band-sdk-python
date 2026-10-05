@@ -68,7 +68,8 @@ class FailureMetadataKey(StrEnum):
 class TurnResultAlreadyReported(Exception):
     """A terminal turn failure that a nested handler already reported via
     ``send_failure``. An adapter's outer ``except`` re-raises this without
-    reporting the same failure a second time."""
+    reporting the same failure a second time. The runtime reports the turn
+    anyway when that ``send_failure`` did not post."""
 
 
 def to_failure_event(failure: AgentFailure) -> tuple[str, dict[str, Any]]:

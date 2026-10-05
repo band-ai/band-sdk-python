@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import band_sdk_core
 from band_sdk_core import AgentFailure, TurnLedger, TurnVerdict
 
-from band.core.protocols import TURN_FAILURE_PROVIDER, TurnResultAlreadyReported
+from band.core.protocols import TURN_FAILURE_PROVIDER
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
@@ -92,18 +92,6 @@ async def report_unsettled_turn(tools: AgentToolsProtocol, *, room_id: str) -> b
     if tools.turn.posts_missing_reply:
         await tools.send_failure(MISSING_REPLY)
     return True
-
-
-def unsettled_turn_error(turn: Turn) -> Exception:
-    """What a reported, unsettled turn raises to the runtime.
-
-    ``TurnResultAlreadyReported`` when the room has the report or the session
-    posts none, so the runtime adds nothing. A report that failed to post
-    raises a plain error instead, so the runtime's own failure report runs.
-    """
-    if turn.complete or not turn.posts_missing_reply:
-        return TurnResultAlreadyReported("turn ended without a reply")
-    return RuntimeError("turn ended without a reply, and its report did not post")
 
 
 async def judge_detached_turn(tools: AgentToolsProtocol, *, room_id: str) -> None:

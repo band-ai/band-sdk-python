@@ -1497,6 +1497,34 @@ async def test_an_idle_slack_originated_turn_is_reported(
 
 
 @pytest.mark.asyncio
+async def test_a_slack_turn_whose_report_failed_is_not_logged_as_a_crash(
+    caplog: pytest.LogCaptureFixture,
+):
+    """A Slack turn has no runtime to fall back to; the failed post is logged
+    where it failed, and the handler does not log the turn again as a crash."""
+    adapter, _, _, rest = _make_adapter(
+        inner=IdleBrain(judges_turns=True), room_ids=["room-1"]
+    )
+    await adapter.on_started("MyBot", "")
+    create = rest.agent_api_events.create_agent_chat_event
+
+    async def fail_error_events(**kwargs: Any) -> Any:
+        if kwargs["event"].message_type == MessageType.ERROR:
+            raise RuntimeError("503")
+        return create.return_value
+
+    create.side_effect = fail_error_events
+
+    with caplog.at_level(logging.WARNING):
+        await _post_slack_event(adapter, adapter.config.apps[0], _mention_event())
+        await adapter.wait_idle()
+
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == [
+        "send_failure could not post the failure event"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_on_event_rehydrates_room_binding_on_bootstrap():
     """First WS-delivered message in a previously-bridged room restores state."""
     adapter, inner, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))

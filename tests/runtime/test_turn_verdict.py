@@ -23,6 +23,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TURN_FAILURE_PROVIDER,
     AgentToolsProtocol,
+    TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -185,18 +186,29 @@ async def crash(tools: AgentToolsProtocol) -> None:
     raise RuntimeError("provider exploded")
 
 
-def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
+ADAPTER_FAILURE = ("scripted", "Provider is down")
+
+
+async def report_and_stop(tools: AgentToolsProtocol) -> None:
+    """An adapter's own failure path: report it, then end the turn."""
+    await tools.send_failure(band_sdk_core.AgentFailure(*ADAPTER_FAILURE))
+    raise TurnResultAlreadyReported(ADAPTER_FAILURE[1])
+
+
+def failure_posts(link: MagicMock) -> list[tuple[str, str]]:
+    """Every attempted failure post, as (provider, text), in order."""
     return [
         (
             call.kwargs["event"].metadata["failure"]["provider"],
             call.kwargs["event"].content,
         )
         for call in link.rest.agent_api_events.create_agent_chat_event.call_args_list
-        if call.kwargs["event"].metadata
-        and "failure" in call.kwargs["event"].metadata
-        and call.kwargs["event"].metadata["failure"]["provider"]
-        == TURN_FAILURE_PROVIDER
+        if call.kwargs["event"].metadata and "failure" in call.kwargs["event"].metadata
     ]
+
+
+def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
+    return [post for post in failure_posts(link) if post[0] == TURN_FAILURE_PROVIDER]
 
 
 @pytest.mark.parametrize("row", sorted(ROWS))
@@ -247,22 +259,37 @@ async def test_only_an_unreported_failure_is_logged_as_a_runtime_error(
     assert bool(record.exc_info) is traceback
 
 
-async def test_a_missing_reply_that_failed_to_post_falls_back_to_the_runtime_report(
-    link: MagicMock,
-) -> None:
-    """The room still hears about the turn when the verdict's own post fails."""
-    create = link.rest.agent_api_events.create_agent_chat_event
-    create.side_effect = [RuntimeError("transient 503"), create.return_value]
-    ctx = run_through(ScriptedAdapter([]), link)
+GENERIC_FAILURE = (TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
-    await deliver(ctx, "live")
+
+@pytest.mark.parametrize("path", ["live", "backlog"])
+@pytest.mark.parametrize("report_posts", [True, False], ids=["posted", "post-failed"])
+@pytest.mark.parametrize(
+    ("steps", "report"),
+    [
+        pytest.param([], MISSING_REPLY_FAILURE, id="missing-reply"),
+        pytest.param([report_and_stop], ADAPTER_FAILURE, id="adapter-report"),
+    ],
+)
+async def test_the_runtime_reports_a_turn_only_when_its_report_did_not_post(
+    link: MagicMock,
+    path: str,
+    steps: list[Step],
+    report: tuple[str, str],
+    report_posts: bool,
+) -> None:
+    """Raising ``TurnResultAlreadyReported`` is not enough: the runtime's
+    fallback runs unless the turn's own report actually reached the room."""
+    if not report_posts:
+        create = link.rest.agent_api_events.create_agent_chat_event
+        create.side_effect = [RuntimeError("transient 503"), create.return_value]
+    ctx = run_through(ScriptedAdapter(steps), link)
+
+    await deliver(ctx, path)
 
     link.mark_failed.assert_awaited_once()
-    # Attempted posts, in order: the verdict's (which failed), then the fallback.
-    assert runtime_failures(link) == [
-        MISSING_REPLY_FAILURE,
-        (TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE),
-    ]
+    fallback = [] if report_posts else [GENERIC_FAILURE]
+    assert failure_posts(link) == [report, *fallback]
 
 
 async def test_a_session_that_reports_no_failures_posts_no_missing_reply(

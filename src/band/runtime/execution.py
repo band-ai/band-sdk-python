@@ -2031,9 +2031,9 @@ class ExecutionContext:
             )
 
         is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
-        already_reported = self._turn_failure_reported or isinstance(
-            error, TurnResultAlreadyReported
-        )
+        # Only a post that landed counts: an adapter raises
+        # TurnResultAlreadyReported even when its send_failure did not post.
+        already_reported = self._turn_failure_reported
         if not (
             self.config.report_turn_failures_to_room
             and is_final

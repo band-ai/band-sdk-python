@@ -21,8 +21,9 @@ from band.core.model_catalog import (
 from band.core.protocols import (
     AgentToolsProtocol,
     HistoryConverter,
+    TurnResultAlreadyReported,
 )
-from band.core.turn import report_unsettled_turn, unsettled_turn_error
+from band.core.turn import report_unsettled_turn
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -445,4 +446,4 @@ class SimpleAdapter(ABC, Generic[H]):
             and not turn.detached
             and await report_unsettled_turn(tools, room_id=room_id)
         ):
-            raise unsettled_turn_error(turn)
+            raise TurnResultAlreadyReported("turn ended without a reply")
