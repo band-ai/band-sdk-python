@@ -68,7 +68,8 @@ class TestReply:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
-    async def test_prompt_contains_room_context_and_message(self):
+    async def test_prompt_carries_the_message_but_no_room_id(self):
+        """The tools are bound to the room, so the prompt never states it."""
         client = FakeCopilotClient()
         adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
@@ -76,7 +77,7 @@ class TestReply:
         await run_message(adapter, tools, content="What's up?")
 
         prompt = client.sessions[0].prompts[0]
-        assert f"[{CHAT_ID_FIELD_NAME}: room-1]" in prompt
+        assert CHAT_ID_FIELD_NAME not in prompt
         assert "[Alice]: What's up?" in prompt
 
     @pytest.mark.asyncio

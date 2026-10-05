@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -399,48 +398,6 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
         request = httpx.Request("GET", f"http://localhost/session/{session_id}")
         response = httpx.Response(status_code=status_code, request=request)
         super().__init__("status error", request=request, response=response)
-
-
-class FakeMCPBackend:
-    """Fake BandMCPBackend for tests."""
-
-    def __init__(
-        self,
-        *,
-        sse_url: str = "http://127.0.0.1:50000/sse",
-        stop_started: asyncio.Event | None = None,
-        stop_release: asyncio.Event | None = None,
-    ) -> None:
-        self.kind = "sse"
-        self.server = None
-        self.allowed_tools: list[str] = []
-        self._sse_url = sse_url
-        self.local_server = type(
-            "_FakeLocalServer", (), {"sse_url": sse_url, "stop": AsyncMock()}
-        )()
-        self.stop_calls = 0
-        self._stop_started = stop_started
-        self._stop_release = stop_release
-
-    async def stop(self) -> None:
-        self.stop_calls += 1
-        if self._stop_started is not None:
-            self._stop_started.set()
-        if self._stop_release is not None:
-            await self._stop_release.wait()
-
-
-def make_fake_mcp_backend_factory(
-    backend: FakeMCPBackend | None = None,
-) -> AsyncMock:
-    """Return an AsyncMock that produces a FakeMCPBackend."""
-    fake = backend or FakeMCPBackend()
-
-    async def factory(**kwargs: Any) -> FakeMCPBackend:
-        return fake
-
-    mock = AsyncMock(side_effect=factory)
-    return mock
 
 
 #: Virtual seconds an ask waits for a human in looptime tests.

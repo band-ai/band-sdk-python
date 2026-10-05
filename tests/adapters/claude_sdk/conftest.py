@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 from unittest.mock import patch
 
+import looptime
 import pytest
 import pytest_asyncio
 
@@ -37,7 +40,7 @@ async def claude_room(
 ) -> AsyncIterator[Callable[..., Awaitable[ClaudeRoom]]]:
     """Open a room on a freshly started adapter; every adapter is torn down
     at the end, cancelling whatever its turns still wait on."""
-    adapters: list[ClaudeSDKAdapter] = []
+    adapters: list[tuple[ClaudeSDKAdapter, AbstractContextManager[None]]] = []
 
     async def open_room(
         config: ClaudeSDKAdapterConfig | None = None,
@@ -47,9 +50,17 @@ async def claude_room(
     ) -> ClaudeRoom:
         adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
         await adapter.on_started("Test Agent", "An agent under test")
-        adapters.append(adapter)
+        loop = asyncio.get_running_loop()
+        cleanup_clock = (
+            looptime.enabled(strict=True)
+            if isinstance(loop, looptime.LoopTimeEventLoop) and loop.looptime_on
+            else nullcontext()
+        )
+        adapters.append((adapter, cleanup_clock))
         return ClaudeRoom(adapter, claude, room_id)
 
     yield open_room
-    for adapter in adapters:
-        await adapter.cleanup_all()
+    # Uvicorn's pending timers must finish on the clock that scheduled them.
+    for adapter, cleanup_clock in adapters:
+        with cleanup_clock:
+            await adapter.cleanup_all()
