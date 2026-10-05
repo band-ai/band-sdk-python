@@ -559,8 +559,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         Returns the list of assistant text parts collected during the turn.
         """
-        self._record_external_tool_effects(tools, response_messages)
         final_text_parts: list[str] = []
+        tool_names_by_id: dict[str, str] = {}
         for resp_msg in response_messages:
             match getattr(resp_msg, "message_type", None):
                 case "assistant_message":
@@ -569,6 +569,11 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 case "tool_call_message":
                     # MCP tool call executed server-side — observe only
                     tool_call = getattr(resp_msg, "tool_call", None)
+                    tool_calls = getattr(resp_msg, "tool_calls", None)
+                    if isinstance(tool_calls, list):
+                        tool_names_by_id.update(
+                            (call.tool_call_id, call.name) for call in tool_calls
+                        )
                     tool_name = (
                         getattr(tool_call, "name", "unknown")
                         if tool_call
@@ -601,6 +606,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     )
                 case "tool_return_message":
                     tool_name = getattr(resp_msg, "name", None) or "unknown"
+                    self._record_external_tool_return(
+                        tools, tool_name, resp_msg, tool_names_by_id
+                    )
                     await self._report_execution_event(
                         tools,
                         "tool_result",
@@ -643,40 +651,29 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         return final_text_parts
 
-    def _record_external_tool_effects(
-        self, tools: AgentToolsProtocol, response_messages: list[Any]
+    def _record_external_tool_return(
+        self,
+        tools: AgentToolsProtocol,
+        tool_name: str,
+        resp_msg: Any,
+        tool_names_by_id: dict[str, str],
     ) -> None:
-        """Record successful external calls from the fully buffered response.
+        """Record an external band-mcp call's effect on the turn.
 
-        Self-hosted tools record their own effects during execution.
+        A self-hosted call runs on this room's own tools, which record it
+        themselves; an external server's call is visible only in the stream.
         """
         if self.config.mcp.mode != "external":
             return
-
-        successful_call_ids: set[str] = set()
-        for message in response_messages:
-            if getattr(message, "message_type", None) != "tool_return_message":
-                continue
-            tool_returns = getattr(message, "tool_returns", None)
-            if isinstance(tool_returns, list):
-                successful_call_ids.update(
-                    result.tool_call_id
-                    for result in tool_returns
-                    if result.status == "success"
-                )
-            elif message.status == "success":
-                tools.turn.record(
-                    turn_effect(getattr(message, "name", None) or "unknown")
-                )
-
-        for message in response_messages:
-            if getattr(message, "message_type", None) != "tool_call_message":
-                continue
-            tool_calls = getattr(message, "tool_calls", None)
-            if isinstance(tool_calls, list):
-                for call in tool_calls:
-                    if call.tool_call_id in successful_call_ids:
-                        tools.turn.record(turn_effect(call.name))
+        tool_returns = getattr(resp_msg, "tool_returns", None)
+        if isinstance(tool_returns, list):
+            # Letta's legacy name/status describe only the first parallel call.
+            for result in tool_returns:
+                if result.status == "success":
+                    name = tool_names_by_id.get(result.tool_call_id, "unknown")
+                    tools.turn.record(turn_effect(name))
+        elif resp_msg.status == "success":
+            tools.turn.record(turn_effect(tool_name))
 
     async def _report_execution_event(
         self,

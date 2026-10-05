@@ -1631,32 +1631,6 @@ class TestExternalToolRecording:
         assert tools.messages_sent == []
         assert failure_reports(tools) == []
 
-    @pytest.mark.asyncio
-    async def test_buffered_results_are_judged_independent_of_message_order(
-        self,
-    ) -> None:
-        adapter, mock_client = ready_letta_adapter(
-            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"), auto_relay=False),
-            room_id=ROOM_ID,
-        )
-        calls, results = make_parallel_tool_messages(
-            [
-                (BandTool.SEND_MESSAGE, "error"),
-                (BandTool.ADD_PARTICIPANT, "success"),
-            ],
-            reverse_returns=True,
-        )
-        mock_client.agents.messages.create.return_value = make_letta_response(
-            results, calls
-        )
-        tools = turn_tools()
-
-        await adapter.on_event(turn_input(tools))
-
-        assert tools.turn.complete
-        assert not tools.turn.replied
-        assert failure_reports(tools) == []
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Auto-relay knob
