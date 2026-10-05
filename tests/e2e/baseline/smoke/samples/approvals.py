@@ -412,12 +412,11 @@ def _claude_sdk_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
 
 
 def _codex(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
-    # A read-only sandbox under "on-request" makes Codex escalate any write to the
-    # room for approval; "never" (the matrix default) would never ask.
+    # Gate the command independently of whether the model requests escalation.
     config = codex_config_kwargs(settings, prompt=SHELL_PROMPT) | {
         "workspace_for_room": lambda _room_id: str(setup.workdir),
         "approval_mode": "manual",
-        "approval_policy": "on-request",
+        "approval_policy": "untrusted",
         "sandbox": CodexSandboxMode.READ_ONLY,
         "approval_wait_timeout_s": setup.wait_timeout_s,
     }

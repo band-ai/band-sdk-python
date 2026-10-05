@@ -9,8 +9,13 @@ workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
 - **Room approvals need a non-default `approval_policy`.** It is forwarded to
   Codex unchanged, and the default `"never"` means Codex never asks.
   `approval_mode` only decides how Band answers the requests Codex does send.
-  To get requests into the room, pair e.g. `approval_policy="on-request"` with a
-  restrictive `sandbox` such as `"read-only"`.
+  `"on-request"` with `"read-only"` does not guarantee a request: Codex may
+  attempt the command inside the sandbox and receive a denial without asking.
+  The model may need to request escalation explicitly. For commands that need
+  approval independently of model escalation, the app-server RPC supports
+  `"untrusted"` (verified with CLI 0.149.0 and 0.160.0). This is distinct from
+  the [retired user/project TOML setting](https://learn.chatgpt.com/docs/agent-approvals-security);
+  see the [released RPC schema](https://github.com/openai/codex/blob/rust-v0.149.0/codex-rs/app-server-protocol/schema/typescript/v2/AskForApproval.ts).
 - **`sandbox_policy` pins the sandbox.** While it is set, the `/sandbox` room
   command is refused.
 - **One workspace per room.** The default is `./.band-workspaces/<room-id>`, and
