@@ -11,10 +11,14 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from letta_client.types.agents.tool_call import ToolCall
+from letta_client.types.agents.tool_call_message import ToolCallMessage
+from letta_client.types.agents.tool_return import ToolReturn
+from letta_client.types.tool_return_message import ToolReturnMessage
 from pytest_httpx import HTTPXMock
 from typing_extensions import Unpack
 
@@ -57,25 +61,90 @@ def make_assistant_message(content: str = "Hello!") -> MagicMock:
 def make_tool_call_message(
     tool_name: str = "band_send_message",
     arguments: str = '{"content": "Hi", "mentions": ["@alice"]}',
-) -> MagicMock:
-    tool_call = MagicMock()
-    tool_call.name = tool_name
-    tool_call.arguments = arguments
-    return make_letta_message("tool_call_message", tool_call=tool_call)
+) -> ToolCallMessage:
+    return make_grouped_call_message(
+        [ToolCall(name=tool_name, arguments=arguments, tool_call_id=call_id(tool_name))]
+    )
 
 
 def make_tool_return_message(
     tool_name: str = "band_send_message",
     tool_return: str = '{"status": "ok"}',
-    status: str = "success",
-) -> MagicMock:
-    """letta-client's ``ToolReturnMessage`` names the tool in ``name``."""
-    return make_letta_message(
-        "tool_return_message", name=tool_name, tool_return=tool_return, status=status
+    status: Literal["success", "error"] = "success",
+) -> ToolReturnMessage:
+    return make_grouped_return_message(
+        [
+            ToolReturn(
+                type="tool",
+                tool_return=tool_return,
+                status=status,
+                tool_call_id=call_id(tool_name),
+            )
+        ],
+        name=tool_name,
     )
 
 
-def make_letta_response(*messages: MagicMock) -> MagicMock:
+def call_id(tool_name: str) -> str:
+    return f"call-{tool_name}"
+
+
+def make_grouped_call_message(calls: list[ToolCall]) -> ToolCallMessage:
+    """Letta's shape: ``tool_call`` repeats only the first of ``tool_calls``."""
+    return ToolCallMessage(
+        id=f"message-{calls[0].tool_call_id}",
+        date=datetime.now(UTC),
+        message_type="tool_call_message",
+        tool_call=calls[0],
+        tool_calls=calls,
+    )
+
+
+def make_grouped_return_message(
+    returns: list[ToolReturn], *, name: str
+) -> ToolReturnMessage:
+    """Letta's shape: ``name``/``status``/``tool_call_id`` describe only the
+    first of ``tool_returns``."""
+    first = returns[0]
+    return ToolReturnMessage(
+        id=f"message-return-{first.tool_call_id}",
+        date=datetime.now(UTC),
+        message_type="tool_return_message",
+        name=name,
+        status=first.status,
+        tool_call_id=first.tool_call_id,
+        tool_return=str(first.tool_return),
+        tool_returns=returns,
+    )
+
+
+def make_parallel_tool_messages(
+    results: list[tuple[str, Literal["success", "error"]]],
+    *,
+    reverse_returns: bool,
+) -> tuple[ToolCallMessage, ToolReturnMessage]:
+    calls = [
+        ToolCall(name=name, arguments="{}", tool_call_id=f"call-{index}")
+        for index, (name, _status) in enumerate(results)
+    ]
+    returns = [
+        ToolReturn(
+            type="tool",
+            tool_return="result",
+            status=status,
+            tool_call_id=call.tool_call_id,
+        )
+        for call, (_name, status) in zip(calls, results, strict=True)
+    ]
+    if reverse_returns:
+        returns.reverse()
+    return (
+        make_grouped_call_message(calls),
+        make_grouped_return_message(returns, name=calls[0].name),
+    )
+
+
+def make_letta_response(*messages: Any) -> MagicMock:
     """Create a fake Letta API response."""
     resp = MagicMock()
     resp.messages = list(messages)
@@ -121,7 +190,7 @@ def scripted_letta_turn(
     }
 
     async def create(**_kwargs: Any) -> MagicMock:
-        messages: list[MagicMock] = []
+        messages: list[Any] = []
         for name, arguments in tool_calls:
             messages.append(make_tool_call_message(name, json.dumps(arguments)))
             result = await registrations[name].execute(

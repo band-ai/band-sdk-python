@@ -14,8 +14,8 @@ from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from letta_client.types.agents.text_content import TextContent
 from letta_client.types.agents.tool_call import ToolCall
-from letta_client.types.agents.tool_call_message import ToolCallMessage
 from letta_client.types.agents.tool_return import ToolReturn
 from letta_client.types.tool_return_message import ToolReturnMessage
 
@@ -30,22 +30,27 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
-from band.core.types import Capability, Emit
+from band.core.types import Capability, Emit, ToolEventKey
 from band.runtime.tools import BandTool
 from band.testing import (
     MISSING_REPLY_FAILURE,
     FakeAgentTools,
+    events_of_type,
     failure_reports,
     reported_failures,
 )
 from tests.adapters.lettakit import (
+    call_id,
     default_enforcement,
     make_assistant_message,
+    make_grouped_call_message,
+    make_grouped_return_message,
     make_letta_response,
     make_mock_agent,
     make_mock_async_stream,
     make_mock_conversation,
     make_mock_tool_page,
+    make_parallel_tool_messages,
     make_platform_message,
     make_tool_call_message,
     make_tool_return_message,
@@ -70,6 +75,13 @@ REPLY_SETTLING_CALLS = [
 
 def sent_contents(tools: FakeAgentTools) -> list[str]:
     return [message["content"] for message in tools.messages_sent]
+
+
+def reported_tool_names(tools: FakeAgentTools, event_type: str) -> list[str]:
+    return [
+        json.loads(event["content"])[ToolEventKey.NAME]
+        for event in events_of_type(tools, event_type)
+    ]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -836,6 +848,51 @@ class TestExecutionReporting:
         assert len(tool_result_events) == 1
 
     @pytest.mark.asyncio
+    async def test_reports_every_parallel_call_and_its_result(self) -> None:
+        adapter, mock_client = ready_letta_adapter(emit=Emit.TOOL_CALLS)
+        calls = [
+            ToolCall(name=BandTool.GET_PARTICIPANTS, arguments="{}", tool_call_id="a"),
+            ToolCall(name=BandTool.LOOKUP_PEERS, arguments="{}", tool_call_id="b"),
+        ]
+        multimodal_output = [TextContent(type="text", text="no peers")]
+        returns = [
+            ToolReturn(
+                type="tool",
+                status="success",
+                tool_call_id="b",
+                tool_return=multimodal_output,
+            ),
+            ToolReturn(
+                type="tool", status="success", tool_call_id="a", tool_return="[]"
+            ),
+        ]
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_grouped_call_message(calls),
+            make_grouped_return_message(returns, name=calls[0].name),
+            make_assistant_message("Done"),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert reported_tool_names(tools, "tool_call") == [
+            BandTool.GET_PARTICIPANTS,
+            BandTool.LOOKUP_PEERS,
+        ]
+        assert reported_tool_names(tools, "tool_result") == [
+            BandTool.LOOKUP_PEERS,
+            BandTool.GET_PARTICIPANTS,
+        ]
+
+    @pytest.mark.asyncio
     async def test_silent_tools_not_reported(self) -> None:
         config = LettaAdapterConfig()
         adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
@@ -1424,48 +1481,6 @@ class TestSendToolResolution:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def make_parallel_tool_messages(
-    results: list[tuple[str, Literal["success", "error"]]],
-    *,
-    reverse_returns: bool,
-) -> tuple[ToolCallMessage, ToolReturnMessage]:
-    calls = [
-        ToolCall(name=name, arguments="{}", tool_call_id=f"call-{index}")
-        for index, (name, _status) in enumerate(results)
-    ]
-    returns = [
-        ToolReturn(
-            type="tool",
-            tool_return="result",
-            status=status,
-            tool_call_id=call.tool_call_id,
-        )
-        for call, (_name, status) in zip(calls, results, strict=True)
-    ]
-    first_call, first_return = calls[0], returns[0]
-    if reverse_returns:
-        returns.reverse()
-    return (
-        ToolCallMessage(
-            id="message-calls",
-            date=datetime.now(UTC),
-            message_type="tool_call_message",
-            tool_call=first_call,
-            tool_calls=calls,
-        ),
-        ToolReturnMessage(
-            id="message-returns",
-            date=datetime.now(UTC),
-            message_type="tool_return_message",
-            name=first_call.name,
-            status=first_return.status,
-            tool_call_id=first_call.tool_call_id,
-            tool_return="result",
-            tool_returns=returns,
-        ),
-    )
-
-
 class TestExternalToolRecording:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1487,13 +1502,38 @@ class TestExternalToolRecording:
             LettaAdapterConfig(mcp=LettaMCPConfig(mode=mcp_mode))
         )
         mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message(BandTool.SEND_MESSAGE),
+            make_tool_return_message(BandTool.SEND_MESSAGE, status=status),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.turn.replied is replied
+
+    @pytest.mark.asyncio
+    async def test_ungrouped_tool_return_is_matched_to_its_call(self) -> None:
+        """A server that sends no ``tool_returns`` puts the one result on the
+        message itself."""
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"))
+        )
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message(BandTool.SEND_MESSAGE),
             ToolReturnMessage(
                 id="message-return",
                 date=datetime.now(UTC),
                 message_type="tool_return_message",
-                name=BandTool.SEND_MESSAGE,
-                status=status,
-                tool_call_id="call-1",
+                status="success",
+                tool_call_id=call_id(BandTool.SEND_MESSAGE),
                 tool_return="result",
             ),
         )
@@ -1509,7 +1549,7 @@ class TestExternalToolRecording:
             room_id="room-1",
         )
 
-        assert tools.turn.replied is replied
+        assert tools.turn.replied
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
