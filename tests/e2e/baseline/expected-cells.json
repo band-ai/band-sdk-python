@@ -1095,15 +1095,6 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_control_signals.py::test_stop_cancels_then_play_replays",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
       "test": "tests/e2e/baseline/smoke/behavior/test_cursor_workflows.py::test_repairs_a_failing_project_after_a_human_gate",
       "adapter": "cursor_acp",
       "lanes": [
