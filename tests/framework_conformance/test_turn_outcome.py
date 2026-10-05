@@ -14,12 +14,17 @@ when a judged adapter has none.
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import pkgutil
 from dataclasses import dataclass
 from enum import StrEnum
 
 import pytest
 
+import band
 from band.core.protocols import TurnResultAlreadyReported
+from band.core.simple_adapter import SimpleAdapter
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from band.testing.fake_tools import FakeAgentTools, reported_failures
@@ -172,6 +177,43 @@ def test_only_the_declared_adapters_go_unjudged() -> None:
     }
 
     assert unjudged == UNJUDGED_FRAMEWORK_IDS
+
+
+#: Every SimpleAdapter in band outside ADAPTER_CONFIGS, and what covers its verdict.
+COVERED_OUTSIDE_CONFIGS = {
+    "ACPClientAdapter": "the acp probe",
+    "CopilotACPAdapter": "ACPClientAdapter's on_message, run by the acp probe",
+    "OmpACPAdapter": "ACPClientAdapter's on_message, run by the acp probe",
+    "CursorACPAdapter": "the cursor_acp probe",
+    "SlackAdapter": "its brain's verdict (tests/integrations/slack)",
+    "A2AAdapter": "unjudged (tests/integrations/a2a)",
+    "A2AGatewayAdapter": "unjudged (tests/integrations/a2a/gateway)",
+    "BandACPServerAdapter": "unjudged (tests/integrations/acp)",
+}
+
+
+def band_adapter_names() -> set[str]:
+    """Every concrete SimpleAdapter defined in band whose module imports here."""
+    for module in pkgutil.walk_packages(band.__path__, "band."):
+        if module.name.endswith("__main__"):
+            continue
+        try:
+            importlib.import_module(module.name)
+        except ImportError:
+            continue  # an extra this venv lacks; its own lane covers it
+    pending, names = [SimpleAdapter], set()
+    while pending:
+        for cls in pending.pop().__subclasses__():
+            pending.append(cls)
+            if cls.__module__.startswith("band.") and not inspect.isabstract(cls):
+                names.add(cls.__name__)
+    return names
+
+
+def test_every_band_adapter_is_registered_or_covered() -> None:
+    registered = {type(cfg.adapter_factory()).__name__ for cfg in ADAPTER_CONFIGS}
+
+    assert band_adapter_names() - registered == set(COVERED_OUTSIDE_CONFIGS)
 
 
 def test_every_judged_adapter_has_a_probe() -> None:

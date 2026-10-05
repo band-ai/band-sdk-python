@@ -49,8 +49,19 @@ async def unknown_handle_send(tools: AgentToolsProtocol) -> None:
 ROWS: dict[str, tuple[list[Step], bool]] = {
     "nothing": ([], False),
     "observe-only": ([lambda t: t.get_participants()], False),
+    "send-event-only": (
+        [lambda t: t.send_event("thinking", message_type="thought")],
+        False,
+    ),
     "act": ([lambda t: t.create_chatroom()], True),
     "reply": ([lambda t: t.send_message("the answer", mentions=USER)], True),
+    "reply-then-observe": (
+        [
+            lambda t: t.send_message("the answer", mentions=USER),
+            lambda t: t.get_participants(),
+        ],
+        True,
+    ),
     "decline": ([lambda t: t.execute_tool_call(BandTool.NO_REPLY, {})], True),
     "relay": ([lambda t: relay_reply(t, "the answer", USER)], True),
     "settled": ([lambda t: _settle(t)], True),

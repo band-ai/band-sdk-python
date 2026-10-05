@@ -203,7 +203,10 @@ asyncio.run(main())
 
 `relay_reply(tools, text, mentions)` from `band.core.delivery` is the one gate
 for a model's final text: it posts through `deliver_reply` only when no tool
-replied or declined this turn.
+replied or declined this turn. It is a fallback, not a channel to steer
+toward: the base prompt still says plain text is never delivered, because
+without that line models more often send their closing narration as a second
+`band_send_message` (measured live on gemini-2.5-flash).
 
 `tests/framework_conformance/test_reply_boundary.py` fails if adapter code calls
 `send_message` directly outside the model's reply paths.
