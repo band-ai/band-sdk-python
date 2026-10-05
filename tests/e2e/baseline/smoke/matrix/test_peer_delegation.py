@@ -2,9 +2,9 @@
 
 The thin L3 delegation slice, across the tool-loop matrix. Two instances A and B of the
 same adapter co-reside via ``cell.run_many(2)``. Turn 1 seeds a value V into B's own
-context. Turn 2 addresses B *directly* (not an orchestrator) — "ask A to confirm V and
-report back" — so the delegation is B's own decision (peer-initiated). Load-bearing,
-floors-only assertions from the one flow:
+context. Turn 2 addresses B *directly* (not an orchestrator) — "send A the value V and
+ask A to repeat it back" — so the delegation is B's own decision (peer-initiated).
+Load-bearing, floors-only assertions from the one flow:
 
 * Peer-initiated routing mention + self-recall (coupled): B emitted a real routing
   mention of A (by message metadata, not plain text) whose body carries the value B
@@ -13,9 +13,8 @@ floors-only assertions from the one flow:
 * Delegate responded: A produced a reply (its turn is driven by B's mention, not a user
   send, so we barrier on A having spoken).
 
-The round-trip value (B relaying A's computed result back to the user) is the flakiest
-hop on a small model, so it is kept soft and non-gating. Named routing / recruitment /
-concurrent triage are already covered by ``test_multi_agent_collaboration``.
+Relaying A's answer back to the user is not exercised here. Named routing / recruitment
+/ concurrent triage are already covered by ``test_multi_agent_collaboration``.
 """
 
 from __future__ import annotations
@@ -68,7 +67,7 @@ async def test_peer_initiated_delegation_with_self_recall(
             )
             await capture.wait_for_processed(seed_mid, agent_b.id)
 
-            # Turn 2: ask B (directly) to delegate to A and report back.
+            # Turn 2: ask B (directly) to route the recalled value to A.
             mark = capture.messages.snapshot()
             deleg_mid = await user_ops.send_message(
                 room_id,

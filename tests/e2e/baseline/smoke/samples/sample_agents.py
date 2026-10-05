@@ -646,16 +646,19 @@ RECALL_ALL_FACTS = (
 
 
 def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
-    """Peer-initiated delegation: drive one agent to ask peer ``peer_name`` to confirm
-    the value it just remembered, then report that reply — so it emits a real routing
-    mention of the peer whose body carries the value it recalled from its own context,
-    and the peer responds. The message must ask a question: a bare token reads as an
-    FYI, which the peer may rightly decline with band_no_reply."""
+    """Peer-initiated delegation: drive one agent to send peer ``peer_name`` the value
+    it remembered, so it emits a real routing mention of the peer whose body carries
+    the value recalled from its own context, and the peer responds.
+
+    The peer never saw the user's message, so the request must be one it can fulfil
+    from the routed message alone: asked to "confirm" a value from a message it cannot
+    see, the peer rightly distrusts the claim and refuses, declines, or answers in
+    plain text. The request also names no user and no later step, because "wait for
+    the reply" reads as permission to end the turn with band_no_reply instead."""
     return (
         "Recall the complete value token from my previous message. "
-        f"{peer_name} did not receive that message. First ask {peer_name} to "
-        f"confirm the exact token with {BandTool.SEND_MESSAGE}(content containing "
-        f"the token and asking {peer_name} to confirm it, mentions=['{peer_id}']). "
-        "Do not address that first message to me. "
-        "Wait for the peer's response, then report it back to me."
+        f"In one {BandTool.SEND_MESSAGE} call with mentions=['{peer_id}'], send "
+        f"{peer_name} exactly this content, with the complete token in place of "
+        '<token>: "Please repeat this token back to me exactly: <token>". '
+        "That message is your whole reply this turn."
     )
