@@ -98,10 +98,7 @@ _GATEWAY_ERROR_MAX_CHARS = 240
 
 def _sanitize_gateway_error_message(exc: BaseException) -> str:
     """Redact bearer tokens/API keys before an internal exception message
-    reaches an external A2A client, and cap its length.
-
-    Mirrors the TS SDK's ``sanitizeGatewayErrorMessage``.
-    """
+    reaches an external A2A client, and cap its length."""
     trimmed = str(exc).strip()
     if not trimmed:
         return "Unknown error"

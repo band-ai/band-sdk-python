@@ -404,6 +404,48 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_restores_the_level_when_the_scenario_fails",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[debug-run-keeps-debug]",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[inherited-warning-is-raised]",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/guards/test_peer_ops.py::test_peer_actor_sends_as_agent",
       "adapter": "suite",
       "lanes": [
