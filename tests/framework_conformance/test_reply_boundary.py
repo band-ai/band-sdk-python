@@ -1,77 +1,89 @@
 """Reply boundary test.
 
-A ``send_message`` call counts as the turn's reply, so only the model's own
-words may go through it: the tool methods, ``deliver_reply``/``relay_reply``,
-and the framework tool implementations that call them. An adapter's own post
-(an approval prompt, a busy notice, a status reply) goes through
+A ``send_message``, ``deliver_reply`` or ``relay_reply`` call counts as the
+turn's reply, so only the model's own words may go through one. An adapter's
+own post (an approval prompt, a busy notice, a status reply) goes through
 ``send_notice``, or it would stand in for the model's answer and suppress the
-final-text relay. This scans ``src/band`` via AST for a direct
-``x.send_message(...)`` call outside the allowlist, so a new adapter post on
-``send_message`` fails here instead of silently counting as a reply.
+final-text relay. This scans ``src/band`` via AST and pins every such call
+outside the tool implementations, per file with the reason it carries the
+model's words, so a new reply call anywhere fails here until it is justified.
 """
 
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from collections import Counter
 
 from tests.paths import REPO_ROOT
 
-_SCAN_ROOT = REPO_ROOT / "src" / "band"
+SCAN_ROOT = REPO_ROOT / "src" / "band"
 
-# The model's tool implementations and the relay that carries its words, plus
-# two files where ``send_message`` is an unrelated client's method.
-_ALLOWED_DIRS: frozenset[Path] = frozenset({_SCAN_ROOT / "runtime" / "tools"})
-_ALLOWED_FILES: frozenset[Path] = frozenset(
-    _SCAN_ROOT / path
-    for path in (
-        "core/delivery.py",
-        "integrations/crewai/catalog.py",
-        "integrations/parlant/tools.py",
-        # Forwards to the inner tools' send_message, which records the reply.
-        "integrations/claude_sdk/dedup_tools.py",
-        # Exempt from the turn verdict: the flow posts its own outcomes.
-        "adapters/crewai_flow.py",
-        # The A2A client's own method.
-        "integrations/a2a/adapter.py",
-        # The Phoenix protocol's own method.
-        "testing/phoenix_server.py",
-    )
-)
+#: The model's tool implementations, where every reply call is the model's.
+TOOLS_DIR = SCAN_ROOT / "runtime" / "tools"
+
+REPLY_CALLS = frozenset({"send_message", "deliver_reply", "relay_reply"})
+
+#: Reply calls per file outside ``TOOLS_DIR``, and why each carries the model's words.
+ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
+    "core/delivery.py": (
+        Counter(send_message=1, deliver_reply=1),
+        "deliver_reply posts the reply; relay_reply delegates to it",
+    ),
+    "adapters/codex.py": (Counter(relay_reply=1), "the model's final text"),
+    "adapters/copilot_sdk.py": (
+        Counter(relay_reply=1, deliver_reply=1),
+        "the model's final text, and its ask_user question as the turn's reply",
+    ),
+    "adapters/letta.py": (Counter(relay_reply=1), "the model's final text"),
+    "adapters/opencode/adapter.py": (Counter(relay_reply=1), "the model's final text"),
+    "adapters/parlant.py": (Counter(relay_reply=1), "the engine's message"),
+    "integrations/acp/room_emitter.py": (
+        Counter(relay_reply=1),
+        "the agent's held text runs",
+    ),
+    "integrations/crewai/catalog.py": (Counter(send_message=1), "the crew's tool"),
+    "integrations/parlant/tools.py": (Counter(send_message=1), "the engine's tool"),
+    "integrations/claude_sdk/dedup_tools.py": (
+        Counter(send_message=1),
+        "forwards the model's tool call to the inner tools",
+    ),
+    "integrations/a2a/adapter.py": (
+        Counter(send_message=1, deliver_reply=3),
+        "the remote agent's answer; send_message is the A2A client's method",
+    ),
+    "adapters/crewai_flow.py": (
+        Counter(send_message=3),
+        "exempt from the verdict: the flow posts its own outcomes",
+    ),
+    "testing/phoenix_server.py": (
+        Counter(send_message=2),
+        "the Phoenix protocol's own method",
+    ),
+}
 
 
-def _calls_send_message(source: str) -> bool:
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "send_message"
+def reply_calls(source: str) -> Counter[str]:
+    """How many times ``source`` calls each reply path."""
+    names = (
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
         for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute | ast.Name)
     )
+    return Counter(name for name in names if name in REPLY_CALLS)
 
 
-def _is_allowed(path: Path) -> bool:
-    return path in _ALLOWED_FILES or any(d in path.parents for d in _ALLOWED_DIRS)
+def test_every_reply_call_carries_the_model_words() -> None:
+    found = {
+        path.relative_to(SCAN_ROOT).as_posix(): calls
+        for path in SCAN_ROOT.rglob("*.py")
+        if TOOLS_DIR not in path.parents
+        and (calls := reply_calls(path.read_text("utf-8")))
+    }
 
-
-def test_adapter_posts_never_count_as_the_model_reply() -> None:
-    offenders = sorted(
-        path.relative_to(REPO_ROOT)
-        for path in _SCAN_ROOT.rglob("*.py")
-        if not _is_allowed(path) and _calls_send_message(path.read_text("utf-8"))
+    assert found == {path: calls for path, (calls, _) in ALLOWED_REPLY_CALLS.items()}, (
+        "A reply call changed outside the model's reply paths. Post an adapter's "
+        "own message with tools.send_notice (and tools.turn.settle() when it ends "
+        "the turn); relay the model's words through relay_reply and record why "
+        "in ALLOWED_REPLY_CALLS."
     )
-
-    assert not offenders, (
-        f"Direct send_message calls outside the model's reply paths: {offenders}. "
-        "Post an adapter's own message with tools.send_notice (and settle the "
-        "turn with tools.turn.settle() when it ends the turn), or relay the "
-        "model's words through band.core.delivery.deliver_reply/relay_reply."
-    )
-
-
-def test_allowlist_entries_still_exist() -> None:
-    missing = [
-        path.relative_to(REPO_ROOT)
-        for path in _ALLOWED_FILES | _ALLOWED_DIRS
-        if not path.exists()
-    ]
-    assert not missing, f"Allowlisted paths no longer exist: {missing}"

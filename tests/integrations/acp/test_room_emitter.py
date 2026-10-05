@@ -441,6 +441,28 @@ class TestRoomTurnEmitterReplyRelay:
         assert sent == ["The answer."]
 
     @pytest.mark.asyncio
+    async def test_a_failed_prompt_records_nothing_streamed_during_it(self) -> None:
+        """A rejected prompt (e.g. busy) owns no work: a reply streamed during
+        it belongs to another turn and must not suppress the retry's answer."""
+        tools = FakeAgentTools()
+        emitter = RoomTurnEmitter(
+            tools,
+            mentions=[{"id": "u1", "name": "User"}],
+            session_id="s1",
+            room_id="room-1",
+            records_tool_effects=True,
+        )
+
+        with pytest.raises(RuntimeError):
+            async with emitter:
+                await emitter.emit(
+                    tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED)
+                )
+                raise RuntimeError("session busy")
+
+        assert not tools.turn.replied
+
+    @pytest.mark.asyncio
     async def test_an_out_of_process_action_completes_the_turn(self) -> None:
         tools = FakeAgentTools()
 

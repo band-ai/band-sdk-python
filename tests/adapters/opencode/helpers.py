@@ -287,7 +287,6 @@ class FakeOpencodeClient:
         self.prompt_calls: list[dict[str, Any]] = []
         self.permission_replies: list[dict[str, Any]] = []
         self.question_replies: list[dict[str, Any]] = []
-        self.question_rejections: list[str] = []
         self.aborted_sessions: list[str] = []
         self.registered_mcp_servers: list[dict[str, str]] = []
         self.disconnected_mcp_servers: list[str] = []
@@ -366,9 +365,6 @@ class FakeOpencodeClient:
         self.question_replies.append({"request_id": request_id, "answers": answers})
         for event in self._reply_question_events.get(request_id, []):
             await self._queue.put(event)
-
-    async def reject_question(self, request_id: str) -> None:
-        self.question_rejections.append(request_id)
 
     async def abort_session(self, session_id: str) -> None:
         self.aborted_sessions.append(session_id)

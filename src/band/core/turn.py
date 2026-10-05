@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 class Turn:
     """The ledger of what one turn's tool calls did.
 
-    ``judged`` is set by ``SimpleAdapter.on_event`` for a turn it will judge.
-    ``detach()`` marks a turn released early (parked on a human decision), so
-    the adapter judges it at its real end instead of ``on_event``.
+    ``judged`` is set by ``SimpleAdapter.run_judged_turn`` for a turn it will
+    judge. ``detach()`` marks a turn released early (parked on a human
+    decision); a judged one is then judged at the adapter's real end of it.
     """
 
     def __init__(self) -> None:
@@ -51,13 +51,8 @@ class Turn:
         self._ledger.note_reported()
 
     def detach(self) -> None:
-        """Move a judged turn's verdict to the adapter's real end of the turn.
-
-        A turn ``on_event`` does not judge stays attached, so
-        ``judge_detached_turn`` never reports it.
-        """
-        if self.judged:
-            self._detached = True
+        """Release the turn before it ends; its delivery is already settled."""
+        self._detached = True
 
     @property
     def detached(self) -> bool:
@@ -96,10 +91,10 @@ async def report_unsettled_turn(tools: AgentToolsProtocol, *, room_id: str) -> b
 
 
 async def judge_detached_turn(tools: AgentToolsProtocol, *, room_id: str) -> None:
-    """Judge a detached turn at the adapter's real end of it.
+    """Judge a judged, detached turn at the adapter's real end of it.
 
     ``on_event`` returned before such a turn ended; an attached turn was
-    already judged there.
+    already judged there, and an unjudged one is never reported.
     """
-    if tools.turn.detached:
+    if tools.turn.judged and tools.turn.detached:
         await report_unsettled_turn(tools, room_id=room_id)

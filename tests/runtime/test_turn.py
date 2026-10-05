@@ -11,11 +11,12 @@ import logging
 from typing import Any
 from unittest.mock import MagicMock
 
+import band_sdk_core
 import pytest
 from pydantic import BaseModel
 
 from band.core.delivery import deliver_reply
-from band.core.turn import report_unsettled_turn
+from band.core.turn import judge_detached_turn, report_unsettled_turn
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import declares_turn_effect, execute_custom_tool
 from band.runtime.tools import AgentTools, BandTool, TurnEffect
@@ -178,34 +179,39 @@ class TestReportUnsettledTurn:
         assert await report_unsettled_turn(tools, room_id="room-1") is False
 
 
-class TestDetach:
-    def test_a_judged_turn_detaches(self) -> None:
+class TestJudgeDetachedTurn:
+    async def test_a_judged_detached_turn_is_reported(self) -> None:
         tools = FakeAgentTools()
         tools.turn.judged = True
-
         tools.turn.detach()
 
-        assert tools.turn.detached
+        await judge_detached_turn(tools, room_id="room-1")
 
-    def test_an_unjudged_turn_never_detaches(self) -> None:
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    async def test_an_unjudged_detached_turn_is_never_reported(self) -> None:
         """A contact-hub turn parked on a decision is never reported later."""
         tools = FakeAgentTools()
-
         tools.turn.detach()
 
-        assert not tools.turn.detached
+        await judge_detached_turn(tools, room_id="room-1")
+
+        assert reported_failures(tools) == []
 
 
+@pytest.mark.parametrize("judged", [True, False], ids=["judged", "contact-hub"])
 async def test_a_detached_report_never_marks_the_contexts_next_message(
-    mock_rest_client: Any,
+    mock_rest_client: Any, judged: bool
 ) -> None:
+    """A released turn reports after its delivery settled, while the context
+    may already be processing a later message, judged or not."""
     ctx = MagicMock(participants=[ALICE], agent_id="agent-1", hub_room_id=None)
     ctx.link.rest = mock_rest_client
     tools = AgentTools.from_context(ctx)
-    tools.turn.judged = True
+    tools.turn.judged = judged
     tools.turn.detach()
 
-    assert await report_unsettled_turn(tools, room_id="room-1") is True
+    await tools.send_failure(band_sdk_core.AgentFailure("codex", "timed out"))
 
     mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
     ctx.note_turn_failure_reported.assert_not_called()

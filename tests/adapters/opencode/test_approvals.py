@@ -392,17 +392,18 @@ async def test_mention_only_question_reply_requests_a_real_answer(
     assert "waiting for answers" in tools.messages_sent[-1]["content"].lower()
 
 
-async def test_malformed_question_with_no_questions_is_rejected(
+async def test_malformed_question_with_no_questions_is_declined(
     asks: AskFactory,
 ) -> None:
-    """A malformed question with an id must not leave OpenCode blocked."""
+    """A malformed question is answered with an empty decline, which hands the
+    turn back to the model instead of blocking it."""
     client = FakeOpencodeClient()
     tools = FakeAgentTools()
     approvals = make_room_approvals(client, tools=tools)
 
     await approvals.on_question_asked(asks.question("q-empty", questions=[]))
 
-    assert client.question_rejections == ["q-empty"]
+    assert client.question_replies == [{"request_id": "q-empty", "answers": []}]
     assert not approvals.awaiting_human()
     assert tools.messages_sent == []
 

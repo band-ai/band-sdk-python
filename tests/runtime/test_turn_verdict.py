@@ -9,6 +9,7 @@ text) and marked FAILED.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -33,6 +34,7 @@ from band.testing import MISSING_REPLY_FAILURE
 from tests.conftest import make_message_event, make_participant_mock
 
 AGENT_ID = "agent-123"
+execution_logger = ExecutionContext.__module__
 ROOM_ID = "room-123"
 USER = ["@user-1"]
 
@@ -177,6 +179,22 @@ async def test_each_turn_outcome_is_reported_honestly(
         link.mark_failed.assert_awaited_once()
         link.mark_processed.assert_not_awaited()
         assert runtime_failures(link) == [MISSING_REPLY_FAILURE]
+
+
+async def test_a_missing_reply_is_not_logged_as_a_runtime_error(
+    link: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A silent turn is an expected verdict, already logged as a WARNING where
+    it was reported, so the runtime adds nothing at ERROR to trip alerting."""
+    ctx = run_through(ScriptedAdapter([]), link)
+
+    with caplog.at_level(logging.DEBUG):
+        await ctx._process_event(
+            make_message_event(room_id=ROOM_ID, sender_id="user-1")
+        )
+
+    runtime_levels = {r.levelno for r in caplog.records if r.name == execution_logger}
+    assert logging.ERROR not in runtime_levels
 
 
 async def test_an_exempt_adapter_is_never_judged(link: MagicMock) -> None:

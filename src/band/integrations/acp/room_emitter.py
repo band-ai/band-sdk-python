@@ -15,7 +15,7 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
-from band.runtime.tools import turn_effect
+from band.runtime.tools import TurnEffect, turn_effect
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,12 @@ class RoomTurnEmitter:
         records_tool_effects: bool = False,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
-        each completed call's effect is recorded on the turn from the stream."""
+        each completed call's effect is recorded on the turn from the stream.
+
+        Those effects are staged and reach the turn only when the prompt closes
+        successfully: a rejected, timed-out or cancelled prompt owns none of
+        the work streamed during it, which may belong to another turn.
+        """
         self._tools = tools
         self._mentions = mentions
         self._session_id = session_id
@@ -72,6 +77,7 @@ class RoomTurnEmitter:
         # reaches the room sink.
         self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._pending_text: list[str] = []
+        self._staged_effects: list[TurnEffect] = []
 
     async def emit(self, chunk: CollectedChunk) -> None:
         if self._records_tool_effects:
@@ -111,7 +117,7 @@ class RoomTurnEmitter:
                 )
 
     def _record_tool_effect(self, chunk: CollectedChunk) -> None:
-        """Record a completed tool call's effect on the turn.
+        """Stage a completed tool call's effect for the turn.
 
         An external band-mcp runs where the SDK never sees it, so the stream is
         the only record of what it did. ACP has no structured tool-name field,
@@ -123,7 +129,7 @@ class RoomTurnEmitter:
             return
         match chunk.tool:
             case ACPToolCall(name=name) | ACPToolResult(call=ACPToolCall(name=name)):
-                self._tools.turn.record(turn_effect(name))
+                self._staged_effects.append(turn_effect(name))
 
     def _tool_event_content(self, chunk: CollectedChunk) -> str:
         """Serialize normalized tool activity for room persistence."""
@@ -180,6 +186,8 @@ class RoomTurnEmitter:
         # neither the held text nor the bookkeeping event.
         if exc_type is not None:
             return False
+        for effect in self._staged_effects:
+            self._tools.turn.record(effect)
         # The held runs only ever post together at close, so they relay as the
         # turn's one reply.
         await relay_reply(

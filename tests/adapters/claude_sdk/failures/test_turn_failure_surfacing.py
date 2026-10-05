@@ -210,16 +210,17 @@ async def test_band_no_reply_does_not_excuse_a_later_silent_turn(
     assert room.failures == [MISSING_REPLY_TEXT]
 
 
-async def test_a_turn_whose_only_reply_was_deduped_is_not_a_missing_reply(
+async def test_a_turn_whose_only_send_was_a_suppressed_duplicate_is_reported(
     claude_room: OpenRoom,
 ) -> None:
-    """The CLI re-sending the previous turn's reply is suppressed as a
-    duplicate, and it still answers the turn that sent it."""
+    """A send the dedup suppresses posts nothing new, so the turn that made it
+    did not reply; the room hears that instead of silence."""
     room = await claude_room()
     room.claude.script([room.model_reply("Done.")], [room.model_reply("Done.")])
 
     await room.send("do it")
-    await room.send("do it again", tools=room.fresh_tools())
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("do it again", tools=room.fresh_tools())
 
     assert room.chat == ["Done."]
-    assert room.failures == []
+    assert room.failures == [MISSING_REPLY_TEXT]

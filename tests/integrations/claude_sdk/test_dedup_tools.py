@@ -536,24 +536,27 @@ class GatedSendTools(FakeAgentTools):
         return await super().send_message(content, mentions)
 
 
-class TestDedupedSendRepliesForItsTurn:
-    """A suppressed duplicate still answers the turn that sent it, since the
-    original already reached the room."""
+class TestDedupedSendBelongsToItsTurn:
+    """A suppressed duplicate is the earlier turn's send re-issued: it posts
+    nothing new, so it never counts as a later turn's reply."""
 
     @pytest.mark.asyncio
-    async def test_a_cached_duplicate_replies_for_the_next_turn(self):
-        wrapper = DedupingAgentTools(FakeAgentTools())
+    async def test_a_cached_duplicate_does_not_answer_the_next_turn(self):
+        first_turn = FakeAgentTools()
+        wrapper = DedupingAgentTools(first_turn)
         await wrapper.send_message("hi", ["alice"])
 
         next_turn = FakeAgentTools()
         await wrapper.update_inner(next_turn)
         await wrapper.send_message("hi", ["alice"])
 
-        assert next_turn.messages_sent == []
-        assert next_turn.turn.replied
+        assert first_turn.turn.replied
+        assert not next_turn.turn.replied
 
     @pytest.mark.asyncio
-    async def test_a_duplicate_joining_an_in_flight_send_replies_for_its_turn(self):
+    async def test_a_duplicate_joining_an_in_flight_send_does_not_answer_its_turn(
+        self,
+    ):
         first_turn = GatedSendTools()
         wrapper = DedupingAgentTools(first_turn)
         original = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
@@ -566,5 +569,5 @@ class TestDedupedSendRepliesForItsTurn:
         first_turn.gate.set()
         await asyncio.gather(original, duplicate)
 
-        assert next_turn.messages_sent == []
-        assert next_turn.turn.replied
+        assert first_turn.turn.replied
+        assert not next_turn.turn.replied

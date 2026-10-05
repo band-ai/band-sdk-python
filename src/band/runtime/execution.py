@@ -75,6 +75,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _log_turn_error(error: Exception, message: str, *args: object) -> None:
+    """Log a failed turn; one whose failure already reached the room was logged
+    where it was reported, so it stays out of ERROR alerting."""
+    reported = isinstance(error, TurnResultAlreadyReported)
+    level = logging.DEBUG if reported else logging.ERROR
+    logger.log(level, message, *args, exc_info=not reported)
+
+
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
 
 
@@ -1567,8 +1576,8 @@ class ExecutionContext:
             logger.debug("Message %s processed successfully", msg_id)
             return BacklogProcessResult.ADVANCED
 
-        except Exception as e:
-            logger.exception("Error processing backlog message %s", msg_id)
+        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+            _log_turn_error(e, "Error processing backlog message %s", msg_id)
             await self._handle_turn_failure(msg_id, attempts, e)
             return BacklogProcessResult.ADVANCED
 
@@ -2167,8 +2176,8 @@ class ExecutionContext:
             logger.debug("Event %s processed successfully", event.type)
             return True
 
-        except Exception as e:
-            logger.exception("Error processing %s", event.type)
+        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+            _log_turn_error(e, "Error processing %s", event.type)
             if isinstance(event, MessageEvent) and msg_id:
                 await self._handle_turn_failure(msg_id, attempts, e)
             return True

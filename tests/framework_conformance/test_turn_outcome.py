@@ -179,12 +179,12 @@ def test_only_the_declared_adapters_go_unjudged() -> None:
     assert unjudged == UNJUDGED_FRAMEWORK_IDS
 
 
-#: Every SimpleAdapter in band outside ADAPTER_CONFIGS, and what covers its verdict.
-COVERED_OUTSIDE_CONFIGS = {
-    "ACPClientAdapter": "the acp probe",
-    "CopilotACPAdapter": "ACPClientAdapter's on_message, run by the acp probe",
-    "OmpACPAdapter": "ACPClientAdapter's on_message, run by the acp probe",
-    "CursorACPAdapter": "the cursor_acp probe",
+#: Judged adapters outside ADAPTER_CONFIGS, by the probe that runs their rows.
+#: A subclass that inherits one of these ``on_message`` methods is covered too.
+PROBED_OUTSIDE_CONFIGS = {"ACPClientAdapter": "acp", "CursorACPAdapter": "cursor_acp"}
+
+#: Adapters outside ADAPTER_CONFIGS whose verdict their own tests pin.
+PINNED_OUTSIDE_CONFIGS = {
     "SlackAdapter": "its brain's verdict (tests/integrations/slack)",
     "A2AAdapter": "unjudged (tests/integrations/a2a)",
     "A2AGatewayAdapter": "unjudged (tests/integrations/a2a/gateway)",
@@ -192,7 +192,7 @@ COVERED_OUTSIDE_CONFIGS = {
 }
 
 
-def band_adapter_names() -> set[str]:
+def band_adapters() -> dict[str, type[SimpleAdapter]]:
     """Every concrete SimpleAdapter defined in band whose module imports here."""
     for module in pkgutil.walk_packages(band.__path__, "band."):
         if module.name.endswith("__main__"):
@@ -201,19 +201,37 @@ def band_adapter_names() -> set[str]:
             importlib.import_module(module.name)
         except ImportError:
             continue  # an extra this venv lacks; its own lane covers it
-    pending, names = [SimpleAdapter], set()
+    pending, adapters = [SimpleAdapter], {}
     while pending:
         for cls in pending.pop().__subclasses__():
             pending.append(cls)
             if cls.__module__.startswith("band.") and not inspect.isabstract(cls):
-                names.add(cls.__name__)
-    return names
+                adapters[cls.__name__] = cls
+    return adapters
 
 
-def test_every_band_adapter_is_registered_or_covered() -> None:
+def probe_running(
+    cls: type[SimpleAdapter], adapters: dict[str, type[SimpleAdapter]]
+) -> str | None:
+    """The probe that runs ``cls``'s turn, via the ``on_message`` it uses."""
+    for name, probe in PROBED_OUTSIDE_CONFIGS.items():
+        owner = adapters.get(name)
+        if owner and issubclass(cls, owner) and cls.on_message is owner.on_message:
+            return probe
+    return None
+
+
+def test_every_band_adapter_is_registered_probed_or_pinned() -> None:
     registered = {type(cfg.adapter_factory()).__name__ for cfg in ADAPTER_CONFIGS}
+    adapters = band_adapters()
+    unprobed = {
+        name
+        for name, cls in adapters.items()
+        if name not in registered
+        and probe_running(cls, adapters) not in TURN_OUTCOME_PROBES
+    }
 
-    assert band_adapter_names() - registered == set(COVERED_OUTSIDE_CONFIGS)
+    assert unprobed == set(PINNED_OUTSIDE_CONFIGS)
 
 
 def test_every_judged_adapter_has_a_probe() -> None:
