@@ -11,7 +11,7 @@ from band.adapters.opencode import OpencodeAdapter
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from tests.adapters.opencode.helpers import (
-    FakeMCPBackend,
+    BandMCPCalls,
     FakeOpencodeClient,
     RawOpencodeEvent,
     ServerStep,
@@ -66,7 +66,7 @@ async def test_a_detached_turn_that_ends_with_nothing_is_reported_once(
 
 
 async def test_a_busy_message_during_a_detached_turn_is_settled(
-    make_adapter, tools, mcp_backend: FakeMCPBackend
+    make_adapter, tools, mcp_backend: BandMCPCalls
 ) -> None:
     """The busy message's own turn is settled, and the detached turn's band
     tool calls still resolve to the detached turn's tools."""

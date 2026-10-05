@@ -63,7 +63,7 @@ opencode = [
     "mcp>=1.28.1,<2",
 ]
 letta = [
-    "letta-client>=0.1.0",
+    "letta-client>=1.0.0",
     # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
     "mcp>=1.28.1,<2",
 ]
@@ -237,7 +237,7 @@ dev = [
     # Include Strands Agents for testing
     "strands-agents[openai]>=1.40,<2",
     # Include letta-client for testing
-    "letta-client>=0.1.0",
+    "letta-client>=1.0.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",

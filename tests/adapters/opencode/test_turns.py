@@ -30,7 +30,7 @@ from band.testing import (
 )
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
-    FakeMCPBackend,
+    BandMCPCalls,
     FakeOpencodeClient,
     TaskEventFailingTools,
     agent_input,
@@ -1109,7 +1109,7 @@ async def test_turn_completes_when_fallback_reply_send_rejected(
 
 
 async def test_room_posting_tool_reply_suppresses_text_fallback(
-    make_adapter, tools, mcp_backend: FakeMCPBackend
+    make_adapter, tools, mcp_backend: BandMCPCalls
 ) -> None:
     """When the model replies via band_send_message, the adapter must not also
     post the assistant's plain text (double-post)."""
@@ -1186,7 +1186,7 @@ async def test_approval_prompts_never_stand_in_for_the_models_reply(
 
 
 async def test_approval_reply_is_settled_and_leaves_the_turn_its_tools(
-    make_adapter, tools, mcp_backend: FakeMCPBackend
+    make_adapter, tools, mcp_backend: BandMCPCalls
 ) -> None:
     """The approve message runs no model, so its own turn is settled; and the
     resumed turn's band tool calls still resolve to the turn's tools."""
@@ -1222,7 +1222,7 @@ async def test_approval_reply_is_settled_and_leaves_the_turn_its_tools(
 
 
 async def test_busy_message_is_settled_and_leaves_the_turn_its_tools(
-    make_adapter, tools, mcp_backend: FakeMCPBackend
+    make_adapter, tools, mcp_backend: BandMCPCalls
 ) -> None:
     """A message arriving mid-turn only gets the busy notice, which settles
     its own turn; the running turn's band tool calls still resolve to the

@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Protocol, cast
 
 from acp import connect_to_agent, spawn_agent_process, text_block
 from acp.exceptions import RequestError
@@ -36,6 +36,7 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
+from band.integrations.mcp.backends import BandMCPTransport
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,6 @@ PermissionNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ElicitationHandler = Callable[..., Awaitable[object]]
 ElicitationNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
-MCPTransportKind = Literal["http", "sse"]
 
 # ACP grants a tool-call permission by *selecting one of the options the agent
 # offered* (each carries an ``optionId`` and a ``kind``); the on-wire response is
@@ -886,7 +886,7 @@ class ACPRuntime:
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         ) = None
         self._stop_lock = asyncio.Lock()
-        self._agent_mcp_transport: MCPTransportKind = "http"
+        self._agent_mcp_transport = BandMCPTransport.HTTP
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
         self._config_lock = asyncio.Lock()
@@ -1151,7 +1151,7 @@ class ACPRuntime:
         return self._client
 
     @property
-    def agent_mcp_transport(self) -> MCPTransportKind:
+    def agent_mcp_transport(self) -> BandMCPTransport:
         """The MCP transport the connected agent negotiated during ``start()``."""
         return self._agent_mcp_transport
 
@@ -1186,16 +1186,16 @@ class ACPRuntime:
         self._agent_supports_session_close = False
 
     @staticmethod
-    def _select_mcp_transport(init_response: object) -> MCPTransportKind:
+    def _select_mcp_transport(init_response: object) -> BandMCPTransport:
         capabilities = getattr(init_response, "agent_capabilities", None)
         mcp_capabilities = getattr(capabilities, "mcp_capabilities", None)
 
         if getattr(mcp_capabilities, "http", False):
-            return "http"
+            return BandMCPTransport.HTTP
         if getattr(mcp_capabilities, "sse", False):
-            return "sse"
+            return BandMCPTransport.SSE
 
-        return "http"
+        return BandMCPTransport.HTTP
 
     @staticmethod
     def _select_session_load(init_response: object) -> bool:

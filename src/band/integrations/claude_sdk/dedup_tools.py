@@ -5,7 +5,7 @@ When the Claude CLI subprocess saturates the asyncio event loop (its primary
 failure mode under load), several upstream paths can re-emit the
 same ``band_send_message`` MCP tool call for a single LLM-intended send:
 
-* MCP transport retries after the in-process handler takes too long to ack.
+* MCP transport retries after the Band MCP handler takes too long to ack.
 * Session resume after a Phoenix WS reconnect, when the previous response was
   still being streamed.
 * A new turn produced by Claude CLI after the original ``Complete`` event has

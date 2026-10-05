@@ -12,9 +12,10 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 from uuid import uuid4
 
+from letta_client import AsyncLetta
 from letta_client.types.agents.tool_call import ToolCall
 from letta_client.types.agents.tool_call_message import ToolCallMessage
 from letta_client.types.agents.tool_return import ToolReturn
@@ -204,11 +205,27 @@ def scripted_letta_turn(
     return create
 
 
-def make_mock_mcp_server(server_id: str = "mcp-server-1") -> MagicMock:
-    """Create a mock MCP server response."""
+def make_mock_mcp_server(
+    server_id: str = "mcp-server-1",
+    *,
+    name: str | None = None,
+    url: str | None = None,
+) -> MagicMock:
+    """Create a mock MCP server registration, as Letta stores one."""
     server = MagicMock()
     server.id = server_id
+    if name is not None:
+        server.server_name = name
+    if url is not None:
+        server.config = {"server_url": url}
     return server
+
+
+def letta_mcp_servers_api() -> Any:
+    """Letta's MCP-server API, specced from the installed letta-client so a
+    call that drifts from its real signature fails."""
+    client = AsyncLetta(base_url="http://letta.invalid", api_key="test")
+    return create_autospec(client.mcp_servers, instance=True)
 
 
 def make_mock_mcp_tool(tool_id: str, tool_name: str) -> MagicMock:
@@ -242,16 +259,6 @@ def make_mock_tool_page(*tools: MagicMock) -> MagicMock:
     page = MagicMock()
     page.items = list(tools)
     return page
-
-
-def make_fake_mcp_backend(port: int = 55321) -> MagicMock:
-    """Create a fake self-hosted Band MCP backend (create_band_mcp_backend result)."""
-    backend = MagicMock()
-    backend.local_server = MagicMock()
-    backend.local_server.port = port
-    backend.allowed_tools = ["mcp__band__band_send_message"]
-    backend.stop = AsyncMock()
-    return backend
 
 
 def default_enforcement(room_id: str | None = None) -> str:

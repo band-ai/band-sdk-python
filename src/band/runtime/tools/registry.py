@@ -162,7 +162,8 @@ AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
 # canonical field name. The Python-side variable is still `room_id`
 # everywhere; only text the model sees (schemas, prompts) uses this. Single
 # source of truth so a producer (schema field name) and its consumers
-# (per-turn prompt text in opencode/letta/acp/claude_sdk) can't drift apart.
+# (per-turn prompt text in opencode/letta and an external-MCP acp) can't
+# drift apart.
 CHAT_ID_FIELD_NAME = "chat_id"
 
 # The chat_id field's max length wherever an MCP front door adds or pins it

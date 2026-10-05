@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -12,20 +11,20 @@ from pydantic import BaseModel
 from band import BandConnectionError
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Capability
+from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
-    FakeMCPBackend,
     FakeOpencodeClient,
     event_message_updated,
     event_session_idle,
     event_text_part,
-    make_fake_mcp_backend_factory,
     make_platform_message,
     run_single_turn,
     tools_protocol,
 )
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 def test_no_leaked_adapter_config_env_vars(
@@ -70,16 +69,13 @@ async def test_mcp_registration_uses_band_agent_id_before_startup() -> None:
         def agent_id(self) -> str:
             return "agent-123"
 
-    fake_backend = FakeMCPBackend()
+    fake_backend = FakeBandMCPBackend()
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_session_idle("sess-1")]]
     )
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
 
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        make_fake_mcp_backend_factory(fake_backend),
-    ):
+    with backends_created_by(fake_backend):
         await adapter.on_started("Renameable Agent", "")
         await adapter.on_message(
             make_platform_message(),
@@ -93,7 +89,7 @@ async def test_mcp_registration_uses_band_agent_id_before_startup() -> None:
 
     expected = adapter._agent_mcp_server_name("agent-123")
     assert fake_client.registered_mcp_servers == [
-        {"name": expected, "url": "http://127.0.0.1:50000/sse"}
+        {"name": expected, "url": fake_backend.endpoint(BandMCPTransport.SSE)}
     ]
 
     await adapter.on_cleanup("room-1")
@@ -110,7 +106,7 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
     def echo_tool(input_data: EchoInput) -> str:
         return input_data.text
 
-    fake_backend = FakeMCPBackend(sse_url="http://127.0.0.1:50000/sse")
+    fake_backend = FakeBandMCPBackend()
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -125,12 +121,8 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
         client_factory=lambda _config: fake_client,
     )
     tools = FakeAgentTools()
-    backend_factory = make_fake_mcp_backend_factory(fake_backend)
 
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        backend_factory,
-    ):
+    with backends_created_by(fake_backend) as starts:
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await adapter.on_message(
             make_platform_message(),
@@ -143,11 +135,12 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
         )
 
     assert fake_client.registered_mcp_servers == [
-        {"name": adapter._mcp_server_name, "url": "http://127.0.0.1:50000/sse"},
+        {
+            "name": adapter._mcp_server_name,
+            "url": fake_backend.endpoint(BandMCPTransport.SSE),
+        },
     ]
-    assert backend_factory.await_args.kwargs["additional_tools"] == [
-        (EchoInput, echo_tool)
-    ]
+    assert starts.requested[0].additional_tools == [(EchoInput, echo_tool)]
 
     await adapter.on_cleanup("room-1")
 
@@ -174,7 +167,7 @@ async def test_prompt_scopes_tools_to_this_agents_mcp_registration(
 
 
 async def test_registers_shared_mcp_backend_on_startup() -> None:
-    fake_backend = FakeMCPBackend()
+    fake_backend = FakeBandMCPBackend()
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -189,10 +182,7 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     )
     tools = FakeAgentTools()
 
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        make_fake_mcp_backend_factory(fake_backend),
-    ):
+    with backends_created_by(fake_backend):
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await adapter.on_message(
             make_platform_message(),
@@ -205,7 +195,10 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
         )
 
     assert fake_client.registered_mcp_servers == [
-        {"name": adapter._mcp_server_name, "url": "http://127.0.0.1:50000/sse"}
+        {
+            "name": adapter._mcp_server_name,
+            "url": fake_backend.endpoint(BandMCPTransport.SSE),
+        }
     ]
     assert fake_client.prompt_calls[0]["tools"] == {
         "band_*": False,
@@ -223,26 +216,18 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
 
 async def test_mcp_registration_retries_until_connected() -> None:
     """A transient non-connected registration result must not be treated as
-    success -- the next on_message (which always calls
-    _ensure_client_started) retries instead of leaving Band tools
-    unregistered for the rest of the process."""
-    fake_backend = FakeMCPBackend()
+    success -- the next message retries instead of leaving Band tools
+    unregistered for the rest of the process -- while a connected one is kept."""
     fake_client = FakeOpencodeClient(
         register_mcp_statuses=["pending"],
-        prompt_event_sequences=[
-            [event_session_idle("sess-1")],
-            [event_session_idle("sess-1")],
-        ],
+        prompt_event_sequences=[[event_session_idle("sess-1")]] * 3,
     )
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
     tools = FakeAgentTools()
+    registrations_after_each_message = []
 
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        make_fake_mcp_backend_factory(fake_backend),
-    ):
-        await adapter.on_started("OpenCode Agent", "A coding agent")
-
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    for _ in range(3):
         await adapter.on_message(
             make_platform_message(),
             tools_protocol(tools),
@@ -252,20 +237,9 @@ async def test_mcp_registration_retries_until_connected() -> None:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert adapter._registered_client is None
-        assert len(fake_client.registered_mcp_servers) == 1
+        registrations_after_each_message.append(len(fake_client.registered_mcp_servers))
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools_protocol(tools),
-            OpencodeSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        assert adapter._registered_client is fake_client
-        assert len(fake_client.registered_mcp_servers) == 2
+    assert registrations_after_each_message == [1, 2, 2]
 
 
 async def test_bootstrap_creates_session_relays_text_and_persists_task(
@@ -410,18 +384,7 @@ async def test_capability_gating_controls_registered_tool_set(
     """Capability.MEMORY / Capability.CONTACTS gate which platform tools
     the adapter registers with OpenCode's shared MCP backend, since a
     bare adapter (no capabilities) must not expose them."""
-    captured_tool_names: list[frozenset[str]] = []
-
-    async def capturing_factory(**kwargs: Any) -> FakeMCPBackend:
-        captured_tool_names.append(
-            frozenset(definition.name for definition in kwargs["tool_definitions"])
-        )
-        return FakeMCPBackend()
-
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        AsyncMock(side_effect=capturing_factory),
-    ):
+    with backends_created_by() as starts:
         bare_adapter = OpencodeAdapter(
             client_factory=lambda _config: FakeOpencodeClient(
                 prompt_event_sequences=[[event_session_idle("sess-1")]]
@@ -457,7 +420,10 @@ async def test_capability_gating_controls_registered_tool_set(
         )
         await full_adapter.on_cleanup("room-1")
 
-    bare_tool_names, full_tool_names = captured_tool_names
+    bare_tool_names, full_tool_names = (
+        {definition.name for definition in settings.tool_definitions}
+        for settings in starts.requested
+    )
     assert bare_tool_names.isdisjoint(MEMORY_TOOL_NAMES)
     assert bare_tool_names.isdisjoint(CONTACT_TOOL_NAMES)
     assert MEMORY_TOOL_NAMES <= full_tool_names

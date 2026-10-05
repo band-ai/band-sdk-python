@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -27,6 +26,7 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
+from tests.mcpbackends import BackendStarts
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
 # What the fake server does next: stream an SSE event, or act between events
@@ -413,62 +413,22 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
         super().__init__("status error", request=request, response=response)
 
 
-class FakeMCPBackend:
-    """Fake BandMCPBackend for tests."""
+class BandMCPCalls:
+    """The model calling band tools over MCP, dispatched to the rooms of the
+    adapter's started backend exactly as the embedded MCP server does."""
 
-    def __init__(
-        self,
-        *,
-        sse_url: str = "http://127.0.0.1:50000/sse",
-        stop_started: asyncio.Event | None = None,
-        stop_release: asyncio.Event | None = None,
-    ) -> None:
-        self.kind = "sse"
-        self.server = None
-        self.allowed_tools: list[str] = []
-        self._sse_url = sse_url
-        self.local_server = type(
-            "_FakeLocalServer", (), {"sse_url": sse_url, "stop": AsyncMock()}
-        )()
-        self.stop_calls = 0
-        self._stop_started = stop_started
-        self._stop_release = stop_release
-        # The adapter's room-tools resolver, captured when it builds the backend.
-        self.get_tools: Callable[[str], Any] | None = None
-
-    async def stop(self) -> None:
-        self.stop_calls += 1
-        if self._stop_started is not None:
-            self._stop_started.set()
-        if self._stop_release is not None:
-            await self._stop_release.wait()
+    def __init__(self, starts: BackendStarts) -> None:
+        self._starts = starts
 
     def band_tool_call(
         self, tool: str, arguments: dict[str, Any], *, room_id: str = "room-1"
     ) -> ServerStep:
-        """The model calling a band tool over MCP, dispatched to the room's
-        tools exactly as the embedded MCP server does."""
-
         async def call() -> None:
-            assert self.get_tools is not None, "the adapter never built the backend"
-            resolver = EmbeddedResolver(get_tools=self.get_tools)
+            assert self._starts.requested, "the adapter never started its backend"
+            resolver = EmbeddedResolver(get_tools=self._starts.requested[-1].get_tools)
             await resolver.invoke(TOOL_DEFINITIONS[tool], room_id, arguments)
 
         return call
-
-
-def make_fake_mcp_backend_factory(
-    backend: FakeMCPBackend | None = None,
-) -> AsyncMock:
-    """Return an AsyncMock that produces a FakeMCPBackend."""
-    fake = backend or FakeMCPBackend()
-
-    async def factory(**kwargs: Any) -> FakeMCPBackend:
-        fake.get_tools = kwargs["get_tools"]
-        return fake
-
-    mock = AsyncMock(side_effect=factory)
-    return mock
 
 
 #: Virtual seconds an ask waits for a human in looptime tests.
