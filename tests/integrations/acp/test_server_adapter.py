@@ -49,6 +49,11 @@ class TestBandACPServerAdapterInit:
 
         assert adapter.history_converter is not None
 
+    def test_room_messages_are_not_judged_as_turns(self) -> None:
+        """Room messages are peers' answers relayed to the editor; judging
+        them would report each one as a missing reply."""
+        assert not BandACPServerAdapter().judges_turns
+
     def test_feature_requests_are_checked_against_what_it_supports(self) -> None:
         with pytest.raises(BandConfigError, match="tool_calls"):
             BandACPServerAdapter(emit=Emit.TOOL_CALLS)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -10,9 +11,11 @@ from pydantic import BaseModel, model_validator
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.core.types import Emit
-from band.runtime.tools import ToolCallOutcome
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import ToolCallOutcome, TurnEffect
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
+    FakeCopilotSession,
     ToolSchemaFakeTools,
     make_started_adapter,
     requires_copilot_sdk,
@@ -198,6 +201,83 @@ class TestToolBridging:
 
         assert not first_tools.tool_calls
         assert second_tools.tool_calls
+
+    @pytest.mark.asyncio
+    async def test_queued_message_does_not_take_over_running_turn_tools(self):
+        """A message waiting on the room's turn lock must not redirect the
+        running turn's tool calls onto its own tools."""
+        second_queued = asyncio.Event()
+
+        async def call_tool_once_second_is_queued(session: FakeCopilotSession) -> None:
+            await second_queued.wait()
+            await session.find_tool("band_get_participants").handler(
+                ToolInvocation(
+                    tool_call_id="c1", tool_name="band_get_participants", arguments={}
+                )
+            )
+
+        client = FakeCopilotClient(turn_events=[call_tool_once_second_is_queued])
+        adapter = await make_started_adapter(client)
+        first_tools, second_tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+
+        first = asyncio.create_task(run_message(adapter, first_tools))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(
+            run_message(adapter, second_tools, is_session_bootstrap=False)
+        )
+        await asyncio.sleep(0)
+        second_queued.set()
+        await asyncio.gather(first, second)
+
+        # Each turn's own call lands on its own tools.
+        assert len(first_tools.tool_calls) == 1
+        assert len(second_tools.tool_calls) == 1
+
+
+class TestCustomToolTurnEffect:
+    """A custom tool's declared effect lands on the room turn's ledger."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("effect", "closing_text_relayed"),
+        [
+            pytest.param(TurnEffect.REPLY, False, id="reply"),
+            pytest.param(TurnEffect.DECLINE, False, id="decline"),
+            pytest.param(TurnEffect.ACT, True, id="act"),
+            pytest.param(None, True, id="undeclared"),
+        ],
+    )
+    async def test_declared_effect_decides_the_final_text_relay(
+        self, effect: TurnEffect | None, closing_text_relayed: bool
+    ):
+        class NotifyInput(BaseModel):
+            text: str
+
+        async def notify(params: NotifyInput) -> str:
+            return "notified"
+
+        handler = notify if effect is None else declares_turn_effect(effect)(notify)
+
+        async def model_calls_notify(session: FakeCopilotSession) -> None:
+            await session.find_tool("notify").handler(
+                ToolInvocation(
+                    tool_call_id="c1", tool_name="notify", arguments={"text": "hi"}
+                )
+            )
+
+        client = FakeCopilotClient(
+            reply_content="Closing text", turn_events=[model_calls_notify]
+        )
+        adapter = await make_started_adapter(
+            client, additional_tools=[(NotifyInput, handler)]
+        )
+        tools = ToolSchemaFakeTools()
+
+        await run_message(adapter, tools)
+
+        relayed = tools.chat == ["Closing text"]
+        assert relayed is closing_text_relayed
+        assert tools.turn.complete
 
 
 class _ReadRoomFileFakeTools(ToolSchemaFakeTools):

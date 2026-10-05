@@ -19,6 +19,16 @@ text. `tests/framework_conformance/test_tool_text_drift.py` is the drift
 guard; an adapter that builds its own tool schemas sets `advertised_arg_text`
 on its test config so the guard can read what the model actually sees.
 
+## Turn Outcome
+
+`SimpleAdapter.run_judged_turn` (called by `on_event`) judges every turn with band-sdk-core's rule: a turn
+that replied, declined via `band_no_reply`, did real work, was settled by the
+adapter, or already reported a failure completes; anything else is reported
+once and marked FAILED. Adapters never judge turns themselves. Post an
+adapter's own messages with `send_notice` (never `send_message`, which counts as
+the reply) and relay a model's final text only through `relay_reply`. See
+[docs/turn-outcome.md](docs/turn-outcome.md).
+
 ## Adapter Constructor Shape
 
 Every adapter is built as `XAdapter(config: XAdapterConfig | None = None, *,
@@ -94,7 +104,7 @@ confined to an explicit AST-enforced allowlist
 `OpencodeAdapter` maps each Band room to a session on a running `opencode
 serve`. Band tools are never gated behind approval, unlike other tool
 calls — see [docs/adapters/opencode.md](docs/adapters/opencode.md) for this
-and three more invariants that are easy to break.
+and four more invariants that are easy to break.
 
 ## ACP (Agent Client Protocol) Integration
 

@@ -107,6 +107,12 @@ class TestGatewayConfiguration:
         assert config.public_url == "https://gw.example.com"
 
 
+def test_peer_messages_are_not_judged_as_turns() -> None:
+    """Peer messages answer an A2A caller, not the room; judging them would
+    report each one as a missing reply."""
+    assert not A2AGatewayAdapter(rest_client=MagicMock()).judges_turns
+
+
 class TestGatewayStartup:
     @pytest.mark.asyncio
     async def test_discovers_peers_and_starts_server(self) -> None:

@@ -94,6 +94,11 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
+    @property
+    def judges_turns(self) -> bool:
+        """The remote A2A agent owns its replies, so its turns are not judged."""
+        return False
+
     def __init__(
         self,
         config: A2AAdapterConfig,

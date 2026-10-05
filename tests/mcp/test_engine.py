@@ -37,7 +37,8 @@ from band.integrations.mcp.engine import (
     pin_existing_chat_id,
     validate_unique_tool_names,
 )
-from band.runtime.tools import TOOL_DEFINITIONS
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import TOOL_DEFINITIONS, TurnEffect
 from band.testing.fake_tools import FakeAgentTools
 from tests.mcp.conftest import FakeHumanTools
 
@@ -518,9 +519,10 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
         seen["message"] = input_data.message
         return {"echo": input_data.message}
 
+    fake = FakeAgentTools(room_id="room-1")
     registration = build_custom_tool_registration(
         CustomToolSpec(input_model=EchoInput, handler=handler),
-        advertise_chat_id=True,
+        get_tools=lambda _chat_id: fake,
     )
     spec = EngineSpec(name="test-custom", tools=(registration,))
     mcp = build_engine(spec)
@@ -532,6 +534,32 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
         result = await _call(session, "echo", message="hi", chat_id="room-1")
         assert result == {"echo": "hi"}
         assert seen == {"message": "hi"}
+
+
+async def test_room_bound_custom_tool_records_its_effect_on_the_resolved_room_turn() -> (
+    None
+):
+    @declares_turn_effect(TurnEffect.REPLY)
+    async def answer(input_data: EchoInput) -> dict[str, str]:
+        return {"echo": input_data.message}
+
+    rooms = {
+        "room-1": FakeAgentTools(room_id="room-1"),
+        "room-2": FakeAgentTools(room_id="room-2"),
+    }
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=answer),
+        get_tools=rooms.get,
+    )
+    mcp = build_engine(EngineSpec(name="test-custom-effect", tools=(registration,)))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        await _call(session, "echo", message="hi", chat_id="room-2")
+
+    assert {room: tools.turn.replied for room, tools in rooms.items()} == {
+        "room-1": False,
+        "room-2": True,
+    }
 
 
 async def test_custom_tool_accepts_bare_tuple_contract() -> None:

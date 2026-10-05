@@ -19,6 +19,7 @@ from typing_extensions import Unpack
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
+from band.core.delivery import relay_reply
 from band.core.exceptions import BandConnectionError
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
@@ -26,6 +27,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import judge_detached_turn
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -59,22 +61,13 @@ from band.integrations.opencode import (
     describe_error,
     parse_opencode_event,
 )
-from band.runtime.custom_tools import (
-    CustomToolDef,
-    custom_tool_effects,
-    get_custom_tool_name,
-)
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import (
-    CHAT_ID_FIELD_NAME,
-    iter_tool_definitions,
-    settles_turn_reply,
-)
+from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "opencode"
-NO_TEXT_REPLY_MESSAGE = "OpenCode completed the turn without a text reply."
 
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
@@ -106,9 +99,6 @@ class TurnState:
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
-    # Set when a room-posting band tool (band_send_message) completed this turn,
-    # so the text fallback stays silent instead of double-posting the reply.
-    replied_via_room_tool: bool = False
     last_error_message: str | None = None
     # Per-assistant-message usage for the current turn (last-write-wins per id,
     # since message.updated streams repeatedly). Summed across messages at turn
@@ -295,7 +285,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # concurrent agents sharing one serve.
         self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._custom_effects = custom_tool_effects(self._custom_tools)
         # Startup reachability check only makes sense against a real server;
         # an injected factory fakes that boundary (tests, custom transports).
         self._preflight_enabled = client_factory is None
@@ -313,8 +302,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # custom tools). Computed once at construction -- both inputs are known
         # here -- and reused when the shared MCP backend is built. Deriving the
         # names eagerly keeps the "is this our own band tool?" auto-approve
-        # check (and room-posting detection) independent of MCP-registration
-        # timing, so a second room's first turn can't race an empty set.
+        # check independent of MCP-registration timing, so a second room's
+        # first turn can't race an empty set.
         self._refresh_tool_definitions()
 
     def _refresh_tool_definitions(self) -> None:
@@ -438,7 +427,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_id: str,
     ) -> None:
         room_state = await self._get_or_create_room_state(room_id)
-        room_state.tools = tools
 
         if self._client is None:
             agent_id = getattr(tools, "agent_id", None)
@@ -447,6 +435,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
         if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
+            tools.turn.settle()
             return
 
         if room_state.turn and (
@@ -457,7 +446,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 "OpenCode is still processing the previous request in this room.",
                 "error",
             )
+            tools.turn.settle()
             return
+
+        # Only a message that starts a turn rebinds the room's tools: the MCP
+        # backend resolves band tool calls through them, so a message consumed
+        # above must not take over the in-flight turn's tools.
+        room_state.tools = tools
 
         await self._ensure_client_started()
         client = self._client
@@ -901,38 +896,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _report_tool_part(
         self, room_state: RoomState, part: OpencodePart
     ) -> None:
-        """Note a room-posting reply and report the tool's call/result.
-
-        Room-posting detection runs regardless of ``Emit.TOOL_CALLS`` (which only
-        governs the tool_call/tool_result narration); the text-fallback
-        suppression must hold even when execution reporting is off.
-        """
-        if part.state is None:
+        """Report the tool's call/result."""
+        if part.state is None or Emit.TOOL_CALLS not in self.features.emit:
             return
 
         state = part.state
         tool_name = self._canonical_tool_name(part.tool or "unknown")
-
-        # A completed room-posting band tool IS the turn's reply -- suppress the
-        # text fallback (codex/copilot_sdk/ACP parity). An errored call did not
-        # post, so it must not suppress. ``status`` is the raw wire string, so
-        # compare by value (the StrEnum member equals its string).
-        if (
-            state.status == OpencodeToolStatus.COMPLETED
-            and settles_turn_reply(tool_name, custom_effects=self._custom_effects)
-            and room_state.turn is not None
-            and not room_state.turn.replied_via_room_tool
-        ):
-            logger.info(
-                "OpenCode turn: replied via room tool room=%s session=%s tool=%s",
-                room_state.room_id,
-                room_state.turn.session_id,
-                tool_name,
-            )
-            room_state.turn.replied_via_room_tool = True
-
-        if Emit.TOOL_CALLS not in self.features.emit:
-            return
 
         match state.status:
             case (
@@ -1085,16 +1054,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 logger.exception(
                     "Failed to report the OpenCode timeout for room %s", room_id
                 )
-                await self._report_delivery_failure(room_state.room_id, turn)
+                await self._report_delivery_failure(turn)
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
+                await judge_detached_turn(turn.tools, room_id=room_state.room_id)
                 await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to deliver the OpenCode turn result for room %s", room_id
                 )
-                await self._report_delivery_failure(room_state.room_id, turn)
+                await self._report_delivery_failure(turn)
         finally:
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
@@ -1122,23 +1092,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn := owner():
             await self._abort_turn(turn, reason)
 
-    async def _report_delivery_failure(self, room_id: str, turn: TurnState) -> None:
+    @staticmethod
+    async def _report_delivery_failure(turn: TurnState) -> None:
         """Tell the room the turn finished but its result could not be posted.
 
-        An event needs no mentions, so it still lands when the reply itself was
-        rejected for having none.
+        A failure event needs no mentions, so it still lands when the reply
+        itself was rejected for having none, and it marks the turn reported.
         """
-        try:
-            await turn.tools.send_event(
+        await turn.tools.send_failure(
+            AgentFailure(
+                _PROVIDER,
                 "OpenCode finished the turn but the result could not be posted "
                 "to the room.",
-                "error",
             )
-        except Exception:
-            logger.exception(
-                "Failed to report the OpenCode delivery failure for room %s",
-                room_id,
-            )
+        )
 
     async def _await_turn(self, turn: TurnState) -> None:
         """Await turn completion, but don't charge human-approval time to the
@@ -1178,7 +1145,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._resolve_future(turn.turn_release_future)
 
     def _release_turn_wait_for_owner(self, owner: TurnOwner) -> None:
+        """Release ``on_message`` early while the turn waits on a human."""
         if turn := owner():
+            turn.tools.turn.detach()
             self._release_turn_wait_for(turn)
 
     def _resolve_turn(self, turn: TurnState) -> None:
@@ -1263,28 +1232,19 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # (or the test's observer WebSocket) is the fault, not model completion.
         logger.info(
             "OpenCode turn: delivering fallback room=%s "
-            "(text=%d chars, error=%s, replied_via_tool=%s)",
+            "(text=%d chars, error=%s, replied=%s)",
             room_id,
             len(text),
             bool(turn.last_error_message),
-            turn.replied_via_room_tool,
+            turn.tools.turn.replied,
         )
 
-        # A room-posting band tool already delivered the reply; don't double-post
-        # its plain text or a "no reply" filler. An error is still surfaced --
-        # it is not a text reply.
-        replied = turn.replied_via_room_tool
+        # An error is still surfaced after a tool reply -- it is not a text reply.
         try:
-            if text and not replied:
-                await turn.tools.send_message(text, mentions=turn.pending_mentions)
-            elif turn.last_error_message:
+            relayed = await relay_reply(turn.tools, text, turn.pending_mentions)
+            if not relayed and turn.last_error_message:
                 await turn.tools.send_failure(
                     AgentFailure(_PROVIDER, turn.last_error_message)
-                )
-            elif not replied:
-                await turn.tools.send_message(
-                    NO_TEXT_REPLY_MESSAGE,
-                    mentions=turn.pending_mentions,
                 )
         finally:
             turn.pending_mentions = []

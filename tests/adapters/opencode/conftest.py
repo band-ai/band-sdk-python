@@ -11,8 +11,8 @@ from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import FeatureKwargs
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
-from tests.adapters.opencode.helpers import AskFactory, FakeOpencodeClient
-from tests.mcpbackends import backends_created_by
+from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls, FakeOpencodeClient
+from tests.mcpbackends import BackendStarts, backends_created_by
 
 
 @pytest.fixture
@@ -49,7 +49,13 @@ def make_adapter() -> Callable[..., OpencodeAdapter]:
 
 
 @pytest.fixture(autouse=True)
-def fake_band_mcp_backends() -> Iterator[None]:
+def fake_band_mcp_backends() -> Iterator[BackendStarts]:
     """Fake every Band MCP backend start in OpenCode adapter tests."""
-    with backends_created_by():
-        yield
+    with backends_created_by() as starts:
+        yield starts
+
+
+@pytest.fixture
+def mcp_backend(fake_band_mcp_backends: BackendStarts) -> BandMCPCalls:
+    """Band tool calls the model makes over the adapter's MCP backend."""
+    return BandMCPCalls(fake_band_mcp_backends)

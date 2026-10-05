@@ -10,12 +10,13 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from band_sdk_core import AgentFailure
+from pydantic_core import to_jsonable_python
 from typing_extensions import Unpack
 
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
 from band.core.delivery import (
     DeliveryFailedError,
-    deliver_reply,
+    relay_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -48,7 +49,7 @@ from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     iter_tool_definitions,
     redact_tool_call_args,
-    settles_turn_reply,
+    turn_effect,
 )
 
 __all__ = [
@@ -560,67 +561,42 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         Returns the list of assistant text parts collected during the turn.
         """
         final_text_parts: list[str] = []
-        settled_reply = False  # an MCP call posted the reply or declined to
+        calls_awaiting_return: dict[str, Any] = {}
         for resp_msg in response_messages:
             match getattr(resp_msg, "message_type", None):
                 case "assistant_message":
                     if text := (getattr(resp_msg, "content", "") or ""):
                         final_text_parts.append(text)
                 case "tool_call_message":
-                    # MCP tool call executed server-side — observe only
-                    tool_call = getattr(resp_msg, "tool_call", None)
-                    tool_name = (
-                        getattr(tool_call, "name", "unknown")
-                        if tool_call
-                        else "unknown"
-                    )
-                    if settles_turn_reply(tool_name):
-                        settled_reply = True
-                    # ToolCall.arguments is a JSON string (letta_client's own
-                    # wire shape); parse it so redact_tool_call_args can
-                    # replace band_send_room_file's content field -- reporting
-                    # the raw string would put real file bytes in this event.
-                    raw_arguments = (
-                        getattr(tool_call, "arguments", "{}") if tool_call else "{}"
-                    )
-                    try:
-                        parsed_arguments = json.loads(raw_arguments)
-                    except (TypeError, ValueError):
-                        parsed_arguments = raw_arguments
-                    reported_args = (
-                        redact_tool_call_args(tool_name, parsed_arguments)
-                        if isinstance(parsed_arguments, dict)
-                        else parsed_arguments
-                    )
-                    await self._report_execution_event(
-                        tools,
-                        "tool_call",
-                        tool_name,
-                        {
-                            ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: reported_args,
-                        },
-                    )
+                    # MCP tool calls executed server-side — observe only.
+                    # tool_call alone holds only the first parallel call.
+                    for call in resp_msg.tool_calls or [resp_msg.tool_call]:
+                        calls_awaiting_return[call.tool_call_id] = call
+                        await self._report_tool_call(tools, call)
                 case "tool_return_message":
-                    tool_name = getattr(resp_msg, "tool_name", "unknown")
-                    await self._report_execution_event(
-                        tools,
-                        "tool_result",
-                        tool_name,
-                        {
-                            ToolEventKey.NAME: tool_name,
-                            ToolEventKey.OUTPUT: getattr(resp_msg, "tool_return", ""),
-                        },
-                    )
+                    # A server that sends no tool_returns puts its one
+                    # result on the message itself.
+                    for result in resp_msg.tool_returns or [resp_msg]:
+                        call = calls_awaiting_return.pop(result.tool_call_id, None)
+                        tool_name = call.name if call else "unknown"
+                        self._record_external_tool_return(tools, tool_name, result)
+                        await self._report_execution_event(
+                            tools,
+                            "tool_result",
+                            tool_name,
+                            {
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: result.tool_return,
+                            },
+                        )
 
         # If the agent already settled its reply through an MCP tool (a message on
         # the platform, or band_no_reply) — nothing to relay.  Otherwise fall back
         # to relaying the assistant text so the user still sees a response —
         # loudly, because a turn landing here means the MCP tool path went unused
         # (a dead tool path would otherwise hide behind green relays).  With
-        # auto_relay disabled, the unused tool path fails loud as an error event
-        # instead.
-        if settled_reply:
+        # auto_relay disabled the text is dropped and the turn verdict decides.
+        if tools.turn.replied:
             logger.debug(
                 "Room %s: Agent settled its reply via a Band tool, skipping auto-relay",
                 room_id,
@@ -634,12 +610,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
                 self._mcp.send_message_tool,
             )
-            detail = (
-                f"Letta agent did not call {self._mcp.send_message_tool} "
-                "(auto-relay disabled); its reply was dropped"
-            )
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
         else:
             final_text = "\n\n".join(final_text_parts)
             mentions = [reply_to_sender_id] if reply_to_sender_id else None
@@ -648,9 +618,38 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
                 self._mcp.send_message_tool,
             )
-            await deliver_reply(tools, final_text, mentions=mentions)
+            await relay_reply(tools, final_text, mentions=mentions)
 
         return final_text_parts
+
+    def _record_external_tool_return(
+        self, tools: AgentToolsProtocol, tool_name: str, result: Any
+    ) -> None:
+        """Record an external band-mcp call's effect on the turn.
+
+        A self-hosted call runs on this room's own tools, which record it
+        themselves; an external server's call is visible only in the stream.
+        """
+        if self.config.mcp.mode == "external" and result.status == "success":
+            tools.turn.record(turn_effect(tool_name))
+
+    async def _report_tool_call(self, tools: AgentToolsProtocol, call: Any) -> None:
+        # ToolCall.arguments is a JSON string (letta_client's own wire shape);
+        # parse it so redact_tool_call_args can replace band_send_room_file's
+        # content field -- reporting the raw string would put real file bytes
+        # in this event.
+        try:
+            arguments = json.loads(call.arguments)
+        except (TypeError, ValueError):
+            arguments = call.arguments
+        if isinstance(arguments, dict):
+            arguments = redact_tool_call_args(call.name, arguments)
+        await self._report_execution_event(
+            tools,
+            "tool_call",
+            call.name,
+            {ToolEventKey.NAME: call.name, ToolEventKey.ARGS: arguments},
+        )
 
     async def _report_execution_event(
         self,
@@ -668,7 +667,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             return
         if tool_name in self._mcp.silent_reporting_tools:
             return
-        await tools.send_event(content=json.dumps(payload), message_type=event_type)
+        # A multimodal tool return is a list of letta_client content models.
+        content = json.dumps(payload, default=to_jsonable_python)
+        await tools.send_event(content=content, message_type=event_type)
 
     # ------------------------------------------------------------------
     # Letta agent lifecycle

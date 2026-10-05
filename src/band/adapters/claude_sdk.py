@@ -88,6 +88,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     ApprovalMode,
@@ -130,10 +131,9 @@ from band.runtime.tools import (
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
-    is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
-    missing_reply_error,
+    turn_effect,
 )
 
 logger = logging.getLogger(__name__)
@@ -603,8 +603,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
-        # Only custom tools that declared an effect let a turn with no Band
-        # terminal tool call still count as answered — see is_terminal_success.
+        # A declined custom tool settles the turn only by its declared effect
+        # (see _declined_the_reply).
         self._custom_effects = custom_tool_effects(self._custom_tools)
 
         # Approval flow state
@@ -623,8 +623,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # (ToolResultBlock only carries the id). Room-scoped rather than
         # turn-local: a resumed session can replay a result whose tool_use
         # streamed in an earlier, truncated turn, and that result must still
-        # resolve to its name to count as terminal work. Entries are popped
-        # as results arrive and the room's map is dropped in on_cleanup.
+        # be narrated under its name. Entries are popped as results arrive
+        # and the room's map is dropped in on_cleanup.
         self._pending_tool_names: dict[str, dict[str, str]] = {}
 
         # A turn runs as a detached task so a manual approval mid-turn can
@@ -782,9 +782,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        self._room_tools[room_id] = tools
-        await self._bind_mcp_tools(room_id, tools)
-
         # Approval flow: track notify target and intercept local commands
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
@@ -803,6 +800,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         args=args,
                         sender=sender,
                     )
+                    tools.turn.settle()
                     return
                 elif cmd == ClaudeSDKCommand.STATUS:
                     await self._handle_status_command(
@@ -810,6 +808,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         room_id=room_id,
                         sender=sender,
                     )
+                    tools.turn.settle()
                     return
 
         # A prior turn's background task (see _run_turn) may still be running
@@ -819,12 +818,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # OpencodeAdapter's own "still processing" guard).
         running_turn = self._turn_tasks.get(room_id)
         if running_turn is not None and not running_turn.done():
-            await tools.send_message(
+            await tools.send_notice(
                 "Still processing the previous request in this room.",
                 mentions=[msg.sender_id] if msg.sender_id else None,
             )
+            tools.turn.settle()
             return
 
+        # Bound only once this message runs a turn: a command or busy message
+        # must not take over the in-flight turn's tools, which its approval
+        # prompts and MCP tool calls still post through.
+        self._room_tools[room_id] = tools
+        await self._bind_mcp_tools(room_id, tools)
         await self._mcp.ensure()
 
         # The manager only resumes when it has to create the client: on
@@ -1166,15 +1171,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # The room's pending-call map (see __init__) — persists across turns
         # so a result replayed by a resumed session still resolves its name.
         pending_tool_names = self._pending_tool_names.setdefault(room_id, {})
-        replied_this_turn = False
         async for sdk_message in client.receive_response():
             match sdk_message:
                 case AssistantMessage():
-                    replied_this_turn |= await self._on_assistant_message(
+                    await self._on_assistant_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 case UserMessage():
-                    replied_this_turn |= await self._on_user_message(
+                    await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 # The CLI announces every mode change in a status message; only
@@ -1194,28 +1198,23 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         self.config.permission_mode,
                     )
                 case ResultMessage():
-                    await self._on_turn_complete(
-                        sdk_message,
-                        room_id,
-                        tools,
-                        replied_this_turn=replied_this_turn,
-                    )
+                    await self._on_turn_complete(sdk_message, room_id, tools)
                     return
         # ``receive_response`` is documented to terminate only after its
         # ResultMessage. Reaching EOF first means the CLI transport died.
-        if replied_this_turn:
-            # The reply already reached the room — failing the turn would
-            # make the runtime redeliver the message and answer the user
-            # twice. Drop the dead session and treat the turn as done.
+        if tools.turn.complete:
+            # The turn already answered or did its work. Failing it would mark
+            # the message FAILED, which a later process or context runs again,
+            # repeating that work. Drop the dead session; the turn is done.
             logger.warning(
-                "Room %s: CLI stream ended without a result after the "
-                "reply was delivered — invalidating session",
+                "Room %s: CLI stream ended without a result after the turn "
+                "completed — invalidating session",
                 room_id,
             )
             await self._invalidate_session(room_id)
             return
-        # Nothing was delivered: use the normal dead-client path so the
-        # runtime marks this turn failed and the cached client is not reused.
+        # The turn is incomplete: use the normal dead-client path so the
+        # runtime marks it failed and the cached client is not reused.
         raise CLIConnectionError(self._stream_ended_without_result_error())
 
     async def _on_assistant_message(
@@ -1224,14 +1223,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
+    ) -> None:
         """Narrate one assistant message's blocks.
 
-        Returns True when a carried tool result was terminal work — results
-        normally arrive in user envelopes (see _on_user_message);
+        Tool results normally arrive in user envelopes (see _on_user_message);
         assistant-carried ones are accepted defensively.
         """
-        replied_this_turn = False
         for block in message.content:
             match block:
                 case TextBlock() if block.text:
@@ -1239,10 +1236,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 case ThinkingBlock() if block.thinking:
                     await self._narrate_thinking(block, room_id, tools)
                 case _:
-                    replied_this_turn |= await self._dispatch_tool_block(
+                    await self._dispatch_tool_block(
                         block, pending_tool_names, room_id, tools
                     )
-        return replied_this_turn
 
     async def _on_user_message(
         self,
@@ -1250,21 +1246,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
+    ) -> None:
         """Handle the tool_use/tool_result blocks the protocol delivers in
         user-type envelopes.
 
-        Returns True when any result was terminal work. ``content`` may also
-        be a plain prompt string, which carries neither.
+        ``content`` may also be a plain prompt string, which carries neither.
         """
         if not isinstance(message.content, list):
-            return False
-        replied_this_turn = False
+            return
         for block in message.content:
-            replied_this_turn |= await self._dispatch_tool_block(
-                block, pending_tool_names, room_id, tools
-            )
-        return replied_this_turn
+            await self._dispatch_tool_block(block, pending_tool_names, room_id, tools)
 
     async def _dispatch_tool_block(
         self,
@@ -1272,20 +1263,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
+    ) -> None:
         """Handle one ToolUseBlock/ToolResultBlock entry, shared by assistant-
-        and user-envelope message handling; any other block type is a no-op.
-        Returns True when the block was terminal work (a tool result)."""
+        and user-envelope message handling; any other block type is a no-op."""
         match block:
             case ToolUseBlock():
                 await self._on_tool_use(block, pending_tool_names, room_id, tools)
-                return False
             case ToolResultBlock():
-                return await self._on_tool_result(
-                    block, pending_tool_names, room_id, tools
-                )
-            case _:
-                return False
+                await self._on_tool_result(block, pending_tool_names, room_id, tools)
 
     async def _send_narration_event(
         self,
@@ -1342,10 +1327,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         room_id: str,
         tools: AgentToolsProtocol,
     ) -> None:
-        """Register a pending call (for the terminal-work check at turn end)
-        and narrate it. Shared by both envelopes a call can arrive in — the
-        protocol's assistant messages, and user messages when the call is
-        carried by a subagent/nested tool_use block."""
+        """Register a pending call (to name its result) and narrate it.
+
+        Shared by both envelopes a call can arrive in: the protocol's assistant
+        messages, and user messages carrying a subagent's nested tool_use block.
+        """
         # Bare name for the cross-adapter tool_call record (the SDK
         # namespaces our tools mcp__band__*; see _semantic_tool_name).
         tool_name = self._semantic_tool_name(block.name)
@@ -1384,10 +1370,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         sdk_message: ResultMessage,
         room_id: str,
         tools: AgentToolsProtocol,
-        *,
-        replied_this_turn: bool,
     ) -> None:
-        """Close out the turn: persist session id, emit usage, surface failure."""
+        """Close out the turn: persist session id, emit usage, surface failure.
+
+        A turn released early for an approval is judged here, at its real end;
+        any other turn is judged by ``run_judged_turn`` once ``on_message`` returns.
+        """
         logger.info(
             "Room %s: Complete - %sms, $%.4f",
             room_id,
@@ -1410,16 +1398,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 else None
             )
             detail = self._result_error_detail(sdk_message)
+            logger.warning("Room %s: %s", room_id, detail)
             await tools.send_failure(
                 AgentFailure(_PROVIDER, detail, code, sdk_message.errors)
             )
             raise TurnResultAlreadyReported(detail)
-        elif not replied_this_turn and not self._declined_the_reply(
-            sdk_message.permission_denials, notified
-        ):
-            detail = missing_reply_error("Claude SDK")
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
+        if self._declined_the_reply(sdk_message.permission_denials, notified):
+            tools.turn.settle()
+        await judge_detached_turn(tools, room_id=room_id)
 
     def _declined_the_reply(
         self, permission_denials: list[Any] | None, notified: set[str] | None
@@ -1433,8 +1419,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         thing the CLI can't tell us — which of those denials actually reached
         the room as a decline notice (see _record_notified_decline). A denial
         only explains the silence when it was both notified and the declined
-        tool is what would have delivered the reply (is_terminal_success) —
-        a declined side tool like Bash still leaves the turn's question
+        tool's call would have done the turn's work (``turn_effect(...).did_work``)
+        — a declined side tool like Bash still leaves the turn's question
         unanswered.
         """
         if not notified:
@@ -1451,9 +1437,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # tool is namespaced (see _semantic_tool_name) — strip it before
             # comparing, same as every other tool-name check in this adapter.
             tool_name = self._semantic_tool_name(raw_tool_name)
-            if is_terminal_success(
-                tool_name, succeeded=True, custom_effects=self._custom_effects
-            ):
+            if turn_effect(tool_name, custom_effects=self._custom_effects).did_work:
                 return True
         return False
 
@@ -1493,17 +1477,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
-        """Narrate one tool result and report whether it was terminal work.
+    ) -> None:
+        """Narrate one tool result under its call's name.
 
         Shared by both envelopes a result can arrive in: user-type messages
         (the protocol shape) and assistant messages (accepted defensively).
-        Returns True when the finished call counts as the turn's productive
-        work (see is_terminal_success) — i.e. the agent already answered.
         """
         result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
         await self._narrate_tool_result(block, result_tool_name, room_id, tools)
-        return self._tool_result_is_terminal(block, result_tool_name)
 
     async def _narrate_tool_result(
         self,
@@ -1536,24 +1517,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             message_type="tool_result",
         )
 
-    def _tool_result_is_terminal(
-        self, block: ToolResultBlock, result_tool_name: str | None
-    ) -> bool:
-        """Whether this finished call counts as the turn's productive work."""
-        return is_terminal_success(
-            result_tool_name,
-            succeeded=not block.is_error,
-            custom_effects=self._custom_effects,
-        )
-
     @staticmethod
     def _stream_ended_without_result_error() -> str:
         """Room-visible detail when the CLI stream ends without a ResultMessage.
 
         Distinct from ``_result_error_detail`` (a completed turn whose
-        ResultMessage reports failure) and ``missing_reply_error`` (a completed
-        turn that never called a reply tool): this turn never reached a
-        terminal message at all, e.g. the CLI subprocess exited or its stdout
+        ResultMessage reports failure): this turn never reached a terminal
+        message at all, e.g. the CLI subprocess exited or its stdout
         closed mid-turn.
         """
         return (
@@ -1723,7 +1693,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         whether a missing-reply guard still applies.
         """
         try:
-            await tools.send_message(message, mentions=mentions)
+            await tools.send_notice(message, mentions=mentions)
             return True
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
@@ -1805,7 +1775,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         mention = [requester["id"]] if requester else None
         if tools:
             try:
-                await tools.send_message(
+                await tools.send_notice(
                     APPROVAL_REQUESTED_TEMPLATE.format(summary=summary, token=token),
                     mentions=mention,
                 )
@@ -1821,7 +1791,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # The request has been posted (or there was nowhere to post it) --
         # either way, on_message must return now so Band's room loop can
-        # dispatch the reply that will resolve this wait.
+        # dispatch the reply that will resolve this wait. The turn is then
+        # judged at its real end (see _on_turn_complete).
+        if tools:
+            tools.turn.detach()
         self._release_turn(room_id)
 
         try:
@@ -1934,7 +1907,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # --- /approvals: list pending ---
         if command == ClaudeSDKCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
-                await tools.send_message("No pending approvals.", mentions=mention)
+                await tools.send_notice("No pending approvals.", mentions=mention)
                 return
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
@@ -1943,12 +1916,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 lines.append(
                     f"- `{entry.token}`: {entry.payload.summary} ({age_s}s ago)"
                 )
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await tools.send_notice("\n".join(lines), mentions=mention)
             return
 
         # --- /approve [token] | /decline [token] ---
         if not is_authorized_sender(self._approvals.authorized_senders, sender["id"]):
-            await tools.send_message(
+            await tools.send_notice(
                 APPROVAL_UNAUTHORIZED_MESSAGE,
                 mentions=mention,
             )
@@ -1959,12 +1932,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if not token:
             match open_tokens:
                 case []:
-                    await tools.send_message("No pending approvals.", mentions=mention)
+                    await tools.send_notice("No pending approvals.", mentions=mention)
                     return
                 case [only]:
                     token = only
                 case _:
-                    await tools.send_message(
+                    await tools.send_notice(
                         "Multiple pending approvals — please specify a token: "
                         + format_tokens(open_tokens),
                         mentions=mention,
@@ -1972,7 +1945,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                     return
 
         if (selected := pending.get(token)) is None:
-            await tools.send_message(
+            await tools.send_notice(
                 APPROVAL_UNKNOWN_TOKEN_TEMPLATE.format(
                     token=token, available=format_tokens(open_tokens) or "none"
                 ),
@@ -1981,7 +1954,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             return
 
         if pending.try_claim(token) is None:
-            await tools.send_message(
+            await tools.send_notice(
                 f"Approval `{token}` is no longer pending.", mentions=mention
             )
             return
@@ -2017,7 +1990,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             f"- active_sessions: {session_count}",
             f"- session_id: `{session_id}`",
         ]
-        await tools.send_message("\n".join(lines), mentions=[sender["id"]])
+        await tools.send_notice("\n".join(lines), mentions=[sender["id"]])
 
     # ------------------------------------------------------------------
     # Approval helpers

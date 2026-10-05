@@ -456,6 +456,22 @@ class AdapterFeatures:
         )
 
 
+# Sender identity of the messages ContactEventHandler's HUB_ROOM strategy
+# injects into the hub room; they never come from the platform.
+SYNTHETIC_SENDER_TYPE = "System"
+SYNTHETIC_CONTACT_EVENTS_SENDER_ID = "contact-events"
+SYNTHETIC_CONTACT_EVENTS_SENDER_NAME = "Contact Events"
+
+
+def is_contact_hub_turn(*, sender_type: str | None, sender_id: str | None) -> bool:
+    """Whether a message is a synthetic contact event the SDK injected into the
+    hub room, rather than a platform message addressed to the agent."""
+    return (
+        sender_type == SYNTHETIC_SENDER_TYPE
+        and sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+    )
+
+
 @dataclass(frozen=True)
 class PlatformMessage:
     """Message from the platform."""

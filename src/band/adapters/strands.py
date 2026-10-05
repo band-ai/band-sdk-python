@@ -38,10 +38,10 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
-    TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
+from band.core.turn import Turn
 from band.core.types import (
     Capability,
     Emit,
@@ -68,13 +68,12 @@ from band.runtime.tools import (
     get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
-    is_terminal_success,
     iter_tool_definitions,
-    missing_reply_error,
     redact_tool_call_args,
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +132,7 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
 
 
 def _result_text(result: ToolResult) -> str:
-    """Flatten a tool result for execution events and terminal-state policy."""
+    """Flatten a tool result for execution events and failure detection."""
     parts: list[str] = []
     image_count = 0
     image_index: int | None = None
@@ -151,6 +150,24 @@ def _result_text(result: ToolResult) -> str:
     if image_index is not None:
         parts[image_index] = image_block_placeholder(image_count)
     return "\n".join(parts)
+
+
+def _custom_tool_failed(result: ToolResult) -> bool:
+    for block in result.get("content", []):
+        match block:
+            case {"json": value}:
+                pass
+            case {"text": str() as text}:
+                # Native Strands tools serialize ordinary dict returns as text.
+                try:
+                    value = json.loads(text)
+                except ValueError:
+                    value = text
+            case _:
+                continue
+        if is_failed_tool_output(value):
+            return True
+    return False
 
 
 def _openai_history(messages: StrandsMessages) -> StrandsMessages:
@@ -179,8 +196,13 @@ def _input_schema(input_model: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
-def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
+StrandsCustomTool = Callable[..., Any] | CustomToolDef
+
+
+def _registered_name(tool: StrandsCustomTool) -> str:
     """Return the name Strands registers this tool under."""
+    if isinstance(tool, tuple):
+        return get_custom_tool_name(tool[0])
     if isinstance(tool, AgentTool):
         return tool.tool_name
     name = getattr(tool, "__name__", "")
@@ -192,24 +214,36 @@ def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
     return name
 
 
-def _build_custom_tools(
-    additional_tools: list[Callable[..., Any] | CustomToolDef] | None,
-) -> tuple[list[AgentTool | Callable[..., Any]], dict[str, TurnEffect]]:
-    """Adapt portable custom tools and collect the turn effects they declared."""
-    raw_tools = additional_tools or []
-    converted: list[AgentTool | Callable[..., Any]] = [
-        CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
-        for tool_def in raw_tools
-    ]
-    names = [_registered_name(tool) for tool in converted]
+def _custom_tool_effects(
+    custom_tools: list[StrandsCustomTool],
+) -> dict[str, TurnEffect]:
+    """Validate custom tool names and collect the native tools' declared effects.
+
+    A portable ``(InputModel, handler)`` tool records its own effect through
+    ``execute_custom_tool``.
+    """
+    names = [_registered_name(tool) for tool in custom_tools]
     # Strands' registry is last-wins, so a collision would silently replace the
     # platform tool the room depends on.
     shadowed = sorted(set(names) & ALL_TOOL_NAMES)
     if shadowed:
         raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
 
-    handlers = (raw[1] if isinstance(raw, tuple) else raw for raw in raw_tools)
-    return converted, declared_effects(zip(names, handlers, strict=True))
+    return declared_effects(
+        (name, tool)
+        for name, tool in zip(names, custom_tools, strict=True)
+        if not isinstance(tool, tuple)
+    )
+
+
+def _bind_custom_tools(
+    custom_tools: list[StrandsCustomTool], turn: Turn
+) -> list[AgentTool | Callable[..., Any]]:
+    """Adapt portable custom tools to Strands for one room turn."""
+    return [
+        CustomToolBridge(tool, turn) if isinstance(tool, tuple) else tool
+        for tool in custom_tools
+    ]
 
 
 class StrandsToolBridge(AgentTool):
@@ -245,8 +279,9 @@ class StrandsToolBridge(AgentTool):
 class CustomToolBridge(StrandsToolBridge):
     """Expose a portable custom tool through Strands' native tool protocol."""
 
-    def __init__(self, tool_def: CustomToolDef):
+    def __init__(self, tool_def: CustomToolDef, turn: Turn):
         self._tool_def = tool_def
+        self._turn = turn
         input_model, _ = tool_def
         name = get_custom_tool_name(input_model)
         super().__init__(name, input_model, input_model.__doc__ or name)
@@ -260,7 +295,7 @@ class CustomToolBridge(StrandsToolBridge):
         del invocation_state, kwargs
         try:
             result = await execute_custom_tool(
-                self._tool_def, dict(tool_use["input"] or {})
+                self._tool_def, dict(tool_use["input"] or {}), turn=self._turn
             )
         except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             yield _tool_result(
@@ -323,7 +358,7 @@ class PlatformToolBridge(StrandsToolBridge):
 
 
 class BandTurnHooks(HookProvider):
-    """Emit execution events and record whether a turn completed useful work."""
+    """Emit execution events and record native tools' declared turn effects."""
 
     def __init__(
         self,
@@ -335,7 +370,6 @@ class BandTurnHooks(HookProvider):
         self._tools = tools
         self._emit_execution = emit_execution
         self._custom_effects = custom_effects
-        self.terminal_fired = False
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         del kwargs
@@ -362,10 +396,14 @@ class BandTurnHooks(HookProvider):
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
             name, output
         )
-        if is_terminal_success(
-            name, succeeded=succeeded, custom_effects=self._custom_effects
+        # Native Strands tools run outside execute_custom_tool, so their
+        # declared effect is recorded here.
+        if (
+            succeeded
+            and (effect := self._custom_effects.get(name))
+            and not _custom_tool_failed(event.result)
         ):
-            self.terminal_fired = True
+            self._tools.turn.record(effect)
         if not self._emit_execution:
             return
         await self._emit_event(
@@ -422,7 +460,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         config: StrandsAdapterConfig | None = None,
         *,
         history_converter: StrandsHistoryConverter | None = None,
-        additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
+        additional_tools: list[StrandsCustomTool] | None = None,
         llm: Model | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
@@ -448,7 +486,8 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         self._model: Model | str = model
         self._system_prompt: str | None = None
         self._message_history: dict[str, StrandsMessages] = {}
-        self._custom_tools, self._custom_effects = _build_custom_tools(additional_tools)
+        self._custom_tools = additional_tools or []
+        self._custom_effects = _custom_tool_effects(self._custom_tools)
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render the prompt after the platform supplies agent metadata."""
@@ -474,7 +513,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         overflow, keeping toolUse/toolResult pairs intact. The persisted room
         transcript is therefore capped by the framework, not unbounded.
         """
-        framework_tools = self._build_platform_tools(tools) + self._custom_tools
+        framework_tools = self._build_platform_tools(tools) + _bind_custom_tools(
+            self._custom_tools, tools.turn
+        )
         return Agent(
             model=self._model,
             messages=messages,
@@ -577,7 +618,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run one room turn and surface a missing tool-based reply."""
+        """Run one room turn through the Strands agent loop."""
         room_history = self._history_for_turn(
             room_id, history, is_session_bootstrap=is_session_bootstrap
         )
@@ -603,13 +644,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             tools=tools,
             hooks=hooks,
         )
-        if not hooks.terminal_fired:
-            logger.warning(
-                "Room %s: Strands turn produced nothing for the room", room_id
-            )
-            detail = missing_reply_error("Strands")
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,

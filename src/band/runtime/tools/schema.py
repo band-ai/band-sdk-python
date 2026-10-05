@@ -7,7 +7,7 @@ dispatch-boundary result types (``ToolCallOutcome``, ``serialize_tool_result``).
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, TypeVar, cast
@@ -203,6 +203,15 @@ class ToolCallOutcome:
     value: Any
     ok: bool
     error_message: str | None = None
+
+
+def is_failed_tool_output(output: Any) -> bool:
+    """Recognize structured ``ok=False`` results and legacy error strings."""
+    if isinstance(output, Mapping):
+        return output.get("ok") is False
+    if isinstance(output, str):
+        return output.lower().startswith(("error:", "error executing "))
+    return False
 
 
 def serialize_tool_result(result: Any) -> Any:

@@ -40,10 +40,8 @@ from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
-from band.integrations.acp.room_emitter import turn_replied_in_room
-from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
+from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp import BandMCPTransport
-from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import (
     Launch,
@@ -2282,116 +2280,6 @@ class TestResolveLauncher:
             "band.integrations.acp.client_adapter.shutil.which", return_value=None
         ):
             assert _resolve_launcher(["mystery-bin", "arg"]) == ["mystery-bin", "arg"]
-
-
-class TestTurnRepliedInRoom:
-    """`turn_replied_in_room`: detect a room post from the ACP tool-call stream.
-
-    ACP has no structured tool-name field and tools may run out-of-process, so the
-    adapter reads the collected chunk stream. These lock the id-correlation edges.
-    """
-
-    @staticmethod
-    def _chunk(chunk_type: str, content: str, **metadata: object) -> CollectedChunk:
-        tool_call_id = str(metadata.get("tool_call_id", ""))
-        call = ACPToolCall(
-            tool_call_id=tool_call_id,
-            name=content if chunk_type == "tool_call" else "unknown",
-            arguments={},
-        )
-        tool = (
-            call
-            if chunk_type == "tool_call"
-            else ACPToolResult(call=call, output=content, status=metadata.get("status"))
-        )
-        return CollectedChunk(
-            chunk_type=chunk_type,
-            content=content,
-            metadata=metadata,
-            tool=tool,
-        )
-
-    def test_completed_posting_tool_call_counts_as_reply(self) -> None:
-        chunks = [
-            self._chunk(
-                "tool_call",
-                "band_send_message",
-                tool_call_id="tc-1",
-                status="completed",
-            )
-        ]
-        assert turn_replied_in_room(chunks)
-
-    def test_posting_call_correlated_to_completed_result_counts(self) -> None:
-        # The tool_call arrives before its terminal status; the completed result seals it.
-        chunks = [
-            self._chunk(
-                "tool_call",
-                "band_send_message",
-                tool_call_id="tc-1",
-                status="in_progress",
-            ),
-            self._chunk("tool_result", "", tool_call_id="tc-1", status="completed"),
-        ]
-        assert turn_replied_in_room(chunks)
-
-    def test_empty_ids_do_not_cross_match(self) -> None:
-        # A not-yet-completed posting call with NO id and a completed NON-posting result
-        # with NO id both default to "" — they must not correlate, or the text fallback
-        # is falsely suppressed and the turn goes silent.
-        chunks = [
-            self._chunk("tool_call", "band_send_message", status="in_progress"),
-            self._chunk("tool_result", "", status="completed"),
-        ]
-        assert not turn_replied_in_room(chunks)
-
-    def test_non_posting_tool_never_counts(self) -> None:
-        chunks = [
-            self._chunk(
-                "tool_call", "get_weather", tool_call_id="tc-1", status="completed"
-            )
-        ]
-        assert not turn_replied_in_room(chunks)
-
-    @pytest.mark.parametrize("name", ["band_no_reply", "band-band_no_reply"])
-    def test_completed_no_reply_settles_the_turn(self, name: str) -> None:
-        chunks = [
-            self._chunk("tool_call", name, tool_call_id="tc-1", status="completed")
-        ]
-        assert turn_replied_in_room(chunks)
-
-    def test_failed_no_reply_keeps_the_text_fallback(self) -> None:
-        chunks = [
-            self._chunk(
-                "tool_call", "band_no_reply", tool_call_id="tc-1", status="failed"
-            )
-        ]
-        assert not turn_replied_in_room(chunks)
-
-    def test_custom_tool_declaring_silence_settles_the_turn(self) -> None:
-        chunks = [
-            self._chunk(
-                "tool_call", "stayquiet", tool_call_id="tc-1", status="completed"
-            )
-        ]
-        assert turn_replied_in_room(
-            chunks, custom_effects={"stayquiet": TurnEffect.DECLINE}
-        )
-        assert not turn_replied_in_room(chunks)
-
-    def test_foreign_mcp_servers_own_tool_never_counts(self) -> None:
-        """A non-Band MCP server's own tool that happens to end in
-        ``-band_send_message`` must not suppress the text fallback -- only the
-        Band loopback server's own ``band-`` prefix counts as a room post."""
-        chunks = [
-            self._chunk(
-                "tool_call",
-                "other-band_send_message",
-                tool_call_id="tc-1",
-                status="completed",
-            )
-        ]
-        assert not turn_replied_in_room(chunks)
 
 
 class TestACPClientAdapterEmitSupport:

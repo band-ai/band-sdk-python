@@ -25,6 +25,7 @@ from band.integrations.acp.types import (
     ToolResultRoomEvent,
     ToolStatus,
 )
+from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool, mcp_tool_spelling
 from band.runtime.tools.agent import AgentTools
 from band.testing.fake_tools import FakeAgentTools
 
@@ -222,9 +223,9 @@ class TestRoomTurnEmitterEmitGating:
 
     @pytest.mark.asyncio
     async def test_silenced_turn_still_suppresses_duplicated_text(self) -> None:
-        """A turn that answered in the room via a Band messaging tool must
-        not also relay its held text — even with ``emit=()`` hiding that
-        tool call from the room."""
+        """A turn that answered in the room via an out-of-process Band
+        messaging tool must not also relay its held text — even with
+        ``emit=()`` hiding that tool call from the room."""
         call = ACPToolCall(
             tool_call_id="tc-9",
             name="band_send_message",
@@ -238,6 +239,7 @@ class TestRoomTurnEmitterEmitGating:
             session_id="s1",
             room_id="room-1",
             emit=frozenset(),
+            records_tool_effects=True,
         )
 
         async with emitter:
@@ -287,3 +289,187 @@ class TestRoomTurnEmitterEmitGating:
             "tool_call",
             "tool_result",
         ]
+
+
+def tool_call_chunk(
+    name: str, status: ToolStatus, *, tool_call_id: str = "tc-1"
+) -> CollectedChunk:
+    call = ACPToolCall(tool_call_id=tool_call_id, name=name, arguments={})
+    return CollectedChunk(
+        chunk_type=ChunkType.TOOL_CALL,
+        content=name,
+        metadata={"status": status},
+        tool=call,
+    )
+
+
+def tool_result_chunk(name: str, status: ToolStatus) -> CollectedChunk:
+    """A result the runtime correlated to its in-progress call."""
+    call = ACPToolCall(tool_call_id="tc-1", name=name, arguments={})
+    return CollectedChunk(
+        chunk_type=ChunkType.TOOL_RESULT,
+        content="",
+        metadata={"status": status},
+        tool=ACPToolResult(call=call, output="", status=status),
+    )
+
+
+async def relayed_texts(
+    tools: FakeAgentTools,
+    *chunks: CollectedChunk,
+    records_tool_effects: bool,
+) -> list[str]:
+    """Run one turn of ``chunks`` and return the messages it posted."""
+    emitter = RoomTurnEmitter(
+        tools,
+        mentions=[{"id": "u1", "name": "User"}],
+        session_id="s1",
+        room_id="room-1",
+        records_tool_effects=records_tool_effects,
+    )
+    async with emitter:
+        for chunk in chunks:
+            await emitter.emit(chunk)
+    return [message["content"] for message in tools.messages_sent]
+
+
+def text(content: str) -> CollectedChunk:
+    return CollectedChunk(chunk_type=ChunkType.TEXT, content=content)
+
+
+class TestRoomTurnEmitterReplyRelay:
+    """The held text relays once, unless a tool call replied or declined.
+
+    In-process Band tools record their own effect on ``tools.turn``; an
+    external band-mcp's calls are seen only in the stream, so the emitter
+    records them itself, and only in that mode.
+    """
+
+    @pytest.mark.asyncio
+    async def test_held_runs_relay_as_one_reply(self) -> None:
+        tools = FakeAgentTools()
+
+        sent = await relayed_texts(
+            tools,
+            text("Checking."),
+            tool_call_chunk("shell", ToolStatus.COMPLETED),
+            text("Done."),
+            records_tool_effects=False,
+        )
+
+        assert sent == ["Checking.\n\nDone."]
+        assert tools.turn.replied
+
+    @pytest.mark.asyncio
+    async def test_an_in_process_reply_suppresses_the_text(self) -> None:
+        tools = FakeAgentTools()
+        await tools.send_message("Posted by the tool.", mentions=["u1"])
+
+        sent = await relayed_texts(
+            tools,
+            tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED),
+            text("I posted it."),
+            records_tool_effects=False,
+        )
+
+        assert sent == ["Posted by the tool."]
+
+    @pytest.mark.asyncio
+    async def test_in_process_mode_never_records_from_the_stream(self) -> None:
+        """The stream reports a call the in-process tool already recorded (or
+        that never posted); only the tool itself may settle the reply."""
+        sent = await relayed_texts(
+            FakeAgentTools(),
+            tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED),
+            text("The answer."),
+            records_tool_effects=False,
+        )
+
+        assert sent == ["The answer."]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            [tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED)],
+            [
+                tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.IN_PROGRESS),
+                tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED),
+            ],
+            [tool_call_chunk(BandTool.NO_REPLY, ToolStatus.COMPLETED)],
+            [
+                tool_call_chunk(
+                    mcp_tool_spelling(BAND_MCP_SERVER_NAME, BandTool.NO_REPLY),
+                    ToolStatus.COMPLETED,
+                )
+            ],
+        ],
+        ids=["completed-call", "completed-result", "no-reply", "mcp-spelled-no-reply"],
+    )
+    async def test_an_out_of_process_reply_or_decline_suppresses_the_text(
+        self, chunks: list[CollectedChunk]
+    ) -> None:
+        tools = FakeAgentTools()
+
+        sent = await relayed_texts(
+            tools, *chunks, text("Narration."), records_tool_effects=True
+        )
+
+        assert sent == []
+        assert tools.turn.replied
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "chunk",
+        [
+            tool_call_chunk(BandTool.NO_REPLY, ToolStatus.FAILED),
+            tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.IN_PROGRESS),
+            tool_call_chunk("get_weather", ToolStatus.COMPLETED),
+            tool_call_chunk(
+                mcp_tool_spelling("other", BandTool.SEND_MESSAGE), ToolStatus.COMPLETED
+            ),
+        ],
+        ids=["failed-no-reply", "unfinished-send", "non-band-tool", "foreign-server"],
+    )
+    async def test_an_out_of_process_call_that_did_not_reply_keeps_the_text(
+        self, chunk: CollectedChunk
+    ) -> None:
+        sent = await relayed_texts(
+            FakeAgentTools(), chunk, text("The answer."), records_tool_effects=True
+        )
+
+        assert sent == ["The answer."]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_prompt_records_nothing_streamed_during_it(self) -> None:
+        """A rejected prompt (e.g. busy) owns no work: a reply streamed during
+        it belongs to another turn and must not suppress the retry's answer."""
+        tools = FakeAgentTools()
+        emitter = RoomTurnEmitter(
+            tools,
+            mentions=[{"id": "u1", "name": "User"}],
+            session_id="s1",
+            room_id="room-1",
+            records_tool_effects=True,
+        )
+
+        with pytest.raises(RuntimeError):
+            async with emitter:
+                await emitter.emit(
+                    tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED)
+                )
+                raise RuntimeError("session busy")
+
+        assert not tools.turn.replied
+
+    @pytest.mark.asyncio
+    async def test_an_out_of_process_action_completes_the_turn(self) -> None:
+        tools = FakeAgentTools()
+
+        await relayed_texts(
+            tools,
+            tool_call_chunk(BandTool.CREATE_TASK, ToolStatus.COMPLETED),
+            records_tool_effects=True,
+        )
+
+        assert tools.turn.complete
