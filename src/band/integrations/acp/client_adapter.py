@@ -422,9 +422,6 @@ class ACPClientAdapter(
         self._room_selections: dict[str, ModelSelection] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
-        # The emitter of the turn running in each room, for the local MCP
-        # server's result hook; rooms run one turn at a time.
-        self._turn_emitters: dict[str, RoomTurnEmitter] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._bootstrapped_sessions: set[str] = set()
@@ -692,7 +689,6 @@ class ACPClientAdapter(
                 # Injected Band tools record their own effects in process.
                 records_tool_effects=not self.config.inject_band_tools,
             ) as emitter:
-                self._turn_emitters[room_id] = emitter
                 self._install_turn_handlers(
                     runtime,
                     emitter=emitter,
@@ -734,8 +730,6 @@ class ACPClientAdapter(
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self.config.turn_timeout_s}s"
                     ) from None
-                finally:
-                    self._turn_emitters.pop(room_id, None)
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
