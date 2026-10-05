@@ -9,6 +9,7 @@ usage, and cleanup.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import partial
@@ -32,6 +33,7 @@ from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolSpec
 
 from band.adapters.strands import (
+    TURN_DIAGNOSTICS_LOG,
     BandTurnHooks,
     CustomToolBridge,
     StrandsAdapter,
@@ -63,6 +65,7 @@ from band.testing import (
     FakeAgentTools,
     ScriptedStrandsModel,
     ScriptedTurn,
+    TextTurn,
     ToolTurn,
     failure_reports,
     reported_failures,
@@ -152,6 +155,16 @@ def _tool_results(adapter: StrandsAdapter, room_id: str = ROOM) -> list[str]:
         if "toolResult" in block
         for item in block["toolResult"]["content"]
         if "text" in item
+    ]
+
+
+def failure_diagnostics(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
+    return [
+        json.loads(record.args[1])
+        for record in caplog.records
+        if record.name == "band.adapters.strands"
+        and record.msg == TURN_DIAGNOSTICS_LOG
+        and isinstance(record.args, tuple)
     ]
 
 
@@ -562,6 +575,187 @@ class TestOnMessage:
 
 class TestTurnProductivity:
     """A turn that reached the room ends quietly; anything else is reported."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("final_text", ["Board checked", ""])
+    async def test_missing_reply_logs_reads_and_final_output_without_events(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+        final_text: str,
+    ) -> None:
+        adapter = await scripted(
+            ToolTurn("band_list_tasks"),
+            TextTurn(final_text),
+            capabilities={Capability.TASKS},
+            emit=set(),
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, tools)
+
+        (diagnostic,) = failure_diagnostics(caplog)
+        assert diagnostic["final_text"].strip() == final_text
+        assert diagnostic["stop_reason"] == "end_turn"
+        (call,) = diagnostic["tool_calls"]
+        assert call["name"] == "band_list_tasks"
+        assert call["args"] == {}
+        assert call["output"]["data"] == []
+        assert call["is_error"] is False
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    @pytest.mark.asyncio
+    async def test_failed_send_diagnostics_redact_arguments_result_and_final_text(
+        self,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        class FailingTools(FakeAgentTools):
+            async def send_message(
+                self, content: str, mentions: list[str] | None = None
+            ) -> None:
+                raise RuntimeError("backend down\nAuthorization: Bearer result-secret")
+
+        tools = FailingTools(room_id=ROOM)
+        adapter = await scripted(
+            ToolTurn(
+                "band_send_message",
+                {
+                    "content": "api_key=argument-secret",
+                    "mentions": ["@tester"],
+                },
+            ),
+            TextTurn("password=final-secret"),
+            emit=set(),
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, tools)
+
+        (diagnostic,) = failure_diagnostics(caplog)
+        (call,) = diagnostic["tool_calls"]
+        assert call["name"] == "band_send_message"
+        assert call["is_error"] is True
+        assert "backend down" in call["output"]
+        assert diagnostic["final_text"].strip() == "password=[REDACTED]"
+        assert call["args"]["content"] == "api_key=[REDACTED]"
+        serialized = json.dumps(diagnostic)
+        for secret in ("argument-secret", "result-secret", "final-secret"):
+            assert secret not in serialized
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_does_not_log_diagnostics(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        adapter = await scripted(SEND_TURN)
+        with caplog.at_level(logging.WARNING):
+            await _run_turn(adapter, tools)
+        assert failure_diagnostics(caplog) == []
+
+    @pytest.mark.asyncio
+    async def test_failure_diagnostics_preserve_redacted_structured_tool_results(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        class InspectInput(BaseModel):
+            """Inspect upstream state."""
+
+            note: str
+
+        async def inspect(args: InspectInput) -> dict[str, Any]:
+            return {"state": "ready", "upstream": {"api_key": "result-secret"}}
+
+        adapter = await scripted(
+            ToolTurn("inspect", {"note": "check"}),
+            TextTurn(""),
+            additional_tools=[(InspectInput, inspect)],
+            emit=set(),
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, tools)
+
+        (diagnostic,) = failure_diagnostics(caplog)
+        (call,) = diagnostic["tool_calls"]
+        assert call["output"] == {
+            "state": "ready",
+            "upstream": {"api_key": "[REDACTED]"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_failure_diagnostics_only_include_the_failing_turn(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        adapter = await scripted(
+            SEND_TURN,
+            TextTurn("sent"),
+            ToolTurn("band_lookup_peers"),
+            TextTurn("checked"),
+        )
+        await _run_turn(adapter, tools)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, FakeAgentTools(room_id=ROOM))
+
+        (diagnostic,) = failure_diagnostics(caplog)
+        (call,) = diagnostic["tool_calls"]
+        assert call["name"] == "band_lookup_peers"
+        assert diagnostic["final_text"].strip() == "checked"
+
+    @pytest.mark.asyncio
+    async def test_failure_diagnostics_keep_repeated_calls(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        adapter = await scripted(
+            ToolTurn("band_list_tasks", {"limit": 1}),
+            ToolTurn("band_list_tasks", {"limit": 2}),
+            TextTurn(""),
+            capabilities={Capability.TASKS},
+            emit=set(),
+        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, tools)
+        (diagnostic,) = failure_diagnostics(caplog)
+        first, second = diagnostic["tool_calls"]
+        assert first["args"] == {"limit": 1}
+        assert second["args"] == {"limit": 2}
+        assert first["output"]["metadata"]["limit"] == 1
+        assert second["output"]["metadata"]["limit"] == 2
+
+    @pytest.mark.asyncio
+    async def test_provider_failure_keeps_the_partial_tool_trace(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        adapter = await scripted(
+            ToolTurn("band_list_tasks"),
+            ErrorTurn(RuntimeError("provider down")),
+            capabilities={Capability.TASKS},
+            emit=set(),
+        )
+        with pytest.raises(EventLoopException, match="provider down"):
+            await _run_turn(adapter, tools)
+        (diagnostic,) = failure_diagnostics(caplog)
+        (call,) = diagnostic["tool_calls"]
+        assert call["name"] == "band_list_tasks"
+        assert call["is_error"] is False
+        assert diagnostic["final_text"] is None
+        assert diagnostic["stop_reason"] is None
 
     @pytest.mark.asyncio
     async def test_failed_band_tool_is_not_terminal(self, scripted):
