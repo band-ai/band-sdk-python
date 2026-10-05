@@ -23,7 +23,6 @@ from a2a.types import (
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.protocols import FAILURE_CODE_TIMEOUT
-from band.core.redaction import redact_credentials
 from band.core.types import PlatformMessage
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.adapter import (
@@ -364,13 +363,14 @@ class TestGatewayExecution:
     @pytest.mark.asyncio
     async def test_send_failure_redacts_secrets_from_reported_metadata(self) -> None:
         """The sanitized exception text reaches the A2A client's metadata --
-        a leaked bearer token or API key must not."""
+        a leaked credential, including its comma-separated parts, must not."""
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=RuntimeError(
-                "upstream rejected Bearer abc123.def456 (api_key=sk-live-secret)"
+                "Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/x, "
+                "SignedHeaders=host;x-amz-date, Signature=abcdef0123"
             )
         )
         queue = EventQueueLegacy()
@@ -380,34 +380,7 @@ class TestGatewayExecution:
 
         await queue.dequeue_event()
         terminal = await queue.dequeue_event()
-        message = terminal.metadata["failure"]["message"]
-        assert "abc123.def456" not in message
-        assert "sk-live-secret" not in message
-        assert "Bearer [REDACTED]" in message
-        assert "api_key=[REDACTED]" in message
-
-    def test_redact_credentials_full_value_scheme_prefixed(self) -> None:
-        """A scheme-prefixed credential value (a space between the key and
-        the secret) must be redacted in full, not just up to that space."""
-        redacted = redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
-        assert "sk-live-abcdef123456" not in redacted
-        assert redacted == "Authorization=[REDACTED]"
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "password=hunter2",
-            "client_secret=abc123XYZ",
-            "AWS_SECRET_ACCESS_KEY=AKIAABCDEFGHIJKLMNOP",
-        ],
-    )
-    def test_redact_credentials_covers_non_token_keywords(self, text: str) -> None:
-        """token/authorization/api_key aren't the only credential-shaped
-        keywords a peer's error text can embed -- password, secret (and its
-        client_secret compound), and access_key must be redacted too."""
-        redacted = redact_credentials(text)
-        secret_value = text.split("=", 1)[1]
-        assert secret_value not in redacted
+        assert terminal.metadata["failure"]["message"] == "Authorization=[REDACTED]"
 
     @pytest.mark.asyncio
     async def test_establish_request_raises_when_peer_missing(self) -> None:
@@ -673,7 +646,7 @@ class TestGatewayResponses:
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
-        secret_message = "upstream rejected token=sk-live-secret"
+        secret_message = "Invalid API key: sk-live-secret, retry"
         peer_failure = {
             "provider": "codex",
             "code": "Unauthorized",
@@ -692,8 +665,8 @@ class TestGatewayResponses:
         event = await queue.dequeue_event()
 
         assert event.status.state == TaskState.TASK_STATE_FAILED
-        assert "sk-live-secret" not in event.metadata["failure"]["message"]
-        assert "sk-live-secret" not in event.status.message.parts[0].text
+        assert event.metadata["failure"]["message"] == "Invalid API key=[REDACTED]"
+        assert event.status.message.parts[0].text == "Invalid API key=[REDACTED]"
 
     @pytest.mark.asyncio
     async def test_relayed_peer_failure_redacts_nested_credentials_in_detail(
@@ -712,6 +685,7 @@ class TestGatewayResponses:
                     "raw": ["upstream said: token=sk-live-nested-secret"],
                     "token=sk-live-key-secret": "diagnostic value",
                     "clientSecret": "sk-live-bare-secret",
+                    "body": '{"api_key": "sk-live-json"}',
                 },
             },
         }
@@ -731,6 +705,7 @@ class TestGatewayResponses:
         assert "sk-live-nested-secret" not in str(detail)
         assert "sk-live-key-secret" not in str(detail)
         assert detail["codex_additional_details"]["clientSecret"] == "[REDACTED]"
+        assert detail["codex_additional_details"]["body"] == '{"api_key=[REDACTED]'
 
     @pytest.mark.asyncio
     async def test_drops_non_dict_peer_failure_metadata(self) -> None:

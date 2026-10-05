@@ -838,6 +838,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             case QuestionAskedEvent():
                 await room_state.approvals.on_question_asked(event.properties)
             case SessionErrorEvent():
+                # The error class only: its data can carry provider text.
+                logger.info(
+                    "OpenCode turn: session.error room=%s session=%s error=%s",
+                    room_state.room_id,
+                    event.session_id,
+                    event.properties.error.name if event.properties.error else None,
+                )
                 if room_state.turn is not None:
                     room_state.turn.last_error_message = describe_error(
                         event.properties.error
@@ -914,7 +921,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             state.status == OpencodeToolStatus.COMPLETED
             and settles_turn_reply(tool_name, custom_effects=self._custom_effects)
             and room_state.turn is not None
+            and not room_state.turn.replied_via_room_tool
         ):
+            logger.info(
+                "OpenCode turn: replied via room tool room=%s session=%s tool=%s",
+                room_state.room_id,
+                room_state.turn.session_id,
+                tool_name,
+            )
             room_state.turn.replied_via_room_tool = True
 
         if Emit.TOOL_CALLS not in self.features.emit:
@@ -1066,7 +1080,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     )
                 # Tokens spent before the timeout were still spent — emit them,
                 # same as the success path (best-effort; no-op if none captured).
-                await self._emit_turn_usage(turn)
+                await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to report the OpenCode timeout for room %s", room_id
@@ -1075,7 +1089,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
-                await self._emit_turn_usage(turn)
+                await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to deliver the OpenCode turn result for room %s", room_id
@@ -1275,10 +1289,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         finally:
             turn.pending_mentions = []
 
-    async def _emit_turn_usage(
-        self,
-        turn: TurnState,
-    ) -> None:
+    async def _emit_turn_usage(self, room_id: str, turn: TurnState) -> None:
         """Sum the turn's per-assistant-message usage and emit it.
 
         A no-op when usage reporting is off (``Emit.USAGE`` absent) or
@@ -1288,7 +1299,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         assistant ``info``; mocked/offline runs don't, so the total is
         simply empty there.
         """
+        if Emit.USAGE not in self.features.emit:
+            return
         total = sum(turn.usage_by_message.values(), TurnUsage())
+        logger.info(
+            "OpenCode turn: usage room=%s session=%s messages=%s empty=%s",
+            room_id,
+            turn.session_id,
+            len(turn.usage_by_message),
+            total.is_empty,
+        )
         await self.emit_usage(turn.tools, total)
 
     async def _report_tool_call(
