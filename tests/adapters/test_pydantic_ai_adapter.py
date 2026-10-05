@@ -2288,6 +2288,27 @@ class TestCustomTools:
 
         assert failure_reports(tools) == reported
 
+    @pytest.mark.asyncio
+    async def test_a_native_tool_failure_value_leaves_the_turn_unanswered(self) -> None:
+        @declares_turn_effect(TurnEffect.ACT)
+        async def finish(
+            ctx: RunContext[AgentToolsProtocol], note: str
+        ) -> dict[str, Any]:
+            """Finish the task."""
+            return {"ok": False, "error": "upstream refused"}
+
+        adapter = PydanticAIAdapter(
+            PydanticAIAdapterConfig(model="test"), additional_tools=[finish]
+        )
+        await adapter.on_started("Probe", "probe")
+        adapter._agent.model = _streamed_tool_calls(("finish", {"note": "go"}))
+        tools = FakeAgentTools(room_id=ROOM_ID)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
     def test_accepts_additional_tools_parameter(self):
         """Adapter accepts list of callables."""
 

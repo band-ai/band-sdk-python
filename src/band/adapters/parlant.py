@@ -656,6 +656,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         If a Band tool already replied or declined this turn, Parlant's response
         is not forwarded (it would be a duplicate or empty).
+        Final messages in the same event batch are joined into one fallback reply;
+        preambles are excluded.
 
         Waiting is bounded by a total budget, polling in shorter windows and
         retrying on an empty window so a slow (cold-start) turn is still answered.
@@ -765,6 +767,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
             # Process events and track if we got a non-preamble message
             got_final_message = False
+            final_segments: list[str] = []
 
             for event in events:
                 logger.debug(
@@ -806,9 +809,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                         )
                         continue
 
-                    # The turn already replied or declined (a Band tool, or an
-                    # earlier relay), so this response would duplicate it. Not
-                    # final either: Parlant may still have more tool calls.
+                    # A Band tool already replied or declined, so forwarding this
+                    # response would duplicate it. Parlant may still have more
+                    # tool calls.
                     if tools.turn.replied:
                         logger.debug(
                             "Room %s: Turn already replied, skipping Parlant response: %s...",
@@ -821,20 +824,22 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     got_final_message = True
 
                     if message_content:
-                        logger.debug(
-                            "Room %s: Sending agent response to platform: %s...",
-                            room_id,
-                            message_content[:100],
-                        )
-                        if await relay_reply(
-                            tools, message_content, mentions=[sender_name]
-                        ):
-                            logger.info("Room %s: Message sent successfully", room_id)
+                        final_segments.append(message_content)
                     else:
                         logger.warning(
                             "Room %s: Empty message content in event",
                             room_id,
                         )
+
+            if final_segments:
+                message_content = "\n\n".join(final_segments)
+                logger.debug(
+                    "Room %s: Sending agent response to platform: %s...",
+                    room_id,
+                    message_content[:100],
+                )
+                if await relay_reply(tools, message_content, mentions=[sender_name]):
+                    logger.info("Room %s: Message sent successfully", room_id)
 
             # If we got a final (non-preamble) message, we're done
             if got_final_message:

@@ -69,6 +69,7 @@ from band.runtime.tools import (
     image_block_placeholder,
     redact_tool_call_args,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -502,8 +503,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     elif isinstance(event, FunctionToolResultEvent):
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
-                        if isinstance(event.part, ToolReturnPart) and (
-                            effect := self._custom_effects.get(event.part.tool_name)
+                        if (
+                            isinstance(event.part, ToolReturnPart)
+                            and not is_failed_tool_output(event.part.content)
+                            and (
+                                effect := self._custom_effects.get(event.part.tool_name)
+                            )
                         ):
                             tools.turn.record(effect)
                         if Emit.TOOL_CALLS in self.features.emit:

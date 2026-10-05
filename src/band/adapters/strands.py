@@ -73,6 +73,7 @@ from band.runtime.tools import (
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,24 @@ def _result_text(result: ToolResult) -> str:
     if image_index is not None:
         parts[image_index] = image_block_placeholder(image_count)
     return "\n".join(parts)
+
+
+def _custom_tool_failed(result: ToolResult) -> bool:
+    for block in result.get("content", []):
+        match block:
+            case {"json": value}:
+                pass
+            case {"text": str() as text}:
+                # Native Strands tools serialize ordinary dict returns as text.
+                try:
+                    value = json.loads(text)
+                except ValueError:
+                    value = text
+            case _:
+                continue
+        if is_failed_tool_output(value):
+            return True
+    return False
 
 
 def _openai_history(messages: StrandsMessages) -> StrandsMessages:
@@ -379,7 +398,11 @@ class BandTurnHooks(HookProvider):
         )
         # Native Strands tools run outside execute_custom_tool, so their
         # declared effect is recorded here.
-        if succeeded and (effect := self._custom_effects.get(name)):
+        if (
+            succeeded
+            and (effect := self._custom_effects.get(name))
+            and not _custom_tool_failed(event.result)
+        ):
             self._tools.turn.record(effect)
         if not self._emit_execution:
             return

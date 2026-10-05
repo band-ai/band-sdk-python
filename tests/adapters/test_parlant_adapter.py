@@ -1086,6 +1086,88 @@ class TestResponseWaitBudget:
         )
 
     @pytest.mark.asyncio
+    async def test_relays_all_final_parts_in_one_batch_without_preamble(
+        self,
+        mock_parlant_server: MagicMock,
+        mock_parlant_agent: MagicMock,
+        mock_tools: FakeAgentTools,
+    ) -> None:
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter._app = self._app_with_waits(
+            wait_results=[True],
+            events=[
+                self._agent_event("One moment…", offset=1, tags=[PARLANT_PREAMBLE_TAG]),
+                self._agent_event("Your table has been booked!", offset=2),
+                self._agent_event(
+                    "Please note that our kitchen contains peanuts.", offset=3
+                ),
+            ],
+        )
+
+        await adapter._process_agent_response(
+            session_id="multipart-session",
+            room_id="room-1",
+            min_offset=0,
+            tools=mock_tools,
+            sender_name="Alice",
+        )
+
+        mock_tools.assert_message_sent(
+            content=(
+                "Your table has been booked!\n\n"
+                "Please note that our kitchen contains peanuts."
+            ),
+            mentions=["Alice"],
+            count=1,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "declined", [False, True], ids=["tool-reply", "tool-decline"]
+    )
+    async def test_tool_reply_or_decline_suppresses_entire_final_batch(
+        self,
+        mock_parlant_server: MagicMock,
+        mock_parlant_agent: MagicMock,
+        mock_tools: FakeAgentTools,
+        declined: bool,
+    ) -> None:
+        if declined:
+            await mock_tools.no_reply("No response needed.")
+        else:
+            await mock_tools.send_message("Already answered.", mentions=["Alice"])
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter._app = self._app_with_waits(
+            wait_results=[True],
+            events=[
+                self._agent_event("One moment…", offset=1, tags=[PARLANT_PREAMBLE_TAG]),
+                self._agent_event("Your table has been booked!", offset=2),
+                self._agent_event(
+                    "Please note that our kitchen contains peanuts.", offset=3
+                ),
+            ],
+        )
+
+        await adapter._process_agent_response(
+            session_id="tool-completed-session",
+            room_id="room-1",
+            min_offset=0,
+            tools=mock_tools,
+            sender_name="Alice",
+        )
+
+        if declined:
+            mock_tools.assert_no_messages_sent()
+        else:
+            mock_tools.assert_message_sent(
+                content="Already answered.", mentions=["Alice"], count=1
+            )
+
+    @pytest.mark.asyncio
     async def test_gives_up_after_budget_when_no_reply_ever_arrives(
         self, mock_parlant_server, mock_parlant_agent, mock_tools
     ):

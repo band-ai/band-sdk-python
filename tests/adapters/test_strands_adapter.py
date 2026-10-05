@@ -646,6 +646,33 @@ class TestTurnProductivity:
         assert failure_reports(tools) == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "output",
+        [
+            {"ok": False, "error": "upstream refused"},
+            "Error: upstream refused",
+            "Error executing ticket: upstream refused",
+        ],
+    )
+    async def test_a_native_tool_failure_value_leaves_the_turn_unanswered(
+        self, tools, scripted, output: Any
+    ) -> None:
+        @declares_turn_effect(TurnEffect.ACT)
+        @strands_tool
+        def native_finish(note: str) -> Any:
+            """Finish the task natively."""
+            return output
+
+        adapter = await scripted(
+            ToolTurn("native_finish", {"note": "go"}), additional_tools=[native_finish]
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await _run_turn(adapter, tools)
+
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    @pytest.mark.asyncio
     async def test_undeclared_native_tool_only_observes(self, tools, scripted):
         @strands_tool
         def native_peek(note: str) -> str:

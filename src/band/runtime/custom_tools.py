@@ -15,6 +15,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from band.core.turn import Turn
+from band.runtime.tools.schema import is_failed_tool_output
 from band.runtime.tools.types import TurnEffect
 
 logger = logging.getLogger(__name__)
@@ -263,6 +264,6 @@ async def invoke_validated_custom_tool(
     result = func(*args)
     if inspect.isawaitable(result):
         result = await result
-    if turn is not None:
+    if turn is not None and not is_failed_tool_output(result):
         turn.record(declared_effect(func) or TurnEffect.OBSERVE)
     return result

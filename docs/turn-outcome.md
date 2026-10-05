@@ -164,6 +164,13 @@ asyncio.run(main())
 whose silence is the answer; both also stop a relaying adapter from posting the
 model's final text.
 
+A declared effect is recorded only on success. A handler that raises or returns
+an explicit failure (`{"ok": False}`, or a string starting with `Error:` or
+`Error executing `, case-insensitively) records nothing: the turn still owes an
+answer, and a failed reply or decline does not suppress the final-text relay.
+Other return values, including `None` from a side-effect-only handler, count as
+successful.
+
 **Limits:** a custom tool only records on the turn it is handed. Where a tool
 runs with `turn=None` (not bound to a room, as in a standalone MCP server), it
 cannot complete any turn. A framework-native tool (rather than an
@@ -207,6 +214,14 @@ replied or declined this turn. It is a fallback, not a channel to steer
 toward: the base prompt still says plain text is never delivered, because
 without that line models more often send their closing narration as a second
 `band_send_message` (measured live on gemini-2.5-flash).
+
+Parlant joins the non-preamble final segments from one event batch before
+relaying, so recording the fallback reply cannot suppress a later segment of
+that same answer.
+
+For external Letta MCP servers, each successful grouped tool return is matched
+to its call by `tool_call_id` and records that core tool's turn effect. Failed
+returns record nothing; self-hosted tools record their own effects.
 
 `tests/framework_conformance/test_reply_boundary.py` pins every `send_message`,
 `deliver_reply` and `relay_reply` call outside the tool implementations, per

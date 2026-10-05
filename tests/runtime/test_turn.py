@@ -15,7 +15,7 @@ import band_sdk_core
 import pytest
 from pydantic import BaseModel
 
-from band.core.delivery import deliver_reply
+from band.core.delivery import deliver_reply, relay_reply
 from band.core.turn import Turn, judge_detached_turn, report_unsettled_turn
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import declares_turn_effect, execute_custom_tool
@@ -98,10 +98,11 @@ class TestCallsThatRecordNothing:
 
 
 class TestCustomTools:
-    async def test_a_declared_tool_records_its_effect(self) -> None:
+    @pytest.mark.parametrize("output", ["filed", None])
+    async def test_a_declared_tool_records_its_effect(self, output: str | None) -> None:
         @declares_turn_effect(TurnEffect.ACT)
-        async def post_to_ticketing(args: LookupInput) -> str:
-            return "filed"
+        async def post_to_ticketing(args: LookupInput) -> str | None:
+            return output
 
         tools = FakeAgentTools()
         await execute_custom_tool(
@@ -133,6 +134,48 @@ class TestCustomTools:
             )
 
         assert not tools.turn.complete
+
+    @pytest.mark.parametrize(
+        "effect", [TurnEffect.ACT, TurnEffect.REPLY, TurnEffect.DECLINE]
+    )
+    @pytest.mark.parametrize(
+        "output",
+        [
+            {"ok": False, "error": "upstream refused"},
+            "Error: upstream refused",
+            "Error executing ticket: upstream refused",
+        ],
+    )
+    async def test_a_failure_value_does_not_complete_the_turn(
+        self, effect: TurnEffect, output: Any
+    ) -> None:
+        @declares_turn_effect(effect)
+        async def refused(args: LookupInput) -> Any:
+            return output
+
+        tools = FakeAgentTools()
+        await execute_custom_tool(
+            (LookupInput, refused), {"topic": "x"}, turn=tools.turn
+        )
+
+        assert await report_unsettled_turn(tools, room_id="room-1")
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    @pytest.mark.parametrize("effect", [TurnEffect.REPLY, TurnEffect.DECLINE])
+    async def test_a_failure_value_does_not_suppress_the_fallback(
+        self, effect: TurnEffect
+    ) -> None:
+        @declares_turn_effect(effect)
+        async def refused(args: LookupInput) -> dict[str, Any]:
+            return {"ok": False, "error": "upstream refused"}
+
+        tools = FakeAgentTools()
+        await execute_custom_tool(
+            (LookupInput, refused), {"topic": "x"}, turn=tools.turn
+        )
+        await relay_reply(tools, "The operation failed.", ["@alice"])
+
+        assert tools.chat == ["The operation failed."]
 
 
 async def test_the_dedup_wrapper_shares_the_inner_ledger() -> None:
