@@ -396,17 +396,11 @@ class TestCrashRecovery:
         ctx._handler_mock.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_next_gate_does_not_fall_back_to_processing_list(
-        self, ctx, mock_link
-    ):
-        """An empty /next never dispatches unfinished work from a listing."""
+    async def test_sync_calls_recovery_before_next(self, ctx, mock_link):
+        """_synchronize_with_next should call crash recovery before /next loop."""
         mock_link.get_next_message.return_value = None
-        mock_link.get_stale_processing_messages.return_value = [
-            make_message("unfinished")
-        ]
 
         await ctx._synchronize_with_next()
 
-        ctx._handler_mock.assert_not_awaited()
-        mock_link.get_stale_processing_messages.assert_not_awaited()
-        mock_link.get_next_message.assert_awaited_once()
+        mock_link.get_stale_processing_messages.assert_called_once()
+        mock_link.get_next_message.assert_called_once()

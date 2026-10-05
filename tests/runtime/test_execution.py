@@ -1902,7 +1902,6 @@ class BacklogApi:
         self.fixed_head: str | None = None
         self.listing_error: tuple[str, int] | None = None
         self.refuse_processed: set[str] = set()
-        self.pending_includes_failed = True
         self.pagination = "page"
         self.cursor_behavior = "normal"
         self.reject_page_parameters = False
@@ -1968,8 +1967,10 @@ class BacklogApi:
             if self.listing_error == (status, page):
                 return httpx.Response(400, json={"error": "listing unavailable"})
             eligible = (
-                {"pending", "delivered", "failed"}
-                if status == "pending" and self.pending_includes_failed
+                {"new", "pending", "delivered", "failed", "processing"}
+                if not status
+                else {"pending", "delivered", "failed"}
+                if status == "pending"
                 else {status}
             )
             message_ids = [
@@ -2070,14 +2071,142 @@ class TestExhaustedHeadRecovery:
                 return await ctx._synchronize_with_next()
             return await ctx._resync_pending_messages()
 
-    @pytest.mark.parametrize("phase", ["bootstrap", "idle"])
-    @pytest.mark.parametrize("pending_includes_failed", [False, True])
-    @pytest.mark.parametrize("pagination", ["page", "cursor", "retired-page"])
-    async def test_exhausted_head_preserves_failure_and_recovers_paginated_fifo(
-        self, backlog, phase, pending_includes_failed, pagination
+    @pytest.mark.parametrize("trigger", ["exhausted", "stale"])
+    async def test_snapshot_hands_off_at_websocket_marker(self, backlog, trigger):
+        link, api = backlog
+        if trigger == "exhausted":
+            api.add("exhausted", "failed")
+        api.add("A", "processing" if trigger == "stale" else "pending")
+        api.add("B", "pending")
+        seen = []
+
+        async def handle(ctx, event):
+            seen.append(event.payload.id)
+
+        ctx = self.context(link, handle)
+        ctx._retry_tracker.mark_permanently_failed("exhausted")
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="A"))
+        await ctx.on_event(
+            make_participant_added_event(room_id="room-123", participant_id="new-user")
+        )
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="B"))
+
+        assert await self.recover(ctx, "bootstrap") is True
+        while not ctx.queue.empty():
+            await ctx._process_event(ctx.queue.get_nowait())
+
+        assert seen == ["A", "new-user", "B"]
+
+    async def test_stop_during_snapshot_does_not_claim_work(self, backlog, monkeypatch):
+        link, api = backlog
+        api.add("older", "pending")
+        api.add("stale", "processing")
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original = link.get_actionable_messages
+
+        async def delayed_snapshot(room_id):
+            messages = await original(room_id)
+            entered.set()
+            await release.wait()
+            return messages
+
+        monkeypatch.setattr(link, "get_actionable_messages", delayed_snapshot)
+        seen = []
+
+        async def handle(ctx, event):
+            seen.append(event.payload.id)
+
+        ctx = self.context(link, handle)
+        recovery = asyncio.create_task(self.recover(ctx, "bootstrap"))
+        try:
+            async with asyncio.timeout(1):
+                await entered.wait()
+                ctx.stop_room()
+                release.set()
+                await recovery
+            assert seen == []
+            assert api.transitions == []
+        finally:
+            recovery.cancel()
+            await asyncio.gather(recovery, return_exceptions=True)
+
+        await ctx.resume_room()
+        assert await self.recover(ctx, "idle") is True
+        assert seen == ["older", "stale"]
+        assert api.statuses == {"older": "processed", "stale": "processed"}
+
+    async def test_server_order_survives_missing_timestamp(self, backlog):
+        link, api = backlog
+        api.add("exhausted", "failed")
+        api.add("older", "pending")
+        api.add("newer", "pending")
+        api.messages["older"]["inserted_at"] = None
+        seen = []
+
+        async def handle(ctx, event):
+            seen.append(event.payload.id)
+
+        ctx = self.context(link, handle)
+        ctx._retry_tracker.mark_permanently_failed("exhausted")
+
+        assert await self.recover(ctx, "bootstrap") is True
+        assert seen == ["older", "newer"]
+
+    async def test_delivery_status_change_cannot_hide_older_work(
+        self, backlog, monkeypatch
     ):
         link, api = backlog
-        api.pending_includes_failed = pending_includes_failed
+        api.add("older", "processing")
+        api.add("newer", "pending")
+        list_messages = link.rest.agent_api_messages.list_agent_messages
+        processing_scans = 0
+
+        async def list_with_status_change(**kwargs):
+            nonlocal processing_scans
+            if kwargs.get("status") == "processing":
+                processing_scans += 1
+                if processing_scans == 2:
+                    api.statuses["older"] = "failed"
+            return await list_messages(**kwargs)
+
+        monkeypatch.setattr(
+            link.rest.agent_api_messages,
+            "list_agent_messages",
+            list_with_status_change,
+        )
+        seen = []
+
+        async def handle(ctx, event):
+            seen.append(event.payload.id)
+
+        ctx = self.context(link, handle)
+        assert await self.recover(ctx, "bootstrap") is True
+        assert seen == ["older", "newer"]
+        assert api.statuses == {"older": "processed", "newer": "processed"}
+
+    async def test_completed_bootstrap_does_not_disable_later_synchronization(
+        self, backlog
+    ):
+        link, api = backlog
+        seen = []
+
+        async def handle(ctx, event):
+            seen.append(event.payload.id)
+
+        ctx = self.context(link, handle)
+        assert await self.recover(ctx, "bootstrap") is True
+        api.add("missed-during-disconnect", "pending")
+        assert await self.recover(ctx, "bootstrap") is True
+        assert seen == ["missed-during-disconnect"]
+        assert api.statuses["missed-during-disconnect"] == "processed"
+
+    @pytest.mark.parametrize("phase", ["bootstrap", "idle"])
+    @pytest.mark.parametrize("pagination", ["page", "cursor", "retired-page"])
+    async def test_exhausted_head_preserves_failure_and_recovers_paginated_fifo(
+        self, backlog, phase, pagination
+    ):
+        link, api = backlog
         api.pagination = "mixed" if pagination == "retired-page" else pagination
         api.reject_page_parameters = pagination == "retired-page"
         api.add("exhausted", "failed")
@@ -2184,33 +2313,31 @@ class TestExhaustedHeadRecovery:
         ]
 
     @pytest.mark.parametrize("phase", ["bootstrap", "idle"])
-    @pytest.mark.parametrize(
-        "listing_error", [("pending", 2), ("failed", 1), ("processing", 1)]
-    )
-    async def test_listing_failure_is_not_a_drained_backlog(
-        self, backlog, phase, listing_error
+    @pytest.mark.parametrize("failed_page", [1, 2])
+    async def test_incomplete_snapshot_never_executes_partial_rows(
+        self, backlog, phase, failed_page
     ):
         link, api = backlog
         api.add("exhausted", "failed")
         api.add("older", "pending")
         api.add("newer", "pending")
-        api.listing_error = listing_error
-        handler = AsyncMock()
-        ctx = self.context(link, handler)
+        api.listing_error = ("", failed_page)
+        seen = []
+
+        async def handle(ctx, event):
+            seen.append(event.payload.id)
+
+        ctx = self.context(link, handle)
         ctx._retry_tracker.mark_permanently_failed("exhausted")
 
         assert await self.recover(ctx, phase) is False
-        assert ctx._sync_complete is False
-        handler.assert_not_awaited()
+        assert seen == []
         assert api.transitions == []
         assert api.statuses["exhausted"] == "failed"
 
         api.listing_error = None
         assert await self.recover(ctx, phase) is True
-        assert [call.args[1].payload.id for call in handler.await_args_list] == [
-            "older",
-            "newer",
-        ]
+        assert seen == ["older", "newer"]
 
     @pytest.mark.parametrize("phase", ["bootstrap", "idle"])
     @pytest.mark.parametrize("cursor_behavior", ["missing", "repeated"])
@@ -3121,7 +3248,7 @@ async def test_stopped_startup_uses_next_gate_not_processing_list() -> None:
         assert await ctx._synchronize_with_next()
         assert invoked == []
         assert peer.accepted_marks == []
-        assert peer.processing_list_reads == 0
+        assert peer.processing_list_reads == 1
         peer.stopped = False
         assert await ctx._synchronize_with_next()
         assert invoked == ["stale", "newer"]

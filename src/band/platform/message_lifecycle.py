@@ -64,20 +64,6 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
     )
 
 
-def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
-    return PlatformMessage(
-        id=item.id,
-        room_id=item.chat_room_id or room_id,
-        content=item.content,
-        sender_id=item.sender_id,
-        sender_type=item.sender_type,
-        sender_name=item.sender_name or "",
-        message_type=item.message_type,
-        metadata=_message_metadata(item.metadata),
-        created_at=item.inserted_at or datetime.now(UTC),
-    )
-
-
 class MessageLifecycle:
     """Message mark/report/fetch operations for one agent's REST client.
 

@@ -159,8 +159,16 @@ class LifecyclePlatform:
         tail = path.rsplit("/", 1)[-1]
         if tail == "messages" and request.method == "GET":
             self.processing_list_reads += 1
+            status = request.url.params.get("status")
+            data = self.messages
+            if status == "processing":
+                data = []
             return httpx.Response(
-                200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                200,
+                json={
+                    "data": data,
+                    "metadata": {"total_pages": 1, "has_more": False, "limit": 50},
+                },
             )
         if tail == "next":
             if self.stopped or not self.messages:
