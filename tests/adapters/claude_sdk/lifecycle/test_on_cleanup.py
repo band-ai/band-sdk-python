@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+import looptime
 import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
@@ -10,6 +11,33 @@ from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+
+
+@pytest.mark.parametrize(
+    "virtual_clock",
+    [
+        pytest.param(False, marks=pytest.mark.looptime(False), id="real-clock"),
+        pytest.param(True, marks=pytest.mark.looptime, id="virtual-clock"),
+    ],
+)
+async def test_fixture_cleanup_keeps_the_clock_that_started_the_server(
+    monkeypatch: pytest.MonkeyPatch,
+    claude_room: OpenRoom,
+    virtual_clock: bool,
+) -> None:
+    room = await claude_room()
+    room.claude.script([room.model_reply("done")])
+    await room.send("hello")
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, looptime.LoopTimeEventLoop)
+    cleanup_all = room.adapter.cleanup_all
+
+    async def cleanup_on_original_clock() -> None:
+        assert loop.looptime_on == virtual_clock
+        await cleanup_all()
+
+    # Keep the real server cleanup, observing its clock during fixture teardown.
+    monkeypatch.setattr(room.adapter, "cleanup_all", cleanup_on_original_clock)
 
 
 async def leave_room(room: ClaudeRoom) -> None:

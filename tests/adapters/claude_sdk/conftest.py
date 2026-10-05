@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 from unittest.mock import patch
 
+import looptime
 import pytest
 import pytest_asyncio
 
@@ -39,7 +40,7 @@ async def claude_room(
 ) -> AsyncIterator[Callable[..., Awaitable[ClaudeRoom]]]:
     """Open a room on a freshly started adapter; every adapter is torn down
     at the end, cancelling whatever its turns still wait on."""
-    adapters: list[ClaudeSDKAdapter] = []
+    adapters: list[tuple[ClaudeSDKAdapter, AbstractContextManager[None]]] = []
 
     async def open_room(
         config: ClaudeSDKAdapterConfig | None = None,
@@ -49,20 +50,17 @@ async def claude_room(
     ) -> ClaudeRoom:
         adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
         await adapter.on_started("Test Agent", "An agent under test")
-        adapters.append(adapter)
+        loop = asyncio.get_running_loop()
+        cleanup_clock = (
+            looptime.enabled(strict=True)
+            if isinstance(loop, looptime.LoopTimeEventLoop) and loop.looptime_on
+            else nullcontext()
+        )
+        adapters.append((adapter, cleanup_clock))
         return ClaudeRoom(adapter, claude, room_id)
 
     yield open_room
-    # looptime is only on for the test body. Teardown runs on the real clock,
-    # so a uvicorn sleep scheduled at virtual T waits ~T of wall time on a
-    # fresh CI runner (uptime < T) and hits pytest-timeout.
-    loop = asyncio.get_running_loop()
-    enable_looptime = getattr(loop, "looptime_enabled", None)
-    already_on = getattr(loop, "looptime_on", True)
-    with (
-        enable_looptime()
-        if enable_looptime is not None and not already_on
-        else nullcontext()
-    ):
-        for adapter in adapters:
+    # Uvicorn's pending timers must finish on the clock that scheduled them.
+    for adapter, cleanup_clock in adapters:
+        with cleanup_clock:
             await adapter.cleanup_all()
