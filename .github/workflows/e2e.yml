@@ -37,8 +37,9 @@ name: E2E (baseline)
 #                  isolated from core; shares the `dev` extra).
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
-#                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
-#                  (copilot CLI over ACP; Anthropic BYOK, no GitHub auth).
+#                  (local `opencode serve`, Zen free model), CopilotACPAdapter
+#                  (copilot CLI over ACP; Anthropic BYOK), and CursorACPAdapter
+#                  (agent CLI over ACP; Cursor API key).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -208,6 +209,9 @@ jobs:
       # quota use is minimal; the smoke skips when the secret is unset. Every
       # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
+      # Where setup-opencode.sh points `opencode serve`'s log, and what the
+      # backends lane uploads.
+      OPENCODE_SERVE_LOG: artifacts/opencode-serve.log
       # Each lane writes one first-attempt test×adapter scorecard. The final job
       # checks it against the expected-cell manifest.
 
@@ -244,6 +248,41 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
 
+    # The install directory is named by the pinned version, so the script's hash
+    # changes the key exactly when the version does.
+    - name: Restore the Cursor CLI (cursor_acp)
+      id: cursor-cli-cache
+      if: matrix.lane == 'backends'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cursor-agent-*
+        key: cursor-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/setup-cursor.sh') }}
+
+    # cursor_acp drives `agent acp`; auth is the backends-only CURSOR_API_KEY on
+    # the baseline step below.
+    - name: Install the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends'
+      run: bash .github/scripts/setup-cursor.sh
+
+    # pwsh resolves both the Linux `agent` symlink and the Windows `agent.cmd`.
+    # The node check guards the later npm-based installs from Cursor's bundled node.
+    - name: Verify Cursor CLI
+      if: matrix.lane == 'backends'
+      shell: pwsh
+      run: |
+        agent --version
+        $node = (Get-Command node).Source
+        if ($node -like "*cursor-agent*") { throw "Cursor's bundled node shadows the runner's: $node" }
+
+    # Saved as soon as the install verifies: the combined cache action saves only
+    # when the whole job passes, so a red lane would re-download on every run.
+    - name: Save the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends' && steps.cursor-cli-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cursor-agent-*
+        key: ${{ steps.cursor-cli-cache.outputs.cache-primary-key }}
+
     - name: Install Bun and OMP (omp_acp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
@@ -274,6 +313,8 @@ jobs:
     # Bash resolving the shebang (see the codex step's comment above).
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       env:
+        # Only cursor_acp reads it, and only the backends lane runs cursor_acp.
+        CURSOR_API_KEY: ${{ matrix.lane == 'backends' && secrets.E2E_CURSOR_API_KEY || '' }}
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
         BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
         BAND_E2E_TEST_SELECTOR: ${{ inputs.test_selector || '' }}
@@ -291,6 +332,16 @@ jobs:
       env:
         PYTHONPATH: .
       run: uv run python .github/scripts/record-backends-environment.py
+
+    - name: Upload the OpenCode server log (opencode)
+      if: always() && matrix.lane == 'backends'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: opencode-serve-${{ matrix.os }}
+        path: ${{ env.OPENCODE_SERVE_LOG }}
+        if-no-files-found: ignore
+        # The server log quotes gated commands and question answers.
+        retention-days: 14
 
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'

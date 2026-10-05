@@ -13,6 +13,7 @@ from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
+from band.core.turn import judge_detached_turn
 from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -27,17 +28,21 @@ from band.integrations.acp.client_profiles import (
     parse_cursor_questions,
 )
 from band.integrations.acp.client_runtime import (
+    ALLOW_ALWAYS_KIND,
     ACPRuntime,
+    option_id_of_kind,
     permission_option_ids,
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import (
+    CURSOR_CLI_BINARY,
     DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
     DECISION_TIMED_OUT_TEMPLATE,
     DECISION_UNAUTHORIZED_MESSAGE,
     PERMISSION_REQUESTED_TEMPLATE,
+    PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
 )
@@ -53,9 +58,8 @@ from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = ("agent", "acp")
+DEFAULT_CURSOR_ACP_COMMAND: tuple[str, ...] = (CURSOR_CLI_BINARY, "acp")
 CursorAuthMethod = Literal["cursor_login"]
-CURSOR_AUTH_METHOD: CursorAuthMethod = "cursor_login"
 QuestionMode = Literal["manual", "auto_first", "auto_cancel"]
 PlanMode = Literal["manual", "auto_accept", "auto_decline"]
 DecisionKind = Literal["permission", "question", "plan"]
@@ -69,7 +73,9 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
 
     Attributes:
         command: The ``agent acp`` launch command.
-        auth_method: Cursor's ACP login method; fixed.
+        auth_method: ACP ``authenticate`` method; off by default. Cursor reads
+            ``api_key``, ``auth_token`` or a stored ``agent login`` without
+            it, and never answers ``authenticate`` when no login is stored.
         api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
             exclusive with ``auth_token``.
         auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
@@ -90,7 +96,7 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
     """
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
-    auth_method: CursorAuthMethod = CURSOR_AUTH_METHOD
+    auth_method: CursorAuthMethod | None = None
     api_key: str | None = Field(default=None, repr=False)
     auth_token: str | None = Field(default=None, repr=False)
     approval_mode: ApprovalMode = "manual"
@@ -119,6 +125,11 @@ class CursorTurn:
     requester_id: str | None
     release: asyncio.Future[None]
     session_id: str | None = None
+    # Cursor sends parallel tool calls' permission requests together and does
+    # not apply an "allow always" to one already outstanding, so the room is
+    # asked one at a time and a granted tool settles its queued repeats.
+    permission_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    always_allowed: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -189,6 +200,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         room_id: str,
     ) -> None:
         if await self._handle_control_message(msg, tools, room_id):
+            tools.turn.settle()
             return
 
         # ext_method routing needs _turn_lock held for the whole turn (only
@@ -270,6 +282,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
             )
+            # A failed or cancelled turn never gets here.
+            await judge_detached_turn(tools, room_id=room_id)
         finally:
             self._cursor_profile.bind_session(None)
             if self._active_turn is turn:
@@ -294,22 +308,33 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self._cursor_profile.bind_session(session_id)
         return session_id, created
 
-    async def on_cleanup(self, room_id: str) -> None:
-        session_id = self._room_to_session.get(room_id)
+    async def on_cleanup(
+        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
+    ) -> None:
+        if expected_runtime is not None:
+            async with self._session_lock:
+                if self._runtimes.get(room_id) is not expected_runtime:
+                    return
         # Wakes any decision _run_turn is parked on; the task itself keeps
         # running detached and winds down on its own (via _on_background_task_done)
         # once the runtime this stops out from under it closes the connection.
         self._cancel_room_decisions(room_id)
-        await super().on_cleanup(room_id)
-        if session_id is not None:
-            self._cursor_profile.forget_session(session_id)
+        await super().on_cleanup(room_id, expected_runtime=expected_runtime)
+
+    def _forget_session(self, session_id: str) -> None:
+        self._cursor_profile.forget_session(session_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         """A room /stop or interrupt must also reach a turn parked on a
         decision -- the runtime's own interrupt only cancels the task that
         already returned once the decision prompt was posted. Matches
         on_cleanup's choice not to hard-cancel the turn itself: waking its
-        pending decision is enough for it to wind down on its own."""
+        pending decision is enough for it to wind down on its own. The
+        interrupt ends that turn, so it is settled and never reported as a
+        missing reply."""
+        turn = self._active_turn
+        if turn is not None and turn.room_id == room_id:
+            turn.tools.turn.settle()
         self._cancel_room_decisions(room_id)
 
     async def cleanup_all(self, *, final: bool = True) -> None:
@@ -329,19 +354,33 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 turn = self._active_turn_for(request.room_id, request.session_id)
                 if turn is None:
                     return None
-                choices = {"permission": permission_option_ids(request.options)}
-                result = await self._wait_for_decision(
-                    kind="permission",
-                    turn=turn,
-                    choices=choices,
-                    prompt=PERMISSION_REQUESTED_TEMPLATE.format(
-                        tool=request.tool_call.name,
-                        # _wait_for_decision fills the token in once it's minted.
-                        token="{token}",
-                        options=", ".join(sorted(choices["permission"])) or "none",
-                    ),
-                )
-                return result if isinstance(result, str) else None
+                async with turn.permission_lock:
+                    return await self._ask_room_permission(turn, request)
+
+    async def _ask_room_permission(
+        self, turn: CursorTurn, request: ACPPermissionRequest
+    ) -> str | None:
+        tool = request.tool_call.name
+        always = option_id_of_kind(request.options, ALLOW_ALWAYS_KIND)
+        if tool in turn.always_allowed and always is not None:
+            return always
+        choices = {"permission": permission_option_ids(request.options)}
+        result = await self._wait_for_decision(
+            kind="permission",
+            turn=turn,
+            choices=choices,
+            prompt=PERMISSION_REQUESTED_TEMPLATE.format(
+                tool=tool,
+                # _wait_for_decision fills the token in once it's minted.
+                token="{token}",
+                options=", ".join(sorted(choices["permission"])) or "none",
+            ),
+        )
+        if not isinstance(result, str):
+            return None
+        if result == always:
+            turn.always_allowed.add(tool)
+        return result
 
     async def _resolve_extension_method(
         self, method: str, params: dict[str, object]
@@ -416,10 +455,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 result = await self._wait_for_decision(
                     kind="plan",
                     turn=turn,
-                    prompt=(
-                        f"{description} needs approval. Reply "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {{token}}` or "
-                        f"`{ROOM_COMMAND} {CursorCommandWord.REJECT} {{token}}`."
+                    prompt=PLAN_REQUESTED_TEMPLATE.format(
+                        plan=description,
+                        # _wait_for_decision fills the token in once it's minted.
+                        token="{token}",
                     ),
                 )
                 return (
@@ -452,7 +491,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self._resolve_evicted_decision(registration.evicted)
         entry = registration.entry
         try:
-            await turn.tools.send_message(
+            await turn.tools.send_notice(
                 prompt.replace("{token}", entry.token),
                 mentions=_requester_mentions(turn),
             )
@@ -466,6 +505,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             # the room needs its queue back the instant a decision is
             # outstanding, whether or not the prompt itself landed.
             if not turn.release.done():
+                turn.tools.turn.detach()
                 turn.release.set_result(None)
 
         result = await self._pending_decisions.wait(
@@ -481,7 +521,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn: CursorTurn, kind: DecisionKind, token: str
     ) -> None:
         try:
-            await turn.tools.send_message(
+            await turn.tools.send_notice(
                 DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
                 mentions=_requester_mentions(turn),
             )
@@ -499,7 +539,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             await self._list_decisions(tools, room_id, mentions=mentions)
             return True
         if len(words) < 3:
-            await tools.send_message(
+            await tools.send_notice(
                 f"Use `{ROOM_COMMAND} {CursorCommandWord.DECISIONS}` to list pending "
                 "Cursor decisions.",
                 mentions=mentions,
@@ -508,13 +548,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         action, token = words[1].lower(), words[2]
         pending = self._pending_decisions.get(token)
         if pending is None or pending.room_id != room_id:
-            await tools.send_message(
+            await tools.send_notice(
                 DECISION_NOT_PENDING_TEMPLATE.format(token=token), mentions=mentions
             )
             return True
         result = self._command_result(action, words[3:], pending)
         if result is _INVALID_DECISION:
-            await tools.send_message(
+            await tools.send_notice(
                 f"That command is not valid for Cursor {pending.kind} decision `{token}`.",
                 mentions=mentions,
             )
@@ -528,7 +568,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         else:
             pending.future.set_result(result)
             reply = DECISION_RESOLVED_TEMPLATE.format(kind=pending.kind, token=token)
-        await tools.send_message(reply, mentions=mentions)
+        await tools.send_notice(reply, mentions=mentions)
         return True
 
     def _command_result(
@@ -648,7 +688,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             for entry in self._pending_decisions.unclaimed_in_room(room_id)
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")
-        await tools.send_message(content, mentions=mentions)
+        await tools.send_notice(content, mentions=mentions)
 
 
 def _requester_mentions(turn: CursorTurn) -> list[str] | None:

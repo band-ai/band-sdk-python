@@ -545,7 +545,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, tool_input)
+                    result = await execute_custom_tool(
+                        custom_tool, tool_input, turn=tools.turn
+                    )
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
                 if is_image_passthrough_result(tool_name, result):

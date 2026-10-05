@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -36,7 +37,8 @@ from band.integrations.mcp.engine import (
     pin_existing_chat_id,
     validate_unique_tool_names,
 )
-from band.runtime.tools import TOOL_DEFINITIONS
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import TOOL_DEFINITIONS, TurnEffect
 from band.testing.fake_tools import FakeAgentTools
 from tests.mcp.conftest import FakeHumanTools
 
@@ -48,8 +50,7 @@ async def _list_tool(session: ClientSession, name: str) -> Any:
 
 async def _call(session: ClientSession, name: str, **arguments: object) -> Any:
     """Call a tool and parse its text content -- the engine's real wire shape
-    (row 15: every registration returns a JSON *string*, matching how a real
-    MCP client / LiveHarness reads it, not FastMCP's structuredContent wrapper)."""
+    (row 15: every registration returns a JSON *string*, its only content)."""
     result = await session.call_tool(name, arguments)
     assert not result.isError, result.content
     text = result.content[0].text if result.content else None
@@ -335,6 +336,22 @@ async def test_embedded_style_uniform_wrap_room_bound_dispatch(
         assert room_id.startswith("room-")
 
 
+async def test_tool_results_are_plain_json_text_without_a_structured_wrapper(
+    agent_session_factory,
+) -> None:
+    """No output schema and no ``{"result": "<json>"}`` structured content: a
+    client that prefers structured content would show it double-encoded."""
+    mcp = await agent_session_factory(FakeAgentTools(room_id="room-1"))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        tool = await _list_tool(session, "band_lookup_peers")
+        result = await session.call_tool("band_lookup_peers", {"chat_id": "room-1"})
+
+    assert tool.outputSchema is None
+    assert result.structuredContent is None
+    assert json.loads(result.content[0].text)["data"] == []
+
+
 async def test_embedded_send_message_round_trip_and_participant_refresh(
     agent_session_factory,
 ) -> None:
@@ -502,9 +519,10 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
         seen["message"] = input_data.message
         return {"echo": input_data.message}
 
+    fake = FakeAgentTools(room_id="room-1")
     registration = build_custom_tool_registration(
         CustomToolSpec(input_model=EchoInput, handler=handler),
-        room_bound=True,
+        get_tools=lambda _chat_id: fake,
     )
     spec = EngineSpec(name="test-custom", tools=(registration,))
     mcp = build_engine(spec)
@@ -518,61 +536,30 @@ async def test_custom_tool_room_bound_strips_chat_id_before_handler() -> None:
         assert seen == {"message": "hi"}
 
 
-async def test_tool_result_hook_sees_successful_builtin_and_custom_calls() -> None:
-    """The embedded door reports each completed call as (name, room, result),
-    for built-in and custom tools alike -- an adapter's only in-process record of
-    which Band tool really ran when the harness stream labels calls otherwise."""
-    observed: list[tuple[str, str | None, Any]] = []
+async def test_room_bound_custom_tool_records_its_effect_on_the_resolved_room_turn() -> (
+    None
+):
+    @declares_turn_effect(TurnEffect.REPLY)
+    async def answer(input_data: EchoInput) -> dict[str, str]:
+        return {"echo": input_data.message}
 
-    def hook(tool_name: str, chat_id: str | None, result: Any) -> None:
-        observed.append((tool_name, chat_id, result))
-
-    tools = FakeAgentTools()
-    builtin = build_tool_registration(
-        TOOL_DEFINITIONS["band_no_reply"],
-        extend_with_chat_id(TOOL_DEFINITIONS["band_no_reply"].input_model, None),
-        resolver=_agent_resolver(tools),
-        strip_chat_id=True,
-        tool_result_hook=hook,
+    rooms = {
+        "room-1": FakeAgentTools(room_id="room-1"),
+        "room-2": FakeAgentTools(room_id="room-2"),
+    }
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=answer),
+        get_tools=rooms.get,
     )
-    custom = build_custom_tool_registration(
-        CustomToolSpec(input_model=EchoInput, handler=_echo),
-        room_bound=True,
-        tool_result_hook=hook,
-    )
-    mcp = build_engine(EngineSpec(name="test-hook", tools=(builtin, custom)))
+    mcp = build_engine(EngineSpec(name="test-custom-effect", tools=(registration,)))
 
     async with create_connected_server_and_client_session(mcp) as session:
-        await _call(session, "band_no_reply", chat_id="room-1", reason="fyi only")
         await _call(session, "echo", message="hi", chat_id="room-2")
 
-    assert observed == [
-        ("band_no_reply", "room-1", {"status": "no_reply"}),
-        ("echo", "room-2", {"echo": "hi"}),
-    ]
-
-
-async def test_tool_result_hook_skipped_when_the_call_fails() -> None:
-    """A failed call must not be reported: an adapter that treats the report as
-    'the reply is settled' would otherwise silence a turn whose post never
-    happened."""
-    observed: list[str] = []
-
-    async def failing(input_data: EchoInput) -> dict[str, str]:
-        raise RuntimeError("downstream refused")
-
-    registration = build_custom_tool_registration(
-        CustomToolSpec(input_model=EchoInput, handler=failing),
-        room_bound=True,
-        tool_result_hook=lambda name, _room, _result: observed.append(name),
-    )
-    mcp = build_engine(EngineSpec(name="test-hook-fail", tools=(registration,)))
-
-    async with create_connected_server_and_client_session(mcp) as session:
-        result = await session.call_tool("echo", {"message": "hi", "chat_id": "r"})
-
-    assert result.isError
-    assert observed == []
+    assert {room: tools.turn.replied for room, tools in rooms.items()} == {
+        "room-1": False,
+        "room-2": True,
+    }
 
 
 async def test_custom_tool_accepts_bare_tuple_contract() -> None:
@@ -585,6 +572,30 @@ async def test_custom_tool_accepts_bare_tuple_contract() -> None:
     async with create_connected_server_and_client_session(mcp) as session:
         result = await _call(session, "echo", message="hi")
         assert result == {"echo": "hi"}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_tool_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unexpected execute failures keep a stack in agent logs."""
+
+    async def handler(_input_data: EchoInput) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=handler)
+    )
+    mcp = build_engine(EngineSpec(name="test-fail-log", tools=(registration,)))
+
+    with caplog.at_level(logging.ERROR, logger="band.integrations.mcp.engine"):
+        async with create_connected_server_and_client_session(mcp) as session:
+            result = await session.call_tool("echo", {"message": "hi"})
+
+    assert result.isError
+    record = next(r for r in caplog.records if r.message == "echo failed")
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
 
 
 async def test_custom_tool_default_factory_field_advertised_as_optional() -> None:

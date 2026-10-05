@@ -20,13 +20,14 @@ async def test_a_cli_that_dies_mid_turn_fails_only_an_unanswered_turn(
     claude_room: OpenRoom,
 ) -> None:
     """Dying after the reply went out completes the turn (failing it would
-    make the runtime redeliver and answer twice); dying before any reply
-    fails it. Either way the next message gets a fresh CLI process."""
+    let a later process run the message again and answer twice); dying
+    before any reply fails it. Either way the next message gets a fresh CLI
+    process."""
     room = await claude_room()
     room.claude.script(
         [room.model_reply("Answered before the crash."), Hangup()],
         [
-            ModelDecision.call("mcp__band__band_get_participants", chat_id="room-1"),
+            ModelDecision.call("mcp__band__band_get_participants"),
             Hangup(),
         ],
         [room.model_reply("Back on a fresh process.")],

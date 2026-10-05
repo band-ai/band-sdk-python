@@ -69,10 +69,6 @@ LOGGED_VALUE_CHARS = 50
 # This approach works across async contexts (unlike ContextVar)
 _session_tools: dict[str, Any] = {}
 
-# Track whether send_message was called for each session
-# This helps the adapter know if it needs to forward Parlant's response
-_session_message_sent: dict[str, bool] = {}
-
 # Parlant tools take mentions as a comma-separated string, not the master
 # model's list[str], so the master description needs this appended — it is
 # genuinely Parlant-specific and not something get_tool_description() covers.
@@ -164,10 +160,8 @@ def set_session_tools(session_id: str, tools: Any | None) -> None:
     """Set the tools for a specific Parlant session."""
     if tools is None:
         _session_tools.pop(session_id, None)
-        _session_message_sent.pop(session_id, None)
     else:
         _session_tools[session_id] = tools
-        _session_message_sent[session_id] = False
     logger.debug("Set tools for session %s: %s", session_id, tools is not None)
 
 
@@ -181,17 +175,6 @@ def get_session_tools(session_id: str) -> Any | None:
         list(_session_tools.keys()),
     )
     return tools
-
-
-def mark_message_sent(session_id: str) -> None:
-    """Mark that a message was sent via the send_message tool for this session."""
-    _session_message_sent[session_id] = True
-    logger.debug("Marked message sent for session %s", session_id)
-
-
-def was_message_sent(session_id: str) -> bool:
-    """Check if a message was sent via the send_message tool for this session."""
-    return _session_message_sent.get(session_id, False)
 
 
 # Keep old API for backwards compatibility (deprecated)
@@ -370,8 +353,6 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 )
 
             await tools.send_message(content, recipients)
-            # Tells the adapter its own reply would duplicate this one.
-            mark_message_sent(context.session_id)
             return ToolResult(data=f"Message sent to {', '.join(recipients)}")
 
         @band_tool("sending event")
@@ -396,9 +377,6 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         ) -> ToolResult:
             tools = require_session_tools(context)
             await tools.no_reply(or_none(reason))
-            # Same suppression as a sent message: the adapter must not post
-            # its own reply for this turn.
-            mark_message_sent(context.session_id)
             return ToolResult(data="No reply sent; this turn is complete")
 
         @band_tool("adding participant '{identifier}'")

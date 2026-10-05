@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -19,13 +19,13 @@ async def test_a_room_bootstraps_once_then_keeps_talking_in_the_same_session(
     room = await claude_room()
     room.claude.script([room.model_reply("hi Bob")], [room.model_reply("still here")])
 
-    await room.send("Hello, agent!", history="[Alice]: the code word is tulip")
+    await room.send("Hello, agent!", history=(said("Alice", "the code word is tulip"),))
     await room.send("Are you there?")
 
     first, second = room.claude.prompts
     assert MEMORY_FRAMING in first
     assert "[Alice]: the code word is tulip" in first
-    assert f"[chat_id: {room.room_id}]" in first
+    assert "chat_id" not in first
     assert "Hello, agent!" in first
     assert MEMORY_FRAMING not in second
     assert "Are you there?" in second

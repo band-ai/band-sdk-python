@@ -49,13 +49,17 @@ from band.client.rest import (
 )
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
-from band.core.protocols import FailureMetadataKey, to_failure_event
+from band.core.protocols import (
+    FailureMetadataKey,
+    to_failure_event,
+)
 from band.core.task_types import (
     TaskAssignmentStatus,
     TaskLifecycleState,
     TaskListState,
     task_ref,
 )
+from band.core.turn import MISSING_REPLY, Turn
 from band.core.types import (
     Capability,
     ContactRequestAction,
@@ -75,6 +79,7 @@ from band.runtime.tools import (
     serialize_tool_result,
     strip_handle_prefix,
 )
+from band.runtime.turn import record_tool_result, records_turn_effects
 
 # Synthetic identity FakeAgentTools uses for the "joins you to the task on
 # first status/active_form write" semantics band_update_task documents.
@@ -224,6 +229,7 @@ class HeldMessage:
         self.released.set()
 
 
+@records_turn_effects
 class FakeAgentTools:
     """
     Fake implementation of AgentToolsProtocol for testing.
@@ -317,6 +323,7 @@ class FakeAgentTools:
         self.context_calls: list[dict[str, Any]] = []
         self._held_messages: list[HeldMessage] = []
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
+        self.turn = Turn()
 
     @property
     def agent_id(self) -> str | None:
@@ -350,6 +357,18 @@ class FakeAgentTools:
         ``None`` without recording anything — mirroring the real send's
         non-throwing refusal at ``band.platform.posting.post_message``.
         """
+        return await self._post(content, mentions)
+
+    async def send_notice(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> MessageSentResponse | None:
+        """Record the adapter's own message; like ``AgentTools.send_notice`` it
+        never counts as the turn's reply."""
+        return await self._post(content, mentions)
+
+    async def _post(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None
+    ) -> MessageSentResponse | None:
         if self.send_message_error is not None:
             raise self.send_message_error
         self._require_mentions(mentions)
@@ -464,9 +483,11 @@ class FakeAgentTools:
         """Same best-effort delegation as ``AgentTools.send_failure``."""
         content, metadata = to_failure_event(failure)
         try:
-            return await self.send_event(content, MessageType.ERROR, metadata)
+            response = await self.send_event(content, MessageType.ERROR, metadata)
         except Exception as exc:  # noqa: BLE001 -- best-effort like the real send_failure; must never raise inside a caller's own except block
             return {"ok": False, "error": str(exc)}
+        self.turn.note_reported()
+        return response
 
     async def add_participant(
         self, identifier: str, role: str = "member"
@@ -1087,11 +1108,21 @@ class FakeAgentTools:
         self, tool_name: str, arguments: dict[str, Any]
     ) -> ToolCallOutcome:
         """Record the call and report success. Override in a subclass to return
-        ``ok=False`` (a base tool failing without raising) for failure-path tests."""
+        ``ok=False`` (a base tool failing without raising) for failure-path tests.
+
+        The tool methods are not called, so the successful call's effect is
+        recorded here."""
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
-        return ToolCallOutcome(value={"status": "ok"}, ok=True)
+        outcome = ToolCallOutcome(value={"status": "ok"}, ok=True)
+        record_tool_result(self.turn, tool_name, outcome.value)
+        return outcome
 
     # --- Assertion helpers ---
+
+    @property
+    def chat(self) -> list[str]:
+        """The content of every message posted to the room, in order."""
+        return [m["content"] for m in self.messages_sent]
 
     def assert_message_sent(
         self,
@@ -1169,3 +1200,12 @@ def reported_failures(tools: FakeAgentTools) -> list[dict[str, Any]]:
         for e in events_of_type(tools, MessageType.ERROR)
         if FailureMetadataKey.FAILURE in e["metadata"]
     ]
+
+
+# The one failure a missing-reply verdict reports, as ``failure_reports`` lists it.
+MISSING_REPLY_FAILURE = (MISSING_REPLY.provider, MISSING_REPLY.message)
+
+
+def failure_reports(tools: FakeAgentTools) -> list[tuple[str, str]]:
+    """Every failure reported via ``send_failure``, as ``(provider, message)``."""
+    return [(f["provider"], f["message"]) for f in reported_failures(tools)]

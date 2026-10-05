@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -15,6 +17,8 @@ from pydantic import BaseModel, Field, ValidationError
 from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Emit, PlatformMessage, ToolEventKey
+from band.testing import FakeAgentTools
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 
 @pytest.fixture
@@ -431,6 +435,46 @@ class TestCustomTools:
         assert function_response is not None
         assert function_response.response == {"output": "hello"}
         mock_tools.execute_tool_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, sample_message, declare: Callable[..., Any], complete: bool
+    ):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declare
+        async def file_report(inp: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = GeminiAdapter(additional_tools=[(FileInput, file_report)])
+        await adapter.on_started("TestBot", "Test bot")
+
+        with patch.object(
+            adapter,
+            "_call_gemini",
+            AsyncMock(
+                side_effect=[
+                    _response_with_function_call("file", {"note": "go"}, "call_1"),
+                    _response_with_text(""),
+                ]
+            ),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert tools.turn.complete is complete
 
 
 class TestReadRoomFileImagePassthrough:

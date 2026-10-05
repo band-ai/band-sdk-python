@@ -32,6 +32,7 @@ from band.integrations.mcp.local_server import (
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools
 from tests.lifecycle import elapsed, held_open, running
+from tests.ports import reserve_port
 
 
 class EchoInput(BaseModel):
@@ -49,6 +50,22 @@ def _text_of(result: CallToolResult) -> str:
     block = result.content[0]
     assert isinstance(block, TextContent), block
     return block.text
+
+
+HIGHEST_PORT = 65535
+PORT_PAIR_ATTEMPTS = 100
+
+
+def free_port_pair() -> int:
+    """A port ``p`` the OS just reported free, with ``p + 1`` free too."""
+    for _ in range(PORT_PAIR_ATTEMPTS):
+        port = reserve_port(LOCAL_MCP_HOST)
+        if port == HIGHEST_PORT:
+            continue
+        with socket.socket() as neighbor, suppress(OSError):
+            neighbor.bind((LOCAL_MCP_HOST, port + 1))
+            return port
+    raise AssertionError("no free adjacent port pair")
 
 
 def _registration_named(
@@ -86,7 +103,6 @@ async def _call_echo(session: ClientSession, message: str) -> None:
 def _assert_fully_stopped(server: LocalMCPServer) -> None:
     assert server._serve_task is None
     assert server._socket is None
-    assert server._port is None
     assert server._uvicorn_server is None
 
 
@@ -410,7 +426,6 @@ class TestLocalMcpServer:
         assert len(reserved) == 1
         assert reserved[0].fileno() == -1  # closed, not leaked
         assert server._socket is None
-        assert server._port is None
 
     @pytest.mark.asyncio
     async def test_concurrent_start_calls_are_serialized(self) -> None:
@@ -465,3 +480,66 @@ class TestLocalMcpServer:
         ):
             await session.initialize()
             await _call_echo(session, "hi")
+
+    @pytest.mark.asyncio
+    async def test_a_server_skips_the_port_it_avoids(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Clients holding a dead server's URL can only tell its replacement
+        apart by port. The scan starts on the avoided port, so only skipping
+        it gives the other one."""
+        monkeypatch.setattr(local_server_mod.random, "randrange", lambda _span: 0)
+        port = free_port_pair()
+        server = LocalMCPServer(
+            name="test-avoid-port",
+            tool_registrations=[],
+            port_min=port,
+            port_max=port + 1,
+            avoid_port=port,
+        )
+        async with running(server):
+            assert server.port == port + 1
+
+    @pytest.mark.asyncio
+    async def test_an_avoided_port_is_taken_when_it_is_the_only_one(self) -> None:
+        port = reserve_port(LOCAL_MCP_HOST)
+        server = LocalMCPServer(
+            name="test-avoid-only-port",
+            tool_registrations=[],
+            port_min=port,
+            port_max=port,
+            avoid_port=port,
+        )
+        async with running(server):
+            assert server.port == port
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_server_keeps_its_urls(self) -> None:
+        """Whoever still holds a dead server's URL compares it with the live
+        one; reading it must not fail once the server is stopped."""
+        server = LocalMCPServer(
+            name="test-stopped-urls", tool_registrations=[], port_min=0, port_max=0
+        )
+        async with running(server):
+            url = server.http_url
+
+        assert server.http_url == url
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_start_leaves_nothing_running(self) -> None:
+        """Whoever cancelled the start never got the server back to stop it."""
+        server = LocalMCPServer(
+            name="test-cancelled-start", tool_registrations=[], port_min=0, port_max=0
+        )
+        starting = asyncio.create_task(server.start())
+        async with asyncio.timeout(1):
+            while server._serve_task is None:
+                await asyncio.sleep(0)
+
+        starting.cancel()
+        with suppress(asyncio.CancelledError):
+            await starting
+
+        assert server.is_running is False
+        with pytest.raises(OSError):
+            await asyncio.open_connection(LOCAL_MCP_HOST, server.port)

@@ -66,17 +66,15 @@ from pydantic import BaseModel
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from band.adapters.strands import StrandsAdapter
-from band.core.protocols import (
-    AgentToolsProtocol,
-    TurnResultAlreadyReported,
-)
-from band.core.types import Emit, PlatformMessage
+from band.core.protocols import AgentToolsProtocol, TurnResultAlreadyReported
+from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.testing import (
+    MISSING_REPLY_FAILURE,
     FakeAgentTools,
     ScriptedStrandsModel,
     TextTurn,
     ToolTurn,
-    reported_failures,
+    failure_reports,
 )
 
 _SEND_CONTENT = "Injected reply: PINEAPPLE"
@@ -101,16 +99,18 @@ def _make_msg(room_id: str) -> PlatformMessage:
 
 
 async def _run(adapter: StrandsAdapter, tools: FakeAgentTools, room_id: str) -> None:
-    """Drive the adapter through its real lifecycle: on_started -> on_message."""
+    """Drive the adapter through its real lifecycle: on_started -> on_event."""
     await adapter.on_started("StrandsSpikeBot", "Tier-1 Strands injection spike bot.")
-    await adapter.on_message(
-        msg=_make_msg(room_id),
-        tools=cast("AgentToolsProtocol", tools),
-        history=[],
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id=room_id,
+    await adapter.on_event(
+        AgentInput(
+            msg=_make_msg(room_id),
+            tools=cast("AgentToolsProtocol", tools),
+            history=HistoryProvider(raw=[]),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=room_id,
+        )
     )
 
 
@@ -215,10 +215,5 @@ async def test_negative_control_text_only_sends_no_message() -> None:
         f"expected no send for a text-only decision, got: {tools.messages_sent}"
     )
     assert tools.tool_calls == []
-    # The plain-text answer was silently dropped — the adapter must surface it.
-    failures = reported_failures(tools)
-    assert len(failures) == 1, (
-        f"expected one reported failure, got: {tools.events_sent}"
-    )
-    assert failures[0]["provider"] == "strands"
-    assert "band_send_message" in failures[0]["message"]
+    # The plain-text answer was silently dropped — the turn verdict surfaces it.
+    assert failure_reports(tools) == [MISSING_REPLY_FAILURE]

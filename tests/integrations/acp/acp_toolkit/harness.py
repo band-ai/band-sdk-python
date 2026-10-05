@@ -204,6 +204,7 @@ class Reply:
     messages: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     transcript: list[RoomActivity] = field(default_factory=list)
+    memories: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def outline(self) -> list[str]:
@@ -308,6 +309,7 @@ class AcpSession:
             messages=self._last_tools.messages_sent,
             events=self._last_tools.events_sent,
             transcript=self._last_tools.transcript,
+            memories=self._last_tools.memories,
         )
 
     async def send(
@@ -347,10 +349,16 @@ class AcpSession:
             messages=tools.messages_sent,
             events=tools.events_sent,
             transcript=tools.transcript,
+            memories=tools.memories,
         )
 
     def session_id(self, room: str) -> str:
-        return self.adapter._room_to_session[room]
+        return self.adapter._room_to_session[room].session_id
+
+    def runtime_keeps_output_of(self, session_id: str, *, room: str) -> bool:
+        """Whether the room's runtime still holds what a turn collected for
+        ``session_id``; a retired session's must not linger."""
+        return bool(self.adapter._runtimes[room].get_collected_chunks(session_id))
 
 
 def fake_agent_config(**settings: Any) -> ACPClientAdapterConfig:
@@ -427,15 +435,24 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
         try:
             yield conn, agent_conn
         finally:
-            for closable in (conn, agent_conn):
-                with contextlib.suppress(Exception):
-                    await closable.close()
-            for writer in (writer_c, writer_a):
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+            try:
+                await _exit(agent)
+            finally:
+                for closable in (conn, agent_conn):
+                    with contextlib.suppress(Exception):
+                        await closable.close()
+                for writer in (writer_c, writer_a):
+                    writer.close()
+                    with contextlib.suppress(Exception):
+                        await writer.wait_closed()
 
     return _spawn
+
+
+async def _exit(agent: FakeACPAgent) -> None:
+    if (gate := agent.exit_gate) is not None:
+        gate.received.set()
+        await gate.release.wait()
 
 
 LIVE_SENDER_NAME = "Peer"

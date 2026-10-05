@@ -14,7 +14,6 @@ from band.adapters.claude_sdk import (
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.adapters.codex import APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED
 from band.adapters.codex import CodexAdapter
-from band.adapters.opencode.adapter import NO_TEXT_REPLY_MESSAGE
 from band.adapters.opencode.approvals import APPROVAL_REQUESTED_TEMPLATE
 from band.client.streaming import MessageCreatedPayload
 from band.integrations.acp.cursor import PERMISSION_REQUESTED_TEMPLATE
@@ -136,11 +135,6 @@ def test_approval_closure_requires_reply_after_the_last_request_and_notice() -> 
             *before_close,
             _message(f"I will finish with {closing_reply} after checking."),
         ],
-        notice,
-        closing_reply=closing_reply,
-    )
-    assert not dialect.settled(
-        [*before_close, _message(NO_TEXT_REPLY_MESSAGE)],
         notice,
         closing_reply=closing_reply,
     )

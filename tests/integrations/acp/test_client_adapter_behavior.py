@@ -14,8 +14,10 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from acp import RequestError
@@ -26,14 +28,24 @@ from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
     SYSTEM_UPDATE_PREFIX,
+    SessionInitializer,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.mcp import BandMCPBackendStoppedError
 from band.runtime.formatters import build_participants_message
+from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
     fake_agent_config,
     live_line,
+)
+from tests.mcpbackends import backends_created_by
+from tests.mcpclient import (
+    STORE_MEMORY_ARGS,
+    crash_backend,
+    endpoint_path,
+    tool_arguments,
 )
 
 # The header is a template ({marker} carries the per-turn nonce); its first
@@ -114,12 +126,11 @@ async def test_streamed_text_deltas_become_one_message(fake_agent) -> None:
 
 @pytest.mark.asyncio
 async def test_band_tool_call_suppresses_text_fallback(fake_agent) -> None:
-    # Detection-only: the ACP stream *reports* a completed band_send_message call,
-    # but the fake doesn't actually post — will_call_tool only emits the frames — so
-    # this pins the suppression decision (tool-first delivery, matching copilot_sdk /
-    # codex), not the post. The end-to-end "exactly one visible reply" outcome, where
-    # a real band-mcp tool posts, is covered by
-    # test_band_mcp_reply_is_not_replayed_as_acp_tool_events (inject_band_tools=True).
+    # Out-of-process: an external band-mcp posts where the SDK never sees it, so
+    # the turn records the completed call from the ACP stream. will_call_tool only
+    # emits the frames, so this pins the suppression decision, not the post. The
+    # in-process outcome, where a real band-mcp tool posts, is covered by
+    # test_in_process_band_reply_suppresses_text_fallback.
     fake_agent.will_say("Posting the answer to the room now.").will_call_tool(
         "tc-1", "band_send_message", result='{"id": "msg-1"}'
     )
@@ -140,7 +151,7 @@ async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
     # where an MCP client prefixes the server name onto the (legacy) tool name. The
     # in-process LocalMCPServer advertises the SDK-native names, so this prefixed
     # `band-create_agent_chat_message` spelling has no real-post equivalent; this
-    # test pins that settles_turn_reply still matches it.
+    # test pins that its effect still resolves to a reply.
     fake_agent.will_call_tool(
         "tc-1", "band-create_agent_chat_message", result='{"id": "msg-1"}'
     ).will_say("Done — posted the answer.")
@@ -149,6 +160,44 @@ async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
 
     assert reply.texts == []
     assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+@pytest.mark.asyncio
+async def test_in_process_band_reply_suppresses_text_fallback(fake_agent) -> None:
+    """An injected Band tool's post is the turn's one reply; the closing
+    narration is not relayed after it."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "Reply from the agent",
+            "mentions": ["@pat"],
+        },
+    ).will_say("Posted the answer.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("question?", room="room-1")
+
+    assert reply.texts == ["Reply from the agent"]
+
+
+@pytest.mark.asyncio
+async def test_injected_tools_never_settle_from_the_stream(fake_agent) -> None:
+    """With Band tools injected, only the tool that really posts settles the
+    reply: a call the stream merely reports keeps the text fallback."""
+    fake_agent.will_call_tool(
+        "tc-1", "band_send_message", result='{"id": "msg-1"}'
+    ).will_say("The answer is 42.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("question?", room="room-1")
+
+    assert reply.texts == ["The answer is 42."]
 
 
 @pytest.mark.asyncio
@@ -375,7 +424,6 @@ async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None
         "tc-message",
         "band_send_message",
         arguments={
-            "room_id": "room-1",
             "content": "Reply from the agent",
             "mentions": ["@pat"],
         },
@@ -473,7 +521,6 @@ async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None
         "tc-event",
         "band_send_event",
         arguments={
-            "room_id": "room-1",
             "content": "Working on it",
             "message_type": "thought",
         },
@@ -506,7 +553,6 @@ async def test_permissioned_band_mcp_turn_has_one_causal_transcript(fake_agent) 
         "tc-message",
         "band_send_message",
         arguments={
-            "room_id": "room-1",
             "content": "Reply from the agent",
             "mentions": ["@pat"],
         },
@@ -585,6 +631,210 @@ async def test_two_rooms_get_isolated_sessions(fake_agent) -> None:
     # Each room created its own ACP session and got its own reply — no cross-talk.
     assert len({s["session_id"] for s in fake_agent.sessions}) == 2
     assert reply1.texts != reply2.texts
+
+
+# --- Room-bound Band MCP endpoints ---------------------------------------------
+#
+# Each room's session gets its own endpoint on the adapter's one Band MCP
+# server; the endpoint carries the room, so the model never supplies one.
+
+
+def band_mcp_url(agent: FakeACPAgent, session_id: str) -> str:
+    return agent.mcp_server(session_id, BAND_MCP_SERVER_NAME).url
+
+
+@pytest.mark.asyncio
+async def test_rooms_get_their_own_band_mcp_endpoint_on_one_server(
+    fake_agent,
+) -> None:
+    fake_agent.will_say("ok")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("hi", room="room-1")
+        await session.send("hi", room="room-2")
+        urls = [
+            urlsplit(band_mcp_url(fake_agent, session.session_id(room)))
+            for room in ("room-1", "room-2")
+        ]
+
+    assert len({url.netloc for url in urls}) == 1
+    assert [url.path for url in urls] == [
+        endpoint_path(room_id="room-1"),
+        endpoint_path(room_id="room-2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_injected_band_tools_advertise_no_chat_id(fake_agent) -> None:
+    fake_agent.will_say("ok")
+
+    async with acp_adapter(
+        fake_agent,
+        fake_agent_config(inject_band_tools=True),
+        capabilities=Capability.MEMORY,
+    ) as session:
+        await session.send("hi", room="room-1")
+        tools = await fake_agent.list_mcp_tools(
+            session_id=session.session_id("room-1"), server=BAND_MCP_SERVER_NAME
+        )
+
+    assert "chat_id" not in tool_arguments(tools, "band_store_memory")
+
+
+@pytest.mark.asyncio
+async def test_band_tool_call_without_chat_id_lands_in_its_own_room(
+    fake_agent,
+) -> None:
+    fake_agent.will_call_mcp_tool(
+        "tc-memory", "band_store_memory", arguments=STORE_MEMORY_ARGS
+    ).will_say("stored")
+
+    async with acp_adapter(
+        fake_agent,
+        fake_agent_config(inject_band_tools=True),
+        capabilities=Capability.MEMORY,
+    ) as session:
+        room1 = await session.send("remember this", room="room-1")
+        room2 = await session.send("remember this", room="room-2")
+
+    assert [len(room1.memories), len(room2.memories)] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_after_shutdown_is_refused(fake_agent) -> None:
+    """``cleanup_all()`` (as ``Agent.stop()`` calls it) closes the Band MCP
+    backend for good: a late turn fails instead of starting a server nothing
+    would stop."""
+    fake_agent.will_say("ok")
+    with backends_created_by() as starts:
+        async with acp_adapter(
+            fake_agent, fake_agent_config(inject_band_tools=True)
+        ) as session:
+            await session.send("before shutdown", room="room-1")
+            await session.adapter.cleanup_all()
+
+            with pytest.raises(BandMCPBackendStoppedError):
+                await session.send("after shutdown", room="room-2")
+
+    assert len(starts.requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_room_keeps_its_session_while_its_band_server_lives(
+    fake_agent,
+) -> None:
+    with backends_created_by():
+        async with acp_adapter(
+            fake_agent, fake_agent_config(inject_band_tools=True)
+        ) as session:
+            await session.send("first", room="room-1")
+            first = session.session_id("room-1")
+            await session.send("second", room="room-1")
+
+            assert session.session_id("room-1") == first
+
+
+@pytest.mark.asyncio
+async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
+    """The room's open session still dials the crashed server's port; the next
+    message moves the room to a fresh session on its replacement."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={"content": "Reply from the agent", "mentions": ["@pat"]},
+    )
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("before the crash", room="room-1")
+        stale_session = session.session_id("room-1")
+        crashed_url = band_mcp_url(fake_agent, stale_session)
+        await crash_backend(session.adapter._mcp)
+
+        reply = await session.send("after the crash", room="room-1")
+        live_url = band_mcp_url(fake_agent, session.session_id("room-1"))
+        await session.adapter._drain_background_tasks()
+
+        assert fake_agent.closed_sessions == [stale_session]
+        assert not session.runtime_keeps_output_of(stale_session, room="room-1")
+
+    assert reply.texts == ["Reply from the agent"]
+    assert "error" not in reply.outline
+    assert urlsplit(live_url).port != urlsplit(crashed_url).port
+
+
+@pytest.mark.asyncio
+async def test_a_retired_sessions_unreleased_setup_is_never_reused(fake_agent) -> None:
+    """A turn that finished creating the room's session may not have released
+    its setup yet; the next turn, after the Band URL went stale, must not be
+    handed that retired session."""
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        await session.send("before the crash", room="room-1")
+        retired = session.session_id("room-1")
+        unreleased = asyncio.create_task(_finished_setup(retired))
+        await unreleased
+        session.adapter._session_initializers["room-1"] = SessionInitializer(
+            task=unreleased, waiters=1
+        )
+        await crash_backend(session.adapter._mcp)
+
+        await session.send("after the crash", room="room-1")
+
+        assert session.session_id("room-1") != retired
+
+
+async def _finished_setup(session_id: str) -> tuple[str, bool]:
+    return session_id, True
+
+
+@pytest.mark.asyncio
+async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint() -> None:
+    agent = (
+        FakeACPAgent(supports_session_load=True)
+        .knows_session("persisted")
+        .will_say("ok")
+        .will_say("still here")
+    )
+
+    async with acp_adapter(agent, fake_agent_config(inject_band_tools=True)) as session:
+        await session.send(
+            "hi",
+            bootstrap=True,
+            history=rehydration_history(session="persisted"),
+        )
+        await session.send("again")
+
+        assert session.session_id("room-1") == "persisted"
+
+    assert agent.session_load_requests == ["persisted"]
+    assert urlsplit(band_mcp_url(agent, "persisted")).path == endpoint_path(
+        room_id="room-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_bootstrap_after_a_crash_never_restores_the_retired_session() -> None:
+    """Each bootstrap names the room's persisted session (as a one-shot
+    invoker sends it); once its Band URL went stale, the room gets a fresh
+    session rather than a reload of the one being closed."""
+    agent = FakeACPAgent(supports_session_load=True).knows_session("persisted")
+    history = rehydration_history(session="persisted")
+
+    async with acp_adapter(agent, fake_agent_config(inject_band_tools=True)) as session:
+        await session.send("before the crash", bootstrap=True, history=history)
+        await crash_backend(session.adapter._mcp)
+        await session.send("after the crash", bootstrap=True, history=history)
+        await session.adapter._drain_background_tasks()
+
+        assert session.session_id("room-1") != "persisted"
+
+    assert agent.session_load_requests == ["persisted"]
+    assert agent.closed_sessions == ["persisted"]
 
 
 # --- Band-history replay when the remote session cannot be restored ------------
@@ -866,6 +1116,40 @@ async def test_codex_call_to_another_servers_same_named_tool_is_not_a_reply(
 
     assert reply.texts == ["The answer."]
     assert reply.tool_call_names == ["other-band_send_message"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_mcp_call_narrates_under_the_name_it_reports_late(
+    fake_agent,
+) -> None:
+    """Cursor opens an MCP call as a nameless ``MCP: tool`` placeholder; posting
+    that left Band tool calls unrecognizable in the room."""
+    fake_agent.will_call_mcp_tool_named_late(
+        "tc-1", "band", "band_list_contacts", arguments={"chat_id": "c1"}, result="[]"
+    ).will_say("No contacts.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("contacts?")
+
+    assert reply.tool_call_names == ["band_list_contacts"]
+    assert reply.tool_call_args == [{"chat_id": "c1"}]
+    assert reply.tool_result_names == ["band_list_contacts"]
+    assert reply.outline == ["tool_call", "tool_result", "message", "task"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_band_post_named_late_is_the_one_reply(fake_agent) -> None:
+    fake_agent.will_call_mcp_tool_named_late(
+        "tc-1",
+        "band",
+        "band_send_message",
+        arguments={"content": "The answer."},
+        result='{"id": "msg-1"}',
+    ).will_say("The answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == []
+    assert reply.tool_call_names == ["band_send_message"]
 
 
 @pytest.mark.asyncio

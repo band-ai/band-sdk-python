@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,14 +36,15 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp.types import Tool
 
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
 from band.integrations.acp.session_config import SessionConfigOption, find_select
+from band.integrations.mcp import BandMCPTransport
+from tests.mcpclient import mcp_session
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
@@ -55,8 +57,8 @@ EFFORT_OPTION_ID = "reasoning_effort"
 
 
 @dataclass
-class ReplyGate:
-    """Holds ``set_config_option`` replies: each is applied, then waits."""
+class Gate:
+    """A pause point: ``received`` is set on arrival, then it waits for ``release``."""
 
     received: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
@@ -96,10 +98,12 @@ class FakeACPAgent:
         self._custom: PromptHandler | None = None
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
-        self._reply_gate: ReplyGate | None = None
+        self._reply_gate: Gate | None = None
         self._hangs_up_on_config = False
         # Closes this agent's end of the transport; the harness binds it.
         self.hang_up: Callable[[], None] = lambda: None
+        # Holds the connection's shutdown, as a subprocess slow to exit.
+        self.exit_gate: Gate | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -132,10 +136,15 @@ class FakeACPAgent:
         as a crashed agent process does."""
         self._hangs_up_on_config = True
 
-    def holds_config_replies(self) -> ReplyGate:
+    def holds_config_replies(self) -> Gate:
         """Apply each ``set_config_option`` at once but reply only on release."""
-        self._reply_gate = ReplyGate()
+        self._reply_gate = Gate()
         return self._reply_gate
+
+    def exits_slowly(self) -> Gate:
+        """Hold every connection's shutdown until release."""
+        self.exit_gate = Gate()
+        return self.exit_gate
 
     def advertises_models(
         self,
@@ -244,6 +253,46 @@ class FakeACPAgent:
         self._script.append(_action)
         return self
 
+    def will_call_mcp_tool_named_late(
+        self,
+        tool_call_id: str,
+        server: str,
+        tool: str,
+        *,
+        arguments: Mapping[str, Any],
+        result: Any,
+    ) -> FakeACPAgent:
+        """Cursor's MCP call: a pending ``MCP: tool`` placeholder with no input,
+        then a statusless update carrying the real title and ``rawInput``."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, "MCP: tool", status="pending", raw_input={}
+                ),
+            )
+            await a.emit(
+                sid,
+                update_tool_call(
+                    tool_call_id,
+                    title=f"{server}: {tool}",
+                    raw_input={
+                        "providerIdentifier": server,
+                        "toolName": tool,
+                        "args": dict(arguments),
+                    },
+                ),
+            )
+            await a.emit(sid, update_tool_call(tool_call_id, status="in_progress"))
+            await a.emit(
+                sid,
+                update_tool_call(tool_call_id, raw_output=result, status="completed"),
+            )
+
+        self._script.append(_action)
+        return self
+
     def will_call_tool_then_trailing_update(
         self,
         tool_call_id: str,
@@ -346,6 +395,27 @@ class FakeACPAgent:
         )
         return self
 
+    def will_update_cursor_todos(self, *contents: str) -> FakeACPAgent:
+        self._script.append(lambda a, sid: a.update_cursor_todos(sid, *contents))
+        return self
+
+    def keeps_updating_cursor_todos(self) -> asyncio.Event:
+        """Update Cursor's todos on every prompt until the connection drops;
+        the returned event is set once the first update is sent."""
+        updating = asyncio.Event()
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            for index in itertools.count():
+                try:
+                    await a.update_cursor_todos(sid, f"todo {index}")
+                except Exception:  # noqa: BLE001 -- the client hung up
+                    return
+                updating.set()
+                await asyncio.sleep(0)
+
+        self._script.append(_action)
+        return updating
+
     def will_ask_permission(
         self,
         *,
@@ -375,6 +445,16 @@ class FakeACPAgent:
 
     async def say(self, session_id: str, text: str) -> None:
         await self.emit(session_id, update_agent_message_text(text))
+
+    async def update_cursor_todos(self, session_id: str, *contents: str) -> None:
+        """Push Cursor's ``cursor/update_todos`` extension notification."""
+        todos = [
+            {"id": f"t{index}", "content": content, "status": "pending"}
+            for index, content in enumerate(contents)
+        ]
+        await self._conn_for(session_id).ext_notification(
+            "cursor/update_todos", {"sessionId": session_id, "todos": todos}
+        )
 
     def _conn_for(self, session_id: str) -> AgentSideConnection:
         conn = self._conns_by_session.get(session_id, self._current_conn)
@@ -411,6 +491,20 @@ class FakeACPAgent:
         self.permission_responses.append(resp)
         return resp
 
+    def mcp_server(self, session_id: str, server: str) -> Any:
+        """The MCP server config named ``server`` advertised for this session."""
+        config = next(
+            (
+                config
+                for config in self._mcp_servers_by_session[session_id]
+                if getattr(config, "name", None) == server
+            ),
+            None,
+        )
+        if config is None:
+            raise ValueError(f"MCP server {server!r} was not advertised")
+        return config
+
     async def call_mcp_tool(
         self,
         *,
@@ -419,34 +513,20 @@ class FakeACPAgent:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        """Call a named streamable-HTTP MCP server advertised for this session."""
-        server_config = next(
-            (
-                config
-                for config in self._mcp_servers_by_session[session_id]
-                if getattr(config, "name", None) == server
-            ),
-            None,
-        )
-        if server_config is None:
-            raise ValueError(f"MCP server {server!r} was not advertised")
-        if getattr(server_config, "type", None) != "http":
-            raise ValueError(f"MCP server {server!r} does not use streamable HTTP")
-
-        async with (
-            streamable_http_client(server_config.url) as (
-                read_stream,
-                write_stream,
-                _,
-            ),
-            ClientSession(read_stream, write_stream) as client,
-        ):
-            await client.initialize()
+        """Call a tool on an MCP server advertised for this session."""
+        config = self.mcp_server(session_id, server)
+        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
             result = await client.call_tool(tool_name, arguments)
 
         if result.isError:
             raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
-        return result.structuredContent or result.content
+        return result.content
+
+    async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
+        """The tools a session's MCP server lists."""
+        config = self.mcp_server(session_id, server)
+        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+            return (await client.list_tools()).tools
 
     # -- acp.Agent protocol ------------------------------------------------------
 
@@ -476,13 +556,14 @@ class FakeACPAgent:
     async def load_session(
         self, cwd: str, session_id: str, mcp_servers: Any = None, **kwargs: Any
     ) -> LoadSessionResponse:
-        del cwd, mcp_servers, kwargs
+        del cwd, kwargs
         self.session_load_requests.append(session_id)
         if self._session_load_error is not None:
             raise self._session_load_error
         if session_id not in self._persisted_sessions:
             raise RequestError.resource_not_found()
         self._conns_by_session[session_id] = self._current_conn
+        self._mcp_servers_by_session[session_id] = list(mcp_servers or [])
         return LoadSessionResponse(config_options=self._config_options)
 
     async def new_session(

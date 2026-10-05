@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +23,8 @@ from pydantic import BaseModel, Field
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
+from band.testing import FakeAgentTools
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -756,6 +760,28 @@ class TestCustomTools:
         assert "Echo: Hi" in echo_result
         assert "Sum: 5" in calc_result
         mock_tools.execute_tool_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, declare: Callable[..., Any], complete: bool
+    ):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declare
+        async def file_report(args: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = GoogleADKAdapter(additional_tools=[(FileInput, file_report)])
+        (bridge,) = [t for t in adapter._build_adk_tools(tools) if t.name == "file"]
+
+        await bridge.run_async(args={"note": "go"}, tool_context=MagicMock())
+
+        assert tools.turn.complete is complete
 
 
 class TestContactsInjection:

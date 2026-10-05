@@ -3,6 +3,7 @@ a turn that answered the room must stay quiet."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -11,11 +12,12 @@ from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
     APPROVAL_RESOLVED_TEMPLATE,
     ClaudeApprovalOptions,
+    ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
     TurnResultAlreadyReported,
 )
 from band.core.types import Emit
-from tests.adapters.claude_sdk.fakecli import EndTurn, Raw, Thinking
+from tests.adapters.claude_sdk.fakecli import EndTurn, Thinking
 from tests.adapters.claude_sdk.helpers import (
     MISSING_REPLY_TEXT,
     SEND_MESSAGE_MCP_NAME,
@@ -36,7 +38,7 @@ async def test_a_turn_that_answered_the_room_is_narrated_and_quiet(
     room.claude.script(
         [
             Thinking("Check who is here first."),
-            ModelDecision.call("mcp__band__band_get_participants", chat_id="room-1"),
+            ModelDecision.call("mcp__band__band_get_participants"),
             room.model_reply("Everyone is here."),
         ]
     )
@@ -62,10 +64,9 @@ async def test_the_room_hears_whenever_a_turn_left_it_unanswered(
     room.claude.script(
         [ModelDecision.text_reply("Here is my answer, in plain text.")],
         [
-            ModelDecision.call("mcp__band__band_get_participants", chat_id="room-1"),
+            ModelDecision.call("mcp__band__band_get_participants"),
             ModelDecision.call(
                 "mcp__band__band_send_event",
-                chat_id="room-1",
                 content="Still thinking",
                 message_type="thought",
             ),
@@ -89,10 +90,11 @@ async def test_the_room_hears_whenever_a_turn_left_it_unanswered(
 
 
 async def test_a_failure_the_cli_reports_reaches_the_room_with_its_status(
-    claude_room: OpenRoom,
+    claude_room: OpenRoom, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``is_error`` wins even when ``subtype`` says success and even after a
-    reply went out; the room gets the CLI's own detail and API status."""
+    reply went out; the room gets the CLI's own detail and API status, and the
+    operator a WARNING for each (the runtime logs it only at DEBUG)."""
     room = await claude_room()
     room.claude.script(
         [EndTurn(is_error=True, result="Not logged in · Please run /login")],
@@ -106,9 +108,15 @@ async def test_a_failure_the_cli_reports_reaches_the_room_with_its_status(
         ],
     )
 
-    for question in ("first", "second"):
-        with pytest.raises(TurnResultAlreadyReported):
-            await room.send(question)
+    with caplog.at_level(logging.WARNING, logger=ClaudeSDKAdapter.__module__):
+        for question in ("first", "second"):
+            with pytest.raises(TurnResultAlreadyReported):
+                await room.send(question)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == [
+        f"Room room-1: {failure['message']}" for failure in room.reported_failures
+    ]
 
     assert room.reported_failures == [
         {
@@ -183,69 +191,6 @@ async def test_a_declined_reply_explains_the_silence_only_if_the_room_was_told(
     assert room.failures == [MISSING_REPLY_TEXT]
 
 
-async def test_tool_traffic_the_cli_carries_outside_assistant_calls_still_counts(
-    claude_room: OpenRoom,
-) -> None:
-    """A subagent's nested reply arrives in a user envelope (with
-    ``is_error`` omitted, which means success), and a result can ride in the
-    assistant message itself; either one answers the turn."""
-    room = await claude_room()
-    room.claude.script(
-        [
-            Raw(
-                {
-                    "type": "user",
-                    "parent_tool_use_id": "toolu_task",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_nested",
-                                "name": SEND_MESSAGE_MCP_NAME,
-                                "input": {},
-                            },
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_nested",
-                                "content": "sent",
-                            },
-                        ]
-                    },
-                }
-            )
-        ],
-        [
-            Raw(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "model": "claude-fake",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_inline",
-                                "name": SEND_MESSAGE_MCP_NAME,
-                                "input": {},
-                            },
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_inline",
-                                "content": "sent",
-                                "is_error": False,
-                            },
-                        ],
-                    },
-                }
-            )
-        ],
-    )
-
-    await room.send("delegate it")
-    await room.send("answer inline")
-
-    assert room.failures == []
-
-
 async def test_band_no_reply_ends_the_turn_quietly(claude_room: OpenRoom) -> None:
     """Choosing not to answer is a finished turn: nothing is posted and no
     missing-reply error reaches the room."""
@@ -270,4 +215,20 @@ async def test_band_no_reply_does_not_excuse_a_later_silent_turn(
     with pytest.raises(TurnResultAlreadyReported):
         await room.send("Are you there?")
 
+    assert room.failures == [MISSING_REPLY_TEXT]
+
+
+async def test_a_turn_whose_only_send_was_a_suppressed_duplicate_is_reported(
+    claude_room: OpenRoom,
+) -> None:
+    """A send the dedup suppresses posts nothing new, so the turn that made it
+    did not reply; the room hears that instead of silence."""
+    room = await claude_room()
+    room.claude.script([room.model_reply("Done.")], [room.model_reply("Done.")])
+
+    await room.send("do it")
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("do it again", tools=room.fresh_tools())
+
+    assert room.chat == ["Done."]
     assert room.failures == [MISSING_REPLY_TEXT]

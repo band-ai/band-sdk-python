@@ -19,6 +19,7 @@ from typing_extensions import Unpack
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
+from band.core.delivery import relay_reply
 from band.core.exceptions import BandConnectionError
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
@@ -26,6 +27,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import judge_detached_turn
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -35,9 +37,10 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.integrations.mcp.backends import (
-    BandMCPBackend,
-    create_band_mcp_backend,
+from band.integrations.mcp import (
+    BandMCPBackendSettings,
+    BandMCPTransport,
+    SharedBandMCPBackend,
 )
 from band.integrations.opencode import (
     HttpOpencodeClient,
@@ -58,22 +61,13 @@ from band.integrations.opencode import (
     describe_error,
     parse_opencode_event,
 )
-from band.runtime.custom_tools import (
-    CustomToolDef,
-    custom_tool_effects,
-    get_custom_tool_name,
-)
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import (
-    CHAT_ID_FIELD_NAME,
-    iter_tool_definitions,
-    settles_turn_reply,
-)
+from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "opencode"
-NO_TEXT_REPLY_MESSAGE = "OpenCode completed the turn without a text reply."
 
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
@@ -105,9 +99,6 @@ class TurnState:
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
-    # Set when a room-posting band tool (band_send_message) completed this turn,
-    # so the text fallback stays silent instead of double-posting the reply.
-    replied_via_room_tool: bool = False
     last_error_message: str | None = None
     # Per-assistant-message usage for the current turn (last-write-wins per id,
     # since message.updated streams repeatedly). Summed across messages at turn
@@ -218,6 +209,15 @@ class RoomState:
         return True
 
 
+@dataclass(frozen=True)
+class McpRegistration:
+    """Where OpenCode was told to find our Band MCP server: on which client,
+    at which URL. A replaced server serves a new URL, so it no longer matches."""
+
+    client: OpencodeClientProtocol
+    url: str
+
+
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     """Band adapter for the OpenCode HTTP server.
 
@@ -285,26 +285,25 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # concurrent agents sharing one serve.
         self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._custom_effects = custom_tool_effects(self._custom_tools)
         # Startup reachability check only makes sense against a real server;
         # an injected factory fakes that boundary (tests, custom transports).
         self._preflight_enabled = client_factory is None
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
-        self._mcp_backend: BandMCPBackend | None = None
+        self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._rooms: dict[str, RoomState] = {}
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._mcp_lifecycle_lock = asyncio.Lock()
-        self._registered_client: OpencodeClientProtocol | None = None
+        self._registration: McpRegistration | None = None
         self._system_prompt: str = ""
         # The tools this adapter registers with OpenCode (band platform tools +
         # custom tools). Computed once at construction -- both inputs are known
         # here -- and reused when the shared MCP backend is built. Deriving the
         # names eagerly keeps the "is this our own band tool?" auto-approve
-        # check (and room-posting detection) independent of MCP-registration
-        # timing, so a second room's first turn can't race an empty set.
+        # check independent of MCP-registration timing, so a second room's
+        # first turn can't race an empty set.
         self._refresh_tool_definitions()
 
     def _refresh_tool_definitions(self) -> None:
@@ -428,7 +427,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_id: str,
     ) -> None:
         room_state = await self._get_or_create_room_state(room_id)
-        room_state.tools = tools
 
         if self._client is None:
             agent_id = getattr(tools, "agent_id", None)
@@ -437,6 +435,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
         if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
+            tools.turn.settle()
             return
 
         if room_state.turn and (
@@ -447,7 +446,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 "OpenCode is still processing the previous request in this room.",
                 "error",
             )
+            tools.turn.settle()
             return
+
+        # Only a message that starts a turn rebinds the room's tools: the MCP
+        # backend resolves band tool calls through them, so a message consumed
+        # above must not take over the in-flight turn's tools.
+        room_state.tools = tools
 
         await self._ensure_client_started()
         client = self._client
@@ -693,46 +698,25 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             client = self._client
         await self._register_mcp_backend(client)
 
-    async def _ensure_mcp_backend(self) -> BandMCPBackend:
-        """Create the shared Band MCP backend (LocalMCPServer with SSE).
-
-        Only ever called while holding ``_mcp_lifecycle_lock`` (from
-        ``_register_mcp_backend``), the same lock ``_shutdown_client`` needs
-        to read or clear ``self._mcp_backend`` -- so no concurrent shutdown
-        can race the ``await`` below.
-        """
-        if self._mcp_backend is not None:
-            return self._mcp_backend
-
-        backend = await create_band_mcp_backend(
-            kind="sse",
+    def _mcp_settings(self) -> BandMCPBackendSettings:
+        return BandMCPBackendSettings(
             tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,
-            additional_tools=self._custom_tools or None,
+            additional_tools=self._custom_tools,
         )
-        self._mcp_backend = backend
-        logger.info(
-            "Shared Band MCP backend started with %d tools (%d custom)",
-            len(backend.allowed_tools),
-            len(self._custom_tools),
-        )
-        return backend
 
     async def _register_mcp_backend(self, client: OpencodeClientProtocol) -> None:
         """Start the shared MCP backend and register it with OpenCode."""
         async with self._mcp_lifecycle_lock:
-            if self._registered_client is client:
+            backend = await self._mcp.ensure()
+            registration = McpRegistration(
+                client=client, url=backend.endpoint(BandMCPTransport.SSE)
+            )
+            if self._registration == registration:
                 return
             try:
-                backend = await self._ensure_mcp_backend()
-                local_server = backend.local_server
-                if local_server is None:
-                    logger.warning(
-                        "MCP backend has no local server to register with OpenCode"
-                    )
-                    return
                 result = await client.register_mcp_server(
-                    name=self._mcp_server_name, url=local_server.sse_url
+                    name=self._mcp_server_name, url=registration.url
                 )
             except Exception:
                 logger.exception(
@@ -750,7 +734,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
             async with self._state_lock:
                 if self._client is client:
-                    self._registered_client = client
+                    self._registration = registration
             logger.info(
                 "MCP server %s registered with OpenCode (status=%s)",
                 self._mcp_server_name,
@@ -758,10 +742,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
     async def _shutdown_client(self) -> None:
-        # _register_mcp_backend creates/assigns self._mcp_backend under this
-        # same lock; reading and clearing it under _state_lock alone would let
-        # an in-flight registration finish after this snapshot and leave a
-        # live, unstopped backend that shutdown already decided doesn't exist.
+        # _register_mcp_backend registers under this same lock, so an
+        # in-flight registration can't land after the disconnect below and
+        # leave OpenCode pointing at the server this shutdown stops.
         async with self._mcp_lifecycle_lock:
             async with self._state_lock:
                 # ``on_cleanup`` decides to shut down after removing the last
@@ -773,19 +756,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     return
                 event_task = self._event_task
                 client = self._client
-                mcp_backend = self._mcp_backend
+                mcp_backend = await self._mcp.detach(final=False)
                 self._event_task = None
                 self._client = None
-                self._mcp_backend = None
 
-            if (
-                mcp_backend is not None
-                and client is not None
-                and self._registered_client is client
-            ):
-                self._registered_client = None
+            registration = self._registration
+            if registration is not None and registration.client is client:
+                self._registration = None
                 try:
-                    await client.disconnect_mcp_server(self._mcp_server_name)
+                    await registration.client.disconnect_mcp_server(
+                        self._mcp_server_name
+                    )
                 except Exception:  # noqa: BLE001 -- best-effort cleanup; OpenCode may already be stopped, and nothing downstream awaits this disconnect
                     logger.debug(
                         "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
@@ -852,6 +833,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             case QuestionAskedEvent():
                 await room_state.approvals.on_question_asked(event.properties)
             case SessionErrorEvent():
+                # The error class only: its data can carry provider text.
+                logger.info(
+                    "OpenCode turn: session.error room=%s session=%s error=%s",
+                    room_state.room_id,
+                    event.session_id,
+                    event.properties.error.name if event.properties.error else None,
+                )
                 if room_state.turn is not None:
                     room_state.turn.last_error_message = describe_error(
                         event.properties.error
@@ -908,31 +896,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _report_tool_part(
         self, room_state: RoomState, part: OpencodePart
     ) -> None:
-        """Note a room-posting reply and report the tool's call/result.
-
-        Room-posting detection runs regardless of ``Emit.TOOL_CALLS`` (which only
-        governs the tool_call/tool_result narration); the text-fallback
-        suppression must hold even when execution reporting is off.
-        """
-        if part.state is None:
+        """Report the tool's call/result."""
+        if part.state is None or Emit.TOOL_CALLS not in self.features.emit:
             return
 
         state = part.state
         tool_name = self._canonical_tool_name(part.tool or "unknown")
-
-        # A completed room-posting band tool IS the turn's reply -- suppress the
-        # text fallback (codex/copilot_sdk/ACP parity). An errored call did not
-        # post, so it must not suppress. ``status`` is the raw wire string, so
-        # compare by value (the StrEnum member equals its string).
-        if (
-            state.status == OpencodeToolStatus.COMPLETED
-            and settles_turn_reply(tool_name, custom_effects=self._custom_effects)
-            and room_state.turn is not None
-        ):
-            room_state.turn.replied_via_room_tool = True
-
-        if Emit.TOOL_CALLS not in self.features.emit:
-            return
 
         match state.status:
             case (
@@ -1080,21 +1049,22 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     )
                 # Tokens spent before the timeout were still spent — emit them,
                 # same as the success path (best-effort; no-op if none captured).
-                await self._emit_turn_usage(turn)
+                await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to report the OpenCode timeout for room %s", room_id
                 )
-                await self._report_delivery_failure(room_state.room_id, turn)
+                await self._report_delivery_failure(turn)
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
-                await self._emit_turn_usage(turn)
+                await judge_detached_turn(turn.tools, room_id=room_state.room_id)
+                await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
                     "Failed to deliver the OpenCode turn result for room %s", room_id
                 )
-                await self._report_delivery_failure(room_state.room_id, turn)
+                await self._report_delivery_failure(turn)
         finally:
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
@@ -1122,23 +1092,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn := owner():
             await self._abort_turn(turn, reason)
 
-    async def _report_delivery_failure(self, room_id: str, turn: TurnState) -> None:
+    @staticmethod
+    async def _report_delivery_failure(turn: TurnState) -> None:
         """Tell the room the turn finished but its result could not be posted.
 
-        An event needs no mentions, so it still lands when the reply itself was
-        rejected for having none.
+        A failure event needs no mentions, so it still lands when the reply
+        itself was rejected for having none, and it marks the turn reported.
         """
-        try:
-            await turn.tools.send_event(
+        await turn.tools.send_failure(
+            AgentFailure(
+                _PROVIDER,
                 "OpenCode finished the turn but the result could not be posted "
                 "to the room.",
-                "error",
             )
-        except Exception:
-            logger.exception(
-                "Failed to report the OpenCode delivery failure for room %s",
-                room_id,
-            )
+        )
 
     async def _await_turn(self, turn: TurnState) -> None:
         """Await turn completion, but don't charge human-approval time to the
@@ -1178,7 +1145,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._resolve_future(turn.turn_release_future)
 
     def _release_turn_wait_for_owner(self, owner: TurnOwner) -> None:
+        """Release ``on_message`` early while the turn waits on a human."""
         if turn := owner():
+            turn.tools.turn.detach()
             self._release_turn_wait_for(turn)
 
     def _resolve_turn(self, turn: TurnState) -> None:
@@ -1263,36 +1232,24 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # (or the test's observer WebSocket) is the fault, not model completion.
         logger.info(
             "OpenCode turn: delivering fallback room=%s "
-            "(text=%d chars, error=%s, replied_via_tool=%s)",
+            "(text=%d chars, error=%s, replied=%s)",
             room_id,
             len(text),
             bool(turn.last_error_message),
-            turn.replied_via_room_tool,
+            turn.tools.turn.replied,
         )
 
-        # A room-posting band tool already delivered the reply; don't double-post
-        # its plain text or a "no reply" filler. An error is still surfaced --
-        # it is not a text reply.
-        replied = turn.replied_via_room_tool
+        # An error is still surfaced after a tool reply -- it is not a text reply.
         try:
-            if text and not replied:
-                await turn.tools.send_message(text, mentions=turn.pending_mentions)
-            elif turn.last_error_message:
+            relayed = await relay_reply(turn.tools, text, turn.pending_mentions)
+            if not relayed and turn.last_error_message:
                 await turn.tools.send_failure(
                     AgentFailure(_PROVIDER, turn.last_error_message)
-                )
-            elif not replied:
-                await turn.tools.send_message(
-                    NO_TEXT_REPLY_MESSAGE,
-                    mentions=turn.pending_mentions,
                 )
         finally:
             turn.pending_mentions = []
 
-    async def _emit_turn_usage(
-        self,
-        turn: TurnState,
-    ) -> None:
+    async def _emit_turn_usage(self, room_id: str, turn: TurnState) -> None:
         """Sum the turn's per-assistant-message usage and emit it.
 
         A no-op when usage reporting is off (``Emit.USAGE`` absent) or
@@ -1302,7 +1259,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         assistant ``info``; mocked/offline runs don't, so the total is
         simply empty there.
         """
+        if Emit.USAGE not in self.features.emit:
+            return
         total = sum(turn.usage_by_message.values(), TurnUsage())
+        logger.info(
+            "OpenCode turn: usage room=%s session=%s messages=%s empty=%s",
+            room_id,
+            turn.session_id,
+            len(turn.usage_by_message),
+            total.is_empty,
+        )
         await self.emit_usage(turn.tools, total)
 
     async def _report_tool_call(

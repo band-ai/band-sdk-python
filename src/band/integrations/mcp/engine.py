@@ -32,7 +32,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.tools import Tool
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ImageContent
@@ -43,6 +43,7 @@ from pydantic.json_schema import SkipJsonSchema
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.turn import Turn
 from band.core.types import Capability, EventMessageType, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -68,6 +69,30 @@ logger = logging.getLogger(__name__)
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 
+# Server-path vocabulary for the room (not the model-facing chat_id field).
+ROOM_PATH_PARAM = "room_id"
+
+
+def _room_id_from_context(ctx: Context) -> str:
+    """Return the room of the endpoint the current MCP request arrived on.
+
+    Read per request via FastMCP's public ``Context``, never cached per MCP
+    session: the room belongs to the request path, and stdio or in-memory
+    sessions carry no HTTP request.
+    """
+    try:
+        request = ctx.request_context.request
+    except ValueError:
+        request = None
+    path_params = getattr(request, "path_params", None) if request is not None else None
+    room_id = path_params.get(ROOM_PATH_PARAM) if path_params else None
+    if not room_id:
+        raise ValueError(
+            "This Band tool takes its room from a room-bound MCP endpoint, "
+            "but the call did not arrive on one"
+        )
+    return room_id
+
 
 @dataclass(frozen=True)
 class MCPToolRegistration:
@@ -76,15 +101,16 @@ class MCPToolRegistration:
     ``input_model`` already carries whatever room-field extension or pin the
     owning factory decided on -- the engine never inspects tool identity to
     make that call, it just wires whatever the factory handed it.
+
+    ``room_from_connection`` asks the FastMCP dispatch wrapper to inject the
+    room from the request ``Context`` before ``execute`` runs.
     """
 
     name: str
     description: str
     input_model: type[BaseModel]
     execute: MCPToolExecutor
-    # False only for band_read_room_file: its image branch returns MCP content
-    # blocks, which the schema FastMCP infers from ``-> str`` would reject.
-    structured_output: bool | None = None
+    room_from_connection: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,25 +138,6 @@ class CustomToolSpec:
 
     input_model: type[BaseModel]
     handler: Callable[..., Any]
-
-
-# Observes one successful tool execution on the embedded door as
-# ``(tool_name, chat_id, result)``. It runs only after the call returned, so a
-# raised error never reaches it. An adapter that bridges an external harness
-# uses it to learn in-process which Band tools actually ran: the harness's own
-# stream may label a call by a model-written title instead of the tool's name,
-# and that is the only other record of the turn.
-ToolResultHook = Callable[[str, str | None, Any], Awaitable[None] | None]
-
-
-async def call_tool_result_hook(
-    hook: ToolResultHook | None, tool_name: str, chat_id: str | None, result: Any
-) -> None:
-    if hook is None:
-        return
-    outcome = hook(tool_name, chat_id, result)
-    if inspect.isawaitable(outcome):
-        await outcome
 
 
 class ToolsResolver(Protocol):
@@ -169,9 +176,9 @@ class EmbeddedResolver:
         chat_id: str | None,
         arguments: dict[str, Any],
     ) -> Any:
-        # Embedded's uniform wrap (row 2) makes chat_id required on every
-        # agent tool's advertised schema, so validation already rejects a
-        # missing one before dispatch reaches here -- this is a defensive
+        # Embedded's uniform wrap (row 2) always yields a room: a required
+        # chat_id on a multi-room endpoint, or the endpoint path on a
+        # room-bound one (``room_from_connection``). This is a defensive
         # narrowing for the type checker and a clear error, not a real path.
         if chat_id is None:
             raise ValueError(f"{definition.name}: missing chat_id for room-bound tool")
@@ -300,16 +307,16 @@ def extend_with_chat_id(
 
 
 def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
-    """Return a subclass that re-annotates an existing ``chat_id`` as pinned.
+    """Return a subclass that hides ``chat_id`` from the advertised schema.
 
-    For human room-bound tools, whose input models already carry a plain
-    ``chat_id`` field (``HumanTools`` is not constructor-scoped, so it was
-    never missing one the way agent tools are). The advertised schema omits
-    the field; an inbound value is still accepted via alias so a client that
-    sends ``chat_id`` explicitly doesn't fail validation. The actual pinned
-    value is injected into the dispatched arguments before validation by
-    ``build_tool_registration``'s own ``pinned_room_id`` parameter, not by
-    this function -- it only reshapes the schema.
+    The field is still accepted on inbound payloads via alias so a client that
+    sends ``chat_id`` explicitly doesn't fail validation; the value that is
+    actually dispatched comes from ``build_tool_registration``'s
+    ``pinned_room_id`` or ``room_from_connection``, not from this helper.
+
+    Used for human tools that already declare ``chat_id``, and for
+    room-bound agent tools whose models have none — in the latter case this
+    adds the hidden field the connection's room fills.
     """
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",
@@ -453,11 +460,37 @@ def _make_dispatch_function(
     ``registration.input_model`` (a real Pydantic model) rather than on a
     hand-built schema dict; ``_build_mcp_tool`` sanitizes the schema this
     produces afterward.
+
+    Room-bound tools take an injected ``ctx: Context`` parameter so the room
+    is read from FastMCP's public request context rather than a low-level
+    MCP ContextVar import.
     """
-    signature = _build_handler_signature(registration.input_model)
+    parameters = list(
+        _build_handler_signature(registration.input_model).parameters.values()
+    )
+    if registration.room_from_connection:
+        parameters.insert(
+            0,
+            inspect.Parameter(
+                "ctx",
+                kind=inspect.Parameter.KEYWORD_ONLY,
+                annotation=Context,
+            ),
+        )
+    signature = inspect.Signature(parameters=parameters, return_annotation=str)
 
     async def _dispatch(**kwargs: Any) -> str:
-        return await registration.execute(kwargs)
+        try:
+            if registration.room_from_connection:
+                ctx = kwargs.pop("ctx")
+                kwargs[CHAT_ID_FIELD_NAME] = _room_id_from_context(ctx)
+            return await registration.execute(kwargs)
+        except (ValueError, BandToolError):
+            raise
+        except Exception:
+            # FastMCP's Tool.run turns this into ToolError(str) with no log.
+            logger.exception("%s failed", registration.name)
+            raise
 
     _dispatch.__signature__ = signature  # type: ignore[attr-defined]
     _dispatch.__name__ = registration.name
@@ -478,7 +511,7 @@ def build_tool_registration(
     resolver: ToolsResolver,
     strip_chat_id: bool,
     pinned_room_id: str | None = None,
-    tool_result_hook: ToolResultHook | None = None,
+    room_from_connection: bool = False,
 ) -> MCPToolRegistration:
     """Build one registration for a built-in (agent/human) tool definition.
 
@@ -493,10 +526,13 @@ def build_tool_registration(
       one) vs. leave it in the dispatched arguments (human tools -- a normal
       method parameter there).
     - ``pinned_room_id``: inject-and-override ``chat_id`` before validation
-      when set (CLI-only feature; the embedded door never pins).
-    - ``tool_result_hook``: observes each successful call (see
-      :data:`ToolResultHook`).
+      when set (the CLI's ``--room-id``).
+    - ``room_from_connection``: inject-and-override ``chat_id`` with the room
+      of the endpoint each call arrives on (a room-bound ``LocalMCPServer``,
+      whose path carries it under ``ROOM_PATH_PARAM``).
     """
+    if pinned_room_id is not None and room_from_connection:
+        raise ValueError("pinned_room_id and room_from_connection are exclusive")
 
     is_read_room_file = definition.name == BandTool.READ_ROOM_FILE
 
@@ -511,7 +547,6 @@ def build_tool_registration(
             else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
-        await call_tool_result_hook(tool_result_hook, definition.name, chat_id, result)
         if is_read_room_file and is_mcp_content_result(result):
             return _mcp_content_blocks(result)
         return _serialize(result)
@@ -521,35 +556,52 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
-        structured_output=False if is_read_room_file else None,
+        room_from_connection=room_from_connection,
     )
+
+
+RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
+
+
+def room_turn(get_tools: RoomToolResolver | None, chat_id: str | None) -> Turn | None:
+    """The turn of the room ``chat_id`` names, if the tool is room-bound."""
+    if get_tools is None or chat_id is None:
+        return None
+    tools = get_tools(chat_id)
+    return tools.turn if tools is not None else None
 
 
 def build_custom_tool_registration(
     spec: CustomToolSpec | CustomToolDef,
     *,
-    room_bound: bool = False,
-    tool_result_hook: ToolResultHook | None = None,
+    get_tools: RoomToolResolver | None = None,
+    room_from_connection: bool = False,
 ) -> MCPToolRegistration:
     """Build a registration for a user-provided custom tool.
 
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
     Dispatches straight through ``execute_custom_tool`` -- there is no
-    ``AgentTools``/``HumanTools`` method behind a custom tool, so no
-    resolver is involved.
+    ``AgentTools``/``HumanTools`` method behind a custom tool. With
+    ``get_tools`` the tool is room-bound and its declared effect is recorded
+    on that room's turn; the room comes from a ``chat_id`` argument, or with
+    ``room_from_connection`` from the endpoint path. Either way it is dropped
+    before the handler runs, since a custom tool never acts in a room.
     """
     tool_def: CustomToolDef = (
         (spec.input_model, spec.handler) if isinstance(spec, CustomToolSpec) else spec
     )
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
-    model = extend_with_chat_id(input_model, None) if room_bound else input_model
+    advertises_chat_id = get_tools is not None and not room_from_connection
+    model = (
+        extend_with_chat_id(input_model, None) if advertises_chat_id else input_model
+    )
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        result = await execute_custom_tool(tool_def, kwargs)
-        await call_tool_result_hook(tool_result_hook, tool_name, chat_id, result)
+        turn = room_turn(get_tools, chat_id)
+        result = await execute_custom_tool(tool_def, kwargs, turn=turn)
         return _serialize(result)
 
     return MCPToolRegistration(
@@ -557,10 +609,8 @@ def build_custom_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=model,
         execute=execute,
+        room_from_connection=room_from_connection,
     )
-
-
-RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
 
 def _filter_to_agent_surface(
@@ -604,20 +654,18 @@ def build_band_mcp_tool_registrations(
     capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
-    tool_result_hook: ToolResultHook | None = None,
 ) -> list[MCPToolRegistration]:
     """Build MCP tool registrations bound to a single, already-live ``AgentTools``.
 
-    For a caller with exactly one room per server instance (e.g. an ACP
-    session) -- no room resolution needed, so every ``chat_id`` resolves to
-    the same ``agent_tools`` regardless of its value.
+    For a caller with exactly one ``AgentTools`` per server instance -- no
+    room resolution needed, so every ``chat_id`` resolves to the same
+    ``agent_tools`` regardless of its value.
     """
     return build_resolved_band_mcp_tool_registrations(
         get_tools=lambda _chat_id: agent_tools,
         capabilities=capabilities,
         additional_tools=additional_tools,
         tool_definitions=tool_definitions,
-        tool_result_hook=tool_result_hook,
     )
 
 
@@ -627,15 +675,17 @@ def build_resolved_band_mcp_tool_registrations(
     capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
-    tool_result_hook: ToolResultHook | None = None,
+    room_from_connection: bool = False,
 ) -> list[MCPToolRegistration]:
     """Build MCP registrations that resolve room-scoped tools at call time.
 
-    Uniform room-wrap: every agent tool gets a ``chat_id`` field here,
-    regardless of the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES``
-    classification -- ``chat_id`` is this door's routing key for
-    ``AgentTools`` instance selection (e.g. opencode's ``_get_room_tools``),
-    so even a CLI-room-less tool like ``band_create_chatroom`` needs one here.
+    Uniform room-wrap: every agent tool routes by a room here, regardless of
+    the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES`` classification -- the room
+    is this door's key for ``AgentTools`` instance selection (e.g. opencode's
+    ``_get_room_tools``), so even a CLI-room-less tool like
+    ``band_create_chatroom`` needs one. A multi-room endpoint takes it from a
+    required ``chat_id`` argument; with ``room_from_connection`` the room
+    comes from the endpoint path instead and no tool advertises ``chat_id``.
     """
     definitions = _resolve_agent_definitions(
         capabilities=capabilities, tool_definitions=tool_definitions
@@ -644,16 +694,18 @@ def build_resolved_band_mcp_tool_registrations(
     registrations = [
         build_tool_registration(
             definition,
-            extend_with_chat_id(definition.input_model, None),
+            pin_existing_chat_id(definition.input_model)
+            if room_from_connection
+            else extend_with_chat_id(definition.input_model, None),
             resolver=resolver,
             strip_chat_id=True,
-            tool_result_hook=tool_result_hook,
+            room_from_connection=room_from_connection,
         )
         for definition in definitions
     ]
     registrations.extend(
         build_custom_tool_registration(
-            tool_def, room_bound=True, tool_result_hook=tool_result_hook
+            tool_def, get_tools=get_tools, room_from_connection=room_from_connection
         )
         for tool_def in additional_tools or []
     )
@@ -762,18 +814,20 @@ def _build_mcp_tool(registration: MCPToolRegistration) -> Tool:
     same helper ``AgentTools.get_tool_schemas`` already applies) keeps this
     engine's wire schema consistent with every other schema surface the SDK
     exposes, instead of teaching a second, parallel normalization to whatever
-    reads this schema downstream. ``structured_output`` still has to pass
-    through here too (not just via a separate ``add_tool`` call) -- the
-    ``FastMCP(tools=...)`` constructor path is the only one used, and
-    ``ToolManager.add_tool`` silently keeps the first registration on a name
-    collision, so a second registration would never actually apply it.
+    reads this schema downstream.
+
+    Every tool is unstructured: ``execute`` already returns the JSON text (or
+    image blocks), and FastMCP's inferred ``-> str`` output schema would only
+    wrap that text in ``{"result": "<json>"}`` structured content, which
+    clients that prefer structured content (the Claude CLI) show the model
+    double-encoded.
     """
     handler = _make_dispatch_function(registration)
     tool = Tool.from_function(
         handler,
         name=registration.name,
         description=registration.description,
-        structured_output=registration.structured_output,
+        structured_output=False,
     )
     tool.parameters = sanitize_tool_schema(tool.parameters)
     return tool

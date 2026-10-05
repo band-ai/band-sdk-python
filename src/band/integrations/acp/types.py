@@ -80,6 +80,7 @@ class ToolStatus(StrEnum):
     tool_call/tool_result chunk and the consumers compare against.
     """
 
+    PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -132,21 +133,28 @@ class ACPToolCall:
         )
 
 
-_MCP_INVOCATION_KEYS = frozenset({"server", "tool", "arguments"})
+# The ``rawInput`` keys each runtime reports an MCP call under, as (server,
+# tool, arguments): codex-acp, then Cursor.
+_MCP_INVOCATION_KEYS: tuple[tuple[str, str, str], ...] = (
+    ("server", "tool", "arguments"),
+    ("providerIdentifier", "toolName", "args"),
+)
 
 
 def _mcp_invocation(
     raw_input: object,
 ) -> tuple[str, dict[str, JsonValue]] | None:
-    """Name and arguments of an MCP call reported as ``rawInput = {server, tool,
-    arguments}`` (codex-acp), whose title is only a display string."""
-    if not isinstance(raw_input, dict) or raw_input.keys() != _MCP_INVOCATION_KEYS:
+    """Name and arguments of an MCP call reported in ``rawInput`` (see
+    ``_MCP_INVOCATION_KEYS``), whose title is only a display string."""
+    if not isinstance(raw_input, dict):
         return None
-    server, tool, arguments = (
-        raw_input["server"],
-        raw_input["tool"],
-        raw_input["arguments"],
+    keys = next(
+        (keys for keys in _MCP_INVOCATION_KEYS if raw_input.keys() == set(keys)),
+        None,
     )
+    if keys is None:
+        return None
+    server, tool, arguments = (raw_input[key] for key in keys)
     if not isinstance(server, str) or not isinstance(tool, str):
         return None
     args = cast(dict[str, JsonValue], arguments) if isinstance(arguments, dict) else {}

@@ -700,10 +700,11 @@ class TestA2AGatewaySnippet:
 
 
 class TestExceptionHierarchy:
-    """README states BandError is the base for the other three."""
+    """README documents BandError, BandConfigError (incl. AgentAlreadyRunningError), and peers."""
 
     def test_hierarchy(self) -> None:
         from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+            AgentAlreadyRunningError,
             BandConfigError,
             BandConnectionError,
             BandError,
@@ -713,6 +714,7 @@ class TestExceptionHierarchy:
         assert issubclass(BandConfigError, BandError)
         assert issubclass(BandConnectionError, BandError)
         assert issubclass(BandToolError, BandError)
+        assert issubclass(AgentAlreadyRunningError, BandConfigError)
 
     def test_exceptions_are_raiseable(self) -> None:
         from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises

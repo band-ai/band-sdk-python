@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -14,20 +13,25 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
+from band.adapters.opencode.approvals import DECLINED_QUESTION_ANSWER
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import (
-    PlatformMessage,
-)
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.integrations.mcp.engine import EmbeddedResolver
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodePermissionRequest,
     OpencodeQuestionRequest,
 )
 from band.integrations.opencode.types import OpencodeSessionState
+from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
+from tests.mcpbackends import BackendStarts
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
+# What the fake server does next: stream an SSE event, or act between events
+# (e.g. the model calling a band tool over MCP).
+ServerStep: TypeAlias = RawOpencodeEvent | Callable[[], Awaitable[None]]
 
 
 def make_platform_message(
@@ -222,12 +226,25 @@ def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
     return cast(AgentToolsProtocol, tools)
 
 
+def agent_input(content: str, tools: FakeAgentTools) -> AgentInput:
+    """What the runtime hands ``on_event`` for one room message."""
+    return AgentInput(
+        msg=make_platform_message(content=content),
+        tools=tools_protocol(tools),
+        history=HistoryProvider(raw=[]),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+
 class RaisingSendTools(FakeAgentTools):
-    """FakeAgentTools whose send_message always fails, to exercise the
+    """FakeAgentTools whose send_notice always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
     swallowed so the turn still unblocks."""
 
-    async def send_message(
+    async def send_notice(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> dict[str, Any]:
         raise BandToolError("send failed")
@@ -253,10 +270,9 @@ class FakeOpencodeClient:
     def __init__(
         self,
         *,
-        prompt_event_sequences: list[list[RawOpencodeEvent]] | None = None,
-        reply_permission_events: dict[str, list[RawOpencodeEvent]] | None = None,
-        reply_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
-        reject_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
+        prompt_event_sequences: list[list[ServerStep]] | None = None,
+        reply_permission_events: dict[str, list[ServerStep]] | None = None,
+        reply_question_events: dict[str, list[ServerStep]] | None = None,
         get_session_missing: set[str] | None = None,
         prompt_exceptions: list[Exception] | None = None,
         serve_registrations: dict[str, str] | None = None,
@@ -271,17 +287,15 @@ class FakeOpencodeClient:
         self.prompt_calls: list[dict[str, Any]] = []
         self.permission_replies: list[dict[str, Any]] = []
         self.question_replies: list[dict[str, Any]] = []
-        self.question_rejections: list[str] = []
         self.aborted_sessions: list[str] = []
         self.registered_mcp_servers: list[dict[str, str]] = []
         self.disconnected_mcp_servers: list[str] = []
         self.closed = False
         self._session_counter = 0
-        self._queue: asyncio.Queue[RawOpencodeEvent | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[ServerStep | None] = asyncio.Queue()
         self._prompt_event_sequences = list(prompt_event_sequences or [])
         self._reply_permission_events = reply_permission_events or {}
         self._reply_question_events = reply_question_events or {}
-        self._reject_question_events = reject_question_events or {}
         self._get_session_missing = get_session_missing or set()
         self._prompt_exceptions = list(prompt_exceptions or [])
         # Popped one at a time per register_mcp_server call; once exhausted,
@@ -352,11 +366,6 @@ class FakeOpencodeClient:
         for event in self._reply_question_events.get(request_id, []):
             await self._queue.put(event)
 
-    async def reject_question(self, request_id: str) -> None:
-        self.question_rejections.append(request_id)
-        for event in self._reject_question_events.get(request_id, []):
-            await self._queue.put(event)
-
     async def abort_session(self, session_id: str) -> None:
         self.aborted_sessions.append(session_id)
 
@@ -375,16 +384,19 @@ class FakeOpencodeClient:
         self.disconnected_mcp_servers.append(name)
         self.serve_registrations.pop(name, None)
 
-    async def push_event(self, event: RawOpencodeEvent) -> None:
-        """Inject one SSE event, as the server would mid-turn."""
+    async def push_event(self, event: ServerStep) -> None:
+        """Inject one SSE event (or server action), as the server would mid-turn."""
         await self._queue.put(event)
 
     async def iter_events(self) -> AsyncIterator[RawOpencodeEvent]:
         while True:
-            event = await self._queue.get()
-            if event is None:
+            step = await self._queue.get()
+            if step is None:
                 return
-            yield event
+            if callable(step):
+                await step()
+                continue
+            yield step
 
     async def health(self) -> None:
         """Fake server is always reachable."""
@@ -401,46 +413,22 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
         super().__init__("status error", request=request, response=response)
 
 
-class FakeMCPBackend:
-    """Fake BandMCPBackend for tests."""
+class BandMCPCalls:
+    """The model calling band tools over MCP, dispatched to the rooms of the
+    adapter's started backend exactly as the embedded MCP server does."""
 
-    def __init__(
-        self,
-        *,
-        sse_url: str = "http://127.0.0.1:50000/sse",
-        stop_started: asyncio.Event | None = None,
-        stop_release: asyncio.Event | None = None,
-    ) -> None:
-        self.kind = "sse"
-        self.server = None
-        self.allowed_tools: list[str] = []
-        self._sse_url = sse_url
-        self.local_server = type(
-            "_FakeLocalServer", (), {"sse_url": sse_url, "stop": AsyncMock()}
-        )()
-        self.stop_calls = 0
-        self._stop_started = stop_started
-        self._stop_release = stop_release
+    def __init__(self, starts: BackendStarts) -> None:
+        self._starts = starts
 
-    async def stop(self) -> None:
-        self.stop_calls += 1
-        if self._stop_started is not None:
-            self._stop_started.set()
-        if self._stop_release is not None:
-            await self._stop_release.wait()
+    def band_tool_call(
+        self, tool: str, arguments: dict[str, Any], *, room_id: str = "room-1"
+    ) -> ServerStep:
+        async def call() -> None:
+            assert self._starts.requested, "the adapter never started its backend"
+            resolver = EmbeddedResolver(get_tools=self._starts.requested[-1].get_tools)
+            await resolver.invoke(TOOL_DEFINITIONS[tool], room_id, arguments)
 
-
-def make_fake_mcp_backend_factory(
-    backend: FakeMCPBackend | None = None,
-) -> AsyncMock:
-    """Return an AsyncMock that produces a FakeMCPBackend."""
-    fake = backend or FakeMCPBackend()
-
-    async def factory(**kwargs: Any) -> FakeMCPBackend:
-        return fake
-
-    mock = AsyncMock(side_effect=factory)
-    return mock
+        return call
 
 
 #: Virtual seconds an ask waits for a human in looptime tests.
@@ -502,3 +490,21 @@ class AskFactory:
 
 def _unique_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}"
+
+
+def _is_decline(reply: dict[str, Any]) -> bool:
+    return all(answer == [DECLINED_QUESTION_ANSWER] for answer in reply["answers"])
+
+
+def declined_questions(client: FakeOpencodeClient) -> list[str]:
+    """Ids of the questions the adapter rejected by answering with the decline."""
+    return [r["request_id"] for r in client.question_replies if _is_decline(r)]
+
+
+def answered_questions(client: FakeOpencodeClient) -> list[tuple[str, list[list[str]]]]:
+    """The room's real answers, as (question id, answers), declines left out."""
+    return [
+        (r["request_id"], r["answers"])
+        for r in client.question_replies
+        if not _is_decline(r)
+    ]

@@ -467,8 +467,10 @@ Each message carries a per-recipient delivery state, exposed as
 DELIVERED -> PROCESSING -> PROCESSED | FAILED
 ```
 
-`FAILED` is **not** terminal — the platform retries (bounded by max retries), so a
-message may cycle `FAILED -> PROCESSING` again before reaching `PROCESSED`.
+`FAILED` is **not** terminal — the platform's `/next` serves a failed message again,
+so a new agent process (or execution context) may cycle it `FAILED -> PROCESSING`
+before `PROCESSED`. The running agent skips a message once it has failed
+`max_message_retries` times (default 1), so it does not retry the message itself.
 `PROCESSED` is the only success terminal.
 
 ```python notest
@@ -575,9 +577,20 @@ the `dev` extra but are split out for isolation.
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes) |
+| `backends` | `dev` | codex, opencode, copilot_acp, cursor_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes), and Cursor `agent` CLI (`CURSOR_API_KEY` in CI; local `agent login` also works) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
+
+The `backends` CI job installs a pinned Cursor `agent` on Ubuntu and Windows
+(`.github/scripts/setup-cursor.sh`; bump `CURSOR_CLI_VERSION` deliberately) and
+passes the `E2E_CURSOR_API_KEY` organization secret as `CURSOR_API_KEY` only to the
+backends lane's baseline test step. For a focused local Cursor run, install the CLI, authenticate
+with `agent login` or set `CURSOR_API_KEY`, and use the repo's `.env.test`:
+
+```bash
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \
+  tests/e2e/baseline/ -k cursor_acp -v -s --no-cov
+```
 
 `backends` folds codex + opencode into one job (both install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that

@@ -77,25 +77,20 @@ class ToolCategory(StrEnum):
 
 
 class TurnEffect(StrEnum):
-    """What a successful call of a Band tool does to the turn's reply obligation.
+    """What a successful tool call does to the turn's reply obligation.
 
-    The one classification behind both turn-outcome questions: whether the
-    turn did any work (an empty final answer is then benign) and whether its
-    reply is settled (no fallback text may be relayed).
+    Mirrors band-sdk-core's ``TurnEffect`` (pinned by a parity test); it stays
+    a ``StrEnum`` because custom tools declare it (``declares_turn_effect``).
     """
 
     OBSERVE = "observe"  # fetches state or narrates; the turn still owes a reply
-    ACT = "act"  # a durable side effect; silence afterwards is benign
+    ACT = "act"  # a durable side effect; the turn is complete without a reply
     REPLY = "reply"  # posts to the room
     DECLINE = "decline"  # deliberate silence (band_no_reply)
 
     @property
     def did_work(self) -> bool:
         return self is not TurnEffect.OBSERVE
-
-    @property
-    def settles_reply(self) -> bool:
-        return self in (TurnEffect.REPLY, TurnEffect.DECLINE)
 
 
 @dataclass(frozen=True)

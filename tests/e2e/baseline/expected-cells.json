@@ -404,6 +404,48 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_restores_the_level_when_the_scenario_fails",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[debug-run-keeps-debug]",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[inherited-warning-is-raised]",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/guards/test_peer_ops.py::test_peer_actor_sends_as_agent",
       "adapter": "suite",
       "lanes": [
@@ -865,6 +907,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -892,6 +943,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -909,6 +969,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_only_an_authorized_member_decides_an_ask",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]",
       "adapter": "suite",
       "lanes": [
@@ -919,6 +988,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-codex]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -954,6 +1032,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-opencode]",
       "adapter": "suite",
       "lanes": [
@@ -981,6 +1068,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-opencode]",
       "adapter": "suite",
       "lanes": [
@@ -999,10 +1095,19 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_control_signals.py::test_stop_cancels_then_play_replays",
-      "adapter": "suite",
+      "test": "tests/e2e/baseline/smoke/behavior/test_cursor_workflows.py::test_repairs_a_failing_project_after_a_human_gate",
+      "adapter": "cursor_acp",
       "lanes": [
-        "core"
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_cursor_workflows.py::test_sequential_rooms_keep_their_work_after_restart",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -1781,6 +1886,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_build_adapter_constructs_each",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_build_adapter_constructs_each",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -1919,6 +2033,15 @@
       "adapter": "crewai_flow",
       "lanes": [
         "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_per_adapter_replies",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -2074,6 +2197,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_burst_recall.py::test_burst_handled_then_spanning_recall",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_burst_recall.py::test_burst_handled_then_spanning_recall",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -2244,6 +2376,20 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "gemini",
       "lanes": [
         "backends",
@@ -2454,6 +2600,20 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "gemini",
       "lanes": [
         "backends",
@@ -2606,6 +2766,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_list_contacts_across_contacts_adapters",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_list_contacts_across_contacts_adapters",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -2723,6 +2892,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -2834,6 +3012,15 @@
       "adapter": "crewai",
       "lanes": [
         "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_recall_memory_across_memory_adapters",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -2984,6 +3171,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_store_memory_across_memory_adapters",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_store_memory_across_memory_adapters",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -3095,6 +3291,15 @@
       "adapter": "crewai",
       "lanes": [
         "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_task_lifecycle_across_task_adapters",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -3230,6 +3435,15 @@
       "adapter": "crewai_flow",
       "lanes": [
         "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_concurrent_instances.py::test_concurrent_same_adapter_instances_each_reply",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -3400,6 +3614,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_after_rejoin",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_after_rejoin",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -3559,6 +3782,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_within_session",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_within_session",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -4063,6 +4295,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_peer_message_drives_turn_without_loop",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_peer_message_drives_turn_without_loop",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -4126,6 +4367,211 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_peer_message_drives_turn_without_loop",
+      "adapter": "strands",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "anthropic",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "relays the model's final text, so an empty turn can't be scripted reliably"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "gemini",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "google_adk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "strands",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "strands",
       "lanes": [
         "core"
@@ -4209,6 +4655,15 @@
       ],
       "status": "na",
       "reason": "terminal echo flow with no memory \u2014 cannot recall a seeded fact"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_noisy_room.py::test_recall_and_ignore_crosstalk_in_busy_room",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_noisy_room.py::test_recall_and_ignore_crosstalk_in_busy_room",
@@ -4850,6 +5305,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_offline.py::test_recalls_offline_note_on_cold_boot",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_offline.py::test_recalls_offline_note_on_cold_boot",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -5009,6 +5473,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -5160,6 +5633,15 @@
       ],
       "status": "na",
       "reason": "terminal echo flow with no memory \u2014 cannot recall a per-room note"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_isolation.py::test_rooms_keep_isolated_context",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_room_isolation.py::test_rooms_keep_isolated_context",
