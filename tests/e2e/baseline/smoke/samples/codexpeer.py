@@ -25,6 +25,8 @@ from band.integrations.codex.types import (
 from band.integrations.uvicorn_server import ManagedUvicornServer
 
 NATIVE_DEADLINE_S = 60
+# The local peer implements this model's flat shell-tool wire format.
+SHELL_MODEL = "gpt-5.3-codex"
 
 
 class ShellPeer:
@@ -140,7 +142,7 @@ async def start_shell_turn(
     thread = await client.request(
         CodexRequestMethod.THREAD_START,
         {
-            "model": config.model,
+            "model": SHELL_MODEL,
             "cwd": str(workdir),
             "approvalPolicy": config.approval_policy,
             "sandbox": config.sandbox,
