@@ -2,7 +2,7 @@
 
 The thin L3 delegation slice, across the tool-loop matrix. Two instances A and B of the
 same adapter co-reside via ``cell.run_many(2)``. Turn 1 seeds a value V into B's own
-context. Turn 2 addresses B *directly* (not an orchestrator) — "send A the note V and
+context. Turn 2 addresses B *directly* (not an orchestrator) — "send A the value V and
 ask A to repeat it back" — so the delegation is B's own decision (peer-initiated).
 Load-bearing, floors-only assertions from the one flow:
 
@@ -13,8 +13,8 @@ Load-bearing, floors-only assertions from the one flow:
 * Delegate responded: A produced a reply (its turn is driven by B's mention, not a user
   send, so we barrier on A having spoken).
 
-Relaying A's answer back to the user is not exercised here. Named routing / recruitment
-/ concurrent triage are already covered by ``test_multi_agent_collaboration``.
+Named routing / recruitment / concurrent triage are already covered by
+``test_multi_agent_collaboration``.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT)
-@flaky_model("multi-hop routing on a small model is non-deterministic")
-@pytest.mark.timeout(extra=300)  # a seed turn + a B→A→B delegation cascade
+@flaky_model("peer routing via a model-chosen mention is non-deterministic")
+@pytest.mark.timeout(extra=300)  # a seed turn + a B→A delegation cascade
 @pytest.mark.asyncio(loop_scope="session")
 async def test_peer_initiated_delegation_with_self_recall(
     cell: AdapterCell,

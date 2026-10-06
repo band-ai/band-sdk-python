@@ -646,15 +646,12 @@ RECALL_ALL_FACTS = (
 
 
 def delegate_to_peer_instruction(peer_name: str) -> str:
-    """Peer-initiated delegation: drive one agent to send peer ``peer_name`` the note
-    it remembered, so it emits a real routing mention of the peer whose body carries
-    the value recalled from its own context, and the peer responds.
+    """Ask an agent to send peer ``peer_name`` the note it remembered.
 
-    The peer never saw the user's message, so the ask must be one it can fulfil from
-    the routed message alone; asked to "confirm" a value it cannot see, it rightly
-    distrusts the claim. The wording is load-bearing for small models: naming the
-    peer as the subject reads as "not for me" (band_no_reply), "token" reads as a
-    secret, and a dictated mention ID contradicts the roster's handle guidance."""
+    The peer never saw the user's message, so the ask must be answerable from the
+    routed message alone. Small models misread the alternatives: naming the peer as
+    the subject reads as "not for me", "token" reads as a secret, and a dictated
+    mention ID clashes with the roster's always-use-the-handle guidance."""
     return (
         f"Please send {peer_name} a {BandTool.SEND_MESSAGE} that mentions them, "
         "includes the complete note from my previous message, and asks them to "
