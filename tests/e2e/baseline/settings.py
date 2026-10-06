@@ -204,9 +204,9 @@ class LLMModels(BaseSettings):
         default="gpt-5.4-mini",
         validation_alias=AliasChoices("E2E_LLM_MODEL", "E2E_OPENAI_MODEL"),
     )
-    # A modern, cheap model: works for the agent under test AND for the judge,
-    # which needs structured-output support (claude-3-haiku-20240307 does not).
-    anthropic_model: str = "claude-haiku-4-5"  # E2E_ANTHROPIC_MODEL
+    # Serves the agent under test AND the judge, which needs structured-output
+    # support.
+    anthropic_model: str = "claude-sonnet-5-5"  # E2E_ANTHROPIC_MODEL
     # Gemini / Google ADK agent model.
     gemini_model: str = "gemini-2.5-flash"  # E2E_GEMINI_MODEL
     # Judge model. MUST be a modern Anthropic model id (structured outputs). Left

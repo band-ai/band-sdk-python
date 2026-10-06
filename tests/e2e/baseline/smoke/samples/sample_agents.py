@@ -386,25 +386,26 @@ def task_board_delegation_instruction(
     weather_place: str,
 ) -> str:
     """Coordinator's turn-1 instruction for the task-board delegation flow: set
-    the room goal, create one task per specialist, then hand both off in a
-    single message that states each task's number or id explicitly -- the
-    specialists need it to know which task to claim and update, a real
-    reliability dependency this instruction must not leave implicit."""
+    the room goal, create one task per specialist, then hand each specialist
+    its own task in its own message. An agent only sees messages that mention
+    it, so a per-owner hand-off keeps each specialist from claiming the other's
+    task or deciding the shared message is not for it."""
     return (
         f"First call {TaskTool.SET_BOARD.value} to set this room's goal: a "
         "short title and summary describing that the team needs an access "
         f"code and a weather forecast gathered. Then call "
         f"{TaskTool.CREATE.value} twice to create two tasks: one with subject "
         f"asking for the access code for key '{lookup_key}', and one with "
-        f"subject asking for the forecast for '{weather_place}'. Then send "
-        "exactly ONE band_send_message that mentions both "
-        f"{lookup_name} (id {lookup_id}) and {weather_name} (id {weather_id}), "
-        "stating the exact task number or id you just created for each of them "
-        "by name, and asking each to claim their task, call the matching tool, "
+        f"subject asking for the forecast for '{weather_place}'. The access-code "
+        f"task belongs to {lookup_name} (id {lookup_id}); the forecast task "
+        f"belongs to {weather_name} (id {weather_id}). Then call "
+        f"{BandTool.SEND_MESSAGE.value} exactly twice, once per owner: each "
+        "message mentions ONLY its recipient and states only that recipient's "
+        "task number or id, asking them to claim it, call the matching tool, "
         "and copy the tool's exact return value verbatim into the completed "
-        "task's comment via band_update_task (not a summary or description "
-        "without the value). Do not look anything up yourself, and do not call "
-        "any other tool."
+        f"task's comment via {TaskTool.UPDATE.value} (not a summary or "
+        "description without the value). Do not look anything up yourself, and "
+        "do not call any other tool."
     )
 
 
@@ -645,17 +646,15 @@ RECALL_ALL_FACTS = (
 )
 
 
-def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
-    """Peer-initiated delegation: drive one agent to ask peer ``peer_name`` to confirm
-    the value it just remembered, then report that reply — so it emits a real routing
-    mention of the peer whose body carries the value it recalled from its own context,
-    and the peer responds. The message must ask a question: a bare token reads as an
-    FYI, which the peer may rightly decline with band_no_reply."""
+def delegate_to_peer_instruction(peer_name: str) -> str:
+    """Ask an agent to send peer ``peer_name`` the note it remembered.
+
+    The peer never saw the user's message, so the ask must be answerable from the
+    routed message alone. Small models misread the alternatives: naming the peer as
+    the subject reads as "not for me", "token" reads as a secret, and a dictated
+    mention ID clashes with the roster's always-use-the-handle guidance."""
     return (
-        "Recall the complete value token from my previous message. "
-        f"{peer_name} did not receive that message. First ask {peer_name} to "
-        f"confirm the exact token with {BandTool.SEND_MESSAGE}(content containing "
-        f"the token and asking {peer_name} to confirm it, mentions=['{peer_id}']). "
-        "Do not address that first message to me. "
-        "Wait for the peer's response, then report it back to me."
+        f"Please send {peer_name} a {BandTool.SEND_MESSAGE} that mentions them, "
+        "includes the complete note from my previous message, and asks them to "
+        "repeat it back to you."
     )
