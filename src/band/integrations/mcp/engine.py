@@ -64,6 +64,7 @@ from band.runtime.tools import (
     validate_tool_arguments,
 )
 from band.runtime.tools.inputs.chat import require_visible_content
+from band.runtime.tools.inputs.identifiers import ResourceId
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +284,7 @@ def extend_with_chat_id(
             __base__=original,
             **{
                 CHAT_ID_FIELD_NAME: (
-                    str,
+                    ResourceId,
                     Field(
                         ...,
                         max_length=CHAT_ID_MAX_LENGTH,
@@ -323,7 +324,7 @@ def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
         __base__=original,
         **{
             CHAT_ID_FIELD_NAME: (
-                SkipJsonSchema[str | None],
+                SkipJsonSchema[ResourceId | None],
                 Field(
                     default=None,
                     max_length=CHAT_ID_MAX_LENGTH,

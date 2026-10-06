@@ -25,6 +25,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER, CrewAIAdapterConfig
+from band.core.memory_types import MemoryType
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -1051,7 +1052,7 @@ class TestMemoryToolExecution:
                 subject_id="subject-1",
                 scope="subject",
                 system="working",
-                type="fact",
+                type=MemoryType.SEMANTIC,
                 segment="user",
                 content_query="remember",
                 page_size=5,
@@ -1065,7 +1066,7 @@ class TestMemoryToolExecution:
             subject_id="subject-1",
             scope="subject",
             system="working",
-            type="fact",
+            type=MemoryType.SEMANTIC,
             segment="user",
             content_query="remember",
             page_size=5,
@@ -1086,7 +1087,7 @@ class TestMemoryToolExecution:
             result = store_memory_tool._run(
                 content="remember this",
                 system="working",
-                type="fact",
+                type=MemoryType.SEMANTIC,
                 segment="user",
                 thought="important for follow-up",
                 scope="subject",
@@ -1100,7 +1101,7 @@ class TestMemoryToolExecution:
         mock_tools.store_memory.assert_awaited_once_with(
             content="remember this",
             system="working",
-            type="fact",
+            type=MemoryType.SEMANTIC,
             segment="user",
             thought="important for follow-up",
             scope="subject",

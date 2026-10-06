@@ -11,6 +11,8 @@ Needs the dev-crewai venv:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 from typing import Any
 from unittest.mock import MagicMock
@@ -21,10 +23,13 @@ pytest.importorskip("crewai", reason="crewai not installed (band-sdk[crewai])")
 
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.crewai.tools import (
+    CrewAIToolContext,
     NoopReporter,
     build_band_crewai_tools,
 )
-from band.runtime.tools import CHAT_TOOL_NAMES
+from band.runtime.tools import CHAT_TOOL_NAMES, AgentTools
+from tests.identifiers import INVALID_IDS, UUID_ID
+from tests.runtime.helpers import memory_client
 
 # No capabilities: the base surface is exactly the chat tools.
 EXPECTED_BASE_TOOLS = len(CHAT_TOOL_NAMES)
@@ -79,3 +84,32 @@ def test_a_mocked_crewai_window_does_not_poison_a_later_real_build() -> None:
         assert len(_build()) == EXPECTED_BASE_TOOLS
 
     assert len(_build()) == EXPECTED_BASE_TOOLS
+
+
+@pytest.mark.parametrize("memory_id", [None, *INVALID_IDS, UUID_ID])
+def test_real_crewai_memory_run_validates_before_rest(memory_id: str | None) -> None:
+    async def run() -> None:
+        async with memory_client() as (rest, requests):
+            context = CrewAIToolContext(
+                room_id="room-1", tools=AgentTools("room-1", rest)
+            )
+            built = build_band_crewai_tools(
+                get_context=lambda: context,
+                reporter=NoopReporter(),
+                features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            )
+            tool = next(t for t in built if t.name == "band_get_memory")
+            args = {} if memory_id is None else {"memory_id": memory_id}
+            result = json.loads(await asyncio.to_thread(tool._run, **args))
+            if memory_id == UUID_ID:
+                assert result["status"] == "success"
+                assert result["id"] == UUID_ID
+                assert [q.url.path for q in requests] == [
+                    f"/api/v1/agent/memories/{UUID_ID}"
+                ]
+            else:
+                assert result["status"] == "error"
+                assert "memory_id" in result["message"]
+                assert requests == []
+
+    asyncio.run(run())
