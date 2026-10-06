@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
@@ -20,6 +19,8 @@ from acp.schema import (
     NewSessionResponse,
 )
 
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
     NoopACPClientProfile,
@@ -37,11 +38,17 @@ from band.integrations.acp.stderr import STDERR_LINE_LOG_TEMPLATE
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
-from tests.integrations.acp.acp_toolkit.peer import INITIALIZE_PENDING_LINE, ExitStage
+from tests.integrations.acp.acp_toolkit.harness import TranscriptTools
+from tests.integrations.acp.acp_toolkit.peer import (
+    INITIALIZE_PENDING_LINE,
+    PEER_EXIT_CODE,
+    RECOVERED_REPLY,
+    ExitStage,
+    stdio_peer_config,
+)
 from tests.paths import REPO_ROOT
 
 RUNTIME_LOGGER = "band.integrations.acp.client_runtime"
-PEER_EXIT_CODE = 3
 StdioRuntimeFactory = Callable[
     [ExitStage, list[str]], AbstractAsyncContextManager[ACPRuntime]
 ]
@@ -51,18 +58,11 @@ StdioRuntimeFactory = Callable[
 def stdio_runtime() -> StdioRuntimeFactory:
     @asynccontextmanager
     async def build(stage: ExitStage, lines: list[str]) -> AsyncIterator[ACPRuntime]:
-        # Windows' venv redirector keeps stdout open until the peer exits.
+        config = stdio_peer_config(stage, lines)
         runtime = ACPRuntime(
-            command=[
-                sys._base_executable,
-                "-m",
-                "tests.integrations.acp.acp_toolkit.peer",
-                stage,
-                str(PEER_EXIT_CODE),
-                *lines,
-            ],
+            command=list(config.command),
             cwd=str(REPO_ROOT),
-            env={"__PYVENV_LAUNCHER__": sys.executable},
+            env=config.env,
         )
         try:
             yield runtime
@@ -78,6 +78,30 @@ def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord
         for record in caplog.records
         if record.name == RUNTIME_LOGGER and record.levelno == logging.WARNING
     ]
+
+
+def assert_crash_report(caplog: pytest.LogCaptureFixture, lines: list[str]) -> None:
+    [warning] = runtime_warnings(caplog)
+    assert warning.getMessage() == (
+        f"ACP agent exited with code {PEER_EXIT_CODE}; stderr tail:\n"
+        + "\n".join(lines)
+    )
+
+
+async def deliver_stdio_turn(
+    adapter: ACPClientAdapter, message: PlatformMessage, tools: TranscriptTools
+) -> None:
+    await adapter.on_event(
+        AgentInput(
+            msg=message,
+            tools=tools,
+            history=HistoryProvider(raw=[]),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=message.room_id,
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -106,11 +130,7 @@ async def test_crashed_stdio_agent_reports_exit_and_stderr(
                 )
                 await runtime.prompt(session_id=session_id, prompt_text="crash")
 
-    [warning] = runtime_warnings(caplog)
-    assert warning.getMessage() == (
-        f"ACP agent exited with code {PEER_EXIT_CODE}; stderr tail:\n"
-        + "\n".join(lines)
-    )
+    assert_crash_report(caplog, lines)
 
 
 @pytest.mark.asyncio
@@ -136,6 +156,38 @@ async def test_deliberate_stdio_stop_does_not_warn_about_nonzero_exit(
             await runtime.start()
 
     assert runtime_warnings(caplog) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", [ExitStage.STDOUT_EOF, ExitStage.PROTOCOL_ERROR])
+async def test_failed_stdio_turn_reports_crash_and_next_turn_recovers(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    sample_platform_message: PlatformMessage,
+    stage: ExitStage,
+) -> None:
+    lines = ["fatal peer diagnostic"]
+    adapter = ACPClientAdapter(
+        stdio_peer_config(stage, lines, crash_marker=tmp_path / "crashed"),
+        workspace_for_room=lambda room_id: str(REPO_ROOT),
+    )
+    failed = TranscriptTools()
+    recovered = TranscriptTools()
+    with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
+        await adapter.on_started("Stdio peer", "Real subprocess")
+        try:
+            with pytest.raises(ConnectionError, match="Connection closed"):
+                await deliver_stdio_turn(adapter, sample_platform_message, failed)
+            await deliver_stdio_turn(adapter, sample_platform_message, recovered)
+        finally:
+            await adapter.stop()
+
+    assert_crash_report(caplog, lines)
+    assert failed.reply.texts == []
+    assert len(failed.reply.errors) == 1
+    assert recovered.reply.texts == [RECOVERED_REPLY]
+    assert recovered.reply.errors == []
+    assert recovered.turn.replied
 
 
 class InitializationObserver(logging.Handler):

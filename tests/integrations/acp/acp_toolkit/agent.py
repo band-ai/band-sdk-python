@@ -22,6 +22,7 @@ from acp.helpers import (
 )
 from acp.schema import (
     AgentCapabilities,
+    AllowedOutcome,
     ConfigOptionUpdate,
     InitializeResponse,
     LoadSessionResponse,
@@ -365,6 +366,7 @@ class FakeACPAgent:
         arguments: dict[str, Any],
         server: str = "band",
         title: str | None = None,
+        requires_approval: bool = False,
     ) -> FakeACPAgent:
         """Call an advertised MCP tool between ACP call and result updates.
 
@@ -387,6 +389,18 @@ class FakeACPAgent:
                 arguments=arguments,
             )
             await a.emit(sid, update_tool_call(tool_call_id, raw_output=result))
+
+        if requires_approval:
+            return self.will_execute_if_approved(_action)
+        self._script.append(_action)
+        return self
+
+    def will_execute_if_approved(self, action: PromptHandler) -> FakeACPAgent:
+        """Execute an action only when the preceding permission was granted."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            if a.approved is True:
+                await action(a, sid)
 
         self._script.append(_action)
         return self
@@ -438,7 +452,10 @@ class FakeACPAgent:
                     ),
                 ],
             )
-            a.approved = allow_option_id in str(resp)
+            a.approved = (
+                isinstance(resp.outcome, AllowedOutcome)
+                and resp.outcome.option_id == allow_option_id
+            )
 
         self._script.append(_action)
         return self
