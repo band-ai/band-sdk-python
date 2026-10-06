@@ -183,9 +183,15 @@ def liveness_probe(marker: str) -> str:
     )
 
 
-def unique_marker(prefix: str) -> str:
-    """A high-entropy token to assert verbatim in event/memory content."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+def unique_marker(label: str) -> str:
+    """A high-entropy token to assert verbatim in event/memory content.
+
+    One unbroken uppercase code (``NOTE0A832EC4``): a separate word-like label
+    reads as a description, and models drop it when they repeat the token.
+    """
+    if not label.isalnum():
+        raise ValueError(f"marker label must be one alphanumeric word: {label!r}")
+    return f"{label}{uuid.uuid4().hex[:8]}".upper()
 
 
 def reasoning_joke_instruction(name: str) -> str:

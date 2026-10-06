@@ -31,7 +31,8 @@ except ImportError as e:
 
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.core.adapterconfig import BaseAdapterConfig
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -88,7 +89,26 @@ def _to_agent_failure(e: Exception) -> AgentFailure:
     if isinstance(e, ServerError):
         status = e.status if e.status is None else str(e.status)
         return AgentFailure(_PROVIDER, str(e), status, e.message)
-    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+    return generic_provider_failure(_PROVIDER, e)
+
+
+def _model_failure(response: types.GenerateContentResponse) -> ProviderRunError | None:
+    """The failure a response carries as data (a blocked prompt, a safety stop),
+    read the way google-adk's ``LlmResponse.create`` reads it. A reply with
+    content, even one cut off at MAX_TOKENS, and an empty normal finish are
+    not failures."""
+    if response.candidates:
+        candidate = response.candidates[0]
+        if candidate.content and candidate.content.parts:
+            return None
+        reason = candidate.finish_reason
+        if reason is None or reason == types.FinishReason.STOP:
+            return None
+        return ProviderRunError(reason.value, candidate.finish_message)
+    feedback = response.prompt_feedback
+    if feedback is None or feedback.block_reason is None:
+        return None
+    return ProviderRunError(feedback.block_reason.value, feedback.block_reason_message)
 
 
 class GeminiAdapterConfig(BaseAdapterConfig):
@@ -258,12 +278,13 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     response = await self._call_gemini(
                         contents=self._message_history[room_id], tools=gemini_tools
                     )
+                    turn_usage = turn_usage + self._usage_from_response(response)
+                    if failure := _model_failure(response):
+                        raise failure
                 except Exception as e:
                     logger.exception("Error calling Gemini")
                     await tools.send_failure(_to_agent_failure(e))
                     raise
-
-                turn_usage = turn_usage + self._usage_from_response(response)
 
                 candidate_content = self._extract_candidate_content(response)
                 if candidate_content is not None:
