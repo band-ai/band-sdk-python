@@ -45,7 +45,7 @@ Self-hosted usage:
     # No LETTA_API_KEY and no MCP_SERVER_URL needed: the adapter self-hosts
     # the MCP server and the dockerized Letta reaches it through the host.
     docker run --add-host=host.docker.internal:host-gateway \
-        -p 8283:8283 letta/letta:latest
+        -p 8283:8283 letta/letta:0.16.8
     uv run examples/letta/01_basic_agent.py
 
 Troubleshooting:

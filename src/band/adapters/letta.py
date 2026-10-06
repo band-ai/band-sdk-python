@@ -104,7 +104,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         adapter = LettaAdapter(
             config=LettaAdapterConfig(
                 base_url="http://localhost:8283",
-                model="openai/gpt-6-luna",
+                model="openai/gpt-5.4-mini",
             ),
         )
 

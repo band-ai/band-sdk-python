@@ -20,7 +20,7 @@ Environment variables:
 
 Run with:
     docker run -d --add-host=host.docker.internal:host-gateway \
-      -p 8283:8283 -e OPENAI_API_KEY="$OPENAI_API_KEY" letta/letta:latest
+      -p 8283:8283 -e OPENAI_API_KEY="$OPENAI_API_KEY" letta/letta:0.16.8
     uv run pytest tests/integration/test_letta_live.py -v -s --no-cov
 """
 
