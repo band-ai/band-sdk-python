@@ -368,9 +368,7 @@ class FakeACPAgent:
     ) -> FakeACPAgent:
         """Call an advertised MCP tool between ACP call and result updates.
 
-        ``title`` is what the ACP ``tool_call`` update reports; it defaults to
-        the tool name, but a harness may write something else there (OMP uses
-        the model's intent phrase), so tests can model that divergence.
+        ``title`` models agents that report an intent phrase instead of a tool name.
         """
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
