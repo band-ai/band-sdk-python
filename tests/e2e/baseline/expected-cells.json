@@ -5716,6 +5716,51 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/matrix/test_tool_round_trip.py::test_custom_tool_round_trips",
       "adapter": "agno",
       "lanes": [

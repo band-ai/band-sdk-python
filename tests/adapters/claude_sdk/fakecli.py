@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError
+from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 from mcp import ClientSession
 
@@ -117,15 +117,21 @@ class FakeClaude:
         # neither stops nor ends.
         self.ignore_interrupt = False
         self.errors: list[BaseException] = []
+        self.closing: Hold | None = None
+        self.refuse_close = False
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
 
-    def client(self, *, options: ClaudeAgentOptions) -> ClaudeSDKClient:
-        """Stands in for the ``ClaudeSDKClient`` constructor."""
+    def transport(self, options: ClaudeAgentOptions) -> FakeCLISession:
+        """A scripted CLI behind the real SDK client and session lifecycle."""
         session = FakeCLISession(self, options)
         self.sessions.append(session)
-        return ClaudeSDKClient(options=options, transport=session)
+        return session
+
+    @property
+    def session_workspaces(self) -> list[str]:
+        return [str(session.options.cwd) for session in self.sessions]
 
     @property
     def resumed(self) -> list[str | None]:
@@ -162,6 +168,7 @@ class FakeCLISession(Transport):
         self._served: dict[str, set[str]] = {}
         self._turn: asyncio.Task[None] | None = None
         self.alive = True
+        self.refuse_close = False
 
     async def connect(self) -> None:
         if (hold := self.claude.connecting) is not None:
@@ -176,6 +183,11 @@ class FakeCLISession(Transport):
     async def end_input(self) -> None: ...
 
     async def close(self) -> None:
+        if (hold := self.claude.closing) is not None:
+            hold.reached.set()
+            await hold.released.wait()
+        if self.claude.refuse_close or self.refuse_close:
+            raise RuntimeError("Claude CLI cleanup failed")
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()
