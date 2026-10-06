@@ -114,6 +114,7 @@ class ACPRuntime(ACPSessionOperations):
             await self._start(respawn=respawn)
 
     async def _start(self, *, respawn: bool) -> None:
+        self._connection_failed = False
         logger.info(
             "%s ACP agent subprocess",
             "Respawning" if respawn else "Spawning",
@@ -127,6 +128,7 @@ class ACPRuntime(ACPSessionOperations):
                 self._stderr.start(transport)
             await self._initialize_connection(self._conn)
         except (asyncio.CancelledError, KeyboardInterrupt):
+            self._stderr.expect_exit(connection_failed=self._connection_failed)
             await self._cleanup_failed_start(ctx, "init cancel")
             raise
         except Exception:
@@ -191,7 +193,7 @@ class ACPRuntime(ACPSessionOperations):
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         async with self._stop_lock:
-            self._stderr.expect_exit()
+            self._stderr.expect_exit(connection_failed=self._connection_failed)
             ctx = self._ctx
             self._ctx = None
             self._conn = None

@@ -35,6 +35,7 @@ class ACPSessionOperations(ABC):
 
     def __init__(self) -> None:
         self._client: ACPCollectingClient | None = None
+        self._connection_failed = False
         self._agent_mcp_transport = BandMCPTransport.HTTP
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
@@ -175,6 +176,9 @@ class ACPSessionOperations(ABC):
             await conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
             if self._client is not None:
                 await self._client.flush(session_id)
+        except ConnectionError:
+            self._connection_failed = True
+            raise
         finally:
             if self._client is not None:
                 self._client.set_sink(session_id, None)

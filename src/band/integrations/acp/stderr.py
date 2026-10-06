@@ -24,7 +24,9 @@ class ACPStderrDrain:
         self._stdout = process.stdout
         self._task = asyncio.create_task(self._drain(process))
 
-    def expect_exit(self) -> None:
+    def expect_exit(self, *, connection_failed: bool = False) -> None:
+        if connection_failed:
+            return
         # Cleanup after stdout EOF did not cause the connection to close.
         if self._stdout is not None and self._stdout.at_eof():
             return

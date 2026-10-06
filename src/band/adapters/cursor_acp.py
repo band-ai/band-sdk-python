@@ -56,6 +56,7 @@ from band.runtime.decisions import (
     Timeout,
 )
 from band.runtime.formatters import strip_leading_mentions
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
 from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -367,7 +368,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         if parsed is None:
             return False
         spelling, tool = parsed
-        return self._canonical_tool_name(spelling) == tool
+        return tool in self._own_tool_names and spelling == mcp_tool_spelling(
+            BAND_MCP_SERVER_NAME, tool
+        )
 
     async def _ask_room_permission(
         self, turn: CursorTurn, request: ACPPermissionRequest

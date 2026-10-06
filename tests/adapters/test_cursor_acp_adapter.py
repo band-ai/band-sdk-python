@@ -14,6 +14,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from acp.schema import PermissionOption
+from pydantic import BaseModel, create_model
 
 from band.adapters.cursor_acp import (
     DECISION_UNAUTHORIZED_MESSAGE,
@@ -28,6 +29,9 @@ from band.core.types import AgentInput, Capability, HistoryProvider, PlatformMes
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.types import ACPToolCall
+from band.runtime.custom_tools import CustomToolDef
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
+from band.runtime.tools.types import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import (
@@ -161,10 +165,13 @@ async def cursor_room() -> AsyncIterator[Callable[..., Awaitable[CursorRoom]]]:
         agent: FakeACPAgent,
         *,
         capabilities: set[Capability] | None = None,
+        additional_tools: list[CustomToolDef] | None = None,
         **config: Any,
     ) -> CursorRoom:
         adapter = CursorACPAdapter(
-            CursorACPAdapterConfig(**config), capabilities=capabilities
+            CursorACPAdapterConfig(**config),
+            capabilities=capabilities,
+            additional_tools=additional_tools,
         )
         pair_in_process(adapter, agent)
         await adapter.on_started("Cursor", "Cursor agent under test")
@@ -185,12 +192,26 @@ def cursor_in(
     )
 
 
+class EchoInput(BaseModel):
+    text: str
+
+
+def echo(text: str) -> str:
+    return text
+
+
+def custom_reply() -> str:
+    return "custom reply"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("approval_mode", ["manual", "auto_accept", "auto_decline"])
 @pytest.mark.parametrize(
     ("title", "own_tool"),
     [
         ("band-band_store_memory: band_store_memory", True),
+        ("band-band_send_message: band_send_message", True),
+        ("band-echo: echo", True),
         ("other-band_send_message: band_send_message", False),
         ("band-band_store_memory: band_send_message", False),
         ("shell", False),
@@ -208,6 +229,15 @@ async def test_only_registered_band_tools_bypass_cursor_approval(
         FakeACPAgent().will_ask_permission(title=title).will_say("finished"),
         approval_mode=approval_mode,
         capabilities={Capability.MEMORY},
+        additional_tools=[
+            (EchoInput, echo),
+            (
+                create_model(
+                    f"{mcp_tool_spelling(BAND_MCP_SERVER_NAME, BandTool.SEND_MESSAGE)}Input"
+                ),
+                custom_reply,
+            ),
+        ],
         decision_timeout_s=0.1,
     )
 

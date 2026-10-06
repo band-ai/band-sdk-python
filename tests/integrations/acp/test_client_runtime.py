@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,7 +35,7 @@ from band.integrations.acp.session_config import select_ids
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
-from tests.integrations.acp.acp_toolkit.peer import ExitStage
+from tests.integrations.acp.acp_toolkit.peer import INITIALIZE_PENDING_LINE, ExitStage
 from tests.paths import REPO_ROOT
 
 RUNTIME_LOGGER = "band.integrations.acp.client_runtime"
@@ -73,7 +73,13 @@ def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "stage", [ExitStage.INITIALIZE, ExitStage.PROMPT, ExitStage.STDOUT_EOF]
+    "stage",
+    [
+        ExitStage.INITIALIZE,
+        ExitStage.PROMPT,
+        ExitStage.STDOUT_EOF,
+        ExitStage.PROTOCOL_ERROR,
+    ],
 )
 async def test_crashed_stdio_agent_reports_exit_and_stderr(
     stdio_runtime: StdioRuntimeFactory,
@@ -131,6 +137,49 @@ async def test_deliberate_stdio_stop_does_not_warn_about_nonzero_exit(
         try:
             await runtime.start()
         finally:
+            await runtime.stop()
+
+    assert runtime_warnings(caplog) == []
+
+
+class InitializationObserver(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage() == f"ACP agent stderr: {INITIALIZE_PENDING_LINE}":
+            self.started.set()
+
+
+@pytest.fixture
+def initialization_observer() -> Iterator[InitializationObserver]:
+    observer = InitializationObserver()
+    logger = logging.getLogger(RUNTIME_LOGGER)
+    logger.addHandler(observer)
+    try:
+        yield observer
+    finally:
+        logger.removeHandler(observer)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stdio_start_does_not_warn_about_nonzero_exit(
+    stdio_runtime: StdioRuntimeFactory,
+    initialization_observer: InitializationObserver,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = stdio_runtime(ExitStage.INITIALIZE_WAIT, ["cancelled initialization"])
+    with caplog.at_level(logging.DEBUG, logger=RUNTIME_LOGGER):
+        startup = asyncio.create_task(runtime.start())
+        try:
+            await initialization_observer.started.wait()
+            startup.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await startup
+        finally:
+            startup.cancel()
+            await asyncio.gather(startup, return_exceptions=True)
             await runtime.stop()
 
     assert runtime_warnings(caplog) == []

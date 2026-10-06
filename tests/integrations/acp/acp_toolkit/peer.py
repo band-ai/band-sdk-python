@@ -14,10 +14,14 @@ from acp.schema import InitializeResponse
 
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
+INITIALIZE_PENDING_LINE = "initialization pending"
+
 
 class ExitStage(StrEnum):
     INITIALIZE = "initialize"
+    INITIALIZE_WAIT = "initialize-wait"
     PROMPT = "prompt"
+    PROTOCOL_ERROR = "protocol-error"
     STDOUT_EOF = "stdout-eof"
     EOF = "eof"
 
@@ -41,16 +45,26 @@ class StdioPeer(FakeACPAgent):
     ) -> InitializeResponse:
         if self.stage is ExitStage.INITIALIZE:
             self.exit_process()
+        if self.stage is ExitStage.INITIALIZE_WAIT:
+            sys.stderr.write(INITIALIZE_PENDING_LINE + "\n")
+            sys.stderr.flush()
+            await asyncio.Future[None]()
         return await super().initialize(protocol_version, client_capabilities, **kwargs)
 
     async def exit_on_prompt(self, agent: FakeACPAgent, session_id: str) -> None:
         del agent, session_id
-        if self.stage is ExitStage.PROMPT:
-            self.exit_process()
-        if self.stage is ExitStage.STDOUT_EOF:
-            os.close(sys.stdout.fileno())
-            # Keep stderr alive until runtime cleanup closes the agent's stdin.
-            await asyncio.Future[None]()
+        match self.stage:
+            case ExitStage.PROMPT:
+                self.exit_process()
+            case ExitStage.PROTOCOL_ERROR:
+                sys.stdout.write("[]\n")
+                sys.stdout.flush()
+            case ExitStage.STDOUT_EOF:
+                os.close(sys.stdout.fileno())
+            case _:
+                return
+        # Keep stderr alive until runtime cleanup closes the agent's stdin.
+        await asyncio.Future[None]()
 
 
 async def main() -> None:
