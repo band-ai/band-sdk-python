@@ -24,7 +24,7 @@ from band.adapters.cursor_acp import (
 )
 from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import AgentInput, Capability, HistoryProvider, PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.types import ACPToolCall
@@ -157,8 +157,15 @@ class CursorRoom:
 async def cursor_room() -> AsyncIterator[Callable[..., Awaitable[CursorRoom]]]:
     adapters: list[CursorACPAdapter] = []
 
-    async def open_room(agent: FakeACPAgent, **config: Any) -> CursorRoom:
-        adapter = CursorACPAdapter(CursorACPAdapterConfig(**config))
+    async def open_room(
+        agent: FakeACPAgent,
+        *,
+        capabilities: set[Capability] | None = None,
+        **config: Any,
+    ) -> CursorRoom:
+        adapter = CursorACPAdapter(
+            CursorACPAdapterConfig(**config), capabilities=capabilities
+        )
         pair_in_process(adapter, agent)
         await adapter.on_started("Cursor", "Cursor agent under test")
         adapters.append(adapter)
@@ -176,6 +183,42 @@ def cursor_in(
     return CursorACPAdapter(
         config, workspace_for_room=lambda room_id: str(workspace_root / room_id)
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approval_mode", ["manual", "auto_accept", "auto_decline"])
+@pytest.mark.parametrize(
+    ("title", "own_tool"),
+    [
+        ("band-band_store_memory: band_store_memory", True),
+        ("other-band_send_message: band_send_message", False),
+        ("band-band_store_memory: band_send_message", False),
+        ("shell", False),
+        ("shell: shell", False),
+        ("band-unknown: unknown", False),
+    ],
+)
+async def test_only_registered_band_tools_bypass_cursor_approval(
+    cursor_room: Callable[..., Awaitable[CursorRoom]],
+    approval_mode: str,
+    title: str,
+    own_tool: bool,
+) -> None:
+    room = await cursor_room(
+        FakeACPAgent().will_ask_permission(title=title).will_say("finished"),
+        approval_mode=approval_mode,
+        capabilities={Capability.MEMORY},
+        decision_timeout_s=0.1,
+    )
+
+    tools = await room.send("run the tool")
+    asks_room = approval_mode == "manual" and not own_tool
+    if asks_room:
+        await tools.until_said("needs permission")
+    await room.turns_finished()
+
+    assert room.agent.approved is (own_tool or approval_mode == "auto_accept")
+    assert any("needs permission" in message for message in said(tools)) is asks_room
 
 
 class TestCursorACPAdapterConfig:

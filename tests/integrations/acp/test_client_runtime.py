@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
+from collections.abc import Callable
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +25,7 @@ from band.integrations.acp.client_profiles import (
 )
 from band.integrations.acp.client_runtime import (
     ACP_STDIO_LIMIT_BYTES,
+    STDERR_TAIL_LINES,
     ACPCollectingClient,
     ACPRuntime,
     select_allow_option_id,
@@ -31,6 +35,101 @@ from band.integrations.acp.session_config import select_ids
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
+from tests.integrations.acp.acp_toolkit.peer import ExitStage
+from tests.paths import REPO_ROOT
+
+RUNTIME_LOGGER = "band.integrations.acp.client_runtime"
+PEER_EXIT_CODE = 3
+StdioRuntimeFactory = Callable[[ExitStage, list[str]], ACPRuntime]
+
+
+@pytest.fixture
+def stdio_runtime() -> StdioRuntimeFactory:
+    def build(stage: ExitStage, lines: list[str]) -> ACPRuntime:
+        return ACPRuntime(
+            command=[
+                sys.executable,
+                "-m",
+                "tests.integrations.acp.acp_toolkit.peer",
+                stage,
+                str(PEER_EXIT_CODE),
+                *lines,
+            ],
+            cwd=str(REPO_ROOT),
+        )
+
+    return build
+
+
+def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.name == RUNTIME_LOGGER and record.levelno == logging.WARNING
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", [ExitStage.INITIALIZE, ExitStage.PROMPT])
+async def test_crashed_stdio_agent_reports_exit_and_stderr(
+    stdio_runtime: StdioRuntimeFactory,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    stage: ExitStage,
+) -> None:
+    lines = ["authentication failed", "peer crashed"]
+    runtime = stdio_runtime(stage, lines)
+    with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
+        try:
+            if stage is ExitStage.INITIALIZE:
+                with pytest.raises(Exception, match="Connection closed"):
+                    await runtime.start()
+            else:
+                await runtime.start()
+                session_id = await runtime.create_session(
+                    cwd=str(tmp_path), mcp_servers=[]
+                )
+                with pytest.raises(Exception, match="Connection closed"):
+                    await runtime.prompt(session_id=session_id, prompt_text="crash")
+        finally:
+            await runtime.stop()
+
+    [warning] = runtime_warnings(caplog)
+    assert warning.getMessage() == (
+        f"ACP agent exited with code {PEER_EXIT_CODE}; stderr tail:\n"
+        + "\n".join(lines)
+    )
+
+
+@pytest.mark.asyncio
+async def test_crashed_stdio_agent_reports_only_the_stderr_tail(
+    stdio_runtime: StdioRuntimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    lines = [f"diagnostic {index}" for index in range(STDERR_TAIL_LINES + 5)]
+    runtime = stdio_runtime(ExitStage.INITIALIZE, lines)
+    with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
+        try:
+            with pytest.raises(Exception, match="Connection closed"):
+                await runtime.start()
+        finally:
+            await runtime.stop()
+
+    [warning] = runtime_warnings(caplog)
+    assert warning.getMessage().splitlines()[1:] == lines[-STDERR_TAIL_LINES:]
+
+
+@pytest.mark.asyncio
+async def test_deliberate_stdio_stop_does_not_warn_about_nonzero_exit(
+    stdio_runtime: StdioRuntimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    runtime = stdio_runtime(ExitStage.EOF, ["deliberately stopped"])
+    with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
+        try:
+            await runtime.start()
+        finally:
+            await runtime.stop()
+
+    assert runtime_warnings(caplog) == []
 
 
 class TestSelectAllowOptionId:
@@ -832,7 +931,6 @@ class TestACPRuntime:
         runtime = ACPRuntime(command=["codex"])
         runtime._conn = mock_conn
         runtime._client = ACPCollectingClient()
-        runtime._client._session_chunks["sess-1"] = []
 
         session_id = await runtime.create_session(cwd="/tmp", mcp_servers=[])
         chunks = await runtime.prompt(session_id=session_id, prompt_text="hello")
@@ -934,7 +1032,7 @@ class TestACPRuntime:
         runtime._agent_supports_session_load = True
 
         with patch(
-            "band.integrations.acp.client_runtime.ACP_SESSION_LOAD_TIMEOUT_SECONDS",
+            "band.integrations.acp.sessions.ACP_SESSION_LOAD_TIMEOUT_SECONDS",
             0.01,
         ):
             assert not await runtime.load_session(

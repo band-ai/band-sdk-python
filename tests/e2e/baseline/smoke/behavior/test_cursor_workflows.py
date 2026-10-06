@@ -23,9 +23,10 @@ from band.core.memory_types import (
     MemoryType,
 )
 from band.core.types import Capability
+from band.integrations.acp.cursor import cursor_mcp_title
 from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
-from band.runtime.tools.effects import turn_effect
-from band.runtime.tools.types import TurnEffect
+from band.runtime.tools.registry import canonicalize_mcp_tool_name
+from band.runtime.tools.types import BandTool
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import (
@@ -60,7 +61,8 @@ logger = logging.getLogger(__name__)
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 WORKFLOW_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
 RECOVERY_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=4)
-MAX_PERMISSION_REQUESTS = 8
+# Each project turn asks for one native shell call.
+MAX_PERMISSION_REQUESTS = 1
 PROJECT_TEST_TIMEOUT_S = 30
 SOURCE_FILE = "calculator.py"
 TEST_FILE = "test_calculator.py"
@@ -290,6 +292,12 @@ async def _decide_permissions_until_closed(
     one holds the turn open, so the reply alone does not end the decisions.
     """
     for attempt in range(MAX_PERMISSION_REQUESTS):
+        parsed = cursor_mcp_title(request["tool"])
+        if parsed is not None:
+            spelling, tool = parsed
+            assert canonicalize_mcp_tool_name(spelling, BandTool) != tool, (
+                f"Cursor asked the room to approve a Band tool: {request['tool']}"
+            )
         outcome = Outcome.APPROVE
         if deny_first_tool is not None and attempt == 0:
             assert deny_first_tool in request["tool"], (
@@ -319,11 +327,7 @@ async def _decide_permissions_until_closed(
                 room.shown(reply_marker, since=checkpoint.cursor),
             )
             return
-        requested_tool = pending["tool"].partition(":")[0]
-        if (
-            deny_first_tool is not None
-            and turn_effect(requested_tool) is not TurnEffect.REPLY
-        ):
+        if deny_first_tool is not None:
             pytest.fail(
                 "Cursor requested another permission after the denied action: "
                 f"{room.said_since(checkpoint.cursor)}"

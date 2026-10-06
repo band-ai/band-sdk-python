@@ -1,4 +1,4 @@
-"""Dependency-free room decision vocabulary for the Cursor ACP adapter."""
+"""Dependency-free Cursor tool-title parsing and room decision vocabulary."""
 
 from __future__ import annotations
 
@@ -9,6 +9,17 @@ DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisi
 
 ROOM_COMMAND = "/cursor"
 CURSOR_CLI_BINARY = "agent"
+CURSOR_TITLE_SEPARATOR = ": "
+
+
+def cursor_mcp_title(title: str) -> tuple[str, str] | None:
+    """Parse Cursor's ``provider-tool: tool`` display title, failing closed."""
+    spelling, separator, tool = title.partition(CURSOR_TITLE_SEPARATOR)
+    if not separator or not spelling or not tool or spelling == tool:
+        return None
+    if any(char.isspace() for char in spelling + tool) or ":" in spelling + tool:
+        return None
+    return spelling, tool
 
 
 class CursorCommandWord(StrEnum):

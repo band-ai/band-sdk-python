@@ -27,13 +27,7 @@ from band.integrations.acp.client_profiles import (
     CursorQuestion,
     parse_cursor_questions,
 )
-from band.integrations.acp.client_runtime import (
-    ALLOW_ALWAYS_KIND,
-    ACPRuntime,
-    option_id_of_kind,
-    permission_option_ids,
-    select_allow_option_id,
-)
+from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import (
     CURSOR_CLI_BINARY,
@@ -45,8 +39,16 @@ from band.integrations.acp.cursor import (
     PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
+    cursor_mcp_title,
+)
+from band.integrations.acp.permissions import (
+    ALLOW_ALWAYS_KIND,
+    option_id_of_kind,
+    permission_option_ids,
+    select_allow_option_id,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
+from band.integrations.acp.types import ACPToolCall
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.decisions import (
     DecisionEntry,
@@ -79,8 +81,9 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
         api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
             exclusive with ``auth_token``.
         auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
-        approval_mode: How Cursor's permission requests are decided;
-            ``"manual"`` asks the room.
+        approval_mode: How Cursor's own tools are decided; ``"manual"`` asks
+            the room. Band tools, including additional_tools, are approved
+            once per call in every mode.
         question_mode: How Cursor's questions are answered; ``"manual"`` asks
             the room.
         plan_mode: How Cursor's plans are settled; ``"manual"`` asks the room.
@@ -345,6 +348,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
+        if self._is_own_band_tool(request.tool_call):
+            return select_allow_option_id(request.options)
         match self.config.approval_mode:
             case "auto_accept":
                 return select_allow_option_id(request.options)
@@ -356,6 +361,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                     return None
                 async with turn.permission_lock:
                     return await self._ask_room_permission(turn, request)
+
+    def _is_own_band_tool(self, call: ACPToolCall) -> bool:
+        parsed = cursor_mcp_title(call.name)
+        if parsed is None:
+            return False
+        spelling, tool = parsed
+        return self._canonical_tool_name(spelling) == tool
 
     async def _ask_room_permission(
         self, turn: CursorTurn, request: ACPPermissionRequest
