@@ -22,31 +22,20 @@ import pytest
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from band.core.exceptions import ProviderRunError
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
-    TurnResultAlreadyReported,
 )
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
 from band.testing import (
-    MISSING_REPLY_FAILURE,
     FakeAgentTools,
-    failure_reports,
-    reported_failures,
 )
 from tests.adapters.genaikit import (
-    SCRIPTED_USAGE,
-    PlatformSchemaFakeTools,
+    ModelFailureCases,
     no_candidates,
-    prompt_blocked,
-    stopped,
-    tool_call,
 )
-from tests.adapters.usage_events import recorded_usage_payloads
 from tests.framework_conformance.turnprobes import (
     CUSTOM_TOOL_DECLARATIONS,
-    turn_input,
 )
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
@@ -1080,71 +1069,14 @@ class TestErrorHandling:
         assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
-class TestModelFailuresReturnedAsData:
-    """ADK yields a model failure as an event instead of raising; the adapter
-    must still fail the turn, even after the turn did real work."""
-
-    @pytest.mark.parametrize(
-        ("script", "code"),
-        [
-            pytest.param([stopped(types.FinishReason.SAFETY)], "SAFETY", id="safety"),
-            pytest.param(
-                [prompt_blocked(types.BlockedReason.PROHIBITED_CONTENT)],
-                "PROHIBITED_CONTENT",
-                id="prompt-blocked",
-            ),
-            pytest.param([no_candidates()], "UNKNOWN_ERROR", id="no-candidates"),
-            pytest.param(
-                [
-                    tool_call(BandTool.CREATE_CHATROOM, {}),
-                    stopped(types.FinishReason.SAFETY),
-                ],
-                "SAFETY",
-                id="safety-after-real-work",
-            ),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_reports_the_failure_code_without_the_provider_text(
-        self, scripted_adapter, script, code
-    ):
-        adapter = await scripted_adapter(*script)
-        tools = PlatformSchemaFakeTools()
-
-        with pytest.raises(ProviderRunError):
-            await adapter.on_event(turn_input(tools))
-
-        assert reported_failures(tools) == [
-            {
-                "provider": "google_adk",
-                "code": code,
-                "message": GENERIC_PROVIDER_FAILURE_MESSAGE,
-                "detail": None,
-            }
-        ]
+class TestModelFailuresReturnedAsData(ModelFailureCases):
+    PROVIDER = "google_adk"
 
     @pytest.mark.asyncio
-    async def test_empty_normal_finish_is_only_a_missing_reply(self, scripted_adapter):
-        adapter = await scripted_adapter(stopped(types.FinishReason.STOP))
-        tools = PlatformSchemaFakeTools()
-
-        with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_event(turn_input(tools))
-
-        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
-
-    @pytest.mark.asyncio
-    async def test_failed_run_still_emits_its_usage(self, scripted_adapter):
-        adapter = await scripted_adapter(
-            stopped(types.FinishReason.SAFETY), emit={Emit.USAGE}
+    async def test_no_candidates_fails_with_adks_own_code(self, scripted_adapter):
+        await self.assert_turn_fails_with(
+            scripted_adapter, [no_candidates()], "UNKNOWN_ERROR"
         )
-        tools = PlatformSchemaFakeTools()
-
-        with pytest.raises(ProviderRunError):
-            await adapter.on_event(turn_input(tools))
-
-        [usage] = recorded_usage_payloads(tools)
-        assert usage["input_tokens"] == SCRIPTED_USAGE.prompt_token_count
 
 
 class TestHistoryTranscript:

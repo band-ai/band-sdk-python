@@ -15,28 +15,21 @@ from google.genai.errors import ServerError
 from pydantic import BaseModel, Field, ValidationError
 
 from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
-from band.core.exceptions import ProviderRunError
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
-    TurnResultAlreadyReported,
 )
 from band.core.types import Emit, PlatformMessage, ToolEventKey
 from band.runtime.tools import BandTool
 from band.testing import (
-    MISSING_REPLY_FAILURE,
     FakeAgentTools,
-    failure_reports,
     reported_failures,
 )
 from tests.adapters.genaikit import (
-    SCRIPTED_USAGE,
+    ModelFailureCases,
     PlatformSchemaFakeTools,
-    prompt_blocked,
-    stopped,
     text_reply,
     tool_call,
 )
-from tests.adapters.usage_events import recorded_usage_payloads
 from tests.framework_conformance.turnprobes import (
     CUSTOM_TOOL_DECLARATIONS,
     turn_input,
@@ -380,57 +373,8 @@ class TestErrorReporting:
         assert failure.detail == "backend overloaded"
 
 
-class TestModelFailuresReturnedAsData:
-    """A blocked prompt or a safety stop arrives as a normal response; the
-    adapter must still fail the turn, even after the turn did real work."""
-
-    @pytest.mark.parametrize(
-        ("script", "code"),
-        [
-            pytest.param([stopped(types.FinishReason.SAFETY)], "SAFETY", id="safety"),
-            pytest.param(
-                [prompt_blocked(types.BlockedReason.PROHIBITED_CONTENT)],
-                "PROHIBITED_CONTENT",
-                id="prompt-blocked",
-            ),
-            pytest.param(
-                [
-                    tool_call(BandTool.CREATE_CHATROOM, {}),
-                    stopped(types.FinishReason.SAFETY),
-                ],
-                "SAFETY",
-                id="safety-after-real-work",
-            ),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_reports_the_failure_code_without_the_provider_text(
-        self, scripted_adapter, script, code
-    ):
-        adapter = await scripted_adapter(*script)
-        tools = PlatformSchemaFakeTools()
-
-        with pytest.raises(ProviderRunError):
-            await adapter.on_event(turn_input(tools))
-
-        assert reported_failures(tools) == [
-            {
-                "provider": "gemini",
-                "code": code,
-                "message": GENERIC_PROVIDER_FAILURE_MESSAGE,
-                "detail": None,
-            }
-        ]
-
-    @pytest.mark.asyncio
-    async def test_empty_normal_finish_is_only_a_missing_reply(self, scripted_adapter):
-        adapter = await scripted_adapter(stopped(types.FinishReason.STOP))
-        tools = PlatformSchemaFakeTools()
-
-        with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_event(turn_input(tools))
-
-        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+class TestModelFailuresReturnedAsData(ModelFailureCases):
+    PROVIDER = "gemini"
 
     @pytest.mark.asyncio
     async def test_reply_cut_off_at_max_tokens_completes(self, scripted_adapter):
@@ -443,19 +387,6 @@ class TestModelFailuresReturnedAsData:
         await adapter.on_event(turn_input(tools))
 
         assert reported_failures(tools) == []
-
-    @pytest.mark.asyncio
-    async def test_failed_run_still_emits_its_usage(self, scripted_adapter):
-        adapter = await scripted_adapter(
-            stopped(types.FinishReason.SAFETY), emit={Emit.USAGE}
-        )
-        tools = PlatformSchemaFakeTools()
-
-        with pytest.raises(ProviderRunError):
-            await adapter.on_event(turn_input(tools))
-
-        [usage] = recorded_usage_payloads(tools)
-        assert usage["input_tokens"] == SCRIPTED_USAGE.prompt_token_count
 
 
 class TestRetries:

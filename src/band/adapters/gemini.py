@@ -93,10 +93,8 @@ def _to_agent_failure(e: Exception) -> AgentFailure:
 
 
 def _model_failure(response: types.GenerateContentResponse) -> ProviderRunError | None:
-    """The failure a response carries as data (a blocked prompt, a safety stop),
-    read the way google-adk's ``LlmResponse.create`` reads it. A reply with
-    content, even one cut off at MAX_TOKENS, and an empty normal finish are
-    not failures."""
+    """The failure a response carries as data, read the way google-adk's
+    ``LlmResponse.create`` reads it."""
     if response.candidates:
         candidate = response.candidates[0]
         if candidate.content and candidate.content.parts:

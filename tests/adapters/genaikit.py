@@ -2,18 +2,37 @@
 
 Gemini reads a ``GenerateContentResponse`` directly and Google ADK reads the
 same object through ``LlmResponse.create``, so both adapters' tests script
-turns from these builders. Every response carries ``SCRIPTED_USAGE``.
+turns from these builders and share ``ModelFailureCases``. Every response
+carries ``SCRIPTED_USAGE``.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
+import pytest
 from google.genai import types
 
-from band.runtime.tools import AgentTools
-from band.testing import FakeAgentTools
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import Emit
+from band.runtime.tools import AgentTools, BandTool
+from band.testing import (
+    MISSING_REPLY_FAILURE,
+    FakeAgentTools,
+    failure_reports,
+    reported_failures,
+)
+from tests.adapters.usage_events import recorded_usage_payloads
+from tests.framework_conformance.turnprobes import turn_input
+
+ScriptedAdapter = Callable[..., Awaitable[SimpleAdapter[Any]]]
 
 SCRIPTED_USAGE = types.GenerateContentResponseUsageMetadata(
     prompt_token_count=11, candidates_token_count=3
@@ -82,3 +101,89 @@ def _candidate(
         ],
         usage_metadata=SCRIPTED_USAGE,
     )
+
+
+class ModelFailureCases:
+    """Turn cases for an adapter whose model returns a failed run as data. A
+    subclass sets ``PROVIDER`` and provides a ``scripted_adapter`` fixture that
+    builds a started adapter playing the given responses in order."""
+
+    PROVIDER: ClassVar[str]
+
+    @pytest.mark.parametrize(
+        ("script", "code"),
+        [
+            pytest.param([stopped(types.FinishReason.SAFETY)], "SAFETY", id="safety"),
+            pytest.param(
+                [prompt_blocked(types.BlockedReason.PROHIBITED_CONTENT)],
+                "PROHIBITED_CONTENT",
+                id="prompt-blocked",
+            ),
+            pytest.param(
+                [
+                    tool_call(BandTool.CREATE_CHATROOM, {}),
+                    stopped(types.FinishReason.SAFETY),
+                ],
+                "SAFETY",
+                id="safety-after-real-work",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_reports_the_failure_code_without_the_provider_text(
+        self,
+        scripted_adapter: ScriptedAdapter,
+        script: list[types.GenerateContentResponse],
+        code: str,
+    ) -> None:
+        await self.assert_turn_fails_with(scripted_adapter, script, code)
+
+    @pytest.mark.asyncio
+    async def test_empty_normal_finish_is_only_a_missing_reply(
+        self, scripted_adapter: ScriptedAdapter
+    ) -> None:
+        adapter = await scripted_adapter(stopped(types.FinishReason.STOP))
+        tools = PlatformSchemaFakeTools()
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    @pytest.mark.asyncio
+    async def test_failed_run_still_emits_its_usage(
+        self, scripted_adapter: ScriptedAdapter
+    ) -> None:
+        adapter = await scripted_adapter(
+            stopped(types.FinishReason.SAFETY), emit={Emit.USAGE}
+        )
+        tools = PlatformSchemaFakeTools()
+
+        with pytest.raises(ProviderRunError):
+            await adapter.on_event(turn_input(tools))
+
+        [usage] = recorded_usage_payloads(tools)
+        assert usage["input_tokens"] == SCRIPTED_USAGE.prompt_token_count
+
+    async def assert_turn_fails_with(
+        self,
+        scripted_adapter: ScriptedAdapter,
+        script: list[types.GenerateContentResponse],
+        code: str,
+    ) -> None:
+        adapter = await scripted_adapter(*script)
+        tools = PlatformSchemaFakeTools()
+
+        with pytest.raises(ProviderRunError):
+            await adapter.on_event(turn_input(tools))
+
+        assert reported_failures(tools) == [
+            {
+                "provider": self.PROVIDER,
+                "code": code,
+                "message": GENERIC_PROVIDER_FAILURE_MESSAGE,
+                "detail": None,
+            }
+        ]
+        posted = [*tools.chat, *(event["content"] for event in tools.events_sent)]
+        assert not any(PROVIDER_DETAIL in content for content in posted)
