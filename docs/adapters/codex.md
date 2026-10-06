@@ -17,6 +17,11 @@ workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
   a custom `workspace_for_room` must return a distinct absolute path for every
   live room. `cwd`, a non-stdio `transport` and a custom `client_factory` are
   rejected at construction because they cannot guarantee per-room isolation.
+- **Ownership survives recovery and failed cleanup.** The workspace stays
+  claimed until the room leaves and its process is closed. Failed startup,
+  close errors and close timeouts retain the claim for retry. A timed-out or
+  cancelled caller does not abandon subprocess cleanup; retry room cleanup to
+  finish releasing ownership. Shutdown attempts every room and reports failures.
 - **Codex's final text is a fallback reply.** With `fallback_send_agent_text`
   (on by default) it is posted when the turn did not reply through a Band tool.
 - **`reasoning_effort` is not validated.** The valid values depend on the model

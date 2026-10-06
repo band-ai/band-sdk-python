@@ -364,6 +364,7 @@ class RoomCodexClient:
     workspace: str
     client: CodexClientProtocol | None = None
     initialized: bool = False
+    unusable: bool = False
     model_override: str | None = None
     selected_model: str | None = None
     reasoning_effort: str | None = None
@@ -781,6 +782,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
+        if self._room_clients:
+            await self.cleanup_all()
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
         self._log_startup_config(agent_name)
@@ -1417,21 +1420,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         thread_id,
                         turn_id,
                     )
-                    # Reset client state so _ensure_client_ready() rebuilds
-                    # on the next message instead of reusing a dead client.
-                    self._client = None
-                    self._initialized = False
-                    # Clear per-room state that references the dead session so
-                    # the next turn does a fresh thread/start instead of reusing
-                    # a cached thread_id the new subprocess doesn't know about.
-                    # Also drop token-usage entries keyed by the dead thread
-                    # ids; otherwise they leak until the last-room teardown
-                    # because on_cleanup can no longer resolve their keys.
-                    stale_thread = self._room_threads.pop(room_id, None)
-                    self._raw_history_by_room.pop(room_id, None)
-                    if stale_thread:
-                        self._token_usage.pop(stale_thread, None)
-                    self._clear_pending_approvals_for_room(room_id)
+                    # EOF or a failed reader does not prove the child exited.
+                    await self._retire_client(self._require_active_client_state())
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
                     # twice -- but the turn still fails either way.
@@ -1543,64 +1533,58 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:
-            thread_id = self._room_threads.pop(room_id, None)
-            if thread_id:
-                self._token_usage.pop(thread_id, None)
+            await self._retire_client(room)
             self._prompt_injected_rooms.discard(room_id)
-            self._raw_history_by_room.pop(room_id, None)
             self._needs_history_injection.discard(room_id)
             self._approval_audit.pop(room_id, None)
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
             self._room_task_titles.pop(room_id, None)
-            if self._client is None:
-                self._room_clients.pop(room_id, None)
-                self._release_room_workspace(room, room_id)
-                return
-            try:
-                close_coro = self._client.close()
-                timeout = self.config.client_close_timeout_s
-                if timeout is not None:
-                    try:
-                        await asyncio.wait_for(close_coro, timeout=timeout)
-                    except TimeoutError:
-                        logger.warning(
-                            "Codex client.close() exceeded %ss timeout; "
-                            "dropping client reference",
-                            timeout,
-                        )
-                else:
-                    await close_coro
-            finally:
-                self._client = None
-                self._initialized = False
-                self._selected_model = None
-                self._room_clients.pop(room_id, None)
-                self._release_room_workspace(room, room_id)
+            self._room_clients.pop(room_id, None)
+            self._release_room_workspace(room, room_id)
+
+    async def _retire_client(self, room: RoomCodexClient) -> None:
+        """Retain an unusable client and its claim until cleanup succeeds."""
+        room.unusable = True
+        room.initialized = False
+        room.selected_model = None
+        # A replacement process cannot use the retired process's thread.
+        if (room_id := self._active_room.get()) is not None:
+            thread_id = self._room_threads.pop(room_id, None)
+            self._raw_history_by_room.pop(room_id, None)
+            if thread_id:
+                self._token_usage.pop(thread_id, None)
+            self._clear_pending_approvals_for_room(room_id)
+        if room.client is not None:
+            await asyncio.wait_for(
+                room.client.close(), timeout=self.config.client_close_timeout_s
+            )
+            room.client = None
+        room.unusable = False
 
     async def cleanup_all(self) -> None:
-        """Close every room-owned Codex process during agent shutdown."""
-        room_ids = list(self._room_clients)
+        """Attempt every room, retaining failed handles and claims for retry."""
         results = await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in room_ids),
+            *(self.on_cleanup(room_id) for room_id in list(self._room_clients)),
             return_exceptions=True,
         )
-        for room_id, result in zip(room_ids, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.warning(
-                    "Failed to clean up Codex client for room %s: %s",
-                    room_id,
-                    result,
-                )
+        errors: list[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                errors.append(result)
+        if errors:
+            raise ExceptionGroup("Codex session cleanup failed", errors)
 
     async def _ensure_client_ready(self) -> None:
-        if self._client is None:
-            self._client = self._build_client(self.config)
-
-        client = self._client
-        if client is None:
-            raise RuntimeError("Codex client was not created")
-        if self._initialized:
+        room = self._require_active_client_state()
+        if room.unusable:
+            await self._retire_client(room)
+        if room.client is None:
+            room.client = self._build_client(self.config)
+        client = room.client
+        if room.initialized:
             return
         try:
             await client.connect()
@@ -1611,27 +1595,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 experimental_api=self.config.experimental_api,
             )
             await self._register_skill_roots(client)
-            self._selected_model = await self._select_model()
-            self._initialized = True
-        except Exception:
-            if self._client is client:
-                self._client = None
-                try:
-                    await client.close()
-                except Exception:
-                    logger.warning(
-                        "Failed to close unsuccessfully initialized Codex client",
-                        exc_info=True,
-                    )
-                # Release the workspace claim (unconditionally -- whether or not
-                # close() itself also raised) but keep the room's RoomCodexClient,
-                # so model_override/reasoning settings survive a failed rebuild
-                # for the next retry. _release_room_workspace's ownership check
-                # keeps this safe even though the stale entry outlives the claim.
-                room_id = self._active_room.get()
-                state = self._active_client_state()
-                if room_id is not None and state is not None:
-                    self._release_room_workspace(state, room_id)
+            room.selected_model = await self._select_model()
+            room.initialized = True
+        except BaseException:
+            await self._retire_client(room)
             raise
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:

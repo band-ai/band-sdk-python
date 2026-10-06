@@ -663,7 +663,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
         if self._session_manager is not None:
-            await self._session_manager.stop()
+            await self.cleanup_all()
 
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()

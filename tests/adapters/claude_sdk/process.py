@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
+from band.runtime.tools import BAND_MCP_SERVER_NAME
+from tests.paths import REPO_ROOT
 
 PROBE = """
 import json
@@ -48,5 +50,15 @@ class WorkspaceProcess(SubprocessCLITransport):
 class WorkspacePeer(WorkspaceProcess):
     """A child that speaks stream-json and executes relative file operations."""
 
+    arguments: tuple[str, ...] = ()
+
     def _build_command(self) -> list[str]:
-        return [sys.executable, "-u", str(Path(__file__).with_name("workspacepeer.py"))]
+        command = [
+            sys.executable,
+            "-u",
+            str(REPO_ROOT / "tests/adapters/roompeer.py"),
+            *self.arguments,
+        ]
+        if server := self._options.mcp_servers.get(BAND_MCP_SERVER_NAME):
+            command.extend(["--band-url", str(server["url"])])
+        return command
