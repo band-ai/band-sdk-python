@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
@@ -42,3 +43,10 @@ class WorkspaceProcess(SubprocessCLITransport):
         await super().connect()
         assert self._process is not None
         self._child = self._process
+
+
+class WorkspacePeer(WorkspaceProcess):
+    """A child that speaks stream-json and executes relative file operations."""
+
+    def _build_command(self) -> list[str]:
+        return [sys.executable, "-u", str(Path(__file__).with_name("workspacepeer.py"))]

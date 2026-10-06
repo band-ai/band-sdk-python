@@ -25,38 +25,9 @@ from band.adapters.claude_sdk import (
 from band.core.types import Emit
 from band.integrations.claude_sdk.transport import create_transport
 from tests.adapters.claude_sdk.helpers import SEND_MESSAGE_MCP_NAME, ClaudeRoom
-from tests.adapters.claude_sdk.process import WorkspaceProcess
 from tests.paths import host_absolute_path
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
-
-
-async def test_real_children_use_their_assigned_workspaces(tmp_path: Path) -> None:
-    observations = []
-    for room_id in ("room-a", "room-b"):
-        workspace = tmp_path / room_id
-        workspace.mkdir()
-        transport = WorkspaceProcess(
-            prompt="",
-            options=ClaudeAgentOptions(
-                cwd=workspace, cli_path=sys.executable, env={"PROBE_MARKER": room_id}
-            ),
-        )
-        await transport.connect()
-        try:
-            messages = transport.read_messages()
-            observations.append(await anext(messages))
-            await messages.aclose()
-        finally:
-            await transport.close()
-        assert transport.exited
-    assert observations == [
-        {"cwd": str(tmp_path / room_id), "marker": room_id}
-        for room_id in ("room-a", "room-b")
-    ]
-    assert (tmp_path / "room-a" / "probe.txt").read_text() == "room-a"
-    assert (tmp_path / "room-b" / "probe.txt").read_text() == "room-b"
-    assert not (tmp_path / "probe.txt").exists()
 
 
 def test_owned_transport_preserves_sdk_permission_routing() -> None:

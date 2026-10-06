@@ -3,39 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
-from claude_agent_sdk import ClaudeAgentOptions
+from claude_agent_sdk import CLIConnectionError
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
-from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
-from band.workspaces import RoomWorkspaces, create_room_workspace_resolver
+from band.workspaces import create_room_workspace_resolver
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
-
-
-@pytest_asyncio.fixture(loop_scope="function")
-async def sessions(
-    claude: FakeClaude, tmp_path: Path
-) -> AsyncIterator[ClaudeSessionManager]:
-    manager = ClaudeSessionManager(
-        ClaudeAgentOptions(),
-        workspaces=RoomWorkspaces(lambda _: str(tmp_path / "shared")),
-    )
-    yield manager
-    claude.refuse_close = False
-    for session in claude.sessions:
-        session.refuse_close = False
-    if claude.connecting is not None:
-        claude.connecting.released.set()
-    if claude.closing is not None:
-        claude.closing.released.set()
-    await manager.stop()
 
 
 async def test_default_rooms_have_distinct_workspaces(
@@ -75,125 +54,164 @@ def test_cwd_and_resolver_are_mutually_exclusive(tmp_path: Path) -> None:
         )
 
 
-async def test_retired_session_keeps_its_workspace_until_leave(
-    claude: FakeClaude, tmp_path: Path
+async def test_cancelled_turn_keeps_its_workspace_until_leave(
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
     path = tmp_path / "original"
-    manager = ClaudeSessionManager(
-        ClaudeAgentOptions(), workspaces=RoomWorkspaces(lambda _: str(path))
+    room = await claude_room(workspace_for_room=lambda _: str(path))
+    abandoned = Hold()
+    claude.script(
+        [room.model_reply("First.")],
+        [abandoned, room.model_reply("Never sent.")],
+        [room.model_reply("Resumed.")],
+        [room.model_reply("Rejoined.")],
     )
-    try:
-        await manager.get_or_create_session("room-a")
-        marker = path / "notes.txt"
-        marker.write_text("keep me")
-        await manager.cleanup_session("room-a", release_workspace=False)
-        path = tmp_path / "changed"
-        await manager.get_or_create_session("room-a", resume_session_id="saved")
-        assert claude.session_workspaces == [str(marker.parent), str(marker.parent)]
-        assert claude.resumed == [None, "saved"]
-        await manager.cleanup_session("room-a")
-        await manager.get_or_create_session("room-a")
-        assert claude.session_workspaces[-1] == str(path)
-        assert marker.read_text() == "keep me"
-    finally:
-        await manager.stop()
+    await room.send("hi")
+    marker = path / "notes.txt"
+    marker.write_text("keep me")
+    path = tmp_path / "changed"
+    message = room.send_in_background("long job")
+    async with abandoned:
+        message.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await message
+    await room.send("again")
+    assert claude.session_workspaces == [str(marker.parent), str(marker.parent)]
+    assert claude.resumed == [None, "sess-1"]
+    assert [session.alive for session in claude.sessions] == [False, True]
+
+    await room.leave()
+    await room.send("I'm back")
+    assert claude.session_workspaces[-1] == str(path)
+    assert claude.resumed[-1] is None
+    assert room.chat == ["First.", "Resumed.", "Rejoined."]
+    assert room.failures == []
+    assert marker.read_text() == "keep me"
 
 
 async def test_collision_is_rejected_until_owner_leaves(
-    sessions: ClaudeSessionManager, claude: FakeClaude
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
-    await sessions.get_or_create_session("room-a")
+    first = await claude_room(workspace_for_room=lambda _: str(tmp_path / "shared"))
+    second = first.beside("room-2")
+    claude.script([first.model_reply("First.")], [second.model_reply("Second.")])
+    await first.send("hi")
     with pytest.raises(ValueError, match="both"):
-        await sessions.get_or_create_session("room-b")
-    await sessions.cleanup_session("room-a")
-    await sessions.get_or_create_session("room-b")
+        await second.send("hi")
+    assert second.chat == []
+    assert len(second.failures) == 1
+    await first.leave()
+    await second.send("again")
+    assert second.chat == ["Second."]
     assert [session.alive for session in claude.sessions] == [False, True]
 
 
 async def test_cancelled_startup_keeps_claim_and_reuses_client(
-    sessions: ClaudeSessionManager, claude: FakeClaude
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
+    room = await claude_room(workspace_for_room=lambda _: str(tmp_path / "shared"))
     hold = claude.connecting = Hold()
-    opening = asyncio.create_task(sessions.get_or_create_session("room-a"))
-    await hold.reached.wait()
-    opening.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await opening
-    hold.released.set()
+    opening = room.send_in_background("hi")
+    async with hold:
+        opening.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await opening
     with pytest.raises(ValueError, match="both"):
-        await sessions.get_or_create_session("room-b")
-    await sessions.get_or_create_session("room-a")
+        await room.beside("room-2").send("hi")
+    claude.script([room.model_reply("Connected.")])
+    await room.send("again")
     assert len(claude.sessions) == 1
     assert claude.sessions[0].alive
+    assert room.chat == ["Connected."]
+    assert room.failures == []
 
 
 async def test_failed_startup_closes_transport_but_keeps_membership_claim(
-    sessions: ClaudeSessionManager, claude: FakeClaude
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
+    room = await claude_room(workspace_for_room=lambda _: str(tmp_path / "shared"))
+    second = room.beside("room-2")
     claude.refuse_connect = True
-    with pytest.raises(Exception, match="startup"):
-        await sessions.get_or_create_session("room-a")
-    assert not claude.sessions[0].alive
-    with pytest.raises(ValueError, match="both"):
-        await sessions.get_or_create_session("room-b")
-    await sessions.cleanup_session("room-a")
-    claude.refuse_connect = False
-    await sessions.get_or_create_session("room-b")
+    try:
+        with pytest.raises(CLIConnectionError, match="startup"):
+            await room.send("hi")
+        assert not claude.sessions[0].alive
+        assert len(room.failures) == 1
+        with pytest.raises(ValueError, match="both"):
+            await second.send("hi")
+        await room.leave()
+    finally:
+        claude.refuse_connect = False
+    claude.script([second.model_reply("Connected.")])
+    await second.send("again")
+    assert second.chat == ["Connected."]
     assert claude.sessions[-1].alive
 
 
 async def test_failed_cleanup_blocks_reuse_and_can_be_retried(
-    sessions: ClaudeSessionManager, claude: FakeClaude
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
-    await sessions.get_or_create_session("room-a")
+    room = await claude_room(workspace_for_room=lambda _: str(tmp_path / "shared"))
+    second = room.beside("room-2")
+    claude.script([room.model_reply("First.")], [second.model_reply("Second.")])
+    await room.send("hi")
     claude.refuse_close = True
-    with pytest.raises(RuntimeError, match="cleanup failed"):
-        await sessions.cleanup_session("room-a")
-    with pytest.raises(ValueError, match="both"):
-        await sessions.get_or_create_session("room-b")
-    with pytest.raises(RuntimeError, match="cleanup failed"):
-        await sessions.get_or_create_session("room-a")
-    assert len(claude.sessions) == 1
-    claude.refuse_close = False
-    await sessions.cleanup_session("room-a")
-    await sessions.get_or_create_session("room-b")
+    try:
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            await room.leave()
+        with pytest.raises(ValueError, match="both"):
+            await second.send("hi")
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            await room.send("again")
+        assert len(claude.sessions) == 1
+        assert claude.sessions[0].alive
+        assert room.chat == ["First."]
+        assert second.chat == []
+    finally:
+        claude.refuse_close = False
+    await room.leave()
+    await second.send("again")
+    assert second.chat == ["Second."]
     assert [session.alive for session in claude.sessions] == [False, True]
 
 
 async def test_cancelled_cleanup_finishes_before_claim_transfer(
-    sessions: ClaudeSessionManager, claude: FakeClaude
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
-    await sessions.get_or_create_session("room-a")
+    room = await claude_room(workspace_for_room=lambda _: str(tmp_path / "shared"))
+    second = room.beside("room-2")
+    claude.script([room.model_reply("First.")], [second.model_reply("Second.")])
+    await room.send("hi")
     hold = claude.closing = Hold()
-    leaving = asyncio.create_task(sessions.cleanup_session("room-a"))
-    await hold.reached.wait()
-    leaving.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await leaving
-    hold.released.set()
-    await sessions.get_or_create_session("room-b")
+    leaving = asyncio.create_task(room.leave())
+    async with hold:
+        leaving.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await leaving
+    await second.send("hi")
+    assert second.chat == ["Second."]
     assert [session.alive for session in claude.sessions] == [False, True]
 
 
 async def test_stop_attempts_all_rooms_and_retries_failed_cleanup(
-    claude: FakeClaude, tmp_path: Path
+    claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
-    manager = ClaudeSessionManager(
-        ClaudeAgentOptions(),
-        workspaces=RoomWorkspaces(create_room_workspace_resolver(tmp_path)),
+    room = await claude_room(
+        workspace_for_room=create_room_workspace_resolver(tmp_path)
     )
-    await manager.get_or_create_session("room-a")
-    await manager.get_or_create_session("room-b")
+    second = room.beside("room-2")
+    claude.script([room.model_reply("First.")], [second.model_reply("Second.")])
+    await room.send("hi")
+    await second.send("hi")
     claude.sessions[0].refuse_close = True
     try:
         with pytest.raises(ExceptionGroup, match="cleanup failed"):
-            await manager.stop()
+            await room.adapter.cleanup_all()
         assert [session.alive for session in claude.sessions] == [True, False]
-        assert manager.get_active_rooms() == ["room-a"]
     finally:
         claude.sessions[0].refuse_close = False
-        await manager.stop()
-    assert not claude.sessions[0].alive
+        await room.adapter.cleanup_all()
+    assert all(not session.alive for session in claude.sessions)
 
 
 async def test_adapter_restart_preserves_workspace_files(
