@@ -70,7 +70,7 @@ def create_rag_graph():
     retriever_tool = retrieve_blog_posts
 
     # Step 3: Set up LLMs
-    model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+    model = os.getenv("OPENAI_MODEL", "gpt-6-luna")
     response_model = ChatOpenAI(model=model, temperature=0)
     grader_model = ChatOpenAI(model=model, temperature=0)
 

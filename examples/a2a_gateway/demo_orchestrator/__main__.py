@@ -71,7 +71,7 @@ class Settings(BaseSettings):
 )
 @click.option(
     "--model",
-    default=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+    default=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
     help="OpenAI model to use",
 )
 def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None:

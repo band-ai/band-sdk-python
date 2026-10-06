@@ -32,7 +32,7 @@ async def main() -> None:
     # Create adapter with CrewAI-style role definition
     adapter = CrewAIAdapter(
         CrewAIAdapterConfig(
-            model="gpt-5.4-mini",
+            model="gpt-6-luna",
             role="Research Assistant",
             goal="Help users find, analyze, and synthesize information efficiently",
             backstory="""You are an expert research assistant with years of experience

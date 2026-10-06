@@ -300,10 +300,10 @@ class TestOnStarted:
         crewai_mocks.Agent.reset_mock()
         crewai_mocks.LLM.reset_mock()
 
-        adapter = CrewAIAdapter(CrewAIAdapterConfig(model="gpt-5.4-mini", max_iter=7))
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(model="gpt-6-luna", max_iter=7))
         await adapter.on_started(agent_name="TestBot", agent_description="")
 
-        crewai_mocks.LLM.assert_called_once_with(model="gpt-5.4-mini")
+        crewai_mocks.LLM.assert_called_once_with(model="gpt-6-luna")
         assert crewai_mocks.Agent.call_args[1]["max_iter"] == 7
 
     @pytest.mark.asyncio

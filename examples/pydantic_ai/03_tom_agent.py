@@ -42,7 +42,7 @@ async def main() -> None:
     # Create adapter with Tom's character prompt
     adapter = PydanticAIAdapter(
         PydanticAIAdapterConfig(
-            model="openai:gpt-5.4-mini", custom_section=generate_tom_prompt("Tom")
+            model="openai:gpt-6-luna", custom_section=generate_tom_prompt("Tom")
         )
     )
 

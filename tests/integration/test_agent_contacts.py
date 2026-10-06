@@ -16,6 +16,7 @@ import pytest
 
 from band.adapters.pydantic_ai import PydanticAIAdapter, PydanticAIAdapterConfig
 from band.agent import Agent
+from band.core.defaultmodels import OPENAI_MODEL
 from band.platform.event import (
     ContactEvent,
 )
@@ -75,7 +76,7 @@ class TestAgentCallbackFlow:
         )
 
         adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
+            PydanticAIAdapterConfig(model=f"openai:{OPENAI_MODEL}")
         )
         agent = Agent.create(
             adapter=adapter,
@@ -113,7 +114,7 @@ class TestAgentBroadcastFlow:
         )
 
         adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
+            PydanticAIAdapterConfig(model=f"openai:{OPENAI_MODEL}")
         )
         agent = Agent.create(
             adapter=adapter,
@@ -147,7 +148,7 @@ class TestAgentGracefulShutdown:
         )
 
         adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
+            PydanticAIAdapterConfig(model=f"openai:{OPENAI_MODEL}")
         )
         agent = Agent.create(
             adapter=adapter,

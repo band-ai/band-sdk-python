@@ -21,6 +21,7 @@ from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import GEMINI_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
@@ -321,7 +322,7 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
             are dropped first.
     """
 
-    model: str = "gemini-2.5-flash"
+    model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
     max_history_messages: PositiveInt = 50

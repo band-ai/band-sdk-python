@@ -27,7 +27,7 @@ from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
 adapter = PydanticAIAdapter(
     PydanticAIAdapterConfig(
-        model="openai:gpt-5.4-mini",
+        model="openai:gpt-6-luna",
         custom_section="You are a helpful assistant.",
     )
 )
@@ -100,11 +100,11 @@ uv run python examples/pydantic_ai/04_jerry_agent.py
 
 Pydantic AI uses model strings in the format `provider:model-name`:
 
-- `openai:gpt-5.4-mini`
+- `openai:gpt-6-luna`
 - `openai:gpt-5.5`
-- `anthropic:claude-sonnet-4-6`
+- `anthropic:claude-sonnet-5-5`
 - `anthropic:claude-haiku-4-5`
-- `google:gemini-2.5-pro`
+- `google:gemini-3.1-pro-preview`
 
 See [Pydantic AI documentation](https://ai.pydantic.dev/) for more model options.
 
@@ -127,7 +127,7 @@ This is a [known issue in Pydantic AI](https://github.com/pydantic/pydantic-ai/i
 1. **Use Anthropic instead** (recommended for production):
    ```python
    adapter = PydanticAIAdapter(
-       PydanticAIAdapterConfig(model="anthropic:claude-sonnet-4-6")
+       PydanticAIAdapterConfig(model="anthropic:claude-sonnet-5-5")
    )
    ```
 

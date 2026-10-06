@@ -53,7 +53,7 @@ async def main() -> None:
 
     # Build the Agno agent — you choose the model, instructions, and tools.
     agno_agent = AgnoAgent(
-        model=Claude(id="claude-sonnet-4-6"),
+        model=Claude(id="claude-sonnet-5-5"),
         instructions="You are a helpful assistant. Be concise and friendly.",
     )
 

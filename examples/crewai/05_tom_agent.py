@@ -60,7 +60,7 @@ async def main() -> None:
     # Create adapter with Tom's character prompt
     adapter = CrewAIAdapter(
         CrewAIAdapterConfig(
-            model="gpt-5.4-mini",
+            model="gpt-6-luna",
             custom_section=generate_tom_prompt(args.agent_name, args.peer_name),
         ),
     )

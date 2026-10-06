@@ -44,7 +44,7 @@ async def main() -> None:
 
     adapter = StrandsAdapter(
         StrandsAdapterConfig(custom_section=generate_jerry_prompt("Jerry")),
-        llm=OpenAIModel(model_id="gpt-5.4-mini"),
+        llm=OpenAIModel(model_id="gpt-6-luna"),
     )
 
     logger.info("Jerry is watching for Tom from his mouse hole...")

@@ -32,6 +32,7 @@ from band.adapters.codex import (
     PendingApproval,
 )
 from band.client.streaming import ControlMode
+from band.core.defaultmodels import OPENAI_MODEL
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -3031,7 +3032,7 @@ class TestHistoryInjection:
             model_list_result={
                 "data": [
                     {"id": "gpt-5.5", "hidden": False},
-                    {"id": "gpt-5.4-mini", "hidden": False},
+                    {"id": "gpt-6-luna", "hidden": False},
                 ]
             },
         )
@@ -3060,7 +3061,7 @@ class TestHistoryInjection:
         fake_client = FakeCodexClient(
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.4-mini", "hidden": False},
+                    {"id": "gpt-6-luna", "hidden": False},
                     {"id": "gpt-5.5", "hidden": False},
                 ]
             },
@@ -3071,7 +3072,7 @@ class TestHistoryInjection:
         adapter._active_room.set("room-1")
         await adapter._ensure_client_ready()
 
-        assert adapter._selected_model == "gpt-5.4-mini"
+        assert adapter._selected_model == "gpt-6-luna"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:
@@ -3085,7 +3086,7 @@ class TestHistoryInjection:
             model_list_result={
                 "data": [
                     {"id": "gpt-5.5", "hidden": False},
-                    {"id": "gpt-5.4-mini", "hidden": False},
+                    {"id": "gpt-6-luna", "hidden": False},
                 ]
             },
         )
@@ -3124,7 +3125,7 @@ class TestHistoryInjection:
         adapter._active_room.set("room-1")
         await adapter._ensure_client_ready()
 
-        assert adapter._selected_model == "gpt-5.5"
+        assert adapter._selected_model == OPENAI_MODEL
 
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
@@ -3138,7 +3139,7 @@ class TestHistoryInjection:
         adapter._active_room.set("room-1")
         await adapter._ensure_client_ready()
 
-        assert adapter._selected_model == "gpt-5.5"
+        assert adapter._selected_model == OPENAI_MODEL
 
     @pytest.mark.asyncio
     async def test_non_model_error_propagates(self) -> None:

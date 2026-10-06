@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
 
     anthropic_api_key: str
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str = "claude-sonnet-5-5"
     agno_session_id: str = "band-agno-db-history"
 
 

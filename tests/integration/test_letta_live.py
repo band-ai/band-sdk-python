@@ -9,7 +9,7 @@ Environment variables:
     LETTA_BASE_URL              Letta server URL (default: http://localhost:8283)
     LETTA_API_KEY               Letta API key (optional for self-hosted)
     LETTA_MODEL                 LLM model for agent create — the server rejects a
-                                create without one (default: openai/gpt-5.4-mini)
+                                create without one (default: openai/gpt-6-luna)
     LETTA_EMBEDDING             Embedding model for agent create — required by
                                 Letta's Docker server
                                 (default: openai/text-embedding-3-small)
@@ -33,6 +33,7 @@ from letta_client import AsyncLetta, NotFoundError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
+from band.core.defaultmodels import OPENAI_MODEL
 from band.integrations.letta.orgscope import resolve_org_scoped_headers
 
 pytestmark = pytest.mark.requires_api
@@ -45,7 +46,7 @@ class LettaLiveSettings(BaseSettings):
 
     letta_base_url: str = "http://localhost:8283"
     letta_api_key: str = ""
-    letta_model: str = "openai/gpt-5.4-mini"
+    letta_model: str = f"openai/{OPENAI_MODEL}"
     letta_embedding: str = "openai/text-embedding-3-small"
     letta_mcp_advertised_host: str = "host.docker.internal"
 

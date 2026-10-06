@@ -378,7 +378,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             SlackApp,
         )
 
-        brain = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-6"))
+        brain = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-5-5"))
         slack = SlackAdapter(
             SlackAdapterConfig(
                 apps=(

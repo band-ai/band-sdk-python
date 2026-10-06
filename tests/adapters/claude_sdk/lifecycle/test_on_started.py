@@ -5,11 +5,11 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from band.adapters.claude_sdk import (
-    DEFAULT_MODEL,
     TOOL_SEARCH,
     ClaudeSDKAdapterConfig,
     ClaudeSDKCommand,
 )
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.runtime.tools import MAX_INLINE_IMAGE_BYTES
 from tests.adapters.claude_sdk.helpers import ClaudeRoom, with_approvals
 from tests.baseline.decisions import ModelDecision
@@ -23,7 +23,7 @@ SDK_DEFAULT_BUFFER_BYTES = 1024 * 1024
 @pytest.mark.parametrize(
     ("config", "model", "fallback_model", "effort"),
     [
-        (ClaudeSDKAdapterConfig(), DEFAULT_MODEL, None, None),
+        (ClaudeSDKAdapterConfig(), ANTHROPIC_MODEL, None, None),
         (
             ClaudeSDKAdapterConfig(
                 model="opus", fallback_model="sonnet", effort="xhigh"
@@ -42,7 +42,7 @@ async def test_the_cli_starts_with_the_configured_model_and_a_large_buffer(
     fallback_model: str | None,
     effort: str | None,
 ) -> None:
-    """An unpinned model falls back to DEFAULT_MODEL (the CLI's own pick fails
+    """An unpinned model falls back to ANTHROPIC_MODEL (the CLI's own pick fails
     under API-key auth). The line buffer must fit an inlined room-file image,
     which crashed the whole CLI connection at the SDK's default size."""
     room = await claude_room(config)

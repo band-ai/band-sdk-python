@@ -18,10 +18,10 @@ Usage:
     uv run python examples/run_agent.py --example pydantic_ai --contacts hub       # LLM decides in hub room
     uv run python examples/run_agent.py --example pydantic_ai --contacts broadcast # Broadcast-only awareness
     uv run python examples/run_agent.py --example pydantic_ai_contacts     # Contact management via chat (legacy)
-    uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-4-5
+    uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-5-5
     uv run python examples/run_agent.py --example anthropic
     uv run python examples/run_agent.py --example anthropic --streaming  # With tool_call/tool_result events
-    uv run python examples/run_agent.py --example anthropic --model claude-sonnet-4-5-20250929
+    uv run python examples/run_agent.py --example anthropic --model claude-sonnet-5-5
     uv run python examples/run_agent.py --example claude_sdk
     uv run python examples/run_agent.py --example claude_sdk --streaming  # With tool_call/tool_result events
     uv run python examples/run_agent.py --example claude_sdk --thinking   # Enable extended thinking
@@ -160,14 +160,14 @@ CREWAI_DEFAULTS = {
 # adapter / underlying CLI picks its own default.  The user can always pass
 # --model to override.
 _DEFAULT_MODELS: dict[str, str] = {
-    "pydantic_ai": "openai:gpt-5.4-mini",  # preserve previous global-default behavior
-    "pydantic_ai_contacts": "anthropic:claude-sonnet-4-5",
-    "contacts_auto": "anthropic:claude-sonnet-4-5",
-    "contacts_hub": "anthropic:claude-sonnet-4-5",
-    "contacts_broadcast": "anthropic:claude-sonnet-4-5",
-    "anthropic": "claude-sonnet-4-5-20250929",
+    "pydantic_ai": "openai:gpt-6-luna",  # preserve previous global-default behavior
+    "pydantic_ai_contacts": "anthropic:claude-sonnet-5-5",
+    "contacts_auto": "anthropic:claude-sonnet-5-5",
+    "contacts_hub": "anthropic:claude-sonnet-5-5",
+    "contacts_broadcast": "anthropic:claude-sonnet-5-5",
+    "anthropic": "claude-sonnet-5-5",
     # parlant: deliberately omitted — its model comes from the NLP service.
-    "crewai": "gpt-5.4-mini",
+    "crewai": "gpt-6-luna",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
 
@@ -234,7 +234,7 @@ async def run_langgraph_agent(
 
     adapter = LangGraphAdapter(
         LangGraphAdapterConfig(custom_section=custom_section),
-        llm=ChatOpenAI(model="gpt-5.4-mini"),
+        llm=ChatOpenAI(model="gpt-6-luna"),
         checkpointer=InMemorySaver(),
     )
 
@@ -798,7 +798,7 @@ Examples:
   uv run python examples/run_agent.py --example langgraph                 # LangGraph with OpenAI
   uv run python examples/run_agent.py --example pydantic_ai               # Pydantic AI with OpenAI
   uv run python examples/run_agent.py --example pydantic_ai --streaming   # With tool_call/tool_result events
-  uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-4-5
+  uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-5-5
   uv run python examples/run_agent.py --example pydantic_ai --contacts auto      # Auto-approve contacts
   uv run python examples/run_agent.py --example pydantic_ai --contacts hub       # LLM decides in hub room
   uv run python examples/run_agent.py --example pydantic_ai --contacts broadcast # Broadcast-only awareness

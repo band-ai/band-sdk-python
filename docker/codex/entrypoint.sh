@@ -150,11 +150,12 @@ bootstrap_codex_home() {
       }
     ' "${source_config}" > "${runtime_config}"
   else
-    cat > "${runtime_config}" <<EOF
-model = "${CODEX_MODEL:-gpt-5.5}"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-EOF
+    # No model line unless CODEX_MODEL is set; the adapter selects one itself.
+    {
+      [[ -n "${CODEX_MODEL:-}" ]] && echo "model = \"${CODEX_MODEL}\""
+      echo 'approval_policy = "never"'
+      echo 'sandbox_mode = "danger-full-access"'
+    } > "${runtime_config}"
   fi
 
   # Pin Codex to the REST Responses transport to avoid the WebSocket 401.

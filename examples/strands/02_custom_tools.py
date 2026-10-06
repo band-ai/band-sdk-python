@@ -47,7 +47,7 @@ async def main() -> None:
         StrandsAdapterConfig(
             custom_section="You can check the weather with the weather tool."
         ),
-        llm=OpenAIModel(model_id="gpt-5.4-mini"),
+        llm=OpenAIModel(model_id="gpt-6-luna"),
         additional_tools=[(WeatherInput, get_weather)],  # CustomToolDef tuple
         capabilities=Capability.MEMORY | Capability.CONTACTS,
     )
