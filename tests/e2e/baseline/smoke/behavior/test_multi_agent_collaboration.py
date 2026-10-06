@@ -15,8 +15,8 @@ agno) so they all install in one venv and the run is lane-schedulable:
   types in one room, hit with concurrent mentions, each handling only its own.
 * ``test_coordinator_delegates_via_task_board`` — a coordinator hands off a
   sprint through the room's task board instead of chat: it creates one task per
-  specialist and hands each specialist its own task in its own message, and
-  each specialist claims, works, and completes its task via
+  specialist and is instructed to hand each specialist its own task in its own
+  message, and each specialist claims, works, and completes its task via
   ``band_update_task`` -- no chat reply from either specialist.
 
 Design notes (why this shape, not a bespoke build):
@@ -48,7 +48,7 @@ import asyncio
 import pytest
 
 from band.core.task_types import TaskAssignmentStatus
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit, MessageType
 from band.runtime.tools import BandTool
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.flaky import flaky_infra, flaky_model
@@ -118,10 +118,12 @@ TASK_BOARD_COLLAB_PROMPT = (
     f"{TaskTool.SET_BOARD.value}, {TaskTool.CREATE.value}, and the "
     f"{BandTool.SEND_MESSAGE.value} calls exactly as instructed.\n"
     "- If you are instead asked to claim and complete a specific task (you "
-    f"will be given its number or id), you MUST: first call {TaskTool.UPDATE.value} "
-    "with that id and status='in_progress'; then call the matching tool "
-    f"({LOOKUP} or {WEATHER}) to get the value (you cannot guess it); then "
-    f"call {TaskTool.UPDATE.value} again with the same id, status='completed', and a "
+    "will be given its number or id), you MUST: first call "
+    f"{TaskTool.UPDATE.value} with that id and "
+    f"status='{TaskAssignmentStatus.IN_PROGRESS.value}'; then call the matching "
+    f"tool ({LOOKUP} or {WEATHER}) to get the value (you cannot guess it); then "
+    f"call {TaskTool.UPDATE.value} again with the same id, "
+    f"status='{TaskAssignmentStatus.COMPLETED.value}', and a "
     "comment whose text is exactly the raw string that tool returned — copy "
     "it verbatim with no paraphrase, summary, or wrapper sentence. Do not send "
     "a chat message for this -- recording it on the task board via "
@@ -389,10 +391,11 @@ async def test_coordinator_delegates_via_task_board(
     """A coordinator hands off a sprint through the task board instead of chat.
 
     The coordinator sets the room goal, creates one task per specialist, and
-    hands each specialist its own task in its own message. Each specialist claims its
-    task (status=in_progress), runs its own opaque tool, then completes it
-    (status=completed) with the result recorded in the comment -- entirely
-    through task-board tool calls, with no chat reply from either specialist.
+    is instructed to hand each specialist its own task in its own message. Each
+    specialist claims its task (status=in_progress), runs its own opaque tool,
+    then completes it (status=completed) with the result recorded in the
+    comment -- entirely through task-board tool calls, with no chat reply from
+    either specialist.
     Task-board state, not room text, is what proves the hand-off worked.
     """
     coordinator, lookup_spec, weather_spec = agents
@@ -417,29 +420,34 @@ async def test_coordinator_delegates_via_task_board(
             mention_id=coordinator.id,
             mention_name=coordinator.name,
         )
-        # The coordinator's own hand-off messages are what the specialists react
-        # to, so wait for their *text* to be captured (wait_for_processed alone
-        # only proves the turn finished, not that the message_created frame for
-        # its reply has arrived -- an independent, unordered platform event).
         await capture.wait_for_reply(
             user_msg_id, coordinator.id, deadline_s=cascade_deadline
         )
-        specialists = (lookup_spec, weather_spec)
-
-        def handed_off_to_each_specialist(messages: list) -> bool:
-            sent = Replies(messages).from_sender(coordinator.id)
-            return all(sent.mentioning(spec.id) for spec in specialists)
-
-        # The coordinator's turn is already processed; this only absorbs
-        # message_created frame lag.
-        await capture.wait_until(
-            handed_off_to_each_specialist, deadline_s=baseline_settings.e2e_timeout
+        # The coordinator's turn is processed, so REST lists every message it sent
+        # in order; message_created frames lag and arrive unordered, so they only
+        # supply each message's typed mentions.
+        sent_ids = [
+            message.id
+            for message in await user_ops.list_messages(
+                room_id, message_type=MessageType.TEXT
+            )
+            if message.sender_id == coordinator.id
+        ]
+        captured = await capture.wait_until(
+            lambda messages: set(sent_ids) <= {message.id for message in messages},
+            deadline_s=baseline_settings.e2e_timeout,
         )
-        sent = capture.messages.from_sender(coordinator.id)
+        by_id = {message.id: message for message in captured}
+        hand_offs = Replies(by_id[message_id] for message_id in sent_ids)
+        specialists = (lookup_spec, weather_spec)
+        for spec in specialists:
+            hand_offs.assert_mentions(spec.id)
+        # Per-room FIFO: a specialist's last hand-off being processed covers every
+        # earlier one.
         await asyncio.gather(
             *(
                 capture.wait_for_processed(
-                    sent.mentioning(spec.id)[-1].id,
+                    hand_offs.mentioning(spec.id)[-1].id,
                     spec.id,
                     deadline_s=cascade_deadline,
                 )
