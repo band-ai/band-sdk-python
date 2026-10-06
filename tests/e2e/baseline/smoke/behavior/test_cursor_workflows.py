@@ -23,9 +23,8 @@ from band.core.memory_types import (
     MemoryType,
 )
 from band.core.types import Capability
-from band.integrations.acp.cursor import cursor_mcp_title
+from band.integrations.acp.cursor import is_cursor_band_tool
 from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
-from band.runtime.tools.registry import canonicalize_mcp_tool_name
 from band.runtime.tools.types import BandTool
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
@@ -292,12 +291,9 @@ async def _decide_permissions_until_closed(
     one holds the turn open, so the reply alone does not end the decisions.
     """
     for attempt in range(MAX_PERMISSION_REQUESTS):
-        parsed = cursor_mcp_title(request["tool"])
-        if parsed is not None:
-            spelling, tool = parsed
-            assert canonicalize_mcp_tool_name(spelling, BandTool) != tool, (
-                f"Cursor asked the room to approve a Band tool: {request['tool']}"
-            )
+        assert not is_cursor_band_tool(request["tool"], tuple(BandTool)), (
+            f"Cursor asked the room to approve a Band tool: {request['tool']}"
+        )
         outcome = Outcome.APPROVE
         if deny_first_tool is not None and attempt == 0:
             assert deny_first_tool in request["tool"], (

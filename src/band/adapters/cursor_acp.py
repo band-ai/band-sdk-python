@@ -39,7 +39,7 @@ from band.integrations.acp.cursor import (
     PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
-    cursor_mcp_title,
+    is_cursor_band_tool,
 )
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -48,7 +48,6 @@ from band.integrations.acp.permissions import (
     select_allow_option_id,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
-from band.integrations.acp.types import ACPToolCall
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.decisions import (
     DecisionEntry,
@@ -56,7 +55,6 @@ from band.runtime.decisions import (
     Timeout,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
 from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -349,7 +347,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
-        if self._is_own_band_tool(request.tool_call):
+        if is_cursor_band_tool(request.tool_call.name, self._own_tool_names):
             return select_allow_option_id(request.options)
         match self.config.approval_mode:
             case "auto_accept":
@@ -362,15 +360,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                     return None
                 async with turn.permission_lock:
                     return await self._ask_room_permission(turn, request)
-
-    def _is_own_band_tool(self, call: ACPToolCall) -> bool:
-        parsed = cursor_mcp_title(call.name)
-        if parsed is None:
-            return False
-        spelling, tool = parsed
-        return tool in self._own_tool_names and spelling == mcp_tool_spelling(
-            BAND_MCP_SERVER_NAME, tool
-        )
 
     async def _ask_room_permission(
         self, turn: CursorTurn, request: ACPPermissionRequest

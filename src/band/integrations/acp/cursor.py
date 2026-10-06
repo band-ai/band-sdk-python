@@ -1,8 +1,11 @@
-"""Dependency-free Cursor tool-title parsing and room decision vocabulary."""
+"""Cursor MCP tool-title identity and room decision vocabulary."""
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from enum import StrEnum
+
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
 
 DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
 DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisions."
@@ -20,6 +23,17 @@ def cursor_mcp_title(title: str) -> tuple[str, str] | None:
     if any(char.isspace() for char in spelling + tool) or ":" in spelling + tool:
         return None
     return spelling, tool
+
+
+def is_cursor_band_tool(title: str, own_names: Collection[str]) -> bool:
+    """Whether both title halves identify the same registered Band MCP tool."""
+    parsed = cursor_mcp_title(title)
+    if parsed is None:
+        return False
+    spelling, tool = parsed
+    return tool in own_names and spelling == mcp_tool_spelling(
+        BAND_MCP_SERVER_NAME, tool
+    )
 
 
 class CursorCommandWord(StrEnum):

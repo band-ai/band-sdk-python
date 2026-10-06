@@ -32,6 +32,7 @@ from band.integrations.acp.client_runtime import (
     tcp_spawn_process,
 )
 from band.integrations.acp.session_config import select_ids
+from band.integrations.acp.stderr import STDERR_LINE_LOG_TEMPLATE
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
@@ -148,7 +149,7 @@ class InitializationObserver(logging.Handler):
         self.started = asyncio.Event()
 
     def emit(self, record: logging.LogRecord) -> None:
-        if record.getMessage() == f"ACP agent stderr: {INITIALIZE_PENDING_LINE}":
+        if record.getMessage() == STDERR_LINE_LOG_TEMPLATE % INITIALIZE_PENDING_LINE:
             self.started.set()
 
 

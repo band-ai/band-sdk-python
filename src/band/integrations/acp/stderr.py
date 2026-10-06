@@ -8,6 +8,7 @@ from collections import deque
 
 STDERR_TAIL_LINES = 20
 STDERR_DRAIN_TIMEOUT_S = 5.0
+STDERR_LINE_LOG_TEMPLATE = "ACP agent stderr: %s"
 
 
 class ACPStderrDrain:
@@ -46,7 +47,7 @@ class ACPStderrDrain:
                 break
             text = line.decode(errors="replace").rstrip("\r\n")
             tail.append(text)
-            self._logger.debug("ACP agent stderr: %s", text)
+            self._logger.debug(STDERR_LINE_LOG_TEMPLATE, text)
         # A later stop cannot reclassify an EOF already observed.
         unexpected = not self._stopping
         returncode = await process.wait()
