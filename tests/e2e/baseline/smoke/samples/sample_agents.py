@@ -386,25 +386,26 @@ def task_board_delegation_instruction(
     weather_place: str,
 ) -> str:
     """Coordinator's turn-1 instruction for the task-board delegation flow: set
-    the room goal, create one task per specialist, then hand both off in a
-    single message that states each task's number or id explicitly -- the
-    specialists need it to know which task to claim and update, a real
-    reliability dependency this instruction must not leave implicit."""
+    the room goal, create one task per specialist, then hand each specialist
+    its own task in its own message. An agent only sees messages that mention
+    it, so a per-owner hand-off keeps each specialist from claiming the other's
+    task or deciding the shared message is not for it."""
     return (
         f"First call {TaskTool.SET_BOARD.value} to set this room's goal: a "
         "short title and summary describing that the team needs an access "
         f"code and a weather forecast gathered. Then call "
         f"{TaskTool.CREATE.value} twice to create two tasks: one with subject "
         f"asking for the access code for key '{lookup_key}', and one with "
-        f"subject asking for the forecast for '{weather_place}'. Then send "
-        "exactly ONE band_send_message that mentions both "
-        f"{lookup_name} (id {lookup_id}) and {weather_name} (id {weather_id}), "
-        "stating the exact task number or id you just created for each of them "
-        "by name, and asking each to claim their task, call the matching tool, "
+        f"subject asking for the forecast for '{weather_place}'. The access-code "
+        f"task belongs to {lookup_name} (id {lookup_id}); the forecast task "
+        f"belongs to {weather_name} (id {weather_id}). Then call "
+        f"{BandTool.SEND_MESSAGE.value} exactly twice, once per owner: each "
+        "message mentions ONLY its recipient and states only that recipient's "
+        "task number or id, asking them to claim it, call the matching tool, "
         "and copy the tool's exact return value verbatim into the completed "
-        "task's comment via band_update_task (not a summary or description "
-        "without the value). Do not look anything up yourself, and do not call "
-        "any other tool."
+        f"task's comment via {TaskTool.UPDATE.value} (not a summary or "
+        "description without the value). Do not look anything up yourself, and "
+        "do not call any other tool."
     )
 
 
