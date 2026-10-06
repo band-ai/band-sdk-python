@@ -46,9 +46,10 @@ StdioRuntimeFactory = Callable[[ExitStage, list[str]], ACPRuntime]
 @pytest.fixture
 def stdio_runtime() -> StdioRuntimeFactory:
     def build(stage: ExitStage, lines: list[str]) -> ACPRuntime:
+        # Windows' venv redirector keeps stdout open until the peer exits.
         return ACPRuntime(
             command=[
-                sys.executable,
+                sys._base_executable,
                 "-m",
                 "tests.integrations.acp.acp_toolkit.peer",
                 stage,
@@ -56,6 +57,7 @@ def stdio_runtime() -> StdioRuntimeFactory:
                 *lines,
             ],
             cwd=str(REPO_ROOT),
+            env={"__PYVENV_LAUNCHER__": sys.executable},
         )
 
     return build
