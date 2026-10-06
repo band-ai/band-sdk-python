@@ -364,12 +364,21 @@ class FakeACPAgent:
         *,
         arguments: dict[str, Any],
         server: str = "band",
+        title: str | None = None,
     ) -> FakeACPAgent:
-        """Call an advertised MCP tool between ACP call and result updates."""
+        """Call an advertised MCP tool between ACP call and result updates.
+
+        ``title`` models agents that report an intent phrase instead of a tool name.
+        """
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
             await a.emit(
-                sid, start_tool_call(tool_call_id, tool_name, raw_input=arguments)
+                sid,
+                start_tool_call(
+                    tool_call_id=tool_call_id,
+                    title=title or tool_name,
+                    raw_input=arguments,
+                ),
             )
             result = await a.call_mcp_tool(
                 session_id=sid,
