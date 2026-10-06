@@ -11,9 +11,10 @@ set -euo pipefail
 # unset key — the login would just fail opaquely with no output.
 : "${OPENAI_API_KEY:?OPENAI_API_KEY is required for codex login}"
 
-# Pinned: an unpinned global install lets both CLIs float between runs, so a CLI change lands as an unrelated-looking lane
-# failure. Bump deliberately.
-CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.149.0}"
+# Pinned: an unpinned global install lets both CLIs float between runs, so a
+# CLI change lands as an unrelated-looking lane failure. Bump deliberately; the
+# CLI's bundled catalogue must include band.core.defaultmodels.OPENAI_MODEL.
+CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.160.0}"
 CODEX_ACP_VERSION="${CODEX_ACP_VERSION:-1.6.2}"
 
 npm install -g "@openai/codex@${CODEX_CLI_VERSION}" \

@@ -322,7 +322,8 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     Attributes:
         model: Full model ID or family alias (``"sonnet"``, ``"opus"``,
-            ``"haiku"``, ``"inherit"``). ``None`` pins ``ANTHROPIC_MODEL``.
+            ``"haiku"``, ``"inherit"``). ``None`` pins
+            ``band.core.defaultmodels.ANTHROPIC_MODEL``.
         fallback_model: Model the CLI uses when ``model`` is unavailable.
         custom_section: Extra instructions appended to the system prompt.
         max_thinking_tokens: Extended-thinking budget; ``None`` disables it.

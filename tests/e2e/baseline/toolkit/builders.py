@@ -404,8 +404,7 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
     builder doesn't expose -- so both stay in sync on cwd/model/command instead
     of a bespoke test hand-copying this logic and silently drifting from it.
 
-    The model defaults to ``OPENAI_MODEL`` from ``band.core.defaultmodels`` --
-    not the OpenAI chat model, which Codex's own catalogue may lack. An absent
+    The model is ``Backends.codex_model`` (``CODEX_MODEL``). An absent
     ``CODEX_COMMAND`` spawns the stock `codex` binary. Splits mirror the gates
     in deps.py.
     """

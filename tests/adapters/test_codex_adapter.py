@@ -3061,8 +3061,8 @@ class TestHistoryInjection:
         fake_client = FakeCodexClient(
             model_list_result={
                 "data": [
-                    {"id": "gpt-6-luna", "hidden": False},
-                    {"id": "gpt-5.5", "hidden": False},
+                    {"id": "gpt-5.6-sol", "hidden": False},
+                    {"id": OPENAI_MODEL, "hidden": False},
                 ]
             },
         )
@@ -3072,7 +3072,7 @@ class TestHistoryInjection:
         adapter._active_room.set("room-1")
         await adapter._ensure_client_ready()
 
-        assert adapter._selected_model == "gpt-6-luna"
+        assert adapter._selected_model == "gpt-5.6-sol"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:

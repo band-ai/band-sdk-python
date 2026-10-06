@@ -1610,6 +1610,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             await self._register_skill_roots(client)
             self._selected_model = await self._select_model()
+            logger.info("Codex model selected: %s", self._selected_model)
             self._initialized = True
         except Exception:
             if self._client is client:
@@ -1674,6 +1675,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         visible_model_ids = self._visible_model_ids(result)
         if visible_model_ids:
             return visible_model_ids[0]
+        logger.warning("model/list has no visible models; using default Codex model")
         return OPENAI_MODEL
 
     async def _ensure_thread(

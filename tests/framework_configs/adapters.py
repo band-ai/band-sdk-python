@@ -395,7 +395,7 @@ def _build_langgraph_config() -> AdapterConfig:
 def _build_crewai_config() -> AdapterConfig:
     _crewai_available = _crewai_installed()
     custom = CrewAIAdapterConfig(
-        model="gpt-6-luna",
+        model="gpt-5.6-sol",
         role="Research Analyst",
         goal="Find and analyze information",
         backstory="Expert researcher",

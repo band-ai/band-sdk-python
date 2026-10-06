@@ -7,9 +7,12 @@ these at the use site.
 
 from __future__ import annotations
 
-# Also the Codex default: it is in Codex's own model catalogue.
+# Also the Codex default; Codex CLI bundles it from 0.156.1.
 OPENAI_MODEL = "gpt-6-luna"
 ANTHROPIC_MODEL = "claude-sonnet-5-5"
 GEMINI_MODEL = "gemini-3.8-flash"
-# Cheap tier for the E2E agents and judge; the judge needs structured outputs.
+# Cheapest current Claude.
 ANTHROPIC_SMALL_MODEL = "claude-haiku-4-5"
+# Letta 0.16.8, the last self-hosted Letta server, never registers gpt-6-*
+# handles and sends reasoning effort "minimal", which gpt-5.6-* rejects.
+LETTA_SELF_HOSTED_MODEL = "openai/gpt-5.4-mini"

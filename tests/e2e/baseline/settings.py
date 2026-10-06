@@ -14,12 +14,13 @@ instead of raising a bool/int ValidationError at construction.
 from __future__ import annotations
 
 from dotenv import load_dotenv
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.defaultmodels import (
     ANTHROPIC_SMALL_MODEL,
     GEMINI_MODEL,
+    LETTA_SELF_HOSTED_MODEL,
     OPENAI_MODEL,
 )
 from band.integrations.omp import DEFAULT_OMP_MODEL
@@ -158,7 +159,7 @@ class Backends(BaseSettings):
     # MCP_SERVER_URL switches the builder to an external band-mcp instead.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str = Field(default="", repr=False)  # LETTA_API_KEY
-    letta_model: str = f"openai/{OPENAI_MODEL}"  # LETTA_MODEL
+    letta_model: str = LETTA_SELF_HOSTED_MODEL  # LETTA_MODEL
     # Letta's docker server requires an embedding model on agent create.
     letta_embedding: str = "openai/text-embedding-3-small"  # LETTA_EMBEDDING
     # Host the (dockerized) Letta server uses to reach the adapter's self-hosted
@@ -187,9 +188,15 @@ class Backends(BaseSettings):
     github_token: str = Field(default="", repr=False)  # GITHUB_TOKEN
     # Those smokes' typed model (see hermetic_copilot_config) rather than
     # Copilot's own pick, which can be an expensive reasoning-tier model
-    # (observed: gpt-5.6-terra). The cheap OPENAI_MODEL keeps their billed
-    # turns cheap and deterministic across runs.
+    # (observed: gpt-5.6-terra); OPENAI_MODEL keeps billed turns cheap and
+    # deterministic.
     copilot_hosted_model: str = OPENAI_MODEL  # COPILOT_HOSTED_MODEL
+
+    @field_validator("codex_model")
+    @classmethod
+    def _blank_codex_model_is_default(cls, value: str) -> str:
+        # env_ignore_empty only catches "", not a whitespace-only CODEX_MODEL.
+        return value.strip() or OPENAI_MODEL
 
 
 class LLMModels(BaseSettings):
