@@ -6,7 +6,8 @@ import asyncio
 import json
 import logging
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,14 +42,17 @@ from tests.paths import REPO_ROOT
 
 RUNTIME_LOGGER = "band.integrations.acp.client_runtime"
 PEER_EXIT_CODE = 3
-StdioRuntimeFactory = Callable[[ExitStage, list[str]], ACPRuntime]
+StdioRuntimeFactory = Callable[
+    [ExitStage, list[str]], AbstractAsyncContextManager[ACPRuntime]
+]
 
 
 @pytest.fixture
 def stdio_runtime() -> StdioRuntimeFactory:
-    def build(stage: ExitStage, lines: list[str]) -> ACPRuntime:
+    @asynccontextmanager
+    async def build(stage: ExitStage, lines: list[str]) -> AsyncIterator[ACPRuntime]:
         # Windows' venv redirector keeps stdout open until the peer exits.
-        return ACPRuntime(
+        runtime = ACPRuntime(
             command=[
                 sys._base_executable,
                 "-m",
@@ -60,6 +64,10 @@ def stdio_runtime() -> StdioRuntimeFactory:
             cwd=str(REPO_ROOT),
             env={"__PYVENV_LAUNCHER__": sys.executable},
         )
+        try:
+            yield runtime
+        finally:
+            await runtime.stop()
 
     return build
 
@@ -89,21 +97,14 @@ async def test_crashed_stdio_agent_reports_exit_and_stderr(
     stage: ExitStage,
 ) -> None:
     lines = ["authentication failed", "peer crashed"]
-    runtime = stdio_runtime(stage, lines)
     with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
-        try:
-            if stage is ExitStage.INITIALIZE:
-                with pytest.raises(Exception, match="Connection closed"):
-                    await runtime.start()
-            else:
+        async with stdio_runtime(stage, lines) as runtime:
+            with pytest.raises(ConnectionError, match="Connection closed"):
                 await runtime.start()
                 session_id = await runtime.create_session(
                     cwd=str(tmp_path), mcp_servers=[]
                 )
-                with pytest.raises(Exception, match="Connection closed"):
-                    await runtime.prompt(session_id=session_id, prompt_text="crash")
-        finally:
-            await runtime.stop()
+                await runtime.prompt(session_id=session_id, prompt_text="crash")
 
     [warning] = runtime_warnings(caplog)
     assert warning.getMessage() == (
@@ -117,13 +118,10 @@ async def test_crashed_stdio_agent_reports_only_the_stderr_tail(
     stdio_runtime: StdioRuntimeFactory, caplog: pytest.LogCaptureFixture
 ) -> None:
     lines = [f"diagnostic {index}" for index in range(STDERR_TAIL_LINES + 5)]
-    runtime = stdio_runtime(ExitStage.INITIALIZE, lines)
     with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
-        try:
-            with pytest.raises(Exception, match="Connection closed"):
+        async with stdio_runtime(ExitStage.INITIALIZE, lines) as runtime:
+            with pytest.raises(ConnectionError, match="Connection closed"):
                 await runtime.start()
-        finally:
-            await runtime.stop()
 
     [warning] = runtime_warnings(caplog)
     assert warning.getMessage().splitlines()[1:] == lines[-STDERR_TAIL_LINES:]
@@ -133,12 +131,9 @@ async def test_crashed_stdio_agent_reports_only_the_stderr_tail(
 async def test_deliberate_stdio_stop_does_not_warn_about_nonzero_exit(
     stdio_runtime: StdioRuntimeFactory, caplog: pytest.LogCaptureFixture
 ) -> None:
-    runtime = stdio_runtime(ExitStage.EOF, ["deliberately stopped"])
     with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
-        try:
+        async with stdio_runtime(ExitStage.EOF, ["deliberately stopped"]) as runtime:
             await runtime.start()
-        finally:
-            await runtime.stop()
 
     assert runtime_warnings(caplog) == []
 
@@ -170,18 +165,19 @@ async def test_cancelled_stdio_start_does_not_warn_about_nonzero_exit(
     initialization_observer: InitializationObserver,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    runtime = stdio_runtime(ExitStage.INITIALIZE_WAIT, ["cancelled initialization"])
     with caplog.at_level(logging.DEBUG, logger=RUNTIME_LOGGER):
-        startup = asyncio.create_task(runtime.start())
-        try:
-            await initialization_observer.started.wait()
-            startup.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await startup
-        finally:
-            startup.cancel()
-            await asyncio.gather(startup, return_exceptions=True)
-            await runtime.stop()
+        async with stdio_runtime(
+            ExitStage.INITIALIZE_WAIT, ["cancelled initialization"]
+        ) as runtime:
+            startup = asyncio.create_task(runtime.start())
+            try:
+                await initialization_observer.started.wait()
+                startup.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await startup
+            finally:
+                startup.cancel()
+                await asyncio.gather(startup, return_exceptions=True)
 
     assert runtime_warnings(caplog) == []
 

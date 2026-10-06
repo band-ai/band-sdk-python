@@ -123,6 +123,10 @@ def said(tools: FakeAgentTools) -> list[str]:
     return [cast(str, sent["content"]) for sent in tools.messages_sent]
 
 
+def permission_requests(tools: FakeAgentTools) -> list[str]:
+    return [message for message in said(tools) if "needs permission" in message]
+
+
 class CursorRoom:
     """A Cursor room whose ``agent acp`` peer is a scripted in-process ACP
     agent: each message goes through ``on_event`` with its own tools, as the
@@ -204,51 +208,90 @@ def custom_reply() -> str:
     return "custom reply"
 
 
+@pytest.fixture
+def cursor_approval_room(
+    cursor_room: Callable[..., Awaitable[CursorRoom]],
+) -> Callable[[str, str], Awaitable[CursorRoom]]:
+    async def open_room(title: str, approval_mode: str) -> CursorRoom:
+        return await cursor_room(
+            FakeACPAgent().will_ask_permission(title=title).will_say("finished"),
+            approval_mode=approval_mode,
+            capabilities={Capability.MEMORY},
+            additional_tools=[
+                (EchoInput, echo),
+                (
+                    create_model(
+                        f"{mcp_tool_spelling(BAND_MCP_SERVER_NAME, BandTool.SEND_MESSAGE)}Input"
+                    ),
+                    custom_reply,
+                ),
+            ],
+            decision_timeout_s=0.1,
+        )
+
+    return open_room
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("approval_mode", ["manual", "auto_accept", "auto_decline"])
 @pytest.mark.parametrize(
-    ("title", "own_tool"),
+    "title",
     [
-        ("band-band_store_memory: band_store_memory", True),
-        ("band-band_send_message: band_send_message", True),
-        ("band-echo: echo", True),
-        ("other-band_send_message: band_send_message", False),
-        ("band-band_store_memory: band_send_message", False),
-        ("shell", False),
-        ("shell: shell", False),
-        ("band-unknown: unknown", False),
+        pytest.param("band-band_store_memory: band_store_memory", id="memory"),
+        pytest.param(
+            "band-band_send_message: band_send_message",
+            id="reply-with-custom-name-collision",
+        ),
+        pytest.param("band-echo: echo", id="custom-tool"),
     ],
 )
-async def test_only_registered_band_tools_bypass_cursor_approval(
-    cursor_room: Callable[..., Awaitable[CursorRoom]],
+async def test_registered_band_tools_are_approved_without_asking_the_room(
+    cursor_approval_room: Callable[[str, str], Awaitable[CursorRoom]],
     approval_mode: str,
     title: str,
-    own_tool: bool,
 ) -> None:
-    room = await cursor_room(
-        FakeACPAgent().will_ask_permission(title=title).will_say("finished"),
-        approval_mode=approval_mode,
-        capabilities={Capability.MEMORY},
-        additional_tools=[
-            (EchoInput, echo),
-            (
-                create_model(
-                    f"{mcp_tool_spelling(BAND_MCP_SERVER_NAME, BandTool.SEND_MESSAGE)}Input"
-                ),
-                custom_reply,
-            ),
-        ],
-        decision_timeout_s=0.1,
-    )
-
+    room = await cursor_approval_room(title, approval_mode)
     tools = await room.send("run the tool")
-    asks_room = approval_mode == "manual" and not own_tool
-    if asks_room:
-        await tools.until_said("needs permission")
     await room.turns_finished()
 
-    assert room.agent.approved is (own_tool or approval_mode == "auto_accept")
-    assert any("needs permission" in message for message in said(tools)) is asks_room
+    assert room.agent.approved is True
+    assert permission_requests(tools) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("approval_mode", "approved", "room_requests"),
+    [
+        ("manual", False, 1),
+        ("auto_accept", True, 0),
+        ("auto_decline", False, 0),
+    ],
+)
+@pytest.mark.parametrize(
+    "title",
+    [
+        pytest.param("other-band_send_message: band_send_message", id="other-server"),
+        pytest.param(
+            "band-band_store_memory: band_send_message", id="mismatched-identity"
+        ),
+        pytest.param("shell", id="native-tool"),
+        pytest.param("shell: shell", id="native-display-title"),
+        pytest.param("band-unknown: unknown", id="unregistered-tool"),
+    ],
+)
+async def test_other_tools_follow_cursor_approval_policy(
+    cursor_approval_room: Callable[[str, str], Awaitable[CursorRoom]],
+    approval_mode: str,
+    title: str,
+    approved: bool,
+    room_requests: int,
+) -> None:
+    room = await cursor_approval_room(title, approval_mode)
+    tools = await room.send("run the tool")
+    await room.turns_finished()
+
+    assert room.agent.approved is approved
+    assert len(permission_requests(tools)) == room_requests
 
 
 class TestCursorACPAdapterConfig:
@@ -733,8 +776,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert await asyncio.gather(first, repeat) == ["allow-always"] * 2
-        asks = [message for message in tools.messages if "needs permission" in message]
-        assert len(asks) == 1
+        assert len(permission_requests(tools)) == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
