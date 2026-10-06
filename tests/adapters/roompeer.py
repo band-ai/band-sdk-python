@@ -24,7 +24,8 @@ WRITE_PREFIX = "WRITE="
 
 class PeerCommand(StrEnum):
     READ = "READ"
-    LOSE_STDOUT = "LOSE_STDOUT"
+    LOSE_TRANSPORT = "LOSE_TRANSPORT"
+    EXIT_PROCESS = "EXIT_PROCESS"
 
 
 def write_instruction(marker: str) -> str:
@@ -74,8 +75,9 @@ def file_request(content: str) -> dict[str, Any]:
         }
 
 
-def lose_stdout() -> None:
-    os.close(sys.stdout.fileno())
+def lose_transport() -> None:
+    # An invalid response id faults the real reader while this child stays alive.
+    emit({"id": []})
     threading.Event().wait()
 
 
@@ -117,8 +119,10 @@ def codex(
                 for item in message["params"]["input"]
                 if item["type"] == "text"
             )
-            if PeerCommand.LOSE_STDOUT in content:
-                lose_stdout()
+            if PeerCommand.EXIT_PROCESS in content:
+                os._exit(0)
+            if PeerCommand.LOSE_TRANSPORT in content:
+                lose_transport()
             request = file_request(content)
             result = perform(request["tool_name"], request["input"])
             emit(
@@ -180,7 +184,13 @@ def main() -> None:
                 )
             case "user":
                 content = message["message"]["content"]
-                if PeerCommand.LOSE_STDOUT in content:
+                if any(
+                    command in content
+                    for command in (
+                        PeerCommand.LOSE_TRANSPORT,
+                        PeerCommand.EXIT_PROCESS,
+                    )
+                ):
                     # The SDK transport delivers EOF only after the child exits.
                     return
                 request = file_request(content)

@@ -271,14 +271,16 @@ async def test_shutdown_attempts_every_room_and_retains_failed_children(
     assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
 
 
+@pytest.mark.parametrize("loss", [PeerCommand.LOSE_TRANSPORT, PeerCommand.EXIT_PROCESS])
 async def test_transport_loss_reaps_child_and_preserves_workspace_until_leave(
     host: WorkspaceHost,
+    loss: PeerCommand,
 ) -> None:
     assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
     original = Path(host.workspace("room-a"))
     host.root = host.root / "changed"
     with pytest.raises((TurnResultAlreadyReported, CLIConnectionError)):
-        await host.send("room-a", PeerCommand.LOSE_STDOUT)
+        await host.send("room-a", loss)
     assert host.exited == [True]
     assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
     assert host.exited == [True, False]
@@ -320,7 +322,7 @@ async def test_transport_loss_with_failed_cleanup_can_recover_safely(
     assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
     host.children[0].refuse_close = True
     with pytest.raises((RuntimeError, TurnResultAlreadyReported)):
-        await host.send("room-a", PeerCommand.LOSE_STDOUT)
+        await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
     with pytest.raises(ValueError, match="both"):
         await host.send("room-b", write_instruction("bravo"))
     with pytest.raises(RuntimeError, match="cleanup failed"):
