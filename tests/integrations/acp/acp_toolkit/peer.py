@@ -43,12 +43,13 @@ class StdioPeer(FakeACPAgent):
     async def initialize(
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
     ) -> InitializeResponse:
-        if self.stage is ExitStage.INITIALIZE:
-            self.exit_process()
-        if self.stage is ExitStage.INITIALIZE_WAIT:
-            sys.stderr.write(INITIALIZE_PENDING_LINE + "\n")
-            sys.stderr.flush()
-            await asyncio.Future[None]()
+        match self.stage:
+            case ExitStage.INITIALIZE:
+                self.exit_process()
+            case ExitStage.INITIALIZE_WAIT:
+                sys.stderr.write(INITIALIZE_PENDING_LINE + "\n")
+                sys.stderr.flush()
+                await asyncio.Future[None]()
         return await super().initialize(protocol_version, client_capabilities, **kwargs)
 
     async def exit_on_prompt(self, agent: FakeACPAgent, session_id: str) -> None:
