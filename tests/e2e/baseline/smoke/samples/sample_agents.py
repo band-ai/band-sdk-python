@@ -646,6 +646,22 @@ RECALL_ALL_FACTS = (
 )
 
 
+def write_workspace_instruction(filename: str, marker: str) -> str:
+    return (
+        f"Use your native filesystem tools to write {marker!r}, without a newline, "
+        f"to the relative file {filename!r} in your current working directory. "
+        "Keep the working directory unchanged. Confirm with band_send_message."
+    )
+
+
+def read_workspace_instruction(filename: str) -> str:
+    return (
+        f"Read the relative file {filename!r} from disk in your current working "
+        "directory now. Its contents may have changed outside this conversation. "
+        "Send its entire current contents using band_send_message."
+    )
+
+
 def delegate_to_peer_instruction(peer_name: str) -> str:
     """Ask an agent to send peer ``peer_name`` the note it remembered.
 

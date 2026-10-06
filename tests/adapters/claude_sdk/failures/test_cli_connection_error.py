@@ -41,6 +41,7 @@ async def test_a_cli_that_dies_mid_turn_fails_only_an_unanswered_turn(
     assert room.chat == ["Answered before the crash.", "Back on a fresh process."]
     assert room.failures == [GENERIC_PROVIDER_FAILURE_MESSAGE]
     assert len(room.claude.sessions) == 3
+    assert len(set(room.claude.session_workspaces)) == 1
 
 
 async def test_a_cli_that_died_while_idle_is_replaced_on_the_next_message(
@@ -63,3 +64,4 @@ async def test_a_cli_that_died_while_idle_is_replaced_on_the_next_message(
     assert room.chat == ["Hello.", "Hello again."]
     assert room.failures == [GENERIC_PROVIDER_FAILURE_MESSAGE]
     assert len(room.claude.sessions) == 2
+    assert len(set(room.claude.session_workspaces)) == 1

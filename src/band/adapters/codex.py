@@ -87,11 +87,9 @@ from band.runtime.tools import (
     redact_tool_call_args,
 )
 from band.workspaces import (
+    RoomWorkspaces,
     WorkspaceResolver,
-    claim_room_workspace,
     is_host_absolute,
-    release_room_workspace,
-    resolve_room_workspace,
 )
 
 logger = logging.getLogger(__name__)
@@ -623,7 +621,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "custom Codex clients cannot guarantee room process isolation"
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
-        self._workspace_rooms: dict[str, str] = {}
+        self._workspaces = RoomWorkspaces(self.config.workspace_for_room)
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
         )
@@ -656,17 +654,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     def _release_room_workspace(self, room: RoomCodexClient, room_id: str) -> None:
         """Release this room's workspace claim (see ``release_room_workspace``)."""
-        release_room_workspace(room_id, room.workspace, self._workspace_rooms)
+        self._workspaces.release(room_id, room.workspace)
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
         if room is None:
-            workspace = resolve_room_workspace(room_id, self.config.workspace_for_room)
-            claim_room_workspace(room_id, workspace, self._workspace_rooms)
+            workspace = self._workspaces.claim(room_id)
             room = RoomCodexClient(workspace=workspace)
             self._room_clients[room_id] = room
         else:
-            claim_room_workspace(room_id, room.workspace, self._workspace_rooms)
+            self._workspaces.claim(room_id, room.workspace)
         return room
 
     def _active_client_state(self) -> RoomCodexClient | None:

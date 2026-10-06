@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
-from claude_agent_sdk.types import _configure_can_use_tool
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    ToolPermissionContext,
+    _configure_can_use_tool,
+)
 
 from band.adapters.claude_sdk import (
     SDK_OWNED_CLI_FLAGS,
@@ -17,10 +23,55 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from band.core.types import Emit
+from band.integrations.claude_sdk.transport import create_transport
 from tests.adapters.claude_sdk.helpers import SEND_MESSAGE_MCP_NAME, ClaudeRoom
+from tests.adapters.claude_sdk.process import WorkspaceProcess
 from tests.paths import host_absolute_path
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+
+
+async def test_real_children_use_their_assigned_workspaces(tmp_path: Path) -> None:
+    observations = []
+    for room_id in ("room-a", "room-b"):
+        workspace = tmp_path / room_id
+        workspace.mkdir()
+        transport = WorkspaceProcess(
+            prompt="",
+            options=ClaudeAgentOptions(
+                cwd=workspace, cli_path=sys.executable, env={"PROBE_MARKER": room_id}
+            ),
+        )
+        await transport.connect()
+        try:
+            messages = transport.read_messages()
+            observations.append(await anext(messages))
+            await messages.aclose()
+        finally:
+            await transport.close()
+        assert transport.exited
+    assert observations == [
+        {"cwd": str(tmp_path / room_id), "marker": room_id}
+        for room_id in ("room-a", "room-b")
+    ]
+    assert (tmp_path / "room-a" / "probe.txt").read_text() == "room-a"
+    assert (tmp_path / "room-b" / "probe.txt").read_text() == "room-b"
+    assert not (tmp_path / "probe.txt").exists()
+
+
+def test_owned_transport_preserves_sdk_permission_routing() -> None:
+    async def allow(
+        tool_name: str, tool_input: dict[str, Any], context: ToolPermissionContext
+    ) -> PermissionResultAllow:
+        return PermissionResultAllow()
+
+    options = ClaudeAgentOptions(cli_path=sys.executable, can_use_tool=allow)
+    transport = create_transport(options)
+    assert isinstance(transport, SubprocessCLITransport)
+    command = transport._build_command()
+    assert command[command.index("--permission-prompt-tool") + 1] == "stdio"
+    assert options.permission_prompt_tool_name is None
+    assert options.can_use_tool is allow
 
 
 async def _cli_options(

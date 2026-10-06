@@ -135,6 +135,7 @@ from band.runtime.tools import (
     mcp_tool_names,
     turn_effect,
 )
+from band.workspaces import RoomWorkspaces, WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +338,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
         permission_mode: Claude Code permission mode, forwarded to the CLI
             (see :class:`ClaudePermissionMode`). ``DONT_ASK`` cannot be
             combined with ``approvals``.
-        cwd: Existing working directory for Claude Code sessions.
+        cwd: Explicit shared working directory; omit for isolated room workspaces.
         setting_sources: Host settings the CLI loads (skills, subagents,
             settings under ``~/.claude`` and ``./.claude``). Empty by default
             so the agent's capabilities are defined by the adapter, not by
@@ -561,14 +562,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         *,
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
         **features: Unpack[FeatureKwargs],
-    ):
+    ) -> None:
         """
         Initialize the Claude SDK adapter.
 
         Args:
             config: Session settings (model, permissions, CLI launch,
                 approvals, timeouts); see :class:`ClaudeSDKAdapterConfig`.
+            workspace_for_room: Optional room-to-absolute-directory resolver;
+                mutually exclusive with config.cwd.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -584,6 +588,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             **features,
         )
         self.config = config or ClaudeSDKAdapterConfig()
+        if self.config.cwd is not None and workspace_for_room is not None:
+            raise ValueError("set either cwd or workspace_for_room, not both")
+        self._workspaces = (
+            RoomWorkspaces(workspace_for_room) if self.config.cwd is None else None
+        )
 
         # Created in on_started.
         self._session_manager: ClaudeSessionManager | None = None
@@ -653,6 +662,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
+        if self._session_manager is not None:
+            await self._session_manager.stop()
 
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()
@@ -723,6 +734,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
             mcp_servers_factory=self._room_mcp_servers,
+            workspaces=self._workspaces,
         )
 
         logger.info(
@@ -1152,7 +1164,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         so the next client resumes the conversation.
         """
         if self._session_manager:
-            await self._session_manager.cleanup_session(room_id)
+            await self._session_manager.cleanup_session(
+                room_id, release_workspace=False
+            )
 
     async def _invalidate_session(self, room_id: str) -> None:
         """Evict the cached session and client so the next message for this

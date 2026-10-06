@@ -203,7 +203,7 @@ async def test_failed_codex_start_releases_workspace_reservation(
     with pytest.raises(RuntimeError, match="connection failed"):
         await adapter._ensure_client_ready()
 
-    assert adapter._workspace_rooms == {}
+    assert adapter._workspaces.rooms == ()
     assert adapter._room_clients["room-a"].client is None
     adapter._room_client("room-b")
 
@@ -223,11 +223,12 @@ async def test_cleanup_after_failed_start_does_not_evict_a_new_owners_claim(
         await adapter._ensure_client_ready()
 
     adapter._room_client("room-b")
-    claim_after_room_b = dict(adapter._workspace_rooms)
 
     await adapter.on_cleanup("room-a")
 
-    assert adapter._workspace_rooms == claim_after_room_b
+    assert adapter._workspaces.rooms == ("room-b",)
+    with pytest.raises(ValueError, match="both"):
+        adapter._room_client("room-c")
 
 
 @pytest.mark.asyncio
@@ -267,7 +268,7 @@ async def test_room_state_survives_a_failed_rebuild_attempt(tmp_path: Path) -> N
         await adapter._ensure_client_ready()
 
     assert adapter._require_active_client_state().model_override == "room-model"
-    assert adapter._workspace_rooms == {}
+    assert adapter._workspaces.rooms == ()
     adapter._room_client("room-a")
 
 
