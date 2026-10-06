@@ -102,6 +102,11 @@ class ResyncRequest:
 class BacklogProcessResult(Enum):
     ADVANCED = "advanced"
     RETRY_LATER = "retry_later"
+    # Skipped from local knowledge (completed, permanently failed, or the
+    # agent's own message); the platform's copy of the message is unchanged,
+    # so /next will offer it again while it stays the oldest not-processed
+    # one.
+    NO_PROGRESS = "no_progress"
 
 
 class ExecutionState(StrEnum):
@@ -1240,6 +1245,10 @@ class ExecutionContext:
         )
 
         try:
+            # A message skipped from local knowledge alone changes nothing
+            # server-side; if /next offers it again the drain has stopped
+            # making durable progress and must not spin on it.
+            skipped: set[str] = set()
             while True:  # Cancellation handles exit
                 next_msg = await self._get_next_message()
 
@@ -1259,6 +1268,15 @@ class ExecutionContext:
                     )
                     break
 
+                if next_msg.id in skipped:
+                    logger.warning(
+                        "ExecutionContext %s: /next re-returned message %s "
+                        "already skipped in this drain; ending sync",
+                        self.room_id,
+                        next_msg.id,
+                    )
+                    break
+
                 if next_msg.id == self._first_ws_msg_id:
                     logger.info(
                         "ExecutionContext %s: Sync point reached at message %s",
@@ -1266,7 +1284,7 @@ class ExecutionContext:
                         next_msg.id,
                     )
                     result = await self._process_backlog_message(next_msg)
-                    if result == BacklogProcessResult.ADVANCED:
+                    if result != BacklogProcessResult.RETRY_LATER:
                         # Remove all WS copies of the sync-point message while
                         # preserving the relative order of other queued events.
                         self._drain_duplicate_from_queue(next_msg.id)
@@ -1283,6 +1301,8 @@ class ExecutionContext:
                 result = await self._process_backlog_message(next_msg)
                 if result == BacklogProcessResult.RETRY_LATER:
                     return False
+                if result == BacklogProcessResult.NO_PROGRESS:
+                    skipped.add(next_msg.id)
 
                 if self._stopped:
                     # A stop control signal landed mid-cycle: the message was
@@ -1336,6 +1356,7 @@ class ExecutionContext:
             "ExecutionContext %s: Re-polling /next for missed messages", self.room_id
         )
         caught_up = 0
+        skipped: set[str] = set()
         try:
             while True:
                 next_msg = await self._get_next_message()
@@ -1350,6 +1371,18 @@ class ExecutionContext:
                     )
                     break
 
+                if next_msg.id in skipped:
+                    # The no-spin invariant of _synchronize_with_next: /next
+                    # keeps offering a message skipped from local knowledge
+                    # alone until the platform retires it.
+                    logger.warning(
+                        "ExecutionContext %s: /next re-returned message %s "
+                        "already skipped in this drain; ending resync",
+                        self.room_id,
+                        next_msg.id,
+                    )
+                    break
+
                 logger.info(
                     "ExecutionContext %s: Catching up missed message %s via /next resync",
                     self.room_id,
@@ -1358,6 +1391,8 @@ class ExecutionContext:
                 result = await self._process_backlog_message(next_msg)
                 if result == BacklogProcessResult.RETRY_LATER:
                     return False
+                if result == BacklogProcessResult.NO_PROGRESS:
+                    skipped.add(next_msg.id)
 
                 caught_up += 1
 
@@ -1429,17 +1464,17 @@ class ExecutionContext:
             agent_id=self._agent_id,
         ):
             logger.debug("Skipping self-message %s", msg_id)
-            return BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.NO_PROGRESS
 
         # Skip permanently failed messages
         if self._retry_tracker.is_permanently_failed(msg_id):
             logger.debug("Skipping permanently failed message %s", msg_id)
-            return BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.NO_PROGRESS
 
         # Skip if already processed (dedupe)
         if self.claims.is_completed(self.room_id, msg_id):
             logger.debug("Skipping duplicate backlog message: %s", msg_id)
-            return BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.NO_PROGRESS
 
         if self.claims.is_ack_pending(self.room_id, msg_id):
             logger.debug("Retrying processed ack for backlog message: %s", msg_id)

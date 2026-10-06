@@ -985,7 +985,7 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.NO_PROGRESS
         mock_handler.assert_not_awaited()
         mock_link_with_next.mark_processing.assert_not_awaited()
         mock_link_with_next.mark_processed.assert_not_awaited()
@@ -1881,7 +1881,7 @@ class TestCrashRecoverySync:
         # A further delivery of the same message must not invoke the handler.
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.NO_PROGRESS
         assert failing_handler.await_count == 1
 
 
