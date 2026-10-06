@@ -16,13 +16,18 @@ class ACPStderrDrain:
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
         self._stopping = False
+        self._stdout: asyncio.StreamReader | None = None
         self._task: asyncio.Task[None] | None = None
 
     def start(self, process: asyncio.subprocess.Process) -> None:
         self._stopping = False
+        self._stdout = process.stdout
         self._task = asyncio.create_task(self._drain(process))
 
     def expect_exit(self) -> None:
+        # Cleanup after stdout EOF did not cause the connection to close.
+        if self._stdout is not None and self._stdout.at_eof():
+            return
         self._stopping = True
 
     async def _drain(self, process: asyncio.subprocess.Process) -> None:
@@ -40,7 +45,7 @@ class ACPStderrDrain:
             text = line.decode(errors="replace").rstrip("\r\n")
             tail.append(text)
             self._logger.debug("ACP agent stderr: %s", text)
-        # Capture the exit intent before prompt failure can trigger stop().
+        # A later stop cannot reclassify an EOF already observed.
         unexpected = not self._stopping
         returncode = await process.wait()
         if unexpected and returncode != 0:

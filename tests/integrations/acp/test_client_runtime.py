@@ -70,7 +70,9 @@ def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stage", [ExitStage.INITIALIZE, ExitStage.PROMPT])
+@pytest.mark.parametrize(
+    "stage", [ExitStage.INITIALIZE, ExitStage.PROMPT, ExitStage.STDOUT_EOF]
+)
 async def test_crashed_stdio_agent_reports_exit_and_stderr(
     stdio_runtime: StdioRuntimeFactory,
     caplog: pytest.LogCaptureFixture,

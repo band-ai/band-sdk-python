@@ -18,6 +18,7 @@ from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 class ExitStage(StrEnum):
     INITIALIZE = "initialize"
     PROMPT = "prompt"
+    STDOUT_EOF = "stdout-eof"
     EOF = "eof"
 
 
@@ -46,6 +47,10 @@ class StdioPeer(FakeACPAgent):
         del agent, session_id
         if self.stage is ExitStage.PROMPT:
             self.exit_process()
+        if self.stage is ExitStage.STDOUT_EOF:
+            os.close(sys.stdout.fileno())
+            # Keep stderr alive until runtime cleanup closes the agent's stdin.
+            await asyncio.Future[None]()
 
 
 async def main() -> None:
