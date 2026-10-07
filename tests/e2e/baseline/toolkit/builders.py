@@ -23,10 +23,12 @@ import weakref
 from typing import Any
 
 from band import create_room_workspace_resolver
+from band.adapters.codex import CodexSandboxMode
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.omp import omp_provider_env
 from band.testing import feature_kwargs
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
     Adapter,
@@ -85,22 +87,21 @@ def _build_claude_sdk(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import (  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
         ClaudeSDKAdapter,
         ClaudeSDKAdapterConfig,
     )
 
-    # Claude Code gets real Bash/filesystem tools; an unset cwd falls back to
-    # the process cwd (this repo's own checkout). Mirrors _build_copilot_acp's
-    # per-cell disposable sandbox.
     sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-claude-sdk-")
     adapter = ClaudeSDKAdapter(
         ClaudeSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
             custom_section=prompt,
-            cwd=sandbox.name,
         ),
+        workspace_for_room=workspace_for_room
+        or create_room_workspace_resolver(sandbox.name),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -414,6 +415,7 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
         # through workspace_for_room instead.
         "cwd": None,
         "workspace_for_room": create_room_workspace_resolver(s.backends.codex_cwd),
+        "sandbox": CodexSandboxMode.WORKSPACE_WRITE,
         "custom_section": prompt or "",
         "model": s.backends.codex_model,
     }
@@ -434,14 +436,18 @@ def _build_codex(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import (  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file builds
         CodexAdapter,
         CodexAdapterConfig,
     )
 
+    config_kwargs = codex_config_kwargs(s, prompt=prompt)
+    if workspace_for_room is not None:
+        config_kwargs["workspace_for_room"] = workspace_for_room
     return CodexAdapter(
-        config=CodexAdapterConfig(**codex_config_kwargs(s, prompt=prompt)),
+        config=CodexAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -529,6 +535,7 @@ def _build_copilot_acp(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- isolates the copilot_acp extra from the other frameworks this file builds
         CopilotACPAdapter,
@@ -564,8 +571,11 @@ def _build_copilot_acp(
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
+    if workspace_for_room is not None:
+        config_kwargs.pop("cwd")
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -597,6 +607,7 @@ def _build_omp_acp(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.omp_acp import (  # noqa: PLC0415
         OmpACPAdapter,
@@ -612,8 +623,11 @@ def _build_omp_acp(
         "env": omp_acp_env(s, omp_agent_home_dir(sandbox)),
     }
 
+    if workspace_for_room is not None:
+        config_kwargs.pop("cwd")
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -645,6 +659,7 @@ def _build_cursor_acp(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.cursor_acp import (  # noqa: PLC0415 -- isolates the ACP extra from other framework builders
         CursorACPAdapter,
@@ -661,8 +676,11 @@ def _build_cursor_acp(
         "approval_mode": "auto_accept",
         "plan_mode": "auto_accept",
     }
+    if workspace_for_room is not None:
+        config_kwargs.pop("cwd")
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )

@@ -441,6 +441,69 @@ async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None
 
 
 @pytest.mark.asyncio
+async def test_intent_titled_no_reply_suppresses_closing_text(
+    fake_agent: FakeACPAgent,
+) -> None:
+    fake_agent.will_call_mcp_tool(
+        tool_call_id="tc-silent",
+        tool_name="band_no_reply",
+        title="Ending the turn silently",
+        arguments={"room_id": "room-1", "reason": "nothing asked of me"},
+    ).will_say("No action is needed, so I ended the turn without replying.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("fyi, no action needed", room="room-1")
+
+    assert reply.texts == []
+
+
+@pytest.mark.asyncio
+async def test_intent_titled_send_message_is_not_duplicated_by_text(
+    fake_agent: FakeACPAgent,
+) -> None:
+    answer = "The fix is ready for review."
+    fake_agent.will_call_mcp_tool(
+        tool_call_id="tc-message",
+        tool_name="band_send_message",
+        title="Sending the review handoff",
+        arguments={
+            "room_id": "room-1",
+            "content": answer,
+            "mentions": ["@pat"],
+        },
+    ).will_say("I sent the review handoff.")
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("please hand off", room="room-1")
+
+    assert reply.texts == [answer]
+
+
+@pytest.mark.asyncio
+async def test_intent_titled_read_only_tool_keeps_text_reply(
+    fake_agent: FakeACPAgent,
+) -> None:
+    answer = "I checked the room roster."
+    fake_agent.will_call_mcp_tool(
+        tool_call_id="tc-roster",
+        tool_name="band_get_participants",
+        title="Checking who is in the room",
+        arguments={"room_id": "room-1"},
+    ).will_say(answer)
+
+    async with acp_adapter(
+        fake_agent, fake_agent_config(inject_band_tools=True)
+    ) as session:
+        reply = await session.send("who is here?", room="room-1")
+
+    assert reply.texts == [answer]
+
+
+@pytest.mark.asyncio
 async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None:
     """A room-visible Band event still gets real ACP tool_call/tool_result
     narration, straddling the event it posts — like any other tool call."""

@@ -60,7 +60,7 @@ async def main() -> None:
     # With BYOK the `model` names the provider's model, not a Copilot one.
     adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
-            model="claude-haiku-4-5",
+            model="claude-sonnet-5-5",
             custom_section="You are a helpful assistant. Be concise and friendly.",
             use_logged_in_user=False,
             # Pin a unique per-example session prefix.

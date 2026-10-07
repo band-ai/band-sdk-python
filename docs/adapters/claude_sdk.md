@@ -11,6 +11,20 @@ setting fails when the adapter is built rather than being silently ignored.
 CLI launch options and chat approvals are nested groups:
 `cli=ClaudeCLIOptions(...)` and `approvals=ClaudeApprovalOptions(...)`.
 
+By default, every room runs in its own `.band-workspaces/<room-id>` directory
+under the host's working directory. Pass `workspace_for_room=` as a keyword-only
+constructor argument to choose another absolute directory for each room; use
+`band.create_room_workspace_resolver(root)` for isolated children of a custom root.
+The resolver is evaluated once per room membership and the directory stays stable
+through session recovery. Leaving or stopping releases the claim without deleting
+files. Workspace claims are local to one adapter instance; they are not an OS
+sandbox or a lock across processes.
+
+An explicit `ClaudeSDKAdapterConfig(cwd=...)` preserves the shared-directory
+behavior for callers who need it. It cannot be combined with `workspace_for_room`.
+Failed session cleanup retains ownership and can be retried; a new session cannot
+reuse the failed client or take another room's claimed directory.
+
 - **Two credentials.** `Agent.create(api_key=...)` is the Band key only. Claude
   Code authenticates itself (`claude auth login` or `ANTHROPIC_API_KEY`); the
   adapter never hands it a key.

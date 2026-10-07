@@ -37,6 +37,7 @@ from band_rest import (
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.types import AgentConfig
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -595,16 +596,23 @@ class AdapterCell:
         prompt: str | None = None,
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
     ) -> SimpleAdapter[Any]:
         """Construct (do not run) this cell's adapter; arguments override cell defaults."""
         # Overrides use None-means-"cell default" (not a sentinel): no test needs to
         # clear a default back to "no prompt", so the sentinel would be dead machinery.
+        kwargs = (
+            {}
+            if workspace_for_room is None
+            else {"workspace_for_room": workspace_for_room}
+        )
         return build_adapter(
             self.adapter_id,
             self.settings,
             prompt=self.prompt if prompt is None else prompt,
             features=self.features if features is None else features,
             tools=self.tools if tools is None else tools,
+            **kwargs,
         )
 
     async def provision(self, *, label: str | None = None) -> ProvisionedAgent:

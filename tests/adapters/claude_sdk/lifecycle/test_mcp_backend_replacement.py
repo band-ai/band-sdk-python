@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import pytest
 
@@ -39,10 +40,12 @@ async def test_a_new_room_after_a_crash_gets_a_live_band_endpoint(
 
 async def test_an_open_room_after_a_crash_resumes_on_the_new_endpoint(
     claude_room: OpenRoom,
+    tmp_path: Path,
 ) -> None:
     """The room's open session still dials the dead port, so it is replaced by
     one that resumes the same conversation on the live one."""
-    room = await claude_room()
+    workspace = tmp_path / "original"
+    room = await claude_room(workspace_for_room=lambda _: str(workspace))
     room.claude.script(
         [room.model_reply("before the crash")],
         [room.model_reply("after the crash")],
@@ -50,6 +53,7 @@ async def test_an_open_room_after_a_crash_resumes_on_the_new_endpoint(
     await room.send("hi")
 
     await room.crash_band_server()
+    workspace = tmp_path / "changed"
     await room.send("still there?")
 
     first_session, _ = room.claude.sessions
@@ -58,6 +62,7 @@ async def test_an_open_room_after_a_crash_resumes_on_the_new_endpoint(
     assert room.claude.resumed == [None, "sess-1"]
     assert first_session.alive is False
     assert second_port != first_port
+    assert room.claude.session_workspaces == [str(tmp_path / "original")] * 2
 
 
 async def test_a_message_after_shutdown_is_refused(claude_room: OpenRoom) -> None:

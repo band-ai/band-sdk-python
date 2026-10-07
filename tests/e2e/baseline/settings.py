@@ -18,7 +18,7 @@ from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.defaultmodels import (
-    ANTHROPIC_SMALL_MODEL,
+    ANTHROPIC_MODEL,
     GEMINI_MODEL,
     LETTA_SELF_HOSTED_MODEL,
     OPENAI_MODEL,
@@ -215,9 +215,10 @@ class LLMModels(BaseSettings):
         default=OPENAI_MODEL,
         validation_alias=AliasChoices("E2E_LLM_MODEL", "E2E_OPENAI_MODEL"),
     )
-    # A modern, cheap model: works for the agent under test AND for the judge,
-    # which needs structured-output support (claude-3-haiku-20240307 does not).
-    anthropic_model: str = ANTHROPIC_SMALL_MODEL  # E2E_ANTHROPIC_MODEL
+    # Serves the agent under test AND the judge. Sonnet handles ambiguous
+    # multi-agent turns that Haiku does not; the judge also needs
+    # structured-output support.
+    anthropic_model: str = ANTHROPIC_MODEL  # E2E_ANTHROPIC_MODEL
     # Gemini / Google ADK agent model.
     gemini_model: str = GEMINI_MODEL  # E2E_GEMINI_MODEL
     # Judge model. MUST be a modern Anthropic model id (structured outputs). Left

@@ -11,10 +11,11 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
-
-from .rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
+from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 
 logger = logging.getLogger(__name__)
+
+_PROCESS_EXIT_TIMEOUT_S = 1.0
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -43,6 +44,7 @@ class CodexStdioClient(BaseJsonRpcClient):
         self._proc: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
 
     @staticmethod
     def _default_codex_command() -> tuple[str, str, str, str]:
@@ -58,6 +60,9 @@ class CodexStdioClient(BaseJsonRpcClient):
 
     async def connect(self) -> None:
         """Start the codex app-server process and reader tasks."""
+        if self._close_task is not None:
+            await self.close()
+            self._close_task = None
         if self._connected:
             return
 
@@ -83,28 +88,44 @@ class CodexStdioClient(BaseJsonRpcClient):
         self._stderr_task = asyncio.create_task(self._read_stderr_loop())
 
     async def close(self) -> None:
-        """Stop read loops and terminate process."""
-        if not self._connected:
+        """Share retryable cleanup that survives a cancelled or timed-out caller."""
+        if self._proc is None:
             return
         self._connected = False
+        if self._close_task is None or (
+            self._close_task.done()
+            and (
+                self._close_task.cancelled() or self._close_task.exception() is not None
+            )
+        ):
+            self._close_task = asyncio.create_task(self._close_process())
+            self._close_task.add_done_callback(self._log_close_failure)
+        await asyncio.shield(self._close_task)
 
-        for task in (self._reader_task, self._stderr_task):
-            if task is not None:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+    @staticmethod
+    def _log_close_failure(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("Codex subprocess cleanup failed", exc_info=error)
 
-        if self._proc and self._proc.stdin:
-            self._proc.stdin.close()
+    async def _close_process(self) -> None:
+        readers = [
+            task for task in (self._reader_task, self._stderr_task) if task is not None
+        ]
+        for task in readers:
+            task.cancel()
+        await asyncio.gather(*readers, return_exceptions=True)
 
-        if self._proc:
+        if (process := self._proc) is not None:
+            if process.stdin is not None:
+                process.stdin.close()
             try:
-                await asyncio.wait_for(self._proc.wait(), timeout=1.0)
+                await asyncio.wait_for(process.wait(), timeout=_PROCESS_EXIT_TIMEOUT_S)
             except TimeoutError:
-                self._proc.kill()
-                await self._proc.wait()
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
 
         self._fail_pending("Codex stdio client closed")
 
