@@ -654,6 +654,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[approve]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[decline]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_thoughts_are_not_placeholders",
       "adapter": "suite",
       "lanes": [
