@@ -23,6 +23,7 @@ from band.core.memory_types import (
     memory_type_field_description,
     validate_subject_scope,
 )
+from band.runtime.tools.inputs.identifiers import ResourceId
 
 
 class ListMemoriesInput(BaseModel):
@@ -82,7 +83,7 @@ class StoreMemoryInput(BaseModel):
 class GetMemoryInput(BaseModel):
     """Retrieve a specific memory by ID."""
 
-    memory_id: str = Field(..., description="Memory ID (UUID)")
+    memory_id: ResourceId = Field(..., description="Memory ID (UUID)")
 
 
 class SupersedeMemoryInput(BaseModel):
@@ -93,7 +94,7 @@ class SupersedeMemoryInput(BaseModel):
     Only the source agent can supersede.
     """
 
-    memory_id: str = Field(..., description="Memory ID (UUID)")
+    memory_id: ResourceId = Field(..., description="Memory ID (UUID)")
 
 
 class ArchiveMemoryInput(BaseModel):
@@ -104,4 +105,4 @@ class ArchiveMemoryInput(BaseModel):
     Only the source agent can archive.
     """
 
-    memory_id: str = Field(..., description="Memory ID (UUID)")
+    memory_id: ResourceId = Field(..., description="Memory ID (UUID)")

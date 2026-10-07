@@ -14,16 +14,20 @@ import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from band_mcp import shared as shared_mod
 from band_mcp.config import Config
 from band_mcp.server import standalone_spec
 from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from mcp import ClientSession
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.context import RequestContext
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel, Field, ValidationError
+from starlette.requests import Request
 
 from band.integrations.mcp.engine import (
     CustomToolSpec,
@@ -38,9 +42,11 @@ from band.integrations.mcp.engine import (
     validate_unique_tool_names,
 )
 from band.runtime.custom_tools import declares_turn_effect
-from band.runtime.tools import TOOL_DEFINITIONS, TurnEffect
+from band.runtime.tools import TOOL_DEFINITIONS, AgentTools, HumanTools, TurnEffect
 from band.testing.fake_tools import FakeAgentTools
+from tests.identifiers import INVALID_IDS, UUID_ID
 from tests.mcp.conftest import FakeHumanTools
+from tests.runtime.helpers import memory_client, rest_client_over
 
 
 async def _list_tool(session: ClientSession, name: str) -> Any:
@@ -792,3 +798,217 @@ async def test_concurrent_dispatch_through_one_engine(monkeypatch) -> None:
     for i in range(AGENT_TOOLS_CACHE_MAX_SIZE):
         await get_participants(f"room_overflow_{i}")
     assert len(resolver._agent_tools_cache) == AGENT_TOOLS_CACHE_MAX_SIZE
+
+
+@pytest.mark.parametrize(
+    "name,human",
+    [
+        ("band_get_memory", False),
+        ("band_get_user_memory", True),
+        ("band_archive_user_memory", True),
+    ],
+)
+@pytest.mark.parametrize("memory_id", INVALID_IDS)
+@pytest.mark.asyncio
+async def test_memory_id_rejected_over_mcp_before_http(
+    name: str, human: bool, memory_id: str
+) -> None:
+    async with memory_client() as (rest, requests):
+        tools = HumanTools(rest) if human else AgentTools("room-1", rest)
+        resolver = (
+            _NoopHumanResolver(tools)
+            if human
+            else EmbeddedResolver(get_tools=lambda room: tools)
+        )
+        definition = TOOL_DEFINITIONS[name]
+        registration = build_tool_registration(
+            definition,
+            input_model=definition.input_model
+            if human
+            else pin_existing_chat_id(definition.input_model),
+            resolver=resolver,
+            strip_chat_id=not human,
+            pinned_room_id=None if human else "room-1",
+        )
+        mcp = build_engine(EngineSpec(name="memory-validation", tools=(registration,)))
+        async with create_connected_server_and_client_session(
+            mcp._mcp_server
+        ) as session:
+            result = await session.call_tool(name, {"memory_id": memory_id})
+            assert result.isError
+            assert "memory_id" in result.content[0].text
+            assert requests == []
+
+
+@pytest.mark.parametrize(
+    "name,human,method,suffix",
+    [
+        ("band_get_memory", False, "GET", ""),
+        ("band_get_user_memory", True, "GET", ""),
+        ("band_archive_user_memory", True, "POST", "/archive"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_memory_item_survives_real_mcp_and_rest(
+    name: str, human: bool, method: str, suffix: str
+) -> None:
+    async with memory_client() as (rest, requests):
+        tools = HumanTools(rest) if human else AgentTools("room-1", rest)
+        resolver = (
+            _NoopHumanResolver(tools)
+            if human
+            else EmbeddedResolver(get_tools=lambda room: tools)
+        )
+        definition = TOOL_DEFINITIONS[name]
+        registration = build_tool_registration(
+            definition,
+            input_model=definition.input_model
+            if human
+            else pin_existing_chat_id(definition.input_model),
+            resolver=resolver,
+            strip_chat_id=not human,
+            pinned_room_id=None if human else "room-1",
+        )
+        mcp = build_engine(EngineSpec(name="memory-validation", tools=(registration,)))
+        async with create_connected_server_and_client_session(
+            mcp._mcp_server
+        ) as session:
+            advertised = await _list_tool(session, name)
+            field = advertised.inputSchema["properties"]["memory_id"]
+            assert field["type"] == "string"
+            assert (
+                field["description"]
+                == definition.input_model.model_fields["memory_id"].description
+            )
+            assert "memory_id" in advertised.inputSchema["required"]
+            assert "pattern" not in field and "minLength" not in field
+            result = await _call(session, name, memory_id=UUID_ID)
+            payload = result["data"] if human else result
+            assert payload["id"] == UUID_ID
+            assert payload["content"] == "remember this"
+            surface = "me" if human else "agent"
+            assert [(q.method, q.url.path) for q in requests] == [
+                (method, f"/api/v1/{surface}/memories/{UUID_ID}{suffix}")
+            ]
+
+
+@pytest.mark.parametrize("field", ["chat_id", "room_id"])
+@pytest.mark.parametrize("room", ["", ".", "#", "../chats/"])
+@pytest.mark.parametrize("pinned", [False, True])
+@pytest.mark.asyncio
+async def test_room_ids_validate_effective_selection(
+    field: str, room: str, pinned: bool
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200, json={"data": {"chat_room_id": "room-1", "goal_title": "ship"}}
+        )
+
+    async with rest_client_over(answer) as rest:
+        tools = AgentTools("room-1", rest)
+        definition = TOOL_DEFINITIONS["band_get_board"]
+        model = (
+            pin_existing_chat_id(definition.input_model)
+            if pinned
+            else extend_with_chat_id(definition.input_model, None)
+        )
+        registration = build_tool_registration(
+            definition,
+            input_model=model,
+            resolver=EmbeddedResolver(get_tools=lambda room: tools),
+            strip_chat_id=True,
+            pinned_room_id="room-1" if pinned else None,
+        )
+        mcp = build_engine(EngineSpec(name="room-validation", tools=(registration,)))
+        async with create_connected_server_and_client_session(
+            mcp._mcp_server
+        ) as session:
+            result = await session.call_tool(definition.name, {field: room})
+            assert bool(result.isError) is not pinned
+            if pinned:
+                assert [q.url.path for q in requests] == [
+                    "/api/v1/agent/chats/room-1/board"
+                ]
+            else:
+                assert (
+                    "chat_id" in result.content[0].text
+                    or "room_id" in result.content[0].text
+                )
+                assert requests == []
+
+
+@pytest.mark.parametrize("field", ["chat_id", "room_id"])
+@pytest.mark.parametrize("room", ["", ".", "#", "room-1"])
+@pytest.mark.asyncio
+async def test_custom_tool_room_validation_precedes_handler(
+    field: str, room: str
+) -> None:
+    class EchoInput(BaseModel):
+        """Echo text."""
+
+        text: str
+
+    handled: list[str] = []
+
+    async def echo(args: EchoInput) -> str:
+        handled.append(args.text)
+        return args.text
+
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=EchoInput, handler=echo),
+        get_tools=lambda room: FakeAgentTools(room_id=room),
+    )
+    mcp = build_engine(EngineSpec(name="custom-room-validation", tools=(registration,)))
+    async with create_connected_server_and_client_session(mcp._mcp_server) as session:
+        result = await session.call_tool(
+            registration.name, {field: room, "text": "hello"}
+        )
+        assert bool(result.isError) is (room != "room-1")
+        assert handled == (["hello"] if room == "room-1" else [])
+
+
+@pytest.mark.parametrize("field", ["chat_id", "room_id"])
+@pytest.mark.parametrize("endpoint_room", ["room-1", "."])
+@pytest.mark.asyncio
+async def test_connection_room_overrides_discarded_client_input(
+    field: str, endpoint_room: str
+) -> None:
+    async with memory_client() as (rest, requests):
+        tools = AgentTools("room-1", rest)
+        definition = TOOL_DEFINITIONS["band_get_memory"]
+        registration = build_tool_registration(
+            definition,
+            pin_existing_chat_id(definition.input_model),
+            resolver=EmbeddedResolver(get_tools=lambda room: tools),
+            strip_chat_id=True,
+            room_from_connection=True,
+        )
+        mcp = build_engine(
+            EngineSpec(name="connection-room-validation", tools=(registration,))
+        )
+        context = Context(
+            fastmcp=mcp,
+            request_context=RequestContext(
+                request_id="1",
+                meta=None,
+                session=None,
+                lifespan_context=None,
+                request=Request(
+                    {"type": "http", "path_params": {"room_id": endpoint_room}}
+                ),
+            ),
+        )
+        tool = mcp._tool_manager.get_tool(definition.name)
+        if endpoint_room == "room-1":
+            result = await tool.run({field: "#", "memory_id": UUID_ID}, context=context)
+            assert json.loads(result)["id"] == UUID_ID
+            assert [q.url.path for q in requests] == [
+                f"/api/v1/agent/memories/{UUID_ID}"
+            ]
+        else:
+            with pytest.raises(ToolError, match="chat_id"):
+                await tool.run({field: "room-1", "memory_id": UUID_ID}, context=context)
+            assert requests == []

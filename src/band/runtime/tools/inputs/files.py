@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from band.runtime.tools.inputs.identifiers import ResourceId
+
 
 class ListRoomFilesInput(BaseModel):
     """List files that have been shared in the current room.
@@ -30,7 +32,7 @@ class ReadRoomFileInput(BaseModel):
     large or not previewable to show inline.
     """
 
-    file_id: str = Field(
+    file_id: ResourceId = Field(
         ...,
         description=(
             "File ID, from a message's attachments or band_list_room_files. "
