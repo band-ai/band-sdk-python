@@ -387,11 +387,11 @@ async def test_a_host_config_policy_settles_tool_use_with_nobody_asked(
 
         # The tool was really attempted, so a missing file is the policy's doing.
         tool_calls = await room.capture.tool_calls(sender_id=room.agent.id)
-        tool_calls.assert_fired(policy.tool)
+        policy.assert_attempted(tool_calls, marker, target)
         said = room.said_since(start)
         assert room.dialect.find_requests(room.capture.messages.since(start)) == []
         assert policy.decisions(said) == policy.announced
         if policy.runs:
-            assert target.read_text().strip() == marker
+            assert written_lines(target) == [marker]
         else:
             assert not target.exists(), f"{policy.name} still wrote the file"
