@@ -1,5 +1,6 @@
 """Tests for Agent compositor."""
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -294,6 +295,23 @@ class TestStop:
         await agent.stop()
 
         mock_runtime.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_stops_tear_down_once(self, mock_runtime, mock_adapter):
+        """A host handler's stop() racing __aexit__'s stop() tears down once."""
+
+        async def stop_that_yields(timeout: float | None = None) -> bool:
+            await asyncio.sleep(0)
+            return True
+
+        mock_runtime.stop.side_effect = stop_that_yields
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+        await agent.start()
+
+        await asyncio.gather(agent.stop(), agent.stop())
+
+        mock_runtime.stop.assert_awaited_once()
+        mock_adapter.cleanup_all.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_calls_adapter_cleanup_all(self, mock_runtime, mock_adapter):

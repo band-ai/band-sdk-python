@@ -213,13 +213,11 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 ### Process Signals
 
-`agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) opts out and stops the agent from its own handler:
+`agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) passes `install_signal_handlers=False` and calls `agent.stop()` from its own handler; `run_forever` then returns. `GracefulShutdown` is a ready-made handler that does this, and `run_with_graceful_shutdown(agent)` wraps it:
 
 ```python notest
-loop = asyncio.get_running_loop()
-async with agent:
-    loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(agent.stop()))
-    await agent.run_forever(install_signal_handlers=False)  # returns once stop() runs
+async with agent, GracefulShutdown(agent):
+    await agent.run_forever(install_signal_handlers=False)
 ```
 
 ### Logging

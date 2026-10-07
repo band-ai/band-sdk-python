@@ -241,10 +241,8 @@ class BandLink:
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends.
 
-        By default SIGTERM/SIGINT stop the connection, and the process's
-        previous handlers are restored on return. A host that owns its
-        process signals passes ``install_signal_handlers=False`` and calls
-        ``disconnect()`` from its own handler.
+        ``install_signal_handlers`` goes to ``PHXChannelsClient.run_forever``;
+        see ``Agent.run_forever`` for when a host turns it off.
         """
         if not self._ws:
             raise RuntimeError("Not connected")

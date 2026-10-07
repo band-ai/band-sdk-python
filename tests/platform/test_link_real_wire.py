@@ -175,9 +175,15 @@ def host_signal_handler(sig: signal.Signals) -> Iterator[Callable[[int, object],
         signal.signal(sig, previous)
 
 
-async def _started_run(link: BandLink, **kwargs: bool) -> asyncio.Task[None]:
-    task = asyncio.create_task(link.run_forever(**kwargs))
-    await asyncio.sleep(0.05)
+async def started_run(
+    link: BandLink, *, install_signal_handlers: bool = True
+) -> asyncio.Task[None]:
+    """Start ``run_forever`` and yield once: it installs its handlers before
+    its first suspension, so one loop tick is enough."""
+    task = asyncio.create_task(
+        link.run_forever(install_signal_handlers=install_signal_handlers)
+    )
+    await asyncio.sleep(0)
     return task
 
 
@@ -186,7 +192,7 @@ async def test_embedded_run_leaves_host_signal_handlers_alone() -> None:
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             await link.connect()
-            running = await _started_run(link, install_signal_handlers=False)
+            running = await started_run(link, install_signal_handlers=False)
 
             assert signal.getsignal(signal.SIGTERM) is host_handler
 
@@ -194,11 +200,19 @@ async def test_embedded_run_leaves_host_signal_handlers_alone() -> None:
             await asyncio.wait_for(running, timeout=5.0)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="a raised SIGINT kills the Windows test process",
+@pytest.mark.parametrize(
+    "sig",
+    [
+        signal.SIGTERM,
+        pytest.param(
+            signal.SIGINT,
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="a raised SIGINT kills the Windows test process",
+            ),
+        ),
+    ],
 )
-@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
 async def test_default_run_stops_on_signal_and_restores_host_handler(
     sig: signal.Signals,
 ) -> None:
@@ -206,7 +220,7 @@ async def test_default_run_stops_on_signal_and_restores_host_handler(
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             await link.connect()
-            running = await _started_run(link)
+            running = await started_run(link)
 
             signal.raise_signal(sig)
             await asyncio.wait_for(running, timeout=5.0)

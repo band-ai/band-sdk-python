@@ -348,7 +348,8 @@ async def run_with_graceful_shutdown(
 
     async with shutdown:
         try:
-            await agent.run(shutdown_timeout=timeout)
+            # This helper owns the signals, so the transport must not take them.
+            await agent.run(shutdown_timeout=timeout, install_signal_handlers=False)
         except asyncio.CancelledError:
             # Normal shutdown via signal
             pass

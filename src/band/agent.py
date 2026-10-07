@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import weakref
 from importlib.metadata import PackageNotFoundError
@@ -101,6 +102,9 @@ class Agent:
         self._adapter = adapter
         self._preprocessor = preprocessor or DefaultPreprocessor()
         self._started = False
+        # A host's signal handler can stop the agent while ``__aexit__`` stops
+        # it too; the second caller waits for the first instead of racing it.
+        self._stop_lock = asyncio.Lock()
         # Tracks shutdown_timeout from run() for use in __aexit__
         # Uses sentinel to distinguish "not set" from "explicitly set to None"
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
@@ -307,41 +311,43 @@ class Agent:
             True if stopped gracefully (processing completed or was idle),
             False if had to cancel mid-processing after timeout.
         """
-        if not self._started:
-            return True
+        async with self._stop_lock:
+            if not self._started:
+                return True
 
-        try:
-            graceful = await self._runtime.stop(timeout=timeout)
-        finally:
-            # Always release adapter-wide resources (e.g. a CLI runtime
-            # subprocess, a self-hosted MCP server, an external registration),
-            # even when the runtime fails to stop cleanly.
-            await release_adapter(self._adapter)
-            self._started = False
-            _running_agents.discard(self)
+            try:
+                graceful = await self._runtime.stop(timeout=timeout)
+            finally:
+                # Always release adapter-wide resources (e.g. a CLI runtime
+                # subprocess, a self-hosted MCP server, an external
+                # registration), even when the runtime fails to stop cleanly.
+                await release_adapter(self._adapter)
+                self._started = False
+                _running_agents.discard(self)
         logger.info(
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )
         return graceful
 
     async def run(
-        self, shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT
+        self,
+        shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT,
+        *,
+        install_signal_handlers: bool = True,
     ) -> None:
         """
-        Run until interrupted: the script entry point.
-
-        Stops on SIGTERM/SIGINT. Hosts that own their process signals use
-        ``start()`` + ``run_forever(install_signal_handlers=False)`` instead.
+        Start, run until stopped or interrupted, then stop.
 
         Args:
             shutdown_timeout: Seconds to wait for graceful shutdown on interrupt.
                               Set to None for immediate cancellation.
                               Default is 30 seconds.
+            install_signal_handlers: See ``run_forever``.
         """
         self._shutdown_timeout = shutdown_timeout
         await self.start()
         try:
-            await self._runtime.run_forever()
+            await self.run_forever(install_signal_handlers=install_signal_handlers)
         finally:
             await self.stop(timeout=shutdown_timeout)
 
