@@ -637,7 +637,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             raise
         finally:
             # Unjudged turns (contact hub) often end without a reply; those are
-            # not failures. ``result is None`` covers the provider-exception path.
+            # not failures, so quiet completion still skips diagnostics.
             if result is None or (tools.turn.judged and not tools.turn.complete):
                 hooks.log_failure(room_id, result)
             if agent is not None:
