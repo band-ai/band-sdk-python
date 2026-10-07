@@ -22,6 +22,7 @@ from band.runtime.capabilities import FeatureFlag
 from band.runtime.types import AgentConfig, ConversationContext, SessionConfig
 from band.testing.platform import platform_connection_stub
 from tests.catalogs import CatalogAdapter
+from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
 @pytest.fixture
@@ -354,10 +355,45 @@ class TestStop:
         assert agent.is_running
 
     @pytest.mark.asyncio
+    async def test_failed_start_clears_pending_stop(self, mock_runtime, mock_adapter):
+        """A mid-start stop must not tear down a later successful start."""
+        start_entered = asyncio.Event()
+        release_start = asyncio.Event()
+        attempts = 0
+
+        async def start_then_fail_once(**kwargs: object) -> None:
+            nonlocal attempts
+            attempts += 1
+            start_entered.set()
+            await release_start.wait()
+            if attempts == 1:
+                raise RuntimeError("boot failed")
+
+        mock_runtime.start.side_effect = start_then_fail_once
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        starting = asyncio.create_task(agent.start())
+        await start_entered.wait()
+        assert await agent.stop(timeout=7.0) is True
+        release_start.set()
+        with pytest.raises(RuntimeError, match="boot failed"):
+            await starting
+
+        start_entered.clear()
+        release_start.clear()
+        starting_again = asyncio.create_task(agent.start())
+        await start_entered.wait()
+        release_start.set()
+        await starting_again
+
+        mock_runtime.stop.assert_not_awaited()
+        assert agent.is_running
+
+    @pytest.mark.asyncio
     async def test_run_returns_cleanly_after_stop_during_start(
         self, mock_runtime, mock_adapter
     ):
-        """SIGTERM mid-start must not leave run() raising Not connected."""
+        """Mid-start stop leaves run() finished without awaiting run_forever."""
         start_entered = asyncio.Event()
         release_start = asyncio.Event()
 
@@ -411,8 +447,8 @@ class TestRun:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("kwargs", "installs"),
-        [({}, True), ({"install_signal_handlers": False}, False)],
-        ids=["script-default", "host-owns-signals"],
+        INSTALL_SIGNAL_HANDLER_CASES,
+        ids=INSTALL_SIGNAL_HANDLER_IDS,
     )
     async def test_starts_then_runs_forever(
         self, mock_runtime, mock_adapter, kwargs, installs
@@ -996,8 +1032,8 @@ class TestRunForever:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("kwargs", "installs"),
-        [({}, True), ({"install_signal_handlers": False}, False)],
-        ids=["script-default", "host-owns-signals"],
+        INSTALL_SIGNAL_HANDLER_CASES,
+        ids=INSTALL_SIGNAL_HANDLER_IDS,
     )
     async def test_run_forever_delegates_to_runtime(
         self, mock_runtime, mock_adapter, kwargs, installs

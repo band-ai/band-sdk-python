@@ -258,22 +258,24 @@ class PlatformRuntime:
         """
         graceful = True
         try:
+            # Unsubscribe while the socket is still up; AgentRuntime.stop
+            # disconnects so a later unsubscribe would be too late.
+            if self._link and self._contacts_subscribed:
+                try:
+                    await self._link.unsubscribe_agent_contacts()
+                    logger.debug("Unsubscribed from contacts channel")
+                except Exception:
+                    logger.exception(
+                        "Failed to unsubscribe contacts before disconnect"
+                    )
+                finally:
+                    self._contacts_subscribed = False
             if self._runtime:
                 graceful = await self._runtime.stop(timeout=timeout)
         finally:
-            # Disconnect even when stop/unsubscribe fails — with
-            # install_signal_handlers=False that is the only way to wake
-            # run_forever.
+            # Idempotent if AgentRuntime.stop already disconnected — with
+            # install_signal_handlers=False disconnect is what wakes run_forever.
             try:
-                if self._link and self._contacts_subscribed:
-                    try:
-                        await self._link.unsubscribe_agent_contacts()
-                        self._contacts_subscribed = False
-                        logger.debug("Unsubscribed from contacts channel")
-                    except Exception:
-                        logger.exception(
-                            "Failed to unsubscribe contacts before disconnect"
-                        )
                 if self._link:
                     await self._link.disconnect()
             finally:

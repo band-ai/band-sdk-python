@@ -204,17 +204,23 @@ class AgentRuntime:
 
         1. Stops all execution contexts (with timeout)
         2. Stops RoomPresence
+        3. Disconnects the link (wakes ``run(install_signal_handlers=False)``)
         """
         self._accepting_rooms = False
         logger.info("Stopping AgentRuntime for agent %s", self.agent_id)
 
         # Stop all executions with timeout
         all_graceful = True
-        for room_id in list(self.executions.keys()):
-            graceful = await self._destroy_execution(room_id, timeout=timeout)
-            all_graceful = all_graceful and graceful
+        try:
+            for room_id in list(self.executions.keys()):
+                graceful = await self._destroy_execution(room_id, timeout=timeout)
+                all_graceful = all_graceful and graceful
 
-        await self.presence.stop()
+            await self.presence.stop()
+        finally:
+            # presence.stop leaves the socket up for reuse; a full runtime stop
+            # must disconnect so run_forever can return when signals are opted out.
+            await self.link.disconnect()
         return all_graceful
 
     async def run(self, *, install_signal_handlers: bool = True) -> None:
@@ -224,7 +230,8 @@ class AgentRuntime:
         Starts the runtime and keeps the WebSocket connection alive.
 
         ``install_signal_handlers`` is passed to ``BandLink.run_forever``;
-        see ``Agent.run_forever`` for when a host turns it off.
+        see ``Agent.run_forever`` for when a host turns it off. A host that
+        passes ``False`` ends the run by calling ``stop()`` (which disconnects).
         """
         await self.start()
         try:

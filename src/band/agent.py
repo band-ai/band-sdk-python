@@ -116,6 +116,10 @@ class Agent:
         # Uses sentinel to distinguish "not set" from "explicitly set to None"
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
 
+    def _clear_pending_stop(self) -> None:
+        self._stop_requested = False
+        self._pending_stop_timeout = None
+
     @classmethod
     def create(
         cls,
@@ -301,8 +305,7 @@ class Agent:
             except BaseException:
                 # A stop requested during this failed start must not apply to a
                 # later successful start.
-                self._stop_requested = False
-                self._pending_stop_timeout = None
+                self._clear_pending_stop()
                 # Idempotent: a failure inside runtime.start() already released.
                 self._runtime.release_single_instance()
                 raise
@@ -342,8 +345,7 @@ class Agent:
                     self._pending_stop_timeout = timeout
                 return True
 
-            self._stop_requested = False
-            self._pending_stop_timeout = None
+            self._clear_pending_stop()
             try:
                 graceful = await self._runtime.stop(timeout=timeout)
             finally:

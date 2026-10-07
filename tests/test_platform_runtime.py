@@ -10,6 +10,7 @@ from band.core.types import ConflictPolicy
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import AgentConfig, SessionConfig
+from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
 @pytest.fixture
@@ -523,8 +524,8 @@ class TestRunForever:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("kwargs", "installs"),
-        [({}, True), ({"install_signal_handlers": False}, False)],
-        ids=["script-default", "host-owns-signals"],
+        INSTALL_SIGNAL_HANDLER_CASES,
+        ids=INSTALL_SIGNAL_HANDLER_IDS,
     )
     async def test_delegates_to_link(self, mock_link, mock_runtime, kwargs, installs):
         """run_forever hands the host's signal choice to the link."""
