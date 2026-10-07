@@ -636,7 +636,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             )
             raise
         finally:
-            if result is None or not tools.turn.complete:
+            # Unjudged turns (contact hub) often end without a reply; those are
+            # not failures. ``result is None`` covers the provider-exception path.
+            if result is None or (tools.turn.judged and not tools.turn.complete):
                 hooks.log_failure(room_id, result)
             if agent is not None:
                 self._message_history[room_id] = agent.messages

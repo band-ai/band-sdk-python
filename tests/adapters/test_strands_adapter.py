@@ -48,6 +48,9 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.types import (
+    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    SYNTHETIC_CONTACT_EVENTS_SENDER_NAME,
+    SYNTHETIC_SENDER_TYPE,
     USAGE_METADATA_KEY,
     AgentInput,
     Capability,
@@ -656,6 +659,38 @@ class TestTurnProductivity:
         with caplog.at_level(logging.WARNING):
             await _run_turn(adapter, tools)
         assert failure_diagnostics(caplog) == []
+
+    @pytest.mark.asyncio
+    async def test_contact_hub_turn_without_reply_does_not_log_diagnostics(
+        self,
+        tools: FakeAgentTools,
+        scripted: Callable[..., Awaitable[StrandsAdapter]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Hub-room contact events are unjudged; no reply is not a failed turn."""
+        adapter = await scripted(
+            ToolTurn("band_list_tasks"),
+            TextTurn("noted"),
+            capabilities={Capability.TASKS},
+            emit=set(),
+        )
+        hub_msg = PlatformMessage(
+            id="msg-hub",
+            room_id=ROOM,
+            content="contact request arrived",
+            sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+            sender_type=SYNTHETIC_SENDER_TYPE,
+            sender_name=SYNTHETIC_CONTACT_EVENTS_SENDER_NAME,
+            message_type="text",
+            metadata=None,
+            created_at=datetime.now(UTC),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await adapter.on_event(turn_input(tools, msg=hub_msg))
+
+        assert failure_diagnostics(caplog) == []
+        assert failure_reports(tools) == []
 
     @pytest.mark.asyncio
     async def test_failure_diagnostics_preserve_redacted_structured_tool_results(
