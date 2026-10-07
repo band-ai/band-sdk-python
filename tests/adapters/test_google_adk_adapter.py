@@ -12,19 +12,31 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable, Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
+from google.genai import types
 from pydantic import BaseModel, Field
 
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+)
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
-from band.testing import FakeAgentTools
-from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
+from band.testing import (
+    FakeAgentTools,
+)
+from tests.adapters.genaikit import (
+    ModelFailureCases,
+    no_candidates,
+)
+from tests.framework_conformance.turnprobes import (
+    CUSTOM_TOOL_DECLARATIONS,
+)
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -35,6 +47,44 @@ GoogleADKAdapterConfig = _google_adk_mod.GoogleADKAdapterConfig
 _get_tool_bridge_class = _google_adk_mod._get_tool_bridge_class
 _BandToolBridge = _get_tool_bridge_class()
 _sanitize_adk_agent_name = _google_adk_mod._sanitize_adk_agent_name
+_adk_models = importlib.import_module("google.adk.models")
+
+
+class ScriptedGenaiModel(_adk_models.BaseLlm):
+    """A local ADK model that answers each request with the next scripted genai
+    response, read through ADK's own ``LlmResponse.create``."""
+
+    scripts: ClassVar[dict[str, list[types.GenerateContentResponse]]] = {}
+
+    @classmethod
+    def supported_models(cls) -> list[str]:
+        return [r"fake-gemini-.*"]
+
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[Any, None]:
+        yield _adk_models.LlmResponse.create(self.scripts[self.model].pop(0))
+
+
+_adk_models.LLMRegistry.register(ScriptedGenaiModel)
+
+
+@pytest.fixture
+def scripted_adapter() -> Iterator[Callable[..., Any]]:
+    """Build a started adapter whose model plays ``responses`` in order."""
+    models: list[str] = []
+
+    async def build(*responses: types.GenerateContentResponse, **features: Any) -> Any:
+        model = f"fake-gemini-{uuid4().hex}"
+        ScriptedGenaiModel.scripts[model] = list(responses)
+        models.append(model)
+        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(model=model), **features)
+        await adapter.on_started("TestBot", "Test bot")
+        return adapter
+
+    yield build
+    for model in models:
+        ScriptedGenaiModel.scripts.pop(model)
 
 
 @pytest.fixture
@@ -1019,6 +1069,16 @@ class TestErrorHandling:
         assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
+class TestModelFailuresReturnedAsData(ModelFailureCases):
+    PROVIDER = "google_adk"
+
+    @pytest.mark.asyncio
+    async def test_no_candidates_fails_with_adks_own_code(self, scripted_adapter):
+        await self.assert_turn_fails_with(
+            scripted_adapter, [no_candidates()], "UNKNOWN_ERROR"
+        )
+
+
 class TestHistoryTranscript:
     """Tests for _format_history_transcript."""
 
@@ -1407,6 +1467,7 @@ class TestFinalResponseCapture:
 
         mock_event = MagicMock()
         mock_event.is_final_response.return_value = True
+        mock_event.error_code = None
         mock_part = MagicMock()
         mock_part.text = "Here is my response"
         mock_event.content.parts = [mock_part]

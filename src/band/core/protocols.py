@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_check
 from band_sdk_core import AgentFailure
 
 from band.core.content import has_visible_content
+from band.core.exceptions import ProviderRunError
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,13 @@ FAILURE_CODE_TIMEOUT = "timeout"
 GENERIC_PROVIDER_FAILURE_MESSAGE = (
     "Internal error while processing message; see agent logs."
 )
+
+
+def generic_provider_failure(provider: str, error: BaseException) -> AgentFailure:
+    """The room-safe failure for a caught provider error: the generic message,
+    plus the coarse code when the provider returned the failure as data."""
+    code = error.code if isinstance(error, ProviderRunError) else None
+    return AgentFailure(provider, GENERIC_PROVIDER_FAILURE_MESSAGE, code)
 
 
 # ``AgentFailure.provider`` for a turn failure the runtime reports on the

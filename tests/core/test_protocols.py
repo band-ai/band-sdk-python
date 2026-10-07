@@ -7,7 +7,13 @@ import logging
 import pytest
 from band_sdk_core import AgentFailure
 
-from band.core.protocols import send_event_safe, to_failure_event
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    generic_provider_failure,
+    send_event_safe,
+    to_failure_event,
+)
 from band.testing.fake_tools import FakeAgentTools
 
 
@@ -51,6 +57,31 @@ class TestToFailureEvent:
         assert content == "boom"
         assert metadata["failure"]["code"] is None
         assert metadata["failure"]["detail"] is None
+
+
+class TestGenericProviderFailure:
+    """Provider text can echo the prompt or carry secrets, so the room only
+    ever sees the generic message and, for a failure returned as data, its
+    coarse code."""
+
+    @pytest.mark.parametrize(
+        ("error", "code"),
+        [
+            pytest.param(ProviderRunError("SAFETY", "the secret is 42"), "SAFETY"),
+            pytest.param(RuntimeError("the secret is 42"), None),
+        ],
+    )
+    def test_posts_only_the_generic_message_and_coarse_code(
+        self, error: Exception, code: str | None
+    ) -> None:
+        failure = generic_provider_failure("gemini", error)
+
+        assert failure.to_dict() == {
+            "provider": "gemini",
+            "code": code,
+            "message": GENERIC_PROVIDER_FAILURE_MESSAGE,
+            "detail": None,
+        }
 
 
 class TestSendEventSafe:

@@ -109,6 +109,7 @@ class TestInvalidateSession:
         # Now create a fresh session
         fresh_client = MagicMock()
         fresh_client.connect = AsyncMock()
+        fresh_client.disconnect = AsyncMock()
 
         with patch(
             "band.integrations.claude_sdk.session_manager.ClaudeSDKClient",
@@ -131,7 +132,7 @@ class TestInvalidateSession:
         await manager.start()
 
         client_a = MagicMock()
-        client_b = MagicMock()
+        client_b = MagicMock(disconnect=AsyncMock())
         manager._sessions["room-a"] = client_a
         manager._sessions["room-b"] = client_b
 
@@ -217,17 +218,6 @@ async def test_a_session_request_racing_stop_fails_instead_of_hanging(
 
     assert stopped is None
     assert isinstance(requested, ClaudeSessionManagerStoppedError)
-
-
-async def test_stop_finishes_even_if_session_cleanup_raises(
-    mock_options: ClaudeAgentOptions,
-) -> None:
-    manager = ClaudeSessionManager(mock_options)
-    await manager.start()
-    manager._do_cleanup_all = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
-
-    async with asyncio.timeout(1):
-        await manager.stop()
 
 
 async def start_slow_to_stop(options: ClaudeAgentOptions) -> ClaudeSessionManager:

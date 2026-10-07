@@ -45,7 +45,8 @@ async def run_claude_sdk(script: TurnScript, tools: FakeAgentTools) -> None:
     claude.script(scripted_turn(script))
     adapter = ClaudeSDKAdapter()
     with patch(
-        "band.integrations.claude_sdk.session_manager.ClaudeSDKClient", claude.client
+        "band.integrations.claude_sdk.session_manager.create_transport",
+        claude.transport,
     ):
         await adapter.on_started("Agent", "An agent under test")
         try:

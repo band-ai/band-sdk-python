@@ -51,22 +51,12 @@ from tests.e2e.baseline.toolkit.provisioning import (
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-
-def _recall_token_request(marker: str) -> str:
-    """Ask A to echo the peer's token without truncating its prefix.
-
-    Derives only the opaque token's prefix from ``marker`` so the recall turn
-    cannot leak the full value — the model must read it from rehydrated context.
-    """
-    token_prefix = f"{marker.partition('-')[0]}-"
-    return (
-        "Earlier the other participant sent you a short note with a token. "
-        "Call band_send_message to reply with exactly that complete token string "
-        "and nothing else. Treat the entire string as one value: copy every "
-        f"character including the full '{token_prefix}' prefix exactly as it "
-        "appeared in their message. The letters before the hyphen are part of the "
-        "token, not a label — not a suffix, hash, or shortened form."
-    )
+# Never names the token, so A can only answer from rehydrated context.
+RECALL_TOKEN_REQUEST = (
+    "Earlier the other participant sent you a short note with a token. "
+    "Call band_send_message to reply with exactly that complete token string "
+    "and nothing else."
+)
 
 
 def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
@@ -147,7 +137,7 @@ async def test_rehydrates_foreign_peer_message(
         mark = capture.messages.snapshot()  # scope strictly to the recall turn
         mid = await user_ops.send_message(
             room_id,
-            _recall_token_request(marker),
+            RECALL_TOKEN_REQUEST,
             mention_id=recaller.id,
             mention_name=recaller.name,
         )

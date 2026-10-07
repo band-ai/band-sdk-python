@@ -44,7 +44,7 @@ async def test_event_emitted(
     reply_capture: CaptureFactory,
 ) -> None:
     """Each event type: it is emitted and carries our marker."""
-    marker = unique_marker(event_type.value)
+    marker = unique_marker("event")
     room_id = await resource_manager.provision_room(
         title="e2e-events", participants=[agent.id]
     )
@@ -144,8 +144,8 @@ async def test_event_sender_isolation(
     """Two agents emit thoughts in one room; thoughts(sender_id=X) returns only
     X's, demonstrating per-sender scoping of the event readers."""
     agent_a, agent_b = agents
-    marker_a = unique_marker("th-a")
-    marker_b = unique_marker("th-b")
+    marker_a = unique_marker("tha")
+    marker_b = unique_marker("thb")
     room_id = await resource_manager.provision_room(
         title="e2e-events-isolation", participants=[agent_a.id, agent_b.id]
     )

@@ -15,13 +15,13 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from band_sdk_core import AgentFailure
 from pydantic import PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.core.adapterconfig import BaseAdapterConfig
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -589,6 +589,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # reported per model response on the event stream, so sum across
             # the loop into one per-turn TurnUsage.
             final_response_text = ""
+            model_failure: ProviderRunError | None = None
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
@@ -596,6 +597,15 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             ):
                 if Emit.USAGE in self.features.emit:
                     turn_usage = turn_usage + self._usage_from_event(event)
+
+                # ADK returns a model failure as an event. Its flow ends the
+                # run after one, so drain rather than break: breaking leaves
+                # ADK's nested generators open inside their tracing spans.
+                # ADK <= 1.10 reports an empty normal finish as "STOP".
+                if event.error_code and event.error_code != types.FinishReason.STOP:
+                    model_failure = ProviderRunError(
+                        event.error_code, event.error_message
+                    )
 
                 # Report tool calls/results if enabled
                 if Emit.TOOL_CALLS in self.features.emit:
@@ -611,11 +621,11 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         "Room %s: ADK agent completed with final response",
                         room_id,
                     )
-        except Exception:
+            if model_failure is not None:
+                raise model_failure
+        except Exception as e:
             logger.exception("Error running ADK agent in room %s", room_id)
-            await tools.send_failure(
-                AgentFailure("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
-            )
+            await tools.send_failure(generic_provider_failure("google_adk", e))
             raise
         finally:
             # Emit before close so a close() failure can't drop the usage, but
