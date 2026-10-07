@@ -18,7 +18,12 @@ from band.core.model_catalog import (
     ModelSelection,
     check_model_selection,
 )
-from band.core.protocols import AgentToolsProtocol, HistoryConverter
+from band.core.protocols import (
+    AgentToolsProtocol,
+    HistoryConverter,
+    TurnResultAlreadyReported,
+)
+from band.core.turn import report_unsettled_turn
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -30,6 +35,7 @@ from band.core.types import (
     PlatformConnection,
     PlatformMessage,
     TurnUsage,
+    is_contact_hub_turn,
 )
 from band.core.validation import listing
 from band.logging_config import trace_context_scope
@@ -364,15 +370,23 @@ class SimpleAdapter(ABC, Generic[H]):
 
     # --- FrameworkAdapter protocol implementation ---
 
+    @property
+    def judges_turns(self) -> bool:
+        """Whether ``run_judged_turn`` judges each turn by core's turn-outcome rule.
+
+        ``False`` for an adapter whose turns are not the model's to answer
+        through Band tools: a bridge to another agent, or a framework engine
+        that owns its own replies.
+        """
+        return True
+
     async def on_event(self, inp: AgentInput) -> None:
         """Implements FrameworkAdapter.on_event().
 
-        Every framework adapter's turn passes through here (the one place
-        that calls the per-adapter ``on_message`` override), so this is where
+        Every platform-delivered turn passes through here, so this is where
         the turn's trace-context correlation window opens -- every log line
         emitted anywhere during this turn's processing picks it up via
-        ``band.logging_config``'s log filter. (``runtime/oneshot.py`` is a
-        separate, non-adapter delivery path and does not go through here.)
+        ``band.logging_config``'s log filter.
         """
         with trace_context_scope():
             # Convert history if converter is set
@@ -383,7 +397,7 @@ class SimpleAdapter(ABC, Generic[H]):
                 # Adapters without converters should type as SimpleAdapter[HistoryProvider]
                 converted_history = inp.history
 
-            await self.on_message(
+            await self.run_judged_turn(
                 msg=inp.msg,
                 tools=inp.tools,
                 history=cast("H", converted_history),
@@ -392,3 +406,44 @@ class SimpleAdapter(ABC, Generic[H]):
                 is_session_bootstrap=inp.is_session_bootstrap,
                 room_id=inp.room_id,
             )
+
+    async def run_judged_turn(
+        self,
+        *,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: H,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Run one turn through ``on_message`` and judge it.
+
+        The entry point for every turn, including those a wrapper like the
+        Slack adapter receives outside ``on_event``. A turn that ended without
+        completing is reported once, then raised as ``TurnResultAlreadyReported``
+        so the runtime marks it FAILED without a second report. A detached turn
+        is judged at its real end instead.
+        """
+        turn = tools.turn
+        turn.judged = self.judges_turns and not is_contact_hub_turn(
+            sender_type=msg.sender_type, sender_id=msg.sender_id
+        )
+        # Positional, as ``on_message`` declares them: an override may rename
+        # its positional parameters.
+        await self.on_message(
+            msg,
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+        if (
+            turn.judged
+            and not turn.detached
+            and await report_unsettled_turn(tools, room_id=room_id)
+        ):
+            raise TurnResultAlreadyReported("turn ended without a reply")

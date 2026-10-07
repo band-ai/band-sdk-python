@@ -16,25 +16,78 @@ import importlib
 import json
 import sys
 import threading
-import warnings
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from unittest.mock import DEFAULT, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
 
-from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER
+from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER, CrewAIAdapterConfig
+from band.core.memory_types import MemoryType
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
 from band.core.types import Capability, Emit, PlatformMessage
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import BandTool, missing_reply_error
+from band.runtime.tools import BandTool
+from band.testing import MISSING_REPLY_FAILURE, failure_reports
+from tests.framework_conformance.turnprobes import turn_input, turn_tools
 
 # The exact text CrewAI raises; the marker is the part the adapter matches on.
 EMPTY_LLM_RESPONSE_ERROR = f"{EMPTY_LLM_RESPONSE_MARKER} - None or empty."
+EMPTY_COMPLETION = ValueError(EMPTY_LLM_RESPONSE_ERROR)
+
+# One scripted tool call: the crew tool's name and the arguments CrewAI passes.
+ToolStep = tuple[str, dict[str, Any]]
+
+ANSWER = "The vault code is 4471-ECHO."
+REPLY: ToolStep = (BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": ["@alice"]})
+# The platform rejects a mention-less message, and FakeAgentTools does too.
+FAILED_REPLY: ToolStep = (BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": []})
+DECLINE: ToolStep = (BandTool.NO_REPLY, {"reason": "FYI only"})
+ACT: ToolStep = (BandTool.CREATE_CHATROOM, {})
+LOOKUP: ToolStep = (BandTool.LOOKUP_PEERS, {})
+NARRATION: ToolStep = (
+    BandTool.SEND_EVENT,
+    {"content": "thinking", "message_type": "thought"},
+)
+
+
+async def started(adapter_cls: type[CrewAIAdapterType]) -> CrewAIAdapterType:
+    adapter = adapter_cls()
+    await adapter.on_started("TestBot", "Test bot")
+    return adapter
+
+
+async def call_crew_tool(adapter: CrewAIAdapterType, step: ToolStep) -> None:
+    """Run one of the crew's real tools as CrewAI does: synchronously, off the
+    event loop thread, so the bridge posts back on the adapter's loop."""
+    name, arguments = step
+    tool = next(t for t in adapter.create_crewai_tools() if t.name == name)
+    await asyncio.to_thread(tool._run, **arguments)
+
+
+def scripted_crew(
+    adapter: CrewAIAdapterType,
+    *steps: ToolStep,
+    ending: str | Exception | None,
+) -> MagicMock:
+    """A crew agent whose kickoff runs ``steps`` through the real tools, then
+    returns ``ending`` as the final text (``None`` for a falsey result) or
+    raises it."""
+
+    async def kickoff(_prompt: str) -> Any:
+        for step in steps:
+            await call_crew_tool(adapter, step)
+        if isinstance(ending, Exception):
+            raise ending
+        return None if ending is None else MagicMock(raw=ending)
+
+    return MagicMock(kickoff_async=AsyncMock(side_effect=kickoff))
+
 
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
@@ -181,24 +234,6 @@ def mock_crewai_agent():
 
 
 @pytest.fixture
-def mock_crewai_agent_replied(mock_crewai_agent):
-    """``mock_crewai_agent`` whose ``kickoff_async`` also marks the turn as
-    replied, for tests that only care about kickoff/history/message
-    plumbing rather than the reply-tracking behavior itself (which has its
-    own dedicated tests under ``TestErrorHandling``)."""
-    module = importlib.import_module("band.adapters.crewai")
-
-    def _mark_replied(*args, **kwargs):
-        tracker = module._reply_tracker_var.get()
-        if tracker is not None:
-            tracker.replied = True
-        return DEFAULT
-
-    mock_crewai_agent.kickoff_async.side_effect = _mark_replied
-    return mock_crewai_agent
-
-
-@pytest.fixture
 def room_context(crewai_mocks, mock_tools):
     """Context manager fixture for setting up room context in tests.
 
@@ -220,34 +255,14 @@ def room_context(crewai_mocks, mock_tools):
     return _room_context
 
 
-class TestCrewAISpecificInitialization:
-    """CrewAI-specific initialization tests (shared init tests live in conformance)."""
-
-    def test_system_prompt_deprecation_warning(self, CrewAIAdapter):
-        """system_prompt parameter should emit DeprecationWarning."""
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            adapter = CrewAIAdapter(system_prompt="Old style prompt")
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "system_prompt" in str(w[0].message)
-            assert "backstory" in str(w[0].message)
-            # system_prompt should be used as backstory when backstory not provided
-            assert adapter.backstory == "Old style prompt"
-
-    def test_system_prompt_does_not_override_backstory(self, CrewAIAdapter):
-        """If both system_prompt and backstory are provided, backstory takes precedence."""
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            adapter = CrewAIAdapter(
-                system_prompt="Old style prompt",
-                backstory="New style backstory",
-            )
-            # backstory should not be overwritten
-            assert adapter.backstory == "New style backstory"
+class TestConfigValidation:
+    @pytest.mark.parametrize("field", ["max_iter", "max_rpm"])
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_iteration_and_rate_limits_must_be_positive(
+        self, field: str, value: int
+    ) -> None:
+        with pytest.raises(ValueError, match="greater than 0"):
+            CrewAIAdapterConfig.model_validate({field: value})
 
 
 class TestOnStarted:
@@ -265,9 +280,11 @@ class TestOnStarted:
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter(
-            role="Research Analyst",
-            goal="Find information",
-            backstory="Expert researcher",
+            CrewAIAdapterConfig(
+                role="Research Analyst",
+                goal="Find information",
+                backstory="Expert researcher",
+            )
         )
 
         await adapter.on_started(agent_name="TestBot", agent_description="")
@@ -276,6 +293,19 @@ class TestOnStarted:
         assert call_kwargs["role"] == "Research Analyst"
         assert call_kwargs["goal"] == "Find information"
         assert "Expert researcher" in call_kwargs["backstory"]
+
+    @pytest.mark.asyncio
+    async def test_builds_llm_and_iteration_limit_from_config(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
+        crewai_mocks.LLM.reset_mock()
+
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(model="gpt-5.6-sol", max_iter=7))
+        await adapter.on_started(agent_name="TestBot", agent_description="")
+
+        crewai_mocks.LLM.assert_called_once_with(model="gpt-5.6-sol")
+        assert crewai_mocks.Agent.call_args[1]["max_iter"] == 7
 
     @pytest.mark.asyncio
     async def test_uses_agent_name_as_default_role(self, CrewAIAdapter, crewai_mocks):
@@ -331,11 +361,11 @@ class TestOnStarted:
 class TestOnMessage:
     @pytest.mark.asyncio
     async def test_initializes_history_on_bootstrap(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent_replied
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent_replied
+        adapter._crewai_agent = mock_crewai_agent
 
         await adapter.on_message(
             msg=sample_message,
@@ -351,11 +381,11 @@ class TestOnMessage:
 
     @pytest.mark.asyncio
     async def test_loads_existing_history(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent_replied
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent_replied
+        adapter._crewai_agent = mock_crewai_agent
 
         existing_history = [
             {"role": "user", "content": "[Bob]: Previous message"},
@@ -376,11 +406,11 @@ class TestOnMessage:
 
     @pytest.mark.asyncio
     async def test_calls_kickoff_async(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent_replied
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent_replied
+        adapter._crewai_agent = mock_crewai_agent
 
         await adapter.on_message(
             msg=sample_message,
@@ -392,11 +422,11 @@ class TestOnMessage:
             room_id="room-123",
         )
 
-        mock_crewai_agent_replied.kickoff_async.assert_called_once()
+        mock_crewai_agent.kickoff_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_replays_history_on_followup_turn(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent_replied
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         """A non-bootstrap turn must replay accumulated in-session history.
 
@@ -408,7 +438,7 @@ class TestOnMessage:
         """
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent_replied
+        adapter._crewai_agent = mock_crewai_agent
 
         # Turn 1 (bootstrap): states something the agent must recall later.
         await adapter.on_message(
@@ -445,7 +475,7 @@ class TestOnMessage:
 
         # The second kickoff must carry the prior turn as replayed context, not
         # just the current message.
-        prompt = mock_crewai_agent_replied.kickoff_async.call_args_list[1][0][0]
+        prompt = mock_crewai_agent.kickoff_async.call_args_list[1][0][0]
         assert "already handled" in prompt
         assert "Hello, agent!" in prompt  # turn-1 content replayed to the model
 
@@ -491,364 +521,6 @@ class TestErrorHandling:
         assert failure.provider == "crewai"
         assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
-    @pytest.mark.asyncio
-    async def test_reports_error_when_crewai_completes_without_reply(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """A normal CrewAI return is still silent unless band_send_message ran."""
-        mock_result = MagicMock()
-        mock_result.raw = "I could not complete the request."
-        mock_crewai_agent.kickoff_async.return_value = mock_result
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "crewai"
-        assert "band_send_message" in failure.message
-        assert "max_iter=20" in failure.message
-
-    @pytest.mark.asyncio
-    async def test_reports_error_when_crewai_returns_none_without_reply(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """A falsey CrewAI completion is still silent unless band_send_message ran."""
-        mock_crewai_agent.kickoff_async.return_value = None
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "crewai"
-        assert "band_send_message" in failure.message
-
-    @pytest.mark.asyncio
-    async def test_does_not_report_completion_error_after_reply(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """A turn is not silent when band_send_message already replied."""
-
-        module = importlib.import_module("band.adapters.crewai")
-
-        mock_result = MagicMock()
-        mock_result.raw = "I already sent the user-facing reply."
-
-        async def _kickoff(_messages):
-            tracker = module._reply_tracker_var.get()
-            if tracker is not None:
-                tracker.replied = True
-            return mock_result
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        mock_tools.send_failure.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_suppresses_empty_final_answer_after_reply(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """CrewAI raising an empty final answer AFTER the agent already replied
-        via band_send_message is non-fatal: no error event, no re-raise.
-
-        This adapter replies only through band_send_message, so CrewAI's
-        empty-final-answer ValueError fires on essentially every turn --
-        including this successful one. Routes through the real
-        ``_mark_productive_work`` (not hand-set flags) so the test fails if a
-        future change stops SEND_MESSAGE from marking a turn productive.
-        """
-
-        module = importlib.import_module("band.adapters.crewai")
-        tools_module = importlib.import_module("band.integrations.crewai.tools")
-
-        async def _kickoff(_prompt):
-            tools_module._mark_productive_work(
-                module._reply_tracker_var.get(),
-                BandTool.SEND_MESSAGE,
-                json.dumps({"status": "success"}),
-                custom_effects=None,
-            )
-            raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        # Must NOT raise — the reply already went out.
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # No failure reported to the room.
-        mock_tools.send_failure.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_suppresses_empty_final_answer_after_tool_only_turn(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """An empty final answer after a tool-only turn (no reply) is non-fatal.
-
-        When the user instructs the agent to run a tool and NOT send a message
-        (e.g. "store this memory, don't reply"), the agent does its work and has
-        nothing left to say — CrewAI then raises ValueError("Invalid response
-        from LLM call - None or empty.") on its forced final-answer step. Because
-        a tool already executed successfully this turn, that empty answer is
-        benign: no error event, no re-raise. Routes through the real
-        ``_mark_productive_work`` (not hand-set flags) so the test fails if a
-        future change stops a terminal tool from marking a turn productive.
-        """
-
-        module = importlib.import_module("band.adapters.crewai")
-        tools_module = importlib.import_module("band.integrations.crewai.tools")
-
-        async def _kickoff(_prompt):
-            tools_module._mark_productive_work(
-                module._reply_tracker_var.get(),
-                BandTool.STORE_MEMORY,
-                json.dumps({"status": "success"}),
-                custom_effects=None,
-            )
-            raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        # Must NOT raise — the tool work already happened.
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # No failure reported to the room.
-        mock_tools.send_failure.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_read_only_turn_with_empty_final_answer_completes(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """A turn whose only work was read-only must finish, not fail the delivery.
-
-        Told to run read tools and nothing else ("call band_list_tasks ... do not
-        call any other tool"), the agent does exactly that and stays silent:
-        fetching state is not terminal work, so the real marker leaves both
-        tracker flags down. Re-raising CrewAI's empty-response ValueError would
-        mark the delivery failed for a turn that did precisely what it was asked.
-        """
-        module = importlib.import_module("band.adapters.crewai")
-        tools_module = importlib.import_module("band.integrations.crewai.tools")
-
-        async def _kickoff(_prompt):
-            # Route through the real marker so the read-only classification --
-            # not a hand-set flag -- is what keeps this turn "unproductive".
-            tools_module._mark_productive_work(
-                module._reply_tracker_var.get(),
-                BandTool.LIST_TASKS,
-                json.dumps({"status": "success", "data": []}),
-                custom_effects=None,
-            )
-            raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        # Must NOT raise — the delivery completes.
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Exactly one failure reported, carrying the shared missing-reply
-        # wording -- the room hears about the missing reply, not CrewAI's
-        # internal error.
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "crewai"
-        assert missing_reply_error("CrewAI") in failure.message
-
-    @pytest.mark.asyncio
-    async def test_empty_answer_with_no_tool_call_still_raises(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """An empty answer with zero tool activity is a genuine failure, not a
-        finished turn -- it must still fail the delivery so the platform retries.
-
-        Nothing distinguishes "the model correctly stopped after read-only
-        work" from "the very first LLM call came back empty" by the exception
-        alone -- both raise CrewAI's identical ValueError. ``any_tool_ran`` is
-        that distinction: it is the only turn where this adapter can rule out
-        a genuine no-response failure, so it is the only one that must not be
-        silently marked processed.
-        """
-        mock_crewai_agent.kickoff_async = AsyncMock(
-            side_effect=ValueError(EMPTY_LLM_RESPONSE_ERROR)
-        )
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        with pytest.raises(ValueError, match=EMPTY_LLM_RESPONSE_ERROR):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "crewai"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
-        # First call plus the one retry -- proves the retry actually happens
-        # before the final raise, not a bare pass-through of the first failure.
-        assert mock_crewai_agent.kickoff_async.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_empty_first_call_recovers_on_retry(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """A turn's first LLM call coming back empty is retried once before
-        giving up -- a successful retry must complete the turn normally.
-
-        Nothing ran before the empty completion, so there is no side effect
-        for the retry to duplicate; the retry either behaves exactly like the
-        first attempt would have or, as here, recovers and replies.
-        """
-        module = importlib.import_module("band.adapters.crewai")
-        mock_result = MagicMock()
-        mock_result.raw = "Hello! I'm here to help."
-
-        async def _kickoff(_prompt):
-            if mock_crewai_agent.kickoff_async.call_count == 1:
-                raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
-            tracker = module._reply_tracker_var.get()
-            if tracker is not None:
-                tracker.replied = True
-            return mock_result
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        mock_tools.send_failure.assert_not_awaited()
-        # First call plus the one retry that recovered it.
-        assert mock_crewai_agent.kickoff_async.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_no_missing_reply_error_after_clean_tool_only_return(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
-    ):
-        """Terminal tool work answers for a turn even when kickoff returns cleanly.
-
-        The empty-response path is not the only ending without a reply: CrewAI
-        can also return normally after a tool-only turn. One rule judges both, so
-        neither posts a missing-reply error once terminal work has landed.
-        """
-        module = importlib.import_module("band.adapters.crewai")
-        mock_result = MagicMock()
-        mock_result.raw = "Stored it."
-
-        async def _kickoff(_prompt):
-            module._reply_tracker_var.get().tool_executed = True
-            return mock_result
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        mock_tools.send_failure.assert_not_awaited()
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "error",
         [
@@ -858,48 +530,19 @@ class TestErrorHandling:
         ids=["non-value-error", "unrelated-value-error"],
     )
     async def test_genuine_error_after_reply_still_reports_and_raises(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent, error
+        self, CrewAIAdapter, error
     ):
-        """A genuine failure AFTER a reply went out must NOT be swallowed.
+        """Only CrewAI's empty-completion ValueError ends a turn normally. Any
+        other exception -- even one raised after band_send_message replied --
+        is a provider failure that is reported and propagates."""
+        adapter = await started(CrewAIAdapter)
+        tools = turn_tools()
+        adapter._crewai_agent = scripted_crew(adapter, REPLY, ending=error)
 
-        The empty-final-answer suppression only matches CrewAI's specific
-        ValueError("Invalid response from LLM call ..."). Any other exception —
-        even one raised after band_send_message already replied — must still
-        post an error event and propagate, so real bugs stay visible.
-        """
-
-        module = importlib.import_module("band.adapters.crewai")
-
-        async def _kickoff(_messages):
-            # Simulate band_send_message having succeeded earlier this turn.
-            tracker = module._reply_tracker_var.get()
-            if tracker is not None:
-                tracker.replied = True
-            raise error
-
-        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent
-
-        # The genuine error must propagate despite the prior reply.
         with pytest.raises(type(error), match=str(error)):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+            await adapter.on_event(turn_input(tools))
 
-        # And it must surface as a reported failure.
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "crewai"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert failure_reports(tools) == [("crewai", GENERIC_PROVIDER_FAILURE_MESSAGE)]
 
     @pytest.mark.asyncio
     async def test_raises_error_when_agent_not_initialized(
@@ -926,12 +569,185 @@ class TestErrorHandling:
         assert "not initialized" in failure.message
 
 
+class TestTurnVerdict:
+    """A CrewAI turn ends on the shared verdict, not on CrewAI's exceptions."""
+
+    @pytest.mark.parametrize(
+        ("calls", "ending"),
+        [
+            ((), "I could not complete the request."),
+            ((), None),
+            ((LOOKUP,), "\n"),
+            ((FAILED_REPLY,), " \t"),
+            ((LOOKUP,), EMPTY_COMPLETION),
+            ((FAILED_REPLY, NARRATION), EMPTY_COMPLETION),
+        ],
+        ids=[
+            "final-text-only",
+            "falsey-result",
+            "read-only-blank",
+            "failed-send-blank",
+            "read-only",
+            "failed-send-then-event",
+        ],
+    )
+    async def test_a_turn_that_neither_replied_nor_worked_is_reported_once(
+        self,
+        CrewAIAdapter: type[CrewAIAdapterType],
+        calls: tuple[ToolStep, ...],
+        ending: str | Exception | None,
+    ) -> None:
+        """The final text is discarded: this agent answers only through tools."""
+        adapter = await started(CrewAIAdapter)
+        tools = turn_tools()
+        adapter._crewai_agent = scripted_crew(adapter, *calls, ending=ending)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+        assert tools.messages_sent == []
+        if calls:
+            assert adapter._crewai_agent.kickoff_async.call_count == 1
+
+    @pytest.mark.parametrize(
+        ("calls", "ending"),
+        [
+            ((REPLY,), EMPTY_COMPLETION),
+            ((REPLY,), "I already sent the user-facing reply."),
+            ((DECLINE,), EMPTY_COMPLETION),
+            ((ACT,), EMPTY_COMPLETION),
+            ((ACT,), "Done."),
+            ((REPLY,), "\n"),
+            ((DECLINE,), "\n"),
+            ((ACT,), "\n"),
+        ],
+        ids=[
+            "reply-then-empty",
+            "reply-then-text",
+            "decline-then-empty",
+            "act-then-empty",
+            "act-then-text",
+            "reply-then-blank",
+            "decline-then-blank",
+            "act-then-blank",
+        ],
+    )
+    async def test_a_turn_that_replied_declined_or_worked_completes(
+        self,
+        CrewAIAdapter: type[CrewAIAdapterType],
+        calls: tuple[ToolStep, ...],
+        ending: str | Exception | None,
+    ) -> None:
+        """CrewAI's empty-completion error is how a tool-only turn ends."""
+        adapter = await started(CrewAIAdapter)
+        tools = turn_tools()
+        adapter._crewai_agent = scripted_crew(adapter, *calls, ending=ending)
+
+        await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == []
+        assert adapter._crewai_agent.kickoff_async.call_count == 1
+
+    @pytest.mark.parametrize("ending", [EMPTY_COMPLETION, None, "", "\n", " \t\r\n"])
+    async def test_an_empty_first_call_is_retried_once_then_reported(
+        self, CrewAIAdapter: type[CrewAIAdapterType], ending: str | Exception | None
+    ) -> None:
+        """Nothing ran before an empty first call, so one retry duplicates
+        nothing; a second empty call ends a turn that did nothing."""
+        adapter = await started(CrewAIAdapter)
+        tools = turn_tools()
+        adapter._crewai_agent = scripted_crew(adapter, ending=ending)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+        assert adapter._crewai_agent.kickoff_async.call_count == 2
+        first, second = adapter._crewai_agent.kickoff_async.call_args_list
+        assert first == second
+
+    @pytest.mark.parametrize("ending", [EMPTY_COMPLETION, None, "", "\n", " \t\r\n"])
+    async def test_an_empty_first_call_recovers_on_retry(
+        self, CrewAIAdapter: type[CrewAIAdapterType], ending: str | Exception | None
+    ) -> None:
+        adapter = await started(CrewAIAdapter)
+        tools = turn_tools()
+        replying = scripted_crew(adapter, REPLY, ending=EMPTY_COMPLETION)
+
+        async def kickoff(prompt: str) -> Any:
+            if crew.kickoff_async.call_count == 1:
+                if isinstance(ending, Exception):
+                    raise ending
+                return None if ending is None else MagicMock(raw=ending)
+            return await replying.kickoff_async(prompt)
+
+        crew = MagicMock(kickoff_async=AsyncMock(side_effect=kickoff))
+        adapter._crewai_agent = crew
+
+        await adapter.on_event(turn_input(tools))
+
+        assert tools.chat == [ANSWER]
+        assert failure_reports(tools) == []
+        assert crew.kickoff_async.call_count == 2
+
+    @pytest.mark.parametrize("retry", [False, True])
+    @pytest.mark.parametrize(
+        "error", [RuntimeError("provider unavailable"), asyncio.CancelledError()]
+    )
+    async def test_unrelated_errors_and_cancellation_propagate(
+        self, CrewAIAdapter: type[CrewAIAdapterType], retry: bool, error: BaseException
+    ) -> None:
+        adapter = await started(CrewAIAdapter)
+        tools = turn_tools()
+        responses = ([MagicMock(raw="\n")] if retry else []) + [error]
+        crew = MagicMock(kickoff_async=AsyncMock(side_effect=responses))
+        adapter._crewai_agent = crew
+
+        with pytest.raises(type(error)):
+            await adapter.on_event(turn_input(tools))
+
+        expected = (
+            []
+            if isinstance(error, asyncio.CancelledError)
+            else [("crewai", GENERIC_PROVIDER_FAILURE_MESSAGE)]
+        )
+        assert failure_reports(tools) == expected
+        assert crew.kickoff_async.call_count == (2 if retry else 1)
+
+    @pytest.mark.parametrize("ending", [EMPTY_COMPLETION, "\n", "  exact final text\n"])
+    async def test_the_next_turn_remembers_what_the_agent_posted(
+        self, CrewAIAdapter: type[CrewAIAdapterType], ending: str | Exception | None
+    ) -> None:
+        """A turn whose work was a band_send_message must leave that message in
+        the room's history. CrewAI's final answer rarely repeats it, and an
+        agent that can't see it already asked a peer asks again whenever the
+        peer's reply wakes it -- the loop a coordinator falls into."""
+        adapter = await started(CrewAIAdapter)
+        crew = scripted_crew(adapter, REPLY, ending=ending)
+        adapter._crewai_agent = crew
+
+        await adapter.on_event(turn_input(turn_tools()))
+        await adapter.on_event(
+            replace(turn_input(turn_tools()), is_session_bootstrap=False)
+        )
+
+        second_prompt = crew.kickoff_async.call_args_list[1].args[0]
+        earlier, _, _ = second_prompt.partition("[New message -- act on this now:]")
+        assert f"(to @alice) {ANSWER}" in earlier
+        assert earlier.count("assistant:") == (
+            2 if isinstance(ending, str) and ending.strip() else 1
+        )
+        if isinstance(ending, str) and ending.strip():
+            assert f"assistant: {ending}" in earlier
+
+
 class TestVerboseMode:
     @pytest.mark.asyncio
     async def test_verbose_mode_passed_to_agent(self, CrewAIAdapter, crewai_mocks):
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(verbose=True)
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(verbose=True))
         await adapter.on_started("TestBot", "Test bot")
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -944,7 +760,7 @@ class TestMaxRpm:
         """max_rpm parameter should be passed to CrewAI Agent."""
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(max_rpm=10)
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(max_rpm=10))
         await adapter.on_started("TestBot", "Test bot")
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -961,11 +777,6 @@ class TestMaxRpm:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         assert call_kwargs["max_rpm"] is None
 
-    def test_max_rpm_stored_on_adapter(self, CrewAIAdapter):
-        """max_rpm should be stored on the adapter instance."""
-        adapter = CrewAIAdapter(max_rpm=60)
-        assert adapter.max_rpm == 60
-
 
 class TestAllowDelegation:
     @pytest.mark.asyncio
@@ -973,7 +784,7 @@ class TestAllowDelegation:
         """allow_delegation parameter should be passed to CrewAI Agent."""
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(allow_delegation=True)
+        adapter = CrewAIAdapter(CrewAIAdapterConfig(allow_delegation=True))
         await adapter.on_started("TestBot", "Test bot")
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -992,20 +803,15 @@ class TestAllowDelegation:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         assert call_kwargs["allow_delegation"] is False
 
-    def test_allow_delegation_stored_on_adapter(self, CrewAIAdapter):
-        """allow_delegation should be stored on the adapter instance."""
-        adapter = CrewAIAdapter(allow_delegation=True)
-        assert adapter.allow_delegation is True
-
 
 class TestParticipantsUpdate:
     @pytest.mark.asyncio
     async def test_includes_participants_update_in_message(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent_replied
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent_replied
+        adapter._crewai_agent = mock_crewai_agent
 
         await adapter.on_message(
             msg=sample_message,
@@ -1017,7 +823,7 @@ class TestParticipantsUpdate:
             room_id="room-123",
         )
 
-        call_args = mock_crewai_agent_replied.kickoff_async.call_args
+        call_args = mock_crewai_agent.kickoff_async.call_args
         prompt = call_args[0][0]
 
         assert "Alice joined" in prompt
@@ -1026,11 +832,11 @@ class TestParticipantsUpdate:
 class TestContactsUpdate:
     @pytest.mark.asyncio
     async def test_includes_contacts_update_in_message(
-        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent_replied
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
-        adapter._crewai_agent = mock_crewai_agent_replied
+        adapter._crewai_agent = mock_crewai_agent
 
         await adapter.on_message(
             msg=sample_message,
@@ -1042,7 +848,7 @@ class TestContactsUpdate:
             room_id="room-123",
         )
 
-        call_args = mock_crewai_agent_replied.kickoff_async.call_args
+        call_args = mock_crewai_agent.kickoff_async.call_args
         prompt = call_args[0][0]
 
         assert "@alice is now a contact" in prompt
@@ -1310,7 +1116,7 @@ class TestMemoryToolExecution:
                 subject_id="subject-1",
                 scope="subject",
                 system="working",
-                type="fact",
+                type=MemoryType.SEMANTIC,
                 segment="user",
                 content_query="remember",
                 page_size=5,
@@ -1324,7 +1130,7 @@ class TestMemoryToolExecution:
             subject_id="subject-1",
             scope="subject",
             system="working",
-            type="fact",
+            type=MemoryType.SEMANTIC,
             segment="user",
             content_query="remember",
             page_size=5,
@@ -1345,7 +1151,7 @@ class TestMemoryToolExecution:
             result = store_memory_tool._run(
                 content="remember this",
                 system="working",
-                type="fact",
+                type=MemoryType.SEMANTIC,
                 segment="user",
                 thought="important for follow-up",
                 scope="subject",
@@ -1359,7 +1165,7 @@ class TestMemoryToolExecution:
         mock_tools.store_memory.assert_awaited_once_with(
             content="remember this",
             system="working",
-            type="fact",
+            type=MemoryType.SEMANTIC,
             segment="user",
             thought="important for follow-up",
             scope="subject",
@@ -1679,15 +1485,20 @@ class TestLazyNestAsyncio:
         ``sys.modules`` re-executes it, but anything still holding a class from the
         old module object then has a ``__module__`` that resolves to nothing, and
         pydantic (which looks annotations up through that name) can no longer build
-        the tool models.
+        the tool models. The original names are restored afterwards so classes
+        imported elsewhere (e.g. ``CrewAIAdapterConfig``) keep their identity.
         """
 
         nest_mock = sys.modules["nest_asyncio"]
         nest_mock.reset_mock()
+        module = importlib.import_module("band.adapters.crewai")
+        original_names = dict(vars(module))
 
-        importlib.reload(importlib.import_module("band.adapters.crewai"))
-
-        nest_mock.apply.assert_not_called()
+        try:
+            importlib.reload(module)
+            nest_mock.apply.assert_not_called()
+        finally:
+            vars(module).update(original_names)
 
     def test_ensure_nest_asyncio_applies_once(
         self, CrewAIAdapter, crewai_mocks, monkeypatch

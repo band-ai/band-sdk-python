@@ -5,12 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import warnings
 from typing import Any, ClassVar, cast
 
 import httpx
 from band_sdk_core import AgentFailure
-from pydantic import ValidationError
+from pydantic import (
+    Field,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveInt,
+    ValidationError,
+)
 from typing_extensions import Unpack
 
 try:
@@ -25,8 +30,10 @@ except ImportError as e:
     ) from e
 
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
-from band.core.exceptions import BandConfigError
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import GEMINI_MODEL
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -83,7 +90,63 @@ def _to_agent_failure(e: Exception) -> AgentFailure:
     if isinstance(e, ServerError):
         status = e.status if e.status is None else str(e.status)
         return AgentFailure(_PROVIDER, str(e), status, e.message)
-    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+    return generic_provider_failure(_PROVIDER, e)
+
+
+def _model_failure(response: types.GenerateContentResponse) -> ProviderRunError | None:
+    """The failure a response carries as data, read the way google-adk's
+    ``LlmResponse.create`` reads it."""
+    if response.candidates:
+        candidate = response.candidates[0]
+        if candidate.content and candidate.content.parts:
+            return None
+        reason = candidate.finish_reason
+        if reason is None or reason == types.FinishReason.STOP:
+            return None
+        return ProviderRunError(reason.value, candidate.finish_message)
+    feedback = response.prompt_feedback
+    if feedback is None or feedback.block_reason is None:
+        return None
+    return ProviderRunError(feedback.block_reason.value, feedback.block_reason_message)
+
+
+class GeminiAdapterConfig(BaseAdapterConfig):
+    """Settings for :class:`GeminiAdapter`.
+
+    Attributes:
+        model: Gemini model name sent with every request.
+        provider_key: Gemini API key; ``None`` lets the google-genai client
+            read ``GOOGLE_API_KEY``/``GEMINI_API_KEY`` or use Vertex AI.
+        system_prompt: Complete system prompt. When set it is sent verbatim
+            and ``custom_section``, ``include_base_instructions`` and the
+            capability sections are ignored.
+        custom_section: Extra instructions appended to the rendered system
+            prompt.
+        include_base_instructions: Whether the rendered system prompt starts
+            with the SDK's base instructions.
+        max_output_tokens: Output token cap per call; ``None`` uses the model
+            default.
+        temperature: Sampling temperature; ``None`` uses the model default.
+        max_tool_rounds: Model calls a single turn may make before it fails.
+        max_retries: Retries of a call after a transient server or transport
+            error.
+        retry_base_delay_s: First retry delay in seconds, doubled on each
+            further retry.
+        max_history_messages: Room history entries kept per room; older ones
+            are trimmed.
+    """
+
+    model: str = GEMINI_MODEL
+    provider_key: str | None = Field(default=None, repr=False)
+    system_prompt: str | None = None
+    custom_section: str = ""
+    include_base_instructions: bool = True
+    max_output_tokens: PositiveInt | None = None
+    temperature: float | None = None
+    max_tool_rounds: PositiveInt = 20
+    max_retries: NonNegativeInt = 2
+    retry_base_delay_s: NonNegativeFloat = 1.0
+    max_history_messages: PositiveInt = 200
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -94,8 +157,10 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
     Example:
         adapter = GeminiAdapter(
-            model="gemini-2.5-flash",
-            prompt="You are a helpful assistant.",
+            GeminiAdapterConfig(
+                model="gemini-3.8-flash",
+                custom_section="You are a helpful assistant.",
+            ),
             capabilities=Capability.MEMORY,
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
@@ -109,76 +174,24 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
     def __init__(
         self,
-        model: str = "gemini-2.5-flash",
-        provider_key: str | None = None,
-        system_prompt: str | None = None,
-        prompt: str | None = None,
-        max_output_tokens: int | None = None,
-        temperature: float | None = None,
-        max_tool_rounds: int = 20,
-        max_retries: int = 2,
-        retry_base_delay_s: float = 1.0,
-        max_history_messages: int = 200,
+        config: GeminiAdapterConfig | None = None,
+        *,
         history_converter: GeminiHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        include_base_instructions: bool = True,
-        # --- Deprecated (one release, then remove) ---
-        api_key: str | None = None,
-        gemini_api_key: str | None = None,
-        custom_section: str | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
-        # --- Selective: provider_key rename ---
-        if gemini_api_key is not None:
-            warnings.warn(
-                "gemini_api_key is deprecated, use provider_key instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if provider_key is not None or api_key is not None:
-                raise BandConfigError(
-                    "Cannot pass gemini_api_key together with provider_key or api_key"
-                )
-            provider_key = gemini_api_key
-
-        if api_key is not None:
-            warnings.warn(
-                "api_key is deprecated on GeminiAdapter, use provider_key instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if provider_key is not None:
-                raise BandConfigError("Cannot pass both provider_key and api_key")
-            provider_key = api_key
-
-        # --- Selective: prompt rename ---
-        if custom_section is not None:
-            warnings.warn(
-                "custom_section is deprecated, use prompt instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if prompt is not None:
-                raise BandConfigError("Cannot pass both prompt and custom_section")
-            prompt = custom_section
-
+        """
+        Args:
+            config: Model, credentials, prompt, sampling and retry settings.
+            history_converter: Converts platform history into Gemini contents;
+                defaults to :class:`GeminiHistoryConverter`.
+            additional_tools: Custom tools offered alongside the platform tools.
+        """
         super().__init__(
             history_converter=history_converter or GeminiHistoryConverter(),
             **features,
         )
-
-        self.model = model
-        self.system_prompt = system_prompt
-        self._prompt = prompt
-        self._include_base_instructions = include_base_instructions
-        self.max_output_tokens = max_output_tokens
-        self.temperature = temperature
-        self.max_tool_rounds = max_tool_rounds
-        self.max_retries = max_retries
-        self.retry_base_delay_s = retry_base_delay_s
-        self.max_history_messages = max_history_messages
-
-        self._provider_key = provider_key
+        self.config = config or GeminiAdapterConfig()
         self.client: genai.Client | None = None
         self._message_history: dict[str, GeminiMessages] = {}
         self._system_prompt: str = ""
@@ -187,20 +200,17 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched.
 
-        Prompt precedence:
-          1. If ``system_prompt`` was provided at construction time, it wins —
-             ``prompt``, ``include_base_instructions``, and ``features``-based
-             capability sections are all ignored.
-          2. Otherwise, ``render_system_prompt`` renders the SDK base prompt
-             (unless ``include_base_instructions=False``) plus ``prompt``, with
-             capability sections gated on ``features.capabilities``.
+        ``config.system_prompt``, when set, wins outright; otherwise
+        ``render_system_prompt`` builds the prompt from the config's
+        ``custom_section`` and ``include_base_instructions`` with capability
+        sections gated on ``features.capabilities``.
         """
         await super().on_started(agent_name, agent_description)
-        self._system_prompt = self.system_prompt or render_system_prompt(
+        self._system_prompt = self.config.system_prompt or render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
-            custom_section=self._prompt or "",
-            include_base_instructions=self._include_base_instructions,
+            custom_section=self.config.custom_section,
+            include_base_instructions=self.config.include_base_instructions,
             features=self.features,
         )
         logger.info("Gemini adapter started for agent: %s", agent_name)
@@ -249,15 +259,16 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
         gemini_tools = self._build_gemini_tools(tools)
         tool_rounds = 0
+        tool_sequence: list[list[str]] = []
         # Gemini reports usage per call; sum across the loop into one
         # TurnUsage, emitted on every exit via the finally.
         turn_usage = TurnUsage()
         try:
             while True:
-                if tool_rounds >= self.max_tool_rounds:
+                if tool_rounds >= self.config.max_tool_rounds:
                     message = (
-                        f"Exceeded max tool rounds ({self.max_tool_rounds}) "
-                        f"in room {room_id}"
+                        f"Exceeded max tool rounds ({self.config.max_tool_rounds}) "
+                        f"in room {room_id}; tool sequence: {tool_sequence}"
                     )
                     await tools.send_failure(AgentFailure(_PROVIDER, message))
                     raise RuntimeError(message)
@@ -266,12 +277,13 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     response = await self._call_gemini(
                         contents=self._message_history[room_id], tools=gemini_tools
                     )
+                    turn_usage = turn_usage + self._usage_from_response(response)
+                    if failure := _model_failure(response):
+                        raise failure
                 except Exception as e:
                     logger.exception("Error calling Gemini")
                     await tools.send_failure(_to_agent_failure(e))
                     raise
-
-                turn_usage = turn_usage + self._usage_from_response(response)
 
                 candidate_content = self._extract_candidate_content(response)
                 if candidate_content is not None:
@@ -280,6 +292,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 function_calls = list(response.function_calls or [])
                 if not function_calls:
                     break
+                tool_sequence.append([call.name or "" for call in function_calls])
 
                 tool_response_parts = await self._process_function_calls(
                     function_calls=function_calls,
@@ -333,11 +346,11 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         function responses that no longer have their matching function call.
         """
         history = self._message_history.get(room_id)
-        if not history or len(history) <= self.max_history_messages:
+        if not history or len(history) <= self.config.max_history_messages:
             return
 
-        trimmed_count = len(history) - self.max_history_messages
-        trimmed = history[-self.max_history_messages :]
+        trimmed_count = len(history) - self.config.max_history_messages
+        trimmed = history[-self.config.max_history_messages :]
 
         while trimmed:
             first = trimmed[0]
@@ -398,7 +411,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             return self.client
 
         try:
-            self.client = genai.Client(api_key=self._provider_key)
+            self.client = genai.Client(api_key=self.config.provider_key)
         except ValueError as e:
             raise ValueError(
                 "Gemini client initialization failed. Either set GOOGLE_API_KEY "
@@ -415,31 +428,29 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         """
         Call Gemini API with bounded retries for transient transport/server failures.
         """
-        config = types.GenerateContentConfig(
+        request_config = types.GenerateContentConfig(
             system_instruction=self._system_prompt,
             tools=tools or None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True
             ),
+            max_output_tokens=self.config.max_output_tokens,
+            temperature=self.config.temperature,
         )
-        if self.max_output_tokens is not None:
-            config.max_output_tokens = self.max_output_tokens
-        if self.temperature is not None:
-            config.temperature = self.temperature
 
-        max_attempts = self.max_retries + 1
+        max_attempts = self.config.max_retries + 1
         client = self._ensure_client()
         for attempt in range(1, max_attempts + 1):
             try:
                 return await client.aio.models.generate_content(
-                    model=self.model,
+                    model=self.config.model,
                     contents=cast(Any, contents),
-                    config=config,
+                    config=request_config,
                 )
             except (ServerError, httpx.TimeoutException, httpx.TransportError) as e:
                 if attempt >= max_attempts:
                     raise
-                delay_s = self.retry_base_delay_s * (2 ** (attempt - 1))
+                delay_s = self.config.retry_base_delay_s * (2 ** (attempt - 1))
                 logger.warning(
                     "Gemini transient error on attempt %s/%s: %s (retrying in %.2fs)",
                     attempt,
@@ -554,7 +565,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, tool_input)
+                    result = await execute_custom_tool(
+                        custom_tool, tool_input, turn=tools.turn
+                    )
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
                 if is_image_passthrough_result(tool_name, result):

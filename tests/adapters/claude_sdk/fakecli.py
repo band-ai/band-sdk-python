@@ -1,8 +1,8 @@
 """A scripted Claude CLI behind the SDK's public ``Transport`` seam.
 
 Everything above the subprocess runs for real: ``ClaudeSDKClient``, its
-control protocol, the adapter's ``can_use_tool`` and hooks, and the in-process
-Band MCP server. Each prompt plays the next scripted turn, and tool calls pass
+control protocol, the adapter's ``can_use_tool`` and hooks, and its Band MCP
+server, which the fake dials over loopback HTTP as the real CLI does. Each prompt plays the next scripted turn, and tool calls pass
 the CLI's permission order before they run
 (https://code.claude.com/docs/en/agent-sdk/permissions).
 """
@@ -15,19 +15,23 @@ import json
 import re
 from collections import deque
 from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError
+from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
+from mcp import ClientSession
 
+from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
+from band.integrations.mcp import BandMCPTransport
 from tests.baseline.decisions import ModelDecision, ToolCall
+from tests.mcpclient import mcp_session
 
 MODEL = "claude-fake"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
-MCP_PROTOCOL_VERSION = "2025-06-18"
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,14 @@ class Hangup:
     """The CLI process dies: the stream ends with no result."""
 
 
+@dataclass(frozen=True)
+class StreamFails:
+    """Reading the CLI's output raises ``error``, as a broken pipe or a read
+    timeout would; the SDK re-raises it unchanged to the turn."""
+
+    error: Exception
+
+
 @dataclass
 class Hold:
     """Parks the turn at this step: ``async with hold`` waits for the turn to
@@ -79,7 +91,7 @@ class Hold:
         self.released.set()
 
 
-Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup
+Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup | StreamFails
 Turn = Sequence[Step]
 
 
@@ -96,16 +108,30 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # Parks every connect, e.g. to land a shutdown while a session starts.
+        self.connecting: Hold | None = None
+        # Modes the account or model can't run; the CLI falls back to
+        # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
+        self.unavailable_modes: set[ClaudePermissionMode] = set()
+        # A wedged CLI: interrupt requests are acknowledged but the turn
+        # neither stops nor ends.
+        self.ignore_interrupt = False
         self.errors: list[BaseException] = []
+        self.closing: Hold | None = None
+        self.refuse_close = False
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
 
-    def client(self, *, options: ClaudeAgentOptions) -> ClaudeSDKClient:
-        """Stands in for the ``ClaudeSDKClient`` constructor."""
+    def transport(self, options: ClaudeAgentOptions) -> FakeCLISession:
+        """A scripted CLI behind the real SDK client and session lifecycle."""
         session = FakeCLISession(self, options)
         self.sessions.append(session)
-        return ClaudeSDKClient(options=options, transport=session)
+        return session
+
+    @property
+    def session_workspaces(self) -> list[str]:
+        return [str(session.options.cwd) for session in self.sessions]
 
     @property
     def resumed(self) -> list[str | None]:
@@ -133,16 +159,21 @@ class FakeCLISession(Transport):
     def __init__(self, claude: FakeClaude, options: ClaudeAgentOptions) -> None:
         self.claude = claude
         self.options = options
+        self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
-        self._outbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._outbox: asyncio.Queue[dict[str, Any] | Exception | None] = asyncio.Queue()
         self._awaiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._hooks: dict[str, list[dict[str, Any]]] = {}
         self._served: dict[str, set[str]] = {}
         self._turn: asyncio.Task[None] | None = None
         self.alive = True
+        self.refuse_close = False
 
     async def connect(self) -> None:
+        if (hold := self.claude.connecting) is not None:
+            hold.reached.set()
+            await hold.released.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
             raise CLIConnectionError("Claude CLI exited during startup")
 
@@ -152,6 +183,11 @@ class FakeCLISession(Transport):
     async def end_input(self) -> None: ...
 
     async def close(self) -> None:
+        if (hold := self.claude.closing) is not None:
+            hold.reached.set()
+            await hold.released.wait()
+        if self.claude.refuse_close or self.refuse_close:
+            raise RuntimeError("Claude CLI cleanup failed")
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()
@@ -165,6 +201,8 @@ class FakeCLISession(Transport):
 
     async def read_messages(self) -> AsyncIterator[dict[str, Any]]:
         while (message := await self._outbox.get()) is not None:
+            if isinstance(message, Exception):
+                raise message
             yield message
 
     async def write(self, data: str) -> None:
@@ -193,6 +231,15 @@ class FakeCLISession(Transport):
                 "response": {},
             },
         )
+        if request["subtype"] == "interrupt":
+            self._interrupt()
+
+    def _interrupt(self) -> None:
+        """Stop the running turn; like the real CLI it still ends with a result."""
+        if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
+            return
+        self._turn.cancel()
+        self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
 
     def _emit(self, **message: Any) -> None:
         self._outbox.put_nowait(message)
@@ -209,6 +256,16 @@ class FakeCLISession(Transport):
         ending = EndTurn()
         try:
             self._emit(type="system", subtype="init", session_id=self.session_id)
+            if self.permission_mode in self.claude.unavailable_modes:
+                # The real CLI announces the fallback once, in a status message.
+                self.permission_mode = AUTO_FALLBACK_PERMISSION_MODE
+                self._emit(
+                    type="system",
+                    subtype="status",
+                    status=None,
+                    permissionMode=self.permission_mode,
+                    session_id=self.session_id,
+                )
             for step in turn:
                 match step:
                     case ModelDecision():
@@ -228,10 +285,19 @@ class FakeCLISession(Transport):
                         self.alive = False
                         self._outbox.put_nowait(None)
                         return
+                    case StreamFails(error=error):
+                        self.alive = False
+                        self._outbox.put_nowait(error)
+                        return
         # A broken script must fail the test (assert_done), not die unseen in this task.
         except Exception as error:  # noqa: BLE001
             self.claude.errors.append(error)
             ending = EndTurn(is_error=True, result=str(error))
+        self._emit_result(ending, denials)
+
+    def _emit_result(
+        self, ending: EndTurn, denials: list[dict[str, Any]] | None = None
+    ) -> None:
         self._emit(
             type="result",
             subtype="success",
@@ -331,10 +397,10 @@ class FakeCLISession(Transport):
         )
 
     def _auto_approved(self, tool_name: str) -> bool:
-        match self.options.permission_mode:
-            case "bypassPermissions":
+        match self.permission_mode:
+            case ClaudePermissionMode.BYPASS_PERMISSIONS:
                 return True
-            case "acceptEdits" if tool_name in EDIT_TOOLS:
+            case ClaudePermissionMode.ACCEPT_EDITS if tool_name in EDIT_TOOLS:
                 return True
         return any(
             _allow_rule_matches(rule, tool_name) for rule in self.options.allowed_tools
@@ -343,7 +409,7 @@ class FakeCLISession(Transport):
     async def _can_use_tool(self, tool_use_id: str, call: ToolCall) -> dict[str, Any]:
         if (
             self.options.can_use_tool is None
-            or self.options.permission_mode == "dontAsk"
+            or self.permission_mode == ClaudePermissionMode.DONT_ASK
         ):
             return {"behavior": "deny", "message": "Permission denied"}
         response = await self._ask_sdk(
@@ -363,41 +429,26 @@ class FakeCLISession(Transport):
     async def _served_tools(self, server: str) -> set[str]:
         """The server's tool names, listed once as the CLI does at startup."""
         if server not in self._served:
-            await self._mcp(
-                server,
-                "initialize",
-                protocolVersion=MCP_PROTOCOL_VERSION,
-                capabilities={},
-                clientInfo={"name": "fake-claude", "version": "0"},
-            )
-            listing = await self._mcp(server, "tools/list")
-            self._served[server] = {tool["name"] for tool in listing["result"]["tools"]}
+            async with self._mcp(server) as session:
+                listing = await session.list_tools()
+            self._served[server] = {tool.name for tool in listing.tools}
         return self._served[server]
 
     async def _execute(self, call: ToolCall) -> tuple[Any, bool]:
         if not call.name.startswith("mcp__"):
             return f"{call.name} ran", False
         _, server, tool = call.name.split("__", 2)
-        reply = await self._mcp(
-            server, "tools/call", name=tool, arguments=call.arguments
-        )
-        if "error" in reply:
-            return reply["error"]["message"], True
-        result = reply["result"]
-        return result["content"], bool(result.get("isError"))
+        async with self._mcp(server) as session:
+            result = await session.call_tool(tool, call.arguments)
+        content = [block.model_dump(exclude_none=True) for block in result.content]
+        return content, result.isError
 
-    async def _mcp(self, server: str, method: str, **params: Any) -> dict[str, Any]:
-        response = await self._ask_sdk(
-            subtype="mcp_message",
-            server_name=server,
-            message={
-                "jsonrpc": "2.0",
-                "id": next(self._ids),
-                "method": method,
-                "params": params,
-            },
-        )
-        return response["response"]["mcp_response"]
+    def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
+        """A session to the MCP server the options name, dialed by its URL."""
+        servers = self.options.mcp_servers
+        assert isinstance(servers, dict), servers
+        config = servers[server]
+        return mcp_session(config["url"], BandMCPTransport(config["type"]))
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:
         self._emit(

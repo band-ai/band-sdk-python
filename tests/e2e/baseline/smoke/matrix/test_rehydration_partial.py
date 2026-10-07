@@ -30,13 +30,6 @@ resuming their own backend session (a session id persisted via task events), not
 consuming platform ``/context`` as history — a different mechanism, so a pass there
 would not validate the ``/context`` rehydration this scenario asserts.
 
-Also excludes ``langgraph``: observed live, its rebooted agent processes the recall
-turn but emits *no* chat reply when a second agent shares the room (it passes the
-solo ``test_recalls_after_rejoin`` / offline cold-boot cases, so ``/context``
-rehydration itself works — the gap is specific to replying after a reboot in a
-live multi-agent room). Tracked as a langgraph-adapter behaviour to investigate;
-excluded here so the scenario stays green for the adapters that support it.
-
 ``letta`` was previously excluded here for a different reason, confirmed live: the
 self-hosted Letta adapter registered its Band MCP tool server per instance, but
 Letta stored MCP tools by name at organization scope and re-pointed the shared
@@ -82,11 +75,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
             Adapter.OPENCODE,
             "recovers context by resuming its own backend session, not via platform "
             "/context — a pass would not validate this rehydration",
-        ),
-        ExcludedAdapter(
-            Adapter.LANGGRAPH,
-            "emits no chat reply after a reboot in a live multi-agent room "
-            "(langgraph-adapter behaviour under investigation)",
         ),
         ExcludedAdapter(
             Adapter.CREWAI_FLOW,

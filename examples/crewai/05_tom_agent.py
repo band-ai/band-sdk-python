@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]>=1.2.0"]
+# dependencies = ["band-sdk[crewai]>=4.0.0"]
 # ///
 """
 Tom the cat agent using CrewAI.
@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_tom_prompt
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -59,8 +59,10 @@ async def main() -> None:
     # Load Tom's credentials from agent_config.yaml
     # Create adapter with Tom's character prompt
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        custom_section=generate_tom_prompt(args.agent_name, args.peer_name),
+        CrewAIAdapterConfig(
+            model="gpt-6-luna",
+            custom_section=generate_tom_prompt(args.agent_name, args.peer_name),
+        ),
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")

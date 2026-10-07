@@ -13,10 +13,16 @@ from band.exports import lazy_exports
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
     from band.testing.fake_tools import (
+        MISSING_REPLY_FAILURE as MISSING_REPLY_FAILURE,
+    )
+    from band.testing.fake_tools import (
         FakeAgentTools as FakeAgentTools,
     )
     from band.testing.fake_tools import (
         events_of_type as events_of_type,
+    )
+    from band.testing.fake_tools import (
+        failure_reports as failure_reports,
     )
     from band.testing.fake_tools import (
         reported_failures as reported_failures,
@@ -55,7 +61,13 @@ if TYPE_CHECKING:
 
 __all__, __getattr__ = lazy_exports(
     __name__,
-    fake_tools=["FakeAgentTools", "events_of_type", "reported_failures"],
+    fake_tools=[
+        "MISSING_REPLY_FAILURE",
+        "FakeAgentTools",
+        "events_of_type",
+        "failure_reports",
+        "reported_failures",
+    ],
     features=["feature_kwargs"],
     phoenix_server=[
         "FakePhoenixServer",

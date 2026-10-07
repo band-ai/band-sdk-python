@@ -12,7 +12,7 @@ Usage:
     prompt = get_role_prompt("planner", agent_name="Design Agent")
 
     # Use with any adapter
-    adapter = SomeAdapter(custom_section=prompt)
+    adapter = SomeAdapter(SomeAdapterConfig(custom_section=prompt))
 """
 
 from __future__ import annotations
@@ -209,7 +209,7 @@ def get_role_prompt(role: str, agent_name: str | None = None) -> str:
 
     Example:
         >>> prompt = get_role_prompt("planner", "Design Bot")
-        >>> adapter = SomeAdapter(custom_section=prompt)
+        >>> adapter = SomeAdapter(SomeAdapterConfig(custom_section=prompt))
     """
     if role not in ROLE_GENERATORS:
         available = ", ".join(sorted(ROLE_GENERATORS.keys()))

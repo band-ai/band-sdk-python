@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]>=1.2.0"]
+# dependencies = ["band-sdk[crewai]>=4.0.0"]
 # ///
 """
 Mixed-example CrewAI coordinator.
@@ -24,7 +24,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -35,18 +35,19 @@ async def main() -> None:
     load_dotenv()
 
     adapter = CrewAIAdapter(
-        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
-        role="Release Readiness Coordinator",
-        goal=(
-            "Turn an engineering request into a release-readiness review with "
-            "clear asks for contract checking, risk review, and final handoff"
-        ),
-        backstory="""You run mixed integration drills where native Band agents
+        CrewAIAdapterConfig(
+            model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
+            role="Release Readiness Coordinator",
+            goal=(
+                "Turn an engineering request into a release-readiness review with "
+                "clear asks for contract checking, risk review, and final handoff"
+            ),
+            backstory="""You run mixed integration drills where native Band agents
         and bridged A2A services work in one shared room. You are good at
         turning a code or rollout request into a concrete engineering review.
         You focus on what changed, what can break, and what another developer
         needs to know before shipping.""",
-        custom_section="""
+            custom_section="""
 Room shape:
 - The fact checker bridge forwards requests to a remote A2A contract-checking service.
 - The risk reviewer bridge forwards requests to a remote A2A rollout-risk service.
@@ -67,7 +68,8 @@ When a user posts a request:
 
 Keep messages short, explicit, and coordination-focused.
 """,
-        verbose=True,
+            verbose=True,
+        ),
     )
 
     logger.info("Starting mixed-example strategy coordinator...")

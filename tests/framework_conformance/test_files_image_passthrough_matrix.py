@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.types import AdapterFeatures, Capability
+from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import TOOL_DEFINITIONS, BandTool, ToolCallOutcome
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
@@ -103,20 +104,24 @@ class _StubReadRoomFileTools:
 
 
 async def _probe_claude_sdk() -> bool:
-    from band.integrations.claude_sdk.tools import (  # noqa: PLC0415 -- claude_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
-        build_band_sdk_tools,
+    """claude_sdk's tools are its room-bound Band MCP backend, dialed over HTTP."""
+    from tests.mcpclient import (  # noqa: PLC0415 -- imports mcp, a claude_sdk extra absent from the standard dev-crewai/dev-parlant lane venvs
+        mcp_session,
+        started_backend,
     )
 
-    sdk_tools = build_band_sdk_tools(
-        tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
-        get_tools=lambda _room_id: _StubReadRoomFileTools(),
-        include_room_id=False,
-    )
-    handler = _tool_named(sdk_tools, BandTool.READ_ROOM_FILE).handler
+    async with (
+        started_backend(
+            room_bound=True,
+            tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
+            get_tools={"room-1": _StubReadRoomFileTools()}.get,
+        ) as backend,
+        mcp_session(backend.endpoint(BandMCPTransport.HTTP, "room-1")) as session,
+    ):
+        result = await session.call_tool(BandTool.READ_ROOM_FILE, {"file_id": "file-1"})
 
-    result = await handler({"file_id": "file-1"})
-
-    return result == _IMAGE_RESULT
+    blocks = [block.model_dump(exclude_none=True) for block in result.content]
+    return not result.isError and {"content": blocks} == _IMAGE_RESULT
 
 
 async def _probe_anthropic() -> bool:
@@ -197,7 +202,7 @@ async def _probe_gemini() -> bool:
         GeminiAdapter,
     )
 
-    adapter = GeminiAdapter(provider_key="test-key")
+    adapter = GeminiAdapter()
     tools = MagicMock()
     tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
     function_calls = [
@@ -332,9 +337,12 @@ async def _probe_codex() -> bool:
 async def _probe_pydantic_ai() -> bool:
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- pydantic_ai extra, absent from the standard dev-crewai/dev-parlant lane venvs
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
-    adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
+    adapter = PydanticAIAdapter(
+        PydanticAIAdapterConfig(model="test"), capabilities=Capability.FILES
+    )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     read_room_file = adapter._agent._function_toolset.tools[BandTool.READ_ROOM_FILE]
 

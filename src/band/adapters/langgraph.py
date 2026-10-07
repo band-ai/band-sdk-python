@@ -12,11 +12,14 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from band_sdk_core import AgentFailure
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
+from pydantic import PositiveInt
 from typing_extensions import Unpack
 
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import Turn
 from band.core.types import (
     Capability,
     Emit,
@@ -72,6 +75,25 @@ def _redacted_tool_end_output(tool_name: str, data: dict[str, Any]) -> Any:
     return output
 
 
+class LangGraphAdapterConfig(BaseAdapterConfig):
+    """Settings for :class:`LangGraphAdapter`.
+
+    Attributes:
+        prompt_template: Name of the system prompt template to render.
+        custom_section: Extra instructions appended to the system prompt.
+        recursion_limit: Maximum graph steps LangGraph runs per turn.
+        inject_system_prompt: Whether the rendered system prompt is prepended
+            on session bootstrap. ``None`` injects it only for the simple
+            ``llm=`` pattern, since ``graph=``/``graph_factory=`` callers
+            often manage their own system messages.
+    """
+
+    prompt_template: str = "default"
+    custom_section: str = ""
+    recursion_limit: PositiveInt = 50
+    inject_system_prompt: bool | None = None
+
+
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     """
     LangGraph adapter using SimpleAdapter pattern.
@@ -80,9 +102,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     1. Simple (recommended for most users):
         adapter = LangGraphAdapter(
-            llm=ChatOpenAI(model="gpt-5.4"),
+            LangGraphAdapterConfig(custom_section="You are a helpful assistant."),
+            llm=ChatOpenAI(model="gpt-6-luna"),
             checkpointer=InMemorySaver(),
-            custom_section="You are a helpful assistant.",
         )
 
     2. Advanced (custom graph):
@@ -100,8 +122,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         Advanced ``graph=`` / ``graph_factory=`` callers often manage their
         own system messages, so prompt injection is opt-in there via
-        ``inject_system_prompt=True``. If enabled, the graph should read
-        ``state["messages"]`` (or whatever your state schema names them).
+        ``LangGraphAdapterConfig(inject_system_prompt=True)``. If enabled, the
+        graph should read ``state["messages"]`` (or whatever your state schema
+        names them).
         See ``examples/langgraph/09_research_ops_orchestrator.py``.
 
     Example:
@@ -109,7 +132,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         from langgraph.checkpoint.memory import InMemorySaver
 
         adapter = LangGraphAdapter(
-            llm=ChatOpenAI(model="gpt-5.4"),
+            llm=ChatOpenAI(model="gpt-6-luna"),
             checkpointer=InMemorySaver(),
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
@@ -123,45 +146,35 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     def __init__(
         self,
-        # Simple pattern: just provide llm and checkpointer
+        config: LangGraphAdapterConfig | None = None,
+        *,
+        history_converter: LangChainHistoryConverter | None = None,
+        additional_tools: list[Any] | None = None,
         llm: BaseChatModel | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
-        # Advanced pattern: provide a graph factory or static graph
         graph_factory: Callable[[list[Any]], Pregel] | None = None,
         graph: Pregel | None = None,
-        # Common options
-        prompt_template: str = "default",
-        custom_section: str = "",
-        additional_tools: list[Any] | None = None,
-        history_converter: LangChainHistoryConverter | None = None,
-        recursion_limit: int = 50,
-        inject_system_prompt: bool | None = None,
         **features: Unpack[FeatureKwargs],
     ):
-        # Use default LangChain converter if not provided
+        """
+        Initialize the LangGraph adapter.
+
+        Args:
+            config: Prompt and run settings; see :class:`LangGraphAdapterConfig`.
+            history_converter: Optional custom history converter.
+            additional_tools: Extra tools, as band ``(InputModel, handler)``
+                tuples or ready-made LangChain tools.
+            llm: Chat model for the simple pattern; the adapter builds the graph.
+            checkpointer: Checkpointer for the simple pattern; defaults to an
+                in-memory saver.
+            graph_factory: Builds a graph from the Band tools (advanced pattern).
+            graph: A prebuilt static graph (advanced pattern).
+        """
         super().__init__(
             history_converter=history_converter or LangChainHistoryConverter(),
             **features,
         )
-
-        # Accept the SDK's portable custom-tool form: convert any CustomToolDef
-        # (InputModel, handler) tuples in additional_tools to LangChain tools — the
-        # same shape every other adapter takes — while passing ready-made LangChain
-        # tools through untouched. Done once here so both the simple and advanced
-        # patterns get a uniform tool list, and a tool written once works across
-        # adapters (LangChain would otherwise reject a bare tuple).
-        if additional_tools:
-            normalized: list[Any] = []
-            for item in additional_tools:
-                if isinstance(
-                    item, tuple
-                ):  # a band CustomToolDef (InputModel, handler)
-                    normalized.extend(
-                        langchain_tools.custom_tool_defs_to_langchain([item])
-                    )
-                else:  # already a LangChain tool / callable
-                    normalized.append(item)
-            additional_tools = normalized
+        self.config = config or LangGraphAdapterConfig()
 
         uses_simple_pattern = (
             llm is not None and graph_factory is None and graph is None
@@ -182,19 +195,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             if checkpointer is None:
                 checkpointer = InMemorySaver()
 
-            additional = additional_tools or []
-
-            def factory(band_tools: list[Any]) -> Pregel:
-                all_tools = band_tools + additional
+            def factory(turn_tools: list[Any]) -> Pregel:
                 return create_agent(
                     model=llm,
-                    tools=all_tools,
+                    tools=turn_tools,
                     checkpointer=checkpointer,
                 )
 
             graph_factory = factory
-            # Clear additional_tools since they're now baked into the factory
-            additional_tools = []
 
         if not graph_factory and not graph:
             raise ValueError(
@@ -203,10 +211,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         self.graph_factory = graph_factory
         self._static_graph = graph
-        self.prompt_template = prompt_template
-        self.custom_section = custom_section
         self.additional_tools = additional_tools or []
-        self.recursion_limit = recursion_limit
+        inject_system_prompt = self.config.inject_system_prompt
         self._inject_system_prompt = (
             uses_simple_pattern
             if inject_system_prompt is None
@@ -220,14 +226,33 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # top of the checkpointer's already-stored state.
         self._bootstrapped_rooms: OrderedDict[str, None] = OrderedDict()
 
+    @property
+    def judges_turns(self) -> bool:
+        """A static ``graph=`` never receives Band tools, so it cannot reply."""
+        return self.graph_factory is not None
+
+    def _additional_tools_for_turn(self, turn: Turn) -> list[Any]:
+        """The caller's extra tools as LangChain tools for one room turn.
+
+        Portable ``CustomToolDef`` tuples are converted here, per turn, so each
+        call records its effect on that room's turn; ready-made LangChain tools
+        pass through untouched.
+        """
+        return [
+            langchain_tools.custom_tool_def_to_langchain(tool, turn=turn)
+            if isinstance(tool, tuple)
+            else tool
+            for tool in self.additional_tools
+        ]
+
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
         self._system_prompt = render_system_prompt(
-            template=self.prompt_template,
+            template=self.config.prompt_template,
             agent_name=agent_name,
             agent_description=agent_description,
-            custom_section=self.custom_section,
+            custom_section=self.config.custom_section,
             features=self.features,
         )
         logger.info("LangGraph adapter started for agent: %s", agent_name)
@@ -296,14 +321,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
         try:
-            # Get LangChain tools
-            lc_tools = (
-                langchain_tools.agent_tools_to_langchain(
-                    tools,
-                    features=self.features,
-                )
-                + self.additional_tools
-            )
+            lc_tools = langchain_tools.agent_tools_to_langchain(
+                tools,
+                features=self.features,
+            ) + self._additional_tools_for_turn(tools.turn)
 
             # Build or get graph
             if self.graph_factory:
@@ -362,7 +383,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     "configurable": {
                         "thread_id": room_id,
                     },
-                    "recursion_limit": self.recursion_limit,
+                    "recursion_limit": self.config.recursion_limit,
                 },
                 version="v2",
             ):

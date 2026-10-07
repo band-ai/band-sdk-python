@@ -37,8 +37,9 @@ name: E2E (baseline)
 #                  isolated from core; shares the `dev` extra).
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
-#                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
-#                  (copilot CLI over ACP; Anthropic BYOK, no GitHub auth).
+#                  (local `opencode serve`, Zen free model), CopilotACPAdapter
+#                  (copilot CLI over ACP; Anthropic BYOK), and CursorACPAdapter
+#                  (agent CLI over ACP; Cursor API key).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -84,6 +85,14 @@ on:
           - all
           - ubuntu
           - windows
+      first_attempt_diagnostics:
+        description: "Log turn phases and allow a scoped test selector."
+        type: boolean
+        default: false
+      test_selector:
+        description: "Optional pytest -k expression for a scoped diagnostic run."
+        type: string
+        default: ""
 
 # Concurrency is scoped per (event kind, lane, OS) on the e2e job below — NOT
 # workflow-wide. A fresh dispatch cancels only the same lane+OS still in flight
@@ -91,6 +100,8 @@ on:
 # leaves the others alone. The event kind is part of the group so a scoped manual
 # dispatch can never cancel — and falsely redden — the nightly's leg for the same
 # lane+OS, or vice versa; each trigger kind only ever supersedes its own prior run.
+# First-attempt diagnostics also include the branch ref, so an investigation
+# cannot cancel another branch's live lane while it is collecting evidence.
 # Cross-lane races on the shared platform are safe: each run provisions
 # uniquely-named agents and the orphan sweep only reaps agents older than
 # BAND_E2E_ORPHAN_MAX_AGE_MINUTES, so a concurrent run's fresh agents are never
@@ -147,27 +158,12 @@ jobs:
     name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
     runs-on: ${{ matrix.runner }}
-    # Without this, GitHub's own default (360 minutes) is the only ceiling on a
-    # genuinely stuck leg — observed live: three real multi-agent-collaboration
-    # tests each burned their full rerun budget (attempt + 2 retries, ~6 min each)
-    # before failing, ~40 minutes for just those three. This caps a leg well
-    # short of the platform default while leaving headroom above that.
-    #
-    # Raised from 120: a full-matrix run showed healthy legs still working well
-    # past 90 minutes, so 120 risked killing legs that were making progress
-    # rather than only ones that were stuck — and a timeout is indistinguishable
-    # from a real failure in the digest, so a too-tight cap manufactures red runs.
-    # This is the *only* place the cap is defined; the digest text and the docs
-    # deliberately describe it without restating the number.
+    # A leg making progress across many live cells needs more time than a single
+    # turn. A stuck leg still ends red at this cap.
     timeout-minutes: 240
-    # Per-(event kind, lane, OS) concurrency: a new dispatch cancels only the
-    # matching lane+OS still running from the same trigger kind, never the whole
-    # matrix and never the other trigger's run — so one lane can be re-run in
-    # isolation without a scoped manual dispatch stealing (and falsely reddening)
-    # a nightly leg for the same lane+OS, or vice versa. (See the note above the
-    # jobs block.)
+    # Keep diagnostic runs on separate branches from cancelling each other.
     concurrency:
-      group: e2e-baseline-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.os }}
+      group: e2e-baseline-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.os }}-${{ inputs.first_attempt_diagnostics && github.ref || 'shared' }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
@@ -213,11 +209,11 @@ jobs:
       # quota use is minimal; the smoke skips when the secret is unset. Every
       # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
-      # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
-      # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
-      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py. Set per
-      # invocation (not here) by the run step below, since a retry attempt needs its
-      # own path — see that step's comment.
+      # Where setup-opencode.sh points `opencode serve`'s log, and what the
+      # backends lane uploads.
+      OPENCODE_SERVE_LOG: artifacts/opencode-serve.log
+      # Each lane writes one first-attempt test×adapter scorecard. The final job
+      # checks it against the expected-cell manifest.
 
     steps:
     - name: Checkout code
@@ -252,6 +248,41 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
 
+    # The install directory is named by the pinned version, so the script's hash
+    # changes the key exactly when the version does.
+    - name: Restore the Cursor CLI (cursor_acp)
+      id: cursor-cli-cache
+      if: matrix.lane == 'backends'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cursor-agent-*
+        key: cursor-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/setup-cursor.sh') }}
+
+    # cursor_acp drives `agent acp`; auth is the backends-only CURSOR_API_KEY on
+    # the baseline step below.
+    - name: Install the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends'
+      run: bash .github/scripts/setup-cursor.sh
+
+    # pwsh resolves both the Linux `agent` symlink and the Windows `agent.cmd`.
+    # The node check guards the later npm-based installs from Cursor's bundled node.
+    - name: Verify Cursor CLI
+      if: matrix.lane == 'backends'
+      shell: pwsh
+      run: |
+        agent --version
+        $node = (Get-Command node).Source
+        if ($node -like "*cursor-agent*") { throw "Cursor's bundled node shadows the runner's: $node" }
+
+    # Saved as soon as the install verifies: the combined cache action saves only
+    # when the whole job passes, so a red lane would re-download on every run.
+    - name: Save the Cursor CLI (cursor_acp)
+      if: matrix.lane == 'backends' && steps.cursor-cli-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cursor-agent-*
+        key: ${{ steps.cursor-cli-cache.outputs.cache-primary-key }}
+
     - name: Install Bun and OMP (omp_acp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
@@ -276,17 +307,17 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
-    # Retries the lane once (`--last-failed`) on any failure before finalizing its
-    # scorecard — see .github/scripts/run-baseline-e2e.sh for the full rationale,
-    # including why it deliberately does not `set -e`. Invoked via `bash` explicitly:
+    # One attempt per test and per lane. Invoked via `bash` explicitly:
     # this step runs on windows-latest too (only the letta lane is Linux-only), and a
     # directly executed .sh there depends on the exec bit surviving checkout and Git
     # Bash resolving the shebang (see the codex step's comment above).
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       env:
-        ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
-        ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
+        # Only cursor_acp reads it, and only the backends lane runs cursor_acp.
+        CURSOR_API_KEY: ${{ matrix.lane == 'backends' && secrets.E2E_CURSOR_API_KEY || '' }}
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
+        BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
+        BAND_E2E_TEST_SELECTOR: ${{ inputs.test_selector || '' }}
       run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
@@ -301,6 +332,16 @@ jobs:
       env:
         PYTHONPATH: .
       run: uv run python .github/scripts/record-backends-environment.py
+
+    - name: Upload the OpenCode server log (opencode)
+      if: always() && matrix.lane == 'backends'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: opencode-serve-${{ matrix.os }}
+        path: ${{ env.OPENCODE_SERVE_LOG }}
+        if-no-files-found: ignore
+        # The server log quotes gated commands and question answers.
+        retention-days: 14
 
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
@@ -352,21 +393,12 @@ jobs:
         path: artifacts
         merge-multiple: true
 
-    # The lane ids this invocation actually selected (every registry lane for a full
-    # 'all' run, or just the dispatched one) — the gate's notion of "in scope", never
-    # inferred from the merged rows themselves.
-    - name: Resolve expected lanes for this run
-      id: expected-lanes
-      env:
-        LANES_JSON: ${{ needs.lanes.outputs.lanes }}
-      run: |
-        lanes=$(echo "$LANES_JSON" | jq -r '[.include[].lane] | unique | join(",")')
-        echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
-
     - name: Merge into one scorecard
       id: merge
       env:
-        EXPECTED_LANES: ${{ steps.expected-lanes.outputs.lanes }}
+        SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
+        SELECTED_OS: ${{ github.event.inputs.os || 'all' }}
+        TEST_SELECTOR: ${{ github.event.inputs.test_selector || '' }}
       run: .github/scripts/merge-scorecard.sh
 
     # Readable on the run page without downloading the artifact.
@@ -405,9 +437,10 @@ jobs:
       if: steps.verdict.outputs.ok != 'true'
       run: exit 1
 
-  # Only a full matrix may certify the commit: its state means the entire baseline
-  # is green/red. Scoped manual runs report through the separate job below, so
-  # their limited coverage can never affect release gating.
+  # Only a full matrix (every lane, OS and test) may certify the commit: its state
+  # means the entire baseline is green/red. Scoped manual runs, including a
+  # test_selector run, report through the separate job below, so their limited
+  # coverage can never affect release gating.
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
@@ -440,7 +473,8 @@ jobs:
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
       (github.event_name == 'schedule' ||
        ((github.event.inputs.lane || 'all') == 'all' &&
-        (github.event.inputs.os || 'all') == 'all'))
+        (github.event.inputs.os || 'all') == 'all' &&
+        (github.event.inputs.test_selector || '') == ''))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -507,7 +541,8 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' &&
       ((github.event.inputs.lane || 'all') != 'all' ||
-       (github.event.inputs.os || 'all') != 'all')
+       (github.event.inputs.os || 'all') != 'all' ||
+       (github.event.inputs.test_selector || '') != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -522,7 +557,7 @@ jobs:
       PASSED: ${{ needs.scorecard.outputs.passed }}
       MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
       RECIPIENTS: "@${{ github.triggering_actor }}"
-      SCOPE_NOTICE: "Selected scope: lane=${{ github.event.inputs.lane }}, os=${{ github.event.inputs.os }}. This is not a full baseline and does not affect the release gate or nightly baseline state."
+      SCOPE_NOTICE: "Selected scope: lane=${{ github.event.inputs.lane }}, os=${{ github.event.inputs.os }}, test_selector=${{ github.event.inputs.test_selector }}. This is not a full baseline and does not affect the release gate or nightly baseline state."
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

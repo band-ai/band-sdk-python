@@ -117,10 +117,11 @@ class TestCapabilityGatingEndToEnd:
 
         from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file tests
             PydanticAIAdapter,
+            PydanticAIAdapterConfig,
         )
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-5.4",
+            PydanticAIAdapterConfig(model="openai:gpt-5.4"),
             capabilities={Capability.MEMORY},
         )
         await adapter.on_started("test-agent", "A test agent")
@@ -242,11 +243,13 @@ class TestCapabilityGatingEndToEnd:
         """include_base_instructions=False renders identity without base instructions."""
         from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
 
         adapter = AnthropicAdapter(
-            prompt="Focus on Python.",
-            include_base_instructions=False,
+            AnthropicAdapterConfig(
+                custom_section="Focus on Python.", include_base_instructions=False
+            )
         )
         await adapter.on_started("test-agent", "A test agent")
 
@@ -264,10 +267,11 @@ class TestCapabilityGatingEndToEnd:
         """Capability sections render independently of include_base_instructions."""
         from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file tests
             AnthropicAdapter,
+            AnthropicAdapterConfig,
         )
 
         adapter = AnthropicAdapter(
-            include_base_instructions=False,
+            AnthropicAdapterConfig(include_base_instructions=False),
             capabilities={Capability.MEMORY},
         )
         await adapter.on_started("test-agent", "A test agent")
@@ -282,11 +286,13 @@ class TestCapabilityGatingEndToEnd:
         """GeminiAdapter honors include_base_instructions=False end-to-end."""
         from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file tests
             GeminiAdapter,
+            GeminiAdapterConfig,
         )
 
         adapter = GeminiAdapter(
-            prompt="Focus on Python.",
-            include_base_instructions=False,
+            GeminiAdapterConfig(
+                custom_section="Focus on Python.", include_base_instructions=False
+            )
         )
         await adapter.on_started("test-agent", "A test agent")
 

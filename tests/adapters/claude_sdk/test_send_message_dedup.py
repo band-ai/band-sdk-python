@@ -5,9 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-import pytest
-
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
@@ -32,10 +30,8 @@ async def test_a_repeated_reply_reaches_its_room_once_even_after_the_turn_ends(
     await room.send("anything else?", tools=next_turn_tools)
     await other_room.send("say hello")
 
-    assert room.chat == ["hello"]
-    assert [message["content"] for message in next_turn_tools.messages_sent] == [
-        "a new answer"
-    ]
+    assert room.chat == ["hello", "a new answer"]
+    assert next_turn_tools.turn.replied
     assert other_room.chat == ["hello"]
     assert room.failures == []
 
@@ -54,14 +50,9 @@ async def test_leaving_a_room_forgets_what_it_already_said(
 
 
 async def test_a_zero_ttl_turns_the_dedup_off(claude_room: OpenRoom) -> None:
-    room = await claude_room(send_message_dedup_ttl_seconds=0)
+    room = await claude_room(ClaudeSDKAdapterConfig(send_message_dedup_ttl_seconds=0))
     room.claude.script([room.model_reply("hello"), room.model_reply("hello")])
 
     await room.send("say hello")
 
     assert room.chat == ["hello", "hello"]
-
-
-def test_a_negative_ttl_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        ClaudeSDKAdapter(send_message_dedup_ttl_seconds=-1)

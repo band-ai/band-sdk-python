@@ -67,7 +67,7 @@ def _msg(
 class TestOnStarted:
     async def test_runs_against_the_given_agent(self, make_agno_agent):
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
 
         await adapter.on_started("TestBot", "desc")
 
@@ -84,7 +84,7 @@ class TestOnStarted:
         # The adapter delivers nothing on its own; plain agent text is not sent
         # (only a ``band_send_message`` tool call reaches the room).
         agent = make_agno_agent(response=RunOutput(content="hi there"))
-        adapter = AgnoAdapter(agent, emit=())
+        adapter = AgnoAdapter(agent=agent, emit=())
         await adapter.on_started("TestBot", "desc")
 
         await adapter.on_message(
@@ -108,7 +108,7 @@ class TestMemoryCollisionWarning:
         self, make_agno_agent
     ):
         agent = make_agno_agent(update_memory_on_run=True)
-        adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
+        adapter = AgnoAdapter(agent=agent, capabilities=Capability.MEMORY)
 
         with pytest.warns(UserWarning, match="update_memory_on_run"):
             await adapter.on_started("TestBot", "desc")
@@ -117,14 +117,14 @@ class TestMemoryCollisionWarning:
         self, make_agno_agent
     ):
         agent = make_agno_agent(enable_agentic_memory=True)
-        adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
+        adapter = AgnoAdapter(agent=agent, capabilities=Capability.MEMORY)
 
         with pytest.warns(UserWarning, match="enable_agentic_memory"):
             await adapter.on_started("TestBot", "desc")
 
     async def test_no_warning_without_memory_capability(self, make_agno_agent):
         agent = make_agno_agent(update_memory_on_run=True, enable_agentic_memory=True)
-        adapter = AgnoAdapter(agent)  # no MEMORY capability -> no collision
+        adapter = AgnoAdapter(agent=agent)  # no MEMORY capability -> no collision
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -198,7 +198,7 @@ class TestRoomToolResolution:
         user_tool = object()
         agent = make_agno_agent()
         agent.tools = [user_tool]
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
         await adapter.on_started("TestBot", "desc")
 
         tools = SchemaTools([openai_tool_schema("band_send_message")])
@@ -580,7 +580,7 @@ class TestEmitThoughts:
 class TestPersistAndAccumulate:
     def test_persist_keeps_only_conversation_roles(self, make_agno_agent):
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
         response = RunOutput(
             messages=[
                 Message(role="system", content="instructions"),
@@ -603,7 +603,7 @@ class TestPersistAndAccumulate:
         # returned run input is that seed plus this turn's live message, but
         # building it must NOT push the live message into the committed store.
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
         seed = [Message(role="user", content="earlier")]
 
         run_input_msgs = adapter._build_run_input(
@@ -628,7 +628,7 @@ class TestPersistAndAccumulate:
         # A non-bootstrap turn reads the committed transcript but never writes to
         # it; the store is only ever advanced by _persist_turn after a run.
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
         adapter._message_history["room-1"] = [Message(role="user", content="committed")]
 
         adapter._build_run_input(
@@ -653,7 +653,7 @@ class TestFailedRunDoesNotContaminateNextTurn:
         agent.arun = AsyncMock(
             side_effect=[RuntimeError("boom"), RunOutput(content="ok")]
         )
-        adapter = AgnoAdapter(agent, emit=())
+        adapter = AgnoAdapter(agent=agent, emit=())
         await adapter.on_started("TestBot", "desc")
 
         first = _msg("room-1", "first question", msg_id="m1")
@@ -692,7 +692,7 @@ class TestFailedRunDoesNotContaminateNextTurn:
 class TestOnCleanup:
     async def test_drops_room_transcript(self, make_agno_agent):
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
         adapter._message_history["room-1"] = [Message(role="user", content="hi")]
 
         await adapter.on_cleanup("room-1")
@@ -701,7 +701,7 @@ class TestOnCleanup:
 
     async def test_unknown_room_is_noop(self, make_agno_agent):
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
 
         await adapter.on_cleanup("never-seen")  # must not raise
 
@@ -709,7 +709,7 @@ class TestOnCleanup:
 class TestUsedBeforeStarted:
     async def test_run_agent_before_on_started_raises(self, make_agno_agent):
         agent = make_agno_agent()
-        adapter = AgnoAdapter(agent)
+        adapter = AgnoAdapter(agent=agent)
 
         with pytest.raises(RuntimeError, match="before on_started"):
             await adapter._run_agent(
@@ -736,7 +736,7 @@ class TestSessionIsolation:
     async def test_custom_session_id_factory_is_used(self, make_agno_agent):
         agent = make_agno_agent()
         adapter = AgnoAdapter(
-            agent, session_id_factory=lambda room: f"sess::{room}", emit=()
+            agent=agent, session_id_factory=lambda room: f"sess::{room}", emit=()
         )
         await adapter.on_started("TestBot", "desc")
 
@@ -989,7 +989,7 @@ class TestPerRunToolExposureEndToEnd:
     async def test_model_receives_only_active_room_tools(self):
         model = CapturingModel()
         agno = AgnoAgent(model=model, instructions="You are Dev.")
-        adapter = AgnoAdapter(agno, emit=())
+        adapter = AgnoAdapter(agent=agno, emit=())
         await adapter.on_started("Bot", "desc")
 
         # Hub room: contact tools are offered to the model.

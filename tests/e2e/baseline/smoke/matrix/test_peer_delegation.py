@@ -2,9 +2,9 @@
 
 The thin L3 delegation slice, across the tool-loop matrix. Two instances A and B of the
 same adapter co-reside via ``cell.run_many(2)``. Turn 1 seeds a value V into B's own
-context. Turn 2 addresses B *directly* (not an orchestrator) — "ask A to confirm V and
-report back" — so the delegation is B's own decision (peer-initiated). Load-bearing,
-floors-only assertions from the one flow:
+context. Turn 2 addresses B *directly* (not an orchestrator) — "send A the value V and
+ask A to repeat it back" — so the delegation is B's own decision (peer-initiated).
+Load-bearing, floors-only assertions from the one flow:
 
 * Peer-initiated routing mention + self-recall (coupled): B emitted a real routing
   mention of A (by message metadata, not plain text) whose body carries the value B
@@ -13,9 +13,8 @@ floors-only assertions from the one flow:
 * Delegate responded: A produced a reply (its turn is driven by B's mention, not a user
   send, so we barrier on A having spoken).
 
-The round-trip value (B relaying A's computed result back to the user) is the flakiest
-hop on a small model, so it is kept soft and non-gating. Named routing / recruitment /
-concurrent triage are already covered by ``test_multi_agent_collaboration``.
+Named routing / recruitment / concurrent triage are already covered by
+``test_multi_agent_collaboration``.
 """
 
 from __future__ import annotations
@@ -37,8 +36,8 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT)
-@flaky_model("multi-hop routing on a small model is non-deterministic")
-@pytest.mark.timeout(extra=300)  # a seed turn + a B→A→B delegation cascade
+@flaky_model("peer routing via a model-chosen mention is non-deterministic")
+@pytest.mark.timeout(extra=300)  # a seed turn + a B→A delegation cascade
 @pytest.mark.asyncio(loop_scope="session")
 async def test_peer_initiated_delegation_with_self_recall(
     cell: AdapterCell,
@@ -49,7 +48,8 @@ async def test_peer_initiated_delegation_with_self_recall(
 ) -> None:
     """B recalls a seeded value, routes it to A by mention, and A responds."""
     value = unique_marker("value")
-    async with cell.run_many(2) as (agent_a, agent_b):
+    # Short names keep the platform's capped agent handles unambiguous.
+    async with cell.run_many(2, labels=["peer-a", "peer-b"]) as (agent_a, agent_b):
         room_id = await resource_manager.provision_room(
             title=f"e2e-peer-delegation-{cell.adapter_id}",
             participants=[agent_a.id, agent_b.id],
@@ -67,18 +67,26 @@ async def test_peer_initiated_delegation_with_self_recall(
             )
             await capture.wait_for_processed(seed_mid, agent_b.id)
 
-            # Turn 2: ask B (directly) to delegate to A and report back.
+            # Turn 2: ask B (directly) to route the recalled value to A.
             mark = capture.messages.snapshot()
             deleg_mid = await user_ops.send_message(
                 room_id,
-                delegate_to_peer_instruction(agent_a.name, agent_a.id),
+                delegate_to_peer_instruction(agent_a.name),
                 mention_id=agent_b.id,
                 mention_name=agent_b.name,
             )
             # Coupled: B mentioned A (metadata) in a message carrying the recalled value
             # — a real peer-initiated routing mention off B's own context.
-            replies_b = await capture.wait_for_reply(deleg_mid, agent_b.id, since=mark)
-            replies_b.mentioning(agent_a.id).assert_contains_any([value])
+            await capture.wait_for_processed(deleg_mid, agent_b.id)
+            replies_b = capture.messages.since(mark).from_sender(agent_b.id)
+            routed = replies_b.mentioning(agent_a.id)
+            routed.assert_contains_exact(value)
+            routed_message = next(
+                message for message in routed if value in message.content
+            )
+            await capture.wait_for_processed(
+                routed_message.id, agent_a.id, deadline_s=cascade_deadline
+            )
 
             # Cascade barrier: A's reply is driven by B's mention (not a user send), so
             # wait until A has produced a message *since the delegation* — reusing the same

@@ -16,18 +16,17 @@ from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
-    FakeMCPBackend,
     FakeOpencodeClient,
     event_message_updated,
     event_session_idle,
     event_text_part,
-    make_fake_mcp_backend_factory,
     make_platform_message,
     run_single_turn,
     tools_protocol,
     wait_for,
 )
 from tests.adapters.usage_events import recorded_usage_payloads
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 async def test_watch_task_drains_the_turn_that_started_it() -> None:
@@ -122,7 +121,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     )
     assert next_turn.usage_by_message == {}
 
-    await adapter._emit_turn_usage(first_turn)
+    await adapter._emit_turn_usage(room_state.room_id, first_turn)
 
     usage_payloads = recorded_usage_payloads(tools)
     assert usage_payloads == [
@@ -167,9 +166,7 @@ async def test_orphaned_turns_pending_permission_replies_against_its_own_client(
     )
 
     assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
-    assert client_a.permission_replies == [
-        {"session_id": "sess-a", "permission_id": "perm-1", "response": "once"}
-    ]
+    assert client_a.permission_replies == [{"permission_id": "perm-1", "reply": "once"}]
     assert client_b.permission_replies == []
 
 
@@ -240,7 +237,7 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
 ) -> None:
     stop_started = asyncio.Event()
     stop_release = asyncio.Event()
-    fake_backend = FakeMCPBackend(
+    fake_backend = FakeBandMCPBackend(
         stop_started=stop_started,
         stop_release=stop_release,
     )
@@ -268,10 +265,7 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
     )
     tools = FakeAgentTools()
 
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        make_fake_mcp_backend_factory(fake_backend),
-    ):
+    with backends_created_by(fake_backend):
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await adapter.on_message(
             make_platform_message(room_id="room-1"),
@@ -507,7 +501,7 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
         room_id="room-1",
     )
 
-    assert [m["content"] for m in tools.messages_sent] == ["after the interrupt"]
+    assert tools.chat == ["after the interrupt"]
 
     await adapter.on_cleanup("room-1")
 
@@ -642,23 +636,27 @@ async def test_shutdown_rechecks_for_room_arriving_after_cleanup_decision(
         prompt_event_sequences=[[event_session_idle("sess-1")]]
     )
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+    backend = FakeBandMCPBackend()
 
-    await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(room_id="room-1"),
-        tools_protocol(tools),
-        OpencodeSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
+    with backends_created_by(backend):
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(room_id="room-1"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
 
-    await adapter._get_or_create_room_state("room-2")
-    await adapter._shutdown_client()
+        await adapter._get_or_create_room_state("room-2")
+        await adapter._shutdown_client()
 
-    assert not fake_client.closed
-    assert fake_client.disconnected_mcp_servers == []
+        assert not fake_client.closed
+        assert fake_client.disconnected_mcp_servers == []
 
-    await adapter.on_cleanup("room-1")
-    await adapter.on_cleanup("room-2")
+        await adapter.on_cleanup("room-1")
+        await adapter.on_cleanup("room-2")
+
+    assert backend.stop_calls == 1

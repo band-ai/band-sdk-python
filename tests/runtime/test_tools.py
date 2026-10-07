@@ -46,16 +46,19 @@ from band.runtime.tools import (
     SendMessageInput,
     SendRoomFileInput,
     StoreMemoryInput,
+    TurnEffect,
     append_mention_handles_hint,
     available_mention_handles,
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
     is_mcp_content_result,
     matches_identifier,
-    settles_turn_reply,
+    turn_effect,
 )
 from tests.conftest import make_participant_mock
 from tests.content import BLANK_CONTENT_CASES
+from tests.identifiers import INVALID_IDS, UUID_ID
+from tests.runtime.helpers import memory_client
 
 
 class TestIsMcpContentResult:
@@ -1377,6 +1380,17 @@ class TestAgentToolsSendMessage:
         assert message.mentions[0].id == "user-1"
         assert message.mentions[0].handle == "@user-one"
 
+    async def test_send_message_accepts_participant_id(
+        self, mock_rest_client, participants
+    ):
+        """An exact ID routes to its participant without knowing the handle."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        await tools.send_message("Hello!", mentions=["user-1"])
+
+        call = mock_rest_client.agent_api_messages.create_agent_chat_message.call_args
+        assert call.kwargs["message"].mentions[0].id == "user-1"
+
     async def test_send_message_omits_attachment_ids_when_not_given(
         self, mock_rest_client, participants
     ):
@@ -2410,33 +2424,33 @@ class TestToolInputModels:
         assert model.task_id is None
 
 
-class TestSettlesTurnReply:
-    """Which tool calls count as having settled the turn's reply."""
+class TestReplyEffectSpellings:
+    """Which tool names resolve to Band's reply effect."""
 
     def test_sdk_injected_tool(self):
-        assert settles_turn_reply("band_send_message") is True
+        assert turn_effect("band_send_message") is TurnEffect.REPLY
 
     def test_standalone_band_mcp_tool(self):
-        assert settles_turn_reply("create_agent_chat_message") is True
+        assert turn_effect("create_agent_chat_message") is TurnEffect.REPLY
 
     def test_mcp_server_prefixed_names(self):
         """MCP clients may prefix the server name onto the tool name."""
-        assert settles_turn_reply("band-band_send_message") is True
-        assert settles_turn_reply("band-create_agent_chat_message") is True
+        assert turn_effect("band-band_send_message") is TurnEffect.REPLY
+        assert turn_effect("band-create_agent_chat_message") is TurnEffect.REPLY
 
     def test_non_settling_tools(self):
-        assert settles_turn_reply("band_send_event") is False
-        assert settles_turn_reply("band_lookup_peers") is False
-        assert settles_turn_reply("get_weather") is False
+        assert turn_effect("band_send_event") is TurnEffect.OBSERVE
+        assert turn_effect("band_lookup_peers") is TurnEffect.OBSERVE
+        assert turn_effect("get_weather") is TurnEffect.OBSERVE
 
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
-        assert settles_turn_reply("band_send_message_draft") is False
+        assert turn_effect("band_send_message_draft") is TurnEffect.OBSERVE
 
     def test_non_band_server_prefix_does_not_resolve(self):
         """An unrelated MCP server's own tool must never be treated as a Band
         reply just because it ends in ``-band_send_message``."""
-        assert settles_turn_reply("other-band_send_message") is False
+        assert turn_effect("other-band_send_message") is TurnEffect.OBSERVE
 
 
 class TestCanonicalizeMcpToolName:
@@ -2490,3 +2504,43 @@ class TestFetchRoomContext:
         )
 
         assert context["meta"]["total_pages"] == 3
+
+
+@pytest.mark.parametrize(
+    "name", ["band_get_memory", "band_supersede_memory", "band_archive_memory"]
+)
+@pytest.mark.parametrize("memory_id", INVALID_IDS)
+@pytest.mark.asyncio
+async def test_memory_validation_prevents_http(name: str, memory_id: str) -> None:
+    async with memory_client() as (rest, requests):
+        outcome = await AgentTools("room-1", rest).execute_tool_call_structured(
+            name, {"memory_id": memory_id}
+        )
+        assert not outcome.ok
+        assert f"Invalid arguments for {name}" in outcome.error_message
+        assert "memory_id:" in outcome.error_message
+        assert requests == []
+
+
+@pytest.mark.parametrize(
+    "name,method,suffix",
+    [
+        ("band_get_memory", "GET", ""),
+        ("band_supersede_memory", "POST", "/supersede"),
+        ("band_archive_memory", "POST", "/archive"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_valid_memory_dispatch_addresses_item(
+    name: str, method: str, suffix: str
+) -> None:
+    async with memory_client() as (rest, requests):
+        outcome = await AgentTools("room-1", rest).execute_tool_call_structured(
+            name, {"memory_id": UUID_ID}
+        )
+        assert outcome.ok, outcome.error_message
+        assert outcome.value["id"] == UUID_ID
+        assert outcome.value["content"] == "remember this"
+        assert [(q.method, q.url.path) for q in requests] == [
+            (method, f"/api/v1/agent/memories/{UUID_ID}{suffix}")
+        ]

@@ -1,6 +1,6 @@
 [project]
 name = "band-mcp"
-version = "2.2.1"
+version = "2.2.4"
 description = "Model Context Protocol (MCP) server for Band integration"
 readme = "README.md"
 authors = [{ name = "band" }]
@@ -27,14 +27,15 @@ dependencies = [
     # No added install footprint.
     "typer>=0.16.0",
     "pydantic-settings>=2.1.0",
-    # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
-    # for band-client-rest Bugs" for why this stays exact.
-    "band-client-rest==0.0.41",
+    # Unversioned on purpose: band-sdk pins band-client-rest exactly, and two
+    # exact pins drift apart -- band-mcp's moved ahead of the published
+    # band-sdk's, so the released wheel could not install at all.
+    "band-client-rest",
     # Auto-bumped after every band-sdk release by release.yml's
     # bump-mcp-sdk-floor job, so this always tracks the most recently
     # published band-sdk version -- band-mcp is developed in lockstep in
     # this monorepo and can depend on any already-released SDK feature.
-    "band-sdk>=3.2.1",
+    "band-sdk>=4.0.0",
     "uvicorn>=0.30.0",  # Required for SSE transport mode
 ]
 

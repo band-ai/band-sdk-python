@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from band.integrations.opencode.client import (
+    ApprovalReply,
     HttpOpencodeClient,
     OpencodeClientProtocol,
 )
@@ -33,6 +34,7 @@ from band.integrations.opencode.types import OpencodeSessionState
 
 __all__ = [
     "UNKNOWN_OPENCODE_ERROR",
+    "ApprovalReply",
     "HttpOpencodeClient",
     "MessagePartDeltaEvent",
     "MessagePartUpdatedEvent",

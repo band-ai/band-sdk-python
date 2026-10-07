@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]>=1.2.0"]
+# dependencies = ["band-sdk[crewai]>=4.0.0"]
 # ///
 """
 CrewAI agent with contact and memory tools enabled.
@@ -28,7 +28,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 from band.core.types import Capability
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -40,26 +40,28 @@ async def main() -> None:
     load_dotenv()
 
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        role="Contact-aware relationship manager",
-        goal=(
-            "Help users manage contacts, keep track of relationship context, "
-            "and remember durable preferences when that is useful."
+        CrewAIAdapterConfig(
+            model="gpt-6-luna",
+            role="Contact-aware relationship manager",
+            goal=(
+                "Help users manage contacts, keep track of relationship context, "
+                "and remember durable preferences when that is useful."
+            ),
+            backstory=(
+                "You support ongoing collaboration inside Band rooms. "
+                "You know how to inspect contacts, manage contact requests, "
+                "and use memory tools sparingly for durable context."
+            ),
+            custom_section=(
+                "Use contact tools when the user asks about who they know, who to add, "
+                "or the state of a contact request. "
+                "Use memory tools for durable user preferences, follow-up notes, or "
+                "important facts that should survive beyond the current turn. "
+                "When a system message reports that a contact was added or removed, "
+                "treat it as fresh room context."
+            ),
         ),
-        backstory=(
-            "You support ongoing collaboration inside Band rooms. "
-            "You know how to inspect contacts, manage contact requests, "
-            "and use memory tools sparingly for durable context."
-        ),
-        custom_section=(
-            "Use contact tools when the user asks about who they know, who to add, "
-            "or the state of a contact request. "
-            "Use memory tools for durable user preferences, follow-up notes, or "
-            "important facts that should survive beyond the current turn. "
-            "When a system message reports that a contact was added or removed, "
-            "treat it as fresh room context."
-        ),
-        capabilities=Capability.MEMORY,
+        capabilities=Capability.MEMORY | Capability.CONTACTS,
     )
 
     contact_config = ContactEventConfig(

@@ -11,14 +11,28 @@ enum, so a reworded prompt fails the smoke instead of silently drifting from it.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import re
 import string
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
 
+from band_rest import ChatMessage
+
+from band.adapters.claude_sdk import (
+    APPROVAL_POLICY_DECISION_TEMPLATE,
+    APPROVAL_UNAUTHORIZED_MESSAGE,
+    APPROVAL_UNKNOWN_TOKEN_TEMPLATE,
+    ClaudeApprovalOptions,
+    ClaudePermissionMode,
+    ClaudeSDKAdapter,
+    ClaudeSDKAdapterConfig,
+    ClaudeSDKCommand,
+)
 from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE as CLAUDE_REQUESTED,
 )
@@ -27,12 +41,6 @@ from band.adapters.claude_sdk import (
 )
 from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE as CLAUDE_TIMED_OUT,
-)
-from band.adapters.claude_sdk import (
-    APPROVAL_UNAUTHORIZED_MESSAGE,
-    APPROVAL_UNKNOWN_TOKEN_TEMPLATE,
-    ClaudeSDKAdapter,
-    ClaudeSDKCommand,
 )
 from band.adapters.codex import (
     APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED,
@@ -50,17 +58,6 @@ from band.adapters.codex import (
     CodexCommand,
     CodexSandboxMode,
 )
-from band.adapters.cursor_acp import (
-    DECISION_NOT_PENDING_TEMPLATE,
-    DECISION_RESOLVED_TEMPLATE,
-    DECISION_TIMED_OUT_TEMPLATE,
-    DECISION_UNAUTHORIZED_MESSAGE,
-    PERMISSION_REQUESTED_TEMPLATE,
-    ROOM_COMMAND,
-    CursorACPAdapter,
-    CursorACPAdapterConfig,
-    CursorCommandWord,
-)
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
@@ -74,19 +71,40 @@ from band.adapters.opencode.approvals import (
 )
 from band.client.streaming import MessageCreatedPayload
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import MessageType
+from band.core.types import ApprovalMode, Capability, MessageType
+from band.integrations.acp.cursor import (
+    DECISION_NOT_PENDING_TEMPLATE,
+    DECISION_RESOLVED_TEMPLATE,
+    DECISION_TIMED_OUT_TEMPLATE,
+    DECISION_UNAUTHORIZED_MESSAGE,
+    PERMISSION_REQUESTED_TEMPLATE,
+    ROOM_COMMAND,
+    CursorCommandWord,
+)
+from band.integrations.codex.types import CodexApprovalMethod
+from band.runtime.formatters import strip_leading_mentions
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
-from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
+from tests.e2e.baseline.toolkit.builders import (
+    codex_config_kwargs,
+    cursor_config_kwargs,
+)
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
+from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCalls
+
+if TYPE_CHECKING:
+    from band.adapters.cursor_acp import CursorACPAdapter
 
 SHELL_PROMPT = "Keep responses short. Use your shell tool when asked."
 # Poll cadence for Notice.assert_shown's event read (see its docstring): there's
 # no push channel for non-text events to key a barrier off, so this bounded
 # poll is the least-bad option.
 _EVENT_POLL_INTERVAL_S = 0.5
+# Formatting a model may wrap its closing word in.
+_MARKER_DECORATION = "`*_.!'\""
 
 
 class Outcome(StrEnum):
@@ -98,21 +116,50 @@ class Outcome(StrEnum):
 
 
 def marker_command(marker: str, target: Path) -> str:
-    """The one shell command whose only effect is writing ``marker`` to ``target``."""
-    return f"printf %s {marker} > {target}"
+    """Write ``marker`` to ``target`` in the agent's configured workdir."""
+    return f'echo {marker} > "{target.name}"'
 
 
-def command_request(marker: str, target: Path) -> str:
+def command_request(marker: str, target: Path, *, done: str) -> str:
     """Ask for exactly one shell command whose only effect is writing ``marker``."""
     return (
         f"Use your shell tool to run exactly `{marker_command(marker, target)}`. "
-        "You must execute it with the tool, not answer from memory."
+        "You must execute it with the tool, not answer from memory. "
+        "If permission is declined or expires, do not retry with another tool or shell. "
+        "Do not run a second shell command to check the result. "
+        f"After the tool attempt is resolved, finish with exactly `{done}`."
     )
 
 
+def write_request(marker: str, target: Path, *, done: str) -> str:
+    """Ask for a file edit (which ``acceptEdits`` allows unprompted) writing ``marker``."""
+    return (
+        f"Use your Write tool to create `{target}` containing exactly `{marker}`. "
+        "Do not use the shell. If the write is refused, do not retry. "
+        f"After the write attempt is resolved, finish with exactly `{done}`."
+    )
+
+
+def written_lines(target: Path) -> list[str]:
+    """The lines a shell redirect wrote to ``target``, whichever host shell wrote them.
+
+    Windows PowerShell 5.1 redirects as UTF-16 with a BOM; cmd, bash and pwsh
+    write UTF-8, and cmd keeps the space before its redirect.
+    """
+    data = target.read_bytes()
+    encoding = "utf-16" if data.startswith(codecs.BOM_UTF16_LE) else "utf-8-sig"
+    return [line.rstrip() for line in data.decode(encoding).splitlines()]
+
+
+def closes_with(content: str, marker: str) -> bool:
+    """Whether a message ends with ``marker`` as its final word."""
+    words = strip_leading_mentions(content).split()
+    return bool(words) and words[-1].strip(_MARKER_DECORATION) == marker
+
+
 def appending_command(marker: str, target: Path) -> str:
-    """A shell command that appends ``marker`` to ``target``, so each run shows."""
-    return f"printf %s {marker} >> {target}"
+    """Append ``marker`` in the configured workdir, so each run shows."""
+    return f'echo {marker} >> "{target.name}"'
 
 
 def repeat_request(command: str, done: str) -> str:
@@ -124,13 +171,14 @@ def repeat_request(command: str, done: str) -> str:
     )
 
 
-def commands_request(*commands: str) -> str:
+def commands_request(*commands: str, done: str) -> str:
     """Ask for each command as its own tool call, none retried after a decline."""
     listed = " and ".join(f"`{command}`" for command in commands)
     return (
         f"Use your shell tool to run exactly these commands: {listed}. Run each one "
         "as its own separate tool call, never combined into one command. If a "
-        "command is declined, do not retry it; just say so and continue."
+        "command is declined, do not retry it. Do not run any further shell "
+        f"commands. When both attempts are resolved, finish with exactly `{done}`."
     )
 
 
@@ -158,6 +206,17 @@ def template_pattern(template: str, *, token: str = "token") -> re.Pattern[str]:
         parts.append(f"(?P={group})" if group in seen else f"(?P<{group}>.+?)")
         seen.add(group)
     return re.compile("".join(parts) + "$", re.DOTALL | re.MULTILINE)
+
+
+def find_requests(
+    pattern: re.Pattern[str], messages: Sequence[MessageCreatedPayload | ChatMessage]
+) -> list[re.Match[str]]:
+    """Every distinct ``pattern`` request among ``messages``, in order, by token."""
+    found: dict[str, re.Match[str]] = {}
+    for message in messages:
+        for match in pattern.finditer(message.content or ""):
+            found.setdefault(match["token"], match)
+    return list(found.values())
 
 
 @dataclass(frozen=True)
@@ -240,7 +299,8 @@ class ApprovalDialect:
 
     ``build(settings, setup)`` roots the agent in ``setup.workdir``;
     ``reply``/``notice`` take the outcome and the matched approval request, and
-    ``late_notice`` is what a reply to an ask that already expired gets. The
+    ``late_notice`` is what a reply to an ask that already expired gets, and
+    ``shell_command`` reads the command a request gates, where it renders one. The
     optional parts name what only some agents can do: ``refusal`` (restricting
     who decides), ``session_approval`` and ``question``.
     """
@@ -250,6 +310,7 @@ class ApprovalDialect:
     reply: Callable[[Outcome, re.Match[str]], str]
     notice: Callable[[Outcome, re.Match[str]], Notice]
     late_notice: Callable[[re.Match[str]], Notice]
+    shell_command: Callable[[re.Match[str]], str | None]
     refusal: Notice | None = None
     session_approval: SessionApproval | None = None
     question: QuestionRelay | None = None
@@ -261,44 +322,74 @@ class ApprovalDialect:
     )
 
     def find_request(
-        self, messages: list[MessageCreatedPayload]
+        self, messages: list[MessageCreatedPayload | ChatMessage]
     ) -> re.Match[str] | None:
         """The first approval request among ``messages``, if the agent posted one."""
         return next(iter(self.find_requests(messages)), None)
 
     def find_requests(
-        self, messages: list[MessageCreatedPayload]
+        self, messages: Sequence[MessageCreatedPayload | ChatMessage]
     ) -> list[re.Match[str]]:
         """Every distinct approval request among ``messages``, in order."""
-        found: dict[str, re.Match[str]] = {}
-        for message in messages:
-            for match in self.request.finditer(message.content or ""):
-                found.setdefault(match["token"], match)
-        return list(found.values())
+        return find_requests(self.request, messages)
 
     def settled(
-        self, since_request: list[MessageCreatedPayload], *notices: Notice
+        self,
+        since_request: list[MessageCreatedPayload | ChatMessage],
+        *notices: Notice,
+        closing_reply: str,
     ) -> bool:
-        """Whether the turn has played out past its decisions: every notice is shown
-        and the agent has closed the turn with a reply that is none of them."""
+        """Whether every notice is shown and a message closing with the requested
+        final word followed it."""
         contents = [m.content or "" for m in since_request]
-        closed = any(
-            self.request.search(content) is None
-            and not any(notice.text in content for notice in notices)
-            for content in contents
+        if not all(notice.streamed_in(contents) for notice in notices):
+            return False
+        last_control = max(
+            (
+                index
+                for index, content in enumerate(contents)
+                if self.request.search(content)
+                or any(notice.text in content for notice in notices)
+            ),
+            default=-1,
         )
-        return closed and all(notice.streamed_in(contents) for notice in notices)
+        return any(
+            closes_with(content, closing_reply)
+            and self.request.search(content) is None
+            and not any(notice.text in content for notice in notices)
+            for content in contents[last_control + 1 :]
+        )
 
 
 def _claude_sdk(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     return ClaudeSDKAdapter(
-        model=settings.llm_models.anthropic_model,
-        custom_section=SHELL_PROMPT,
-        cwd=str(setup.workdir),
-        approval_mode="manual",
-        approval_wait_timeout_s=setup.wait_timeout_s,
-        approval_authorized_senders=setup.approvers,
+        ClaudeSDKAdapterConfig(
+            model=settings.llm_models.anthropic_model,
+            custom_section=SHELL_PROMPT,
+            cwd=setup.workdir,
+            approvals=ClaudeApprovalOptions(
+                mode="manual",
+                wait_timeout_s=setup.wait_timeout_s,
+                authorized_senders=setup.approvers,
+            ),
+        )
     )
+
+
+def _summary_command(summary: str) -> Callable[[re.Match[str]], str | None]:
+    """Read the gated command out of a request's ``summary`` field, given the
+    adapter's own summary rendered with ``{command}`` placeholders."""
+    pattern = template_pattern(summary)
+
+    def command(request: re.Match[str]) -> str | None:
+        match = pattern.fullmatch(request["summary"])
+        return match["command"] if match else None
+
+    return command
+
+
+def _opencode_shell_command(request: re.Match[str]) -> str | None:
+    return request["patterns"] if request["permission"] == "bash" else None
 
 
 def _claude_sdk_reply(outcome: Outcome, request: re.Match[str]) -> str:
@@ -322,12 +413,16 @@ def _claude_sdk_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
 
 
 def _codex(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
-    # A read-only sandbox under "on-request" makes Codex escalate any write to the
-    # room for approval; "never" (the matrix default) would never ask.
-    config = codex_config_kwargs(settings, prompt=SHELL_PROMPT) | {
+    prompt = (
+        f"{SHELL_PROMPT} Submit requested shell commands with default permissions. "
+        "The harness asks for human approval before executing writes, including "
+        "in the read-only sandbox. Do not refuse based on the sandbox description. "
+        "Do not set sandbox_permissions or justification."
+    )
+    config = codex_config_kwargs(settings, prompt=prompt) | {
         "workspace_for_room": lambda _room_id: str(setup.workdir),
         "approval_mode": "manual",
-        "approval_policy": "on-request",
+        "approval_policy": "untrusted",
         "sandbox": CodexSandboxMode.READ_ONLY,
         "approval_wait_timeout_s": setup.wait_timeout_s,
     }
@@ -352,21 +447,48 @@ def _codex_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
             return Notice(CODEX_TIMED_OUT.format(token=token, decision="decline"))
 
 
-def _cursor(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
+def cursor_test_adapter(
+    settings: BaselineSettings,
+    setup: AgentSetup,
+    *,
+    approval_mode: ApprovalMode = "manual",
+    workspace_for_room: WorkspaceResolver | None = None,
+    custom_section: str = SHELL_PROMPT,
+    capabilities: set[Capability] | None = None,
+    inject_band_tools: bool = True,
+) -> CursorACPAdapter:
+    from band.adapters.cursor_acp import (  # noqa: PLC0415
+        CursorACPAdapter,
+        CursorACPAdapterConfig,
+    )
+
     config_kwargs: dict[str, Any] = {
-        "api_key": settings.backends.cursor_api_key,
-        "custom_section": SHELL_PROMPT,
-        "cwd": str(setup.workdir),
-        "approval_mode": "manual",
-        # Only the permission is under test; other decisions resolve themselves.
-        "question_mode": "auto_first",
+        **cursor_config_kwargs(settings, prompt=custom_section),
+        "approval_mode": approval_mode,
         "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
+        "inject_band_tools": inject_band_tools,
+        # Cursor saves an "allow always" grant to its config dir, which would
+        # let later cells run that command unasked.
+        "env": {
+            "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
+        },
     }
-    if settings.backends.cursor_command.strip():
-        config_kwargs["command"] = tuple(settings.backends.cursor_command.split())
-    return CursorACPAdapter(config=CursorACPAdapterConfig(**config_kwargs))
+    return CursorACPAdapter(
+        config=CursorACPAdapterConfig(**config_kwargs),
+        # Not ``cwd``: that roots a per-room child dir, while the cells read
+        # their effects straight from ``setup.workdir``.
+        workspace_for_room=workspace_for_room or (lambda _room_id: str(setup.workdir)),
+        capabilities=capabilities,
+    )
+
+
+def cursor_approval_adapter(
+    settings: BaselineSettings, setup: AgentSetup
+) -> CursorACPAdapter:
+    # Band MCP replies need a separate Cursor permission after the shell decision.
+    return cursor_test_adapter(settings, setup, inject_band_tools=False)
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:
@@ -480,6 +602,9 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
                 token=request["token"], available="none"
             )
         ),
+        shell_command=_summary_command(
+            ClaudeSDKAdapter._approval_summary("{tool}", {"command": "{command}"})
+        ),
         refusal=Notice(APPROVAL_UNAUTHORIZED_MESSAGE),
     ),
     Adapter.CODEX: ApprovalDialect(
@@ -488,6 +613,11 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         reply=_codex_reply,
         notice=_codex_notice,
         late_notice=lambda _request: Notice(NO_APPROVALS_TO_RESOLVE_MESSAGE),
+        shell_command=_summary_command(
+            CodexAdapter._approval_summary(
+                CodexApprovalMethod.COMMAND_EXECUTION, {"command": "{command}"}
+            )
+        ),
         session_approval=SessionApproval(
             reply=lambda request: f"/{CodexCommand.APPROVE_SESSION} {request['token']}",
             notice=_codex_session_notice,
@@ -495,13 +625,14 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         workdir_root=lambda settings: settings.backends.codex_cwd,
     ),
     Adapter.CURSOR_ACP: ApprovalDialect(
-        build=_cursor,
+        build=cursor_approval_adapter,
         request=template_pattern(PERMISSION_REQUESTED_TEMPLATE),
         reply=_cursor_reply,
         notice=_cursor_notice,
         late_notice=lambda request: Notice(
             DECISION_NOT_PENDING_TEMPLATE.format(token=request["token"])
         ),
+        shell_command=lambda request: request["tool"],
         refusal=Notice(DECISION_UNAUTHORIZED_MESSAGE),
         session_approval=SessionApproval(
             reply=lambda request: _cursor_select(request, lasting=True),
@@ -516,6 +647,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         late_notice=lambda request: Notice(
             APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id=request["token"])
         ),
+        shell_command=_opencode_shell_command,
         session_approval=SessionApproval(
             reply=lambda request: f"{PermissionReplyWord.ALWAYS} {request['token']}",
             notice=_opencode_handled("always"),
@@ -525,3 +657,114 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         extra_deps=(Dep.OPENCODE_BASH_ASKS,),
     ),
 }
+
+
+CLAUDE_POLICY_DECISION = template_pattern(APPROVAL_POLICY_DECISION_TEMPLATE)
+CLAUDE_SHELL_TOOLS = ("Bash", "PowerShell")
+NATIVE_SHELL_COMMAND_MISSING = "expected native shell command"
+
+
+def assert_shell_write_attempted(
+    tool_calls: ToolCalls, marker: str, target: Path
+) -> None:
+    expected = marker_command(marker, target)
+    shells = tool_calls.named(*CLAUDE_SHELL_TOOLS)
+    assert any(call.args.get("command") == expected for call in shells), (
+        f"{NATIVE_SHELL_COMMAND_MISSING} {expected!r}; "
+        f"observed: {[(call.name, call.args.get('command')) for call in tool_calls]}"
+    )
+
+
+def assert_file_write_attempted(
+    tool_calls: ToolCalls, marker: str, target: Path
+) -> None:
+    tool_calls.assert_fired(
+        "Write", with_args={"file_path": str(target), "content": marker}
+    )
+
+
+class ClosingRequest(Protocol):
+    """Asks for one write of ``marker`` to ``target``, closed by ``done``."""
+
+    def __call__(self, marker: str, target: Path, *, done: str) -> str: ...
+
+
+@dataclass(frozen=True)
+class UnattendedPolicy:
+    """A host's Claude config that settles native tool use with nobody asked.
+
+    ``config`` is plain data, as the host's YAML holds it; ``request`` asks for
+    a write checked by ``assert_attempted``; ``decision`` is what the adapter's
+    policy notice announces (``None``: the CLI decides silently); ``runs`` is
+    whether the write reaches the disk.
+    """
+
+    name: str
+    config: dict[str, Any]
+    request: ClosingRequest
+    assert_attempted: Callable[[ToolCalls, str, Path], None]
+    decision: str | None
+    runs: bool
+
+    def build(
+        self, settings: BaselineSettings, setup: AgentSetup
+    ) -> SimpleAdapter[Any]:
+        return ClaudeSDKAdapter(
+            ClaudeSDKAdapterConfig.model_validate(
+                {
+                    "model": settings.llm_models.anthropic_model,
+                    "custom_section": SHELL_PROMPT,
+                    "cwd": str(setup.workdir),
+                    **self.config,
+                }
+            )
+        )
+
+    @property
+    def announced(self) -> set[str]:
+        """The decisions its policy notices must announce, and no others."""
+        return set() if self.decision is None else {self.decision}
+
+    @staticmethod
+    def decisions(contents: list[str]) -> set[str]:
+        """Every decision the adapter's policy notices announced."""
+        return {
+            match["decision"]
+            for content in contents
+            for match in CLAUDE_POLICY_DECISION.finditer(content)
+        }
+
+    def settled(self, contents: list[str], done: str) -> bool:
+        """The policy's decision is shown and the agent closed with ``done``."""
+        decided = self.decision is None or self.decision in self.decisions(contents)
+        return decided and any(closes_with(content, done) for content in contents)
+
+
+UNATTENDED_POLICIES = (
+    UnattendedPolicy(
+        name="auto-accept",
+        config={"approvals": {"mode": "auto_accept"}},
+        request=command_request,
+        assert_attempted=assert_shell_write_attempted,
+        decision="accept",
+        runs=True,
+    ),
+    UnattendedPolicy(
+        name="auto-decline",
+        config={"approvals": {"mode": "auto_decline"}},
+        request=command_request,
+        assert_attempted=assert_shell_write_attempted,
+        decision="decline",
+        runs=False,
+    ),
+    # A file write acceptEdits (the default) allows, so a dropped mode shows up
+    # as a written file.
+    UnattendedPolicy(
+        name="dont-ask",
+        config={"permission_mode": ClaudePermissionMode.DONT_ASK.value},
+        request=write_request,
+        assert_attempted=assert_file_write_attempted,
+        decision=None,
+        runs=False,
+    ),
+)

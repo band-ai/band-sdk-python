@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Example: Hierarchical agents with graph_as_tool.
@@ -78,7 +78,7 @@ async def main() -> None:
 
     # Create adapter with SQL tool
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-6-luna")),
         checkpointer=InMemorySaver(),
         additional_tools=[sql_tool],
     )

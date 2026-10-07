@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[crewai]>=1.2.0"]
+# dependencies = ["band-sdk[crewai]>=4.0.0"]
 # ///
 """
 CrewAI coordinator agent for multi-agent orchestration.
@@ -23,7 +23,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import CrewAIAdapter
+from band.adapters import CrewAIAdapter, CrewAIAdapterConfig
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -34,10 +34,11 @@ async def main() -> None:
 
     # Create a coordinator agent that orchestrates other agents
     adapter = CrewAIAdapter(
-        model="gpt-5.4-mini",
-        role="Team Coordinator",
-        goal="Orchestrate collaboration between specialized agents to accomplish complex tasks",
-        backstory="""You are an experienced project coordinator who excels at
+        CrewAIAdapterConfig(
+            model="gpt-6-luna",
+            role="Team Coordinator",
+            goal="Orchestrate collaboration between specialized agents to accomplish complex tasks",
+            backstory="""You are an experienced project coordinator who excels at
         breaking down complex problems into manageable tasks and delegating them
         to the right specialists. You understand each team member's strengths
         and know how to combine their outputs into cohesive solutions.
@@ -49,7 +50,7 @@ async def main() -> None:
         - Create new chat rooms for focused discussions (band_create_chatroom)
 
         Use these tools to build the right team for each user request.""",
-        custom_section="""
+            custom_section="""
 When coordinating:
 1. First understand what the user needs
 2. Identify which specialists would be helpful
@@ -59,7 +60,8 @@ When coordinating:
 6. Synthesize outputs from multiple agents
 7. Clean up by removing agents no longer needed
 """,
-        verbose=True,
+            verbose=True,
+        ),
     )
 
     logger.info("Starting CrewAI coordinator agent...")

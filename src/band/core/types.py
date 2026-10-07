@@ -387,13 +387,18 @@ class PlatformConnection:
     ws_url: str
 
 
+# How an adapter settles a tool-permission request: ask in chat, or answer
+# it automatically.
+ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
+
+
 class FeatureKwargs(TypedDict, total=False):
     """The feature keywords every ``SimpleAdapter`` constructor accepts.
 
     Adapters forward these via ``**features: Unpack[FeatureKwargs]`` instead
     of repeating the five parameters in every signature, and instead of
     taking a wrapping ``AdapterFeatures`` object -- callers pass the knobs
-    directly, e.g. ``ClaudeSDKAdapter(model="...", emit=Emit.THOUGHTS)``.
+    directly, e.g. ``ClaudeSDKAdapter(config, emit=Emit.THOUGHTS)``.
     ``AdapterFeatures`` itself is the internal frozen container ``self.features``
     resolves to; it is not part of the public constructor surface.
     """
@@ -449,6 +454,22 @@ class AdapterFeatures:
             "include_categories",
             tuple(include_categories) if include_categories is not None else None,
         )
+
+
+# Sender identity of the messages ContactEventHandler's HUB_ROOM strategy
+# injects into the hub room; they never come from the platform.
+SYNTHETIC_SENDER_TYPE = "System"
+SYNTHETIC_CONTACT_EVENTS_SENDER_ID = "contact-events"
+SYNTHETIC_CONTACT_EVENTS_SENDER_NAME = "Contact Events"
+
+
+def is_contact_hub_turn(*, sender_type: str | None, sender_id: str | None) -> bool:
+    """Whether a message is a synthetic contact event the SDK injected into the
+    hub room, rather than a platform message addressed to the agent."""
+    return (
+        sender_type == SYNTHETIC_SENDER_TYPE
+        and sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+    )
 
 
 @dataclass(frozen=True)

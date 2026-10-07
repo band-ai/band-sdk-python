@@ -36,6 +36,11 @@ ContactEventHandler = Callable[[ContactEvent], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
+# Waits before each re-join of a room whose channel join failed (e.g. a
+# transient "join crashed" under platform load). Without them only the next
+# reconnect's reconciliation would ever join that room again.
+JOIN_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)
+
 
 class RoomPresence:
     """
@@ -104,6 +109,8 @@ class RoomPresence:
 
         # Internal task for consuming events from link
         self._event_task: asyncio.Task | None = None
+        # At most one pending re-join per room whose join failed.
+        self._join_retries: dict[str, asyncio.Task[None]] = {}
         # True for the span of start() before _event_task exists to guard
         # against a second concurrent call (see start()).
         self._starting = False
@@ -139,9 +146,7 @@ class RoomPresence:
         3. Subscribe to existing rooms (if configured)
         4. Spawn task to consume events from link
         """
-        if self._starting or (
-            self._event_task is not None and not self._event_task.done()
-        ):
+        if self._running:
             raise RuntimeError(
                 f"RoomPresence for agent {self.link.agent_id} is already running; "
                 "call stop() before starting again"
@@ -202,6 +207,7 @@ class RoomPresence:
                 except asyncio.CancelledError:
                     pass
                 self._event_task = None
+            await self._cancel_join_retries(list(self._join_retries))
 
             # `clear()`'s own return value is not a substitute here: it
             # includes every tracked room regardless of membership (an
@@ -280,6 +286,7 @@ class RoomPresence:
             logger.warning("%s event without room_id", event.type)
             return
 
+        await self._cancel_join_retries([room_id])
         # Unconditional, harmless no-op if never subscribed.
         await self.link.unsubscribe_room(room_id)
         if not self.roster.record_room_removed(room_id):
@@ -513,35 +520,21 @@ class RoomPresence:
         only ``BandLink``'s own next-reconnect reconciliation would ever
         notice, and the roster (already rolled back to ``Unadmitted`` by the
         ``finally``) has nothing to hand ``stop()``/``reconcile()`` to target
-        it for cleanup meanwhile. That specific await gets its own best-effort
-        unsubscribe before re-raising, below.
+        it for cleanup meanwhile. ``_subscribe`` gives that await its own
+        best-effort unsubscribe before re-raising.
+
+        A join that fails (not a stale ticket) is retried in the background
+        on ``JOIN_RETRY_DELAYS_S``.
         """
         succeeded = False
         try:
-            try:
-                try:
-                    await self.link.subscribe_room(room_id)
-                except asyncio.CancelledError:
-                    await self._unsubscribe_room(room_id, context=context)
-                    raise
-            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
-                logger.warning(
-                    "Failed to subscribe to room %s during %s: %s", room_id, context, e
-                )
-                return False
-
-            if not self.link.is_room_subscribed(room_id):
-                # subscribe_room() is best-effort and non-raising by design (a
-                # single room failure must not crash the whole subscription
-                # sequence), so an internal join/rollback failure never reaches
-                # this except block above — check the real outcome instead of
-                # assuming "no exception" means "subscribed".
-                logger.warning("Room %s did not subscribe during %s", room_id, context)
-                return False
-
-            succeeded = True
+            succeeded = await self._subscribe(room_id, context=context)
         finally:
             admitted = self.roster.record_room_admission(room_id, ticket, succeeded)
+
+        if not succeeded:
+            self._retry_join_later(room_id, payload)
+            return False
 
         if not admitted:
             logger.debug(
@@ -566,6 +559,69 @@ class RoomPresence:
 
         logger.info("Agent joined room: %s", room_id)
         return True
+
+    async def _subscribe(self, room_id: str, *, context: str) -> bool:
+        """Join the room's channel; whether it is now really subscribed."""
+        try:
+            try:
+                await self.link.subscribe_room(room_id)
+            except asyncio.CancelledError:
+                await self._unsubscribe_room(room_id, context=context)
+                raise
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
+            logger.warning(
+                "Failed to subscribe to room %s during %s: %s", room_id, context, e
+            )
+            return False
+
+        if not self.link.is_room_subscribed(room_id):
+            # subscribe_room() is best-effort and non-raising by design (a
+            # single room failure must not crash the whole subscription
+            # sequence), so an internal join/rollback failure never raises
+            # here — check the real outcome instead.
+            logger.warning("Room %s did not subscribe during %s", room_id, context)
+            return False
+        return True
+
+    @property
+    def _running(self) -> bool:
+        return self._starting or (
+            self._event_task is not None and not self._event_task.done()
+        )
+
+    def _retry_join_later(self, room_id: str, payload: dict[str, Any]) -> None:
+        if self._running and room_id not in self._join_retries:
+            self._join_retries[room_id] = asyncio.create_task(
+                self._retry_join(room_id, payload)
+            )
+
+    async def _retry_join(self, room_id: str, payload: dict[str, Any]) -> None:
+        try:
+            for delay in JOIN_RETRY_DELAYS_S:
+                await asyncio.sleep(delay)
+                ticket = self.roster.begin_room_admission(room_id, passes_filter=True)
+                if ticket is None:
+                    return  # admitted meanwhile, e.g. by reconnect reconciliation
+                if await self._complete_room_admission(
+                    room_id, ticket, payload, context="join retry"
+                ):
+                    return
+            logger.warning(
+                "Room %s still not joined after %s retries; the next reconnect "
+                "will try again",
+                room_id,
+                len(JOIN_RETRY_DELAYS_S),
+            )
+        finally:
+            self._join_retries.pop(room_id, None)
+
+    async def _cancel_join_retries(self, room_ids: list[str]) -> None:
+        tasks = [
+            task for room_id in room_ids if (task := self._join_retries.get(room_id))
+        ]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _subscribe_rooms(
         self,

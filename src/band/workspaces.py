@@ -14,13 +14,50 @@ WorkspaceResolver = Callable[[str], str]
 _DEFAULT_WORKSPACE_DIRECTORY = ".band-workspaces"
 
 
+class RoomWorkspaces:
+    """Adapter-local workspace claims, stable until a room leaves."""
+
+    def __init__(self, resolver: WorkspaceResolver | None = None) -> None:
+        self._resolver = resolver
+        self._paths: dict[str, str] = {}
+        self._owners: dict[str, str] = {}
+
+    @property
+    def rooms(self) -> tuple[str, ...]:
+        return tuple(self._paths)
+
+    def workspace(self, room_id: str) -> str:
+        return self._paths[room_id]
+
+    def claim(self, room_id: str, workspace: str | None = None) -> str:
+        path = self._paths.get(room_id)
+        if path is None:
+            path = workspace or resolve_room_workspace(room_id, self._resolver)
+        claim_room_workspace(room_id, path, self._owners)
+        self._paths[room_id] = path
+        return path
+
+    def release(self, room_id: str, workspace: str | None = None) -> None:
+        path = self._paths.get(room_id)
+        if path is None or (workspace is not None and workspace != path):
+            return
+        release_room_workspace(room_id, path, self._owners)
+        del self._paths[room_id]
+
+
+def is_host_absolute(path: str) -> bool:
+    """Whether ``path`` is absolute on the running OS -- on Windows that also
+    needs a drive or UNC share, so ``/opt/x`` is relative there."""
+    return Path(path).is_absolute()
+
+
 def resolve_room_workspace(
     room_id: str, workspace_for_room: WorkspaceResolver | None
 ) -> str:
     """Return a room's absolute workspace, creating the safe default on demand."""
     if workspace_for_room is not None:
         workspace = workspace_for_room(room_id)
-        if not isinstance(workspace, str) or not Path(workspace).is_absolute():
+        if not isinstance(workspace, str) or not is_host_absolute(workspace):
             raise ValueError("workspace_for_room must return an absolute path")
         resolved_workspace = os.path.realpath(workspace)
         Path(resolved_workspace).mkdir(parents=True, exist_ok=True)

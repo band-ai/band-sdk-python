@@ -1,7 +1,7 @@
 """Multi-agent collaboration smokes: a room of *different framework types* doing
 different things together.
 
-Three scenarios, each a single shared room with a heterogeneous cast built from
+Four scenarios, each a single shared room with a heterogeneous cast built from
 the registry's tool-capable, ``core``-lane adapters (anthropic + pydantic_ai +
 agno) so they all install in one venv and the run is lane-schedulable:
 
@@ -15,7 +15,8 @@ agno) so they all install in one venv and the run is lane-schedulable:
   types in one room, hit with concurrent mentions, each handling only its own.
 * ``test_coordinator_delegates_via_task_board`` — a coordinator hands off a
   sprint through the room's task board instead of chat: it creates one task per
-  specialist, and each specialist claims, works, and completes its task via
+  specialist and is instructed to hand each specialist its own task in its own
+  message, and each specialist claims, works, and completes its task via
   ``band_update_task`` -- no chat reply from either specialist.
 
 Design notes (why this shape, not a bespoke build):
@@ -47,7 +48,8 @@ import asyncio
 import pytest
 
 from band.core.task_types import TaskAssignmentStatus
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit, MessageType
+from band.runtime.tools import BandTool
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.settings import BaselineSettings
@@ -108,22 +110,26 @@ TASK_BOARD_COLLAB_PROMPT = (
     "You are one agent in a shared multi-agent room with a task board. You have "
     f"two tools for values you cannot know on your own: `{LOOKUP}` returns a "
     f"secret access code for a key, and `{WEATHER}` returns the forecast for a "
-    "place. You also have task-board tools, including band_set_board, "
-    "band_create_task, and band_update_task. Follow the user's instructions "
-    "exactly.\n"
+    "place. You also have task-board tools, including "
+    f"{TaskTool.SET_BOARD.value}, {TaskTool.CREATE.value}, and "
+    f"{TaskTool.UPDATE.value}. Follow the user's instructions exactly.\n"
     "- If you are asked to set up the task board and hand work off to other "
     "named agents, do NOT call the lookup/weather tools yourself: use "
-    "band_set_board, band_create_task, and a single band_send_message exactly "
-    "as instructed.\n"
+    f"{TaskTool.SET_BOARD.value}, {TaskTool.CREATE.value}, and the "
+    f"{BandTool.SEND_MESSAGE.value} calls exactly as instructed.\n"
     "- If you are instead asked to claim and complete a specific task (you "
-    "will be given its number or id), you MUST: first call band_update_task "
-    "with that id and status='in_progress'; then call the matching tool "
-    f"({LOOKUP} or {WEATHER}) to get the value (you cannot guess it); then "
-    "call band_update_task again with the same id, status='completed', and a "
+    "will be given its number or id), you MUST: first call "
+    f"{TaskTool.UPDATE.value} with that id and "
+    f"status='{TaskAssignmentStatus.IN_PROGRESS.value}'; then call the matching "
+    f"tool ({LOOKUP} or {WEATHER}) to get the value (you cannot guess it); then "
+    f"call {TaskTool.UPDATE.value} again with the same id, "
+    f"status='{TaskAssignmentStatus.COMPLETED.value}', and a "
     "comment whose text is exactly the raw string that tool returned — copy "
     "it verbatim with no paraphrase, summary, or wrapper sentence. Do not send "
     "a chat message for this -- recording it on the task board via "
-    "band_update_task is your only action."
+    f"{TaskTool.UPDATE.value} is your only action. Each step needs the previous "
+    "step's result, so make exactly one tool call per response and wait for "
+    "its result before the next; never batch them."
 )
 
 
@@ -186,7 +192,22 @@ async def test_coordinator_delegates_to_two_specialists(
             text = " ".join(m.content.lower() for m in messages)
             return ACCESS_CODES[PANEL_KEY].lower() in text and FORECAST_FRAGMENT in text
 
-        await capture.wait_until(both_results_in, deadline_s=cascade_deadline)
+        try:
+            await capture.wait_until(both_results_in, deadline_s=cascade_deadline)
+        except TimeoutError as exc:
+            lookup_calls, weather_calls = await asyncio.gather(
+                capture.tool_calls(sender_id=lookup_spec.id),
+                capture.tool_calls(sender_id=weather_spec.id),
+            )
+            replies = [
+                (message.sender_id, message.content[:500])
+                for message in capture.messages
+            ]
+            raise TimeoutError(
+                f"{exc}; replies: {replies}; "
+                f"lookup calls: {[call.name for call in lookup_calls]}; "
+                f"weather calls: {[call.name for call in weather_calls]}"
+            ) from exc
 
         lookup_calls, weather_calls = await asyncio.gather(
             capture.tool_calls(sender_id=lookup_spec.id),
@@ -370,10 +391,11 @@ async def test_coordinator_delegates_via_task_board(
     """A coordinator hands off a sprint through the task board instead of chat.
 
     The coordinator sets the room goal, creates one task per specialist, and
-    delegates in a single message naming each task. Each specialist claims its
-    task (status=in_progress), runs its own opaque tool, then completes it
-    (status=completed) with the result recorded in the comment -- entirely
-    through task-board tool calls, with no chat reply from either specialist.
+    is instructed to hand each specialist its own task in its own message. Each
+    specialist claims its task (status=in_progress), runs its own opaque tool,
+    then completes it (status=completed) with the result recorded in the
+    comment -- entirely through task-board tool calls, with no chat reply from
+    either specialist.
     Task-board state, not room text, is what proves the hand-off worked.
     """
     coordinator, lookup_spec, weather_spec = agents
@@ -398,22 +420,39 @@ async def test_coordinator_delegates_via_task_board(
             mention_id=coordinator.id,
             mention_name=coordinator.name,
         )
-        # The coordinator's own delegation message is what the specialists react
-        # to, so wait for its *text* to be captured (wait_for_processed alone
-        # only proves the turn finished, not that the message_created frame for
-        # its reply has arrived -- an independent, unordered platform event).
-        coordinator_replies = await capture.wait_for_reply(
+        await capture.wait_for_reply(
             user_msg_id, coordinator.id, deadline_s=cascade_deadline
         )
-        delegation_msg = coordinator_replies[-1]
-
+        # The coordinator's turn is processed, so REST lists every message it sent
+        # in order; message_created frames lag and arrive unordered, so they only
+        # supply each message's typed mentions.
+        sent_ids = [
+            message.id
+            for message in await user_ops.list_messages(
+                room_id, message_type=MessageType.TEXT
+            )
+            if message.sender_id == coordinator.id
+        ]
+        captured = await capture.wait_until(
+            lambda messages: set(sent_ids) <= {message.id for message in messages},
+            deadline_s=baseline_settings.e2e_timeout,
+        )
+        by_id = {message.id: message for message in captured}
+        hand_offs = Replies(by_id[message_id] for message_id in sent_ids)
+        specialists = (lookup_spec, weather_spec)
+        for spec in specialists:
+            hand_offs.assert_mentions(spec.id)
+        # Per-room FIFO: a specialist's last hand-off being processed covers every
+        # earlier one.
         await asyncio.gather(
-            capture.wait_for_processed(
-                delegation_msg.id, lookup_spec.id, deadline_s=cascade_deadline
-            ),
-            capture.wait_for_processed(
-                delegation_msg.id, weather_spec.id, deadline_s=cascade_deadline
-            ),
+            *(
+                capture.wait_for_processed(
+                    hand_offs.mentioning(spec.id)[-1].id,
+                    spec.id,
+                    deadline_s=cascade_deadline,
+                )
+                for spec in specialists
+            )
         )
 
         (

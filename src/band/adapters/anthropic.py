@@ -1,23 +1,20 @@
-"""
-Anthropic adapter using SimpleAdapter pattern.
-
-Extracted from band.integrations.anthropic.agent.BandAnthropicAgent.
-"""
+"""Anthropic adapter using SimpleAdapter pattern."""
 
 from __future__ import annotations
 
 import json
 import logging
-import warnings
 from typing import Any, ClassVar, cast
 
 from anthropic import APIStatusError, AsyncAnthropic
 from anthropic.types import Message, MessageParam, TextBlock, ToolParam, ToolUseBlock
 from band_sdk_core import AgentFailure
+from pydantic import Field, PositiveInt
 from typing_extensions import Unpack
 
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
-from band.core.exceptions import BandConfigError
+from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -74,6 +71,31 @@ def _to_agent_failure(e: Exception) -> AgentFailure:
     return AgentFailure("anthropic", GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
+class AnthropicAdapterConfig(BaseAdapterConfig):
+    """Settings for :class:`AnthropicAdapter`.
+
+    Attributes:
+        model: Anthropic model ID sent with every request.
+        provider_key: Anthropic API key; ``None`` lets the Anthropic client
+            read ``ANTHROPIC_API_KEY`` from the environment.
+        system_prompt: Complete system prompt. When set it is sent verbatim
+            and ``custom_section``, ``include_base_instructions`` and the
+            capability sections are ignored.
+        custom_section: Extra instructions appended to the rendered system
+            prompt.
+        include_base_instructions: Whether the rendered system prompt starts
+            with the SDK's base instructions.
+        max_tokens: Maximum output tokens per API call.
+    """
+
+    model: str = ANTHROPIC_MODEL
+    provider_key: str | None = Field(default=None, repr=False)
+    system_prompt: str | None = None
+    custom_section: str = ""
+    include_base_instructions: bool = True
+    max_tokens: PositiveInt = 4096
+
+
 class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     """
     Anthropic SDK adapter using SimpleAdapter pattern.
@@ -83,8 +105,10 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
     Example:
         adapter = AnthropicAdapter(
-            model="claude-sonnet-4-5-20250929",
-            prompt="You are a helpful assistant.",
+            AnthropicAdapterConfig(
+                model="claude-sonnet-5-5",
+                custom_section="You are a helpful assistant.",
+            ),
             capabilities=Capability.MEMORY,
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
@@ -98,93 +122,46 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-5-20250929",
-        provider_key: str | None = None,
-        system_prompt: str | None = None,
-        prompt: str | None = None,
-        max_tokens: int = 4096,
+        config: AnthropicAdapterConfig | None = None,
+        *,
         history_converter: AnthropicHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        include_base_instructions: bool = True,
-        # --- Deprecated (one release, then remove) ---
-        api_key: str | None = None,
-        anthropic_api_key: str | None = None,
-        custom_section: str | None = None,
         **features: Unpack[FeatureKwargs],
     ):
-        # --- Selective: provider_key rename ---
-        if anthropic_api_key is not None:
-            warnings.warn(
-                "anthropic_api_key is deprecated, use provider_key instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if provider_key is not None or api_key is not None:
-                raise BandConfigError(
-                    "Cannot pass anthropic_api_key together with provider_key or api_key"
-                )
-            provider_key = anthropic_api_key
-
-        if api_key is not None:
-            warnings.warn(
-                "api_key is deprecated on AnthropicAdapter, use provider_key instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if provider_key is not None:
-                raise BandConfigError("Cannot pass both provider_key and api_key")
-            provider_key = api_key
-
-        # --- Selective: prompt rename ---
-        if custom_section is not None:
-            warnings.warn(
-                "custom_section is deprecated, use prompt instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if prompt is not None:
-                raise BandConfigError("Cannot pass both prompt and custom_section")
-            prompt = custom_section
-
+        """
+        Args:
+            config: Model, credentials and prompt settings.
+            history_converter: Converts platform history into Anthropic
+                messages; defaults to :class:`AnthropicHistoryConverter`.
+            additional_tools: Custom tools offered alongside the platform tools.
+        """
         super().__init__(
             history_converter=history_converter or AnthropicHistoryConverter(),
             **features,
         )
-
-        self.model = model
-        self.system_prompt = system_prompt
-        self._prompt = prompt
-        self._include_base_instructions = include_base_instructions
-        self.max_tokens = max_tokens
-
-        # Anthropic client (uses ANTHROPIC_API_KEY env var if not provided)
-        self.client = AsyncAnthropic(api_key=provider_key)
+        self.config = config or AnthropicAdapterConfig()
+        self.client = AsyncAnthropic(api_key=self.config.provider_key)
 
         # Per-room conversation history (Anthropic SDK is stateless)
         self._message_history: dict[str, list[dict[str, Any]]] = {}
         # Rendered system prompt (set after start)
         self._system_prompt: str = ""
-        # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
 
-    # --- Copied from BandAnthropicAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched.
 
-        Prompt precedence:
-          1. If ``system_prompt`` was provided at construction time, it wins —
-             ``prompt``, ``include_base_instructions``, and ``features``-based
-             capability sections are all ignored.
-          2. Otherwise, ``render_system_prompt`` renders the SDK base prompt
-             (unless ``include_base_instructions=False``) plus ``prompt``, with
-             capability sections gated on ``features.capabilities``.
+        ``config.system_prompt``, when set, wins outright; otherwise
+        ``render_system_prompt`` builds the prompt from the config's
+        ``custom_section`` and ``include_base_instructions`` with capability
+        sections gated on ``features.capabilities``.
         """
         await super().on_started(agent_name, agent_description)
-        self._system_prompt = self.system_prompt or render_system_prompt(
+        self._system_prompt = self.config.system_prompt or render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
-            custom_section=self._prompt or "",
-            include_base_instructions=self._include_base_instructions,
+            custom_section=self.config.custom_section,
+            include_base_instructions=self.config.include_base_instructions,
             features=self.features,
         )
         logger.info("Anthropic adapter started for agent: %s", agent_name)
@@ -367,8 +344,8 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             Anthropic Message response
         """
         return await self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
+            model=self.config.model,
+            max_tokens=self.config.max_tokens,
             system=self._system_prompt,
             messages=cast(list[MessageParam], messages),
             tools=tools,
@@ -477,7 +454,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, tool_input)
+                    result = await execute_custom_tool(
+                        custom_tool, tool_input, turn=tools.turn
+                    )
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
                 if is_image_passthrough_result(tool_name, result):

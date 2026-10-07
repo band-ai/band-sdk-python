@@ -40,29 +40,23 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, Lane, per_adapter
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
+    agent_rest_client,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-
-def _recall_token_request(marker: str) -> str:
-    """Ask A to echo the peer's token without truncating its prefix.
-
-    Derives only the opaque token's prefix from ``marker`` so the recall turn
-    cannot leak the full value — the model must read it from rehydrated context.
-    """
-    token_prefix = f"{marker.partition('-')[0]}-"
-    return (
-        "Earlier the other participant sent you a short note with a token. "
-        "Reply with exactly that complete token string and nothing else. "
-        f"Copy every character including the full '{token_prefix}' prefix exactly "
-        "as it appeared in their message — not a suffix, hash, or shortened form."
-    )
+# Never names the token, so A can only answer from rehydrated context.
+RECALL_TOKEN_REQUEST = (
+    "Earlier the other participant sent you a short note with a token. "
+    "Call band_send_message to reply with exactly that complete token string "
+    "and nothing else."
+)
 
 
 def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
@@ -93,6 +87,7 @@ async def test_rehydrates_foreign_peer_message(
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
 ) -> None:
     """A recalls a marker a *different-framework* peer stated, via agent-scoped ``/context``.
 
@@ -128,6 +123,13 @@ async def test_rehydrates_foreign_peer_message(
         # look like a rehydration bug rather than a setup failure.
         replies.mentioning(recaller.id).assert_contains_any([marker])
 
+    context = await agent_rest_client(
+        recaller, baseline_settings
+    ).agent_api_context.get_agent_chat_context(chat_id=room_id)
+    assert any(marker in (item.content or "") for item in context.data or []), (
+        f"agent-scoped bootstrap context lost the exact foreign token {marker!r}"
+    )
+
     # A boots fresh under its own identity — no in-memory history — and is asked what the
     # other participant told it. A correct recall can only come from the platform
     # rehydrating B's (foreign-framework) message into A's context on bootstrap.
@@ -135,9 +137,9 @@ async def test_rehydrates_foreign_peer_message(
         mark = capture.messages.snapshot()  # scope strictly to the recall turn
         mid = await user_ops.send_message(
             room_id,
-            _recall_token_request(marker),
+            RECALL_TOKEN_REQUEST,
             mention_id=recaller.id,
             mention_name=recaller.name,
         )
         replies = await capture.wait_for_reply(mid, recaller.id, since=mark)
-        replies.assert_contains_any([marker])
+        replies.assert_contains_exact(marker)

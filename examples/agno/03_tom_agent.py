@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
+# dependencies = ["band-sdk[agno]>=4.0.0", "anthropic>=0.75.0"]
 # ///
 """
 Tom the cat agent — tries to catch Jerry!
@@ -65,7 +65,7 @@ async def main() -> None:
 
     # You own the Agno agent — model and in-character instructions.
     agno_agent = AgnoAgent(
-        model=Claude(id="claude-sonnet-4-6"),
+        model=Claude(id="claude-sonnet-5-5"),
         instructions=generate_tom_prompt("Tom"),
     )
 
@@ -74,7 +74,7 @@ async def main() -> None:
         "tom_agent",
         # Default emit posts tool_call/tool_result events so Tom's platform
         # actions (lookup, invite, send) are visible in the room.
-        adapter=AgnoAdapter(agno_agent),
+        adapter=AgnoAdapter(agent=agno_agent),
     ) as agent:
         await agent.run_forever()
 

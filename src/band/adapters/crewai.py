@@ -10,19 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import warnings
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
+from pydantic import PositiveInt
 from typing_extensions import Unpack
 
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
-from band.core.protocols import (
-    GENERIC_PROVIDER_FAILURE_MESSAGE,
-    AgentToolsProtocol,
-    TurnResultAlreadyReported,
-)
+from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.crewai import (
@@ -33,7 +31,7 @@ from band.integrations.crewai import (
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import missing_reply_error
+from band.runtime.tools import BandTool
 
 if TYPE_CHECKING:
     from crewai import Agent as CrewAIAgent
@@ -50,10 +48,10 @@ _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = Conte
     "_current_room_context", default=None
 )
 
-# Per-turn marker for whether the agent already delivered a reply via
-# band_send_message. Set in on_message, read by the tool wrappers (through
-# _get_context) and the error handler. Shared by reference so the mark is
-# visible across CrewAI's sync-to-async tool execution boundary.
+# Per-turn tool activity: whether any tool ran and what band_send_message
+# posted. Set in on_message, written by the tool wrappers (through
+# _get_context). Shared by reference so the marks are visible across CrewAI's
+# sync-to-async tool execution boundary.
 _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
@@ -109,6 +107,34 @@ def _silence_lite_agent_error_panel() -> None:
         logger.warning("Could not silence CrewAI LiteAgent error panel: %s", e)
 
 
+class CrewAIAdapterConfig(BaseAdapterConfig):
+    """Settings for :class:`CrewAIAdapter`.
+
+    Attributes:
+        model: CrewAI LLM model name (e.g. ``"gpt-6-luna"``); API keys are read
+            from the environment by CrewAI's ``LLM`` class.
+        role: The agent's role in the crew; ``None`` uses the agent's name.
+        goal: The agent's objective; ``None`` uses the agent's description.
+        backstory: The agent's background; the platform instructions are
+            appended to it.
+        custom_section: Extra instructions added to the platform prompt.
+        verbose: Enables CrewAI's detailed logging.
+        max_iter: Maximum reasoning iterations per turn.
+        max_rpm: Maximum LLM requests per minute; ``None`` is unlimited.
+        allow_delegation: Whether CrewAI may delegate to other crew agents.
+    """
+
+    model: str = OPENAI_MODEL
+    role: str | None = None
+    goal: str | None = None
+    backstory: str | None = None
+    custom_section: str | None = None
+    verbose: bool = False
+    max_iter: PositiveInt = 20
+    max_rpm: PositiveInt | None = None
+    allow_delegation: bool = False
+
+
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     """CrewAI adapter using the official CrewAI SDK.
 
@@ -117,17 +143,15 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     Example:
         adapter = CrewAIAdapter(
-            model="gpt-5.4",
-            role="Research Assistant",
-            goal="Help users find and analyze information",
-            backstory="Expert researcher with deep knowledge across domains",
+            CrewAIAdapterConfig(
+                model="gpt-6-luna",
+                role="Research Assistant",
+                goal="Help users find and analyze information",
+                backstory="Expert researcher with deep knowledge across domains",
+            )
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
-
-    Note:
-        API keys are configured through environment variables as expected by
-        the CrewAI LLM class (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS})
@@ -137,66 +161,26 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     def __init__(
         self,
-        model: str = "gpt-5.4",
-        role: str | None = None,
-        goal: str | None = None,
-        backstory: str | None = None,
-        custom_section: str | None = None,
-        verbose: bool = False,
-        max_iter: int = 20,
-        max_rpm: int | None = None,
-        allow_delegation: bool = False,
+        config: CrewAIAdapterConfig | None = None,
+        *,
         history_converter: CrewAIHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        system_prompt: str | None = None,  # Deprecated
         **features: Unpack[FeatureKwargs],
     ):
         """Initialize the CrewAI adapter.
 
         Args:
-            model: Model name (e.g., "gpt-5.4", "gpt-5.4-mini", "claude-3-5-sonnet").
-                   API keys are read from environment variables by CrewAI's LLM class.
-            role: Agent's role in the crew (e.g., "Research Assistant")
-            goal: Agent's primary goal or objective
-            backstory: Agent's background and expertise description
-            custom_section: Custom instructions added to the agent's backstory
-            verbose: If True, enables detailed logging from CrewAI
-            max_iter: Maximum iterations for the agent (default: 20)
-            max_rpm: Maximum requests per minute (rate limiting)
-            allow_delegation: Whether to allow task delegation to other agents
-            history_converter: Custom history converter (optional)
-            additional_tools: List of custom tools as (InputModel, callable) tuples.
-                Each InputModel is a Pydantic model defining the tool's input schema,
-                and the callable is the function to execute (sync or async).
-            system_prompt: Deprecated. Use 'backstory' instead for prompt customization.
+            config: Agent settings; defaults to ``CrewAIAdapterConfig()``.
+            history_converter: Custom history converter (optional).
+            additional_tools: Custom tools as ``(InputModel, callable)``
+                tuples; the callable may be sync or async.
         """
-        if system_prompt is not None:
-            warnings.warn(
-                "The 'system_prompt' parameter is deprecated and will be removed in a "
-                "future version. Use 'backstory' parameter instead for prompt "
-                "customization. The CrewAI SDK uses role/goal/backstory pattern.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # If backstory not provided, use system_prompt as backstory for compatibility
-            if backstory is None:
-                backstory = system_prompt
-
         super().__init__(
             history_converter=history_converter or CrewAIHistoryConverter(),
             **features,
         )
 
-        self.model = model
-        self.role = role
-        self.goal = goal
-        self.backstory = backstory
-        self.custom_section = custom_section
-        self.verbose = verbose
-        self.max_iter = max_iter
-        self.max_rpm = max_rpm
-        self.allow_delegation = allow_delegation
-
+        self.config = config or CrewAIAdapterConfig()
         self._crewai_agent: CrewAIAgent | None = None
         self._message_history: dict[str, list[dict[str, Any]]] = {}
         self._custom_tools: list[CustomToolDef] = additional_tools or []
@@ -223,24 +207,26 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
 
-        role = self.role or agent_name
-        goal = self.goal or agent_description or "Help users accomplish their tasks"
+        role = self.config.role or agent_name
+        goal = (
+            self.config.goal or agent_description or "Help users accomplish their tasks"
+        )
 
-        if self.backstory:
+        if self.config.backstory:
             # User provided full backstory -- append capability-gated platform
             # instructions so the LLM knows about memory/contact tools if enabled.
             platform_prompt = render_system_prompt(
                 agent_name=agent_name,
                 agent_description=agent_description,
-                custom_section=self.custom_section or "",
+                custom_section=self.config.custom_section or "",
                 features=self.features,
             )
-            backstory = f"{self.backstory}\n\n{platform_prompt}"
+            backstory = f"{self.config.backstory}\n\n{platform_prompt}"
         else:
             backstory = render_system_prompt(
                 agent_name=agent_name,
                 agent_description=agent_description,
-                custom_section=self.custom_section or "",
+                custom_section=self.config.custom_section or "",
                 features=self.features,
             )
 
@@ -250,18 +236,18 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             role=role,
             goal=goal,
             backstory=backstory,
-            llm=LLM(model=self.model),
+            llm=LLM(model=self.config.model),
             tools=tools,
-            verbose=self.verbose,
-            max_iter=self.max_iter,
-            max_rpm=self.max_rpm,
-            allow_delegation=self.allow_delegation,
+            verbose=self.config.verbose,
+            max_iter=self.config.max_iter,
+            max_rpm=self.config.max_rpm,
+            allow_delegation=self.config.allow_delegation,
         )
 
         logger.info(
             "CrewAI adapter started for agent: %s (model=%s, role=%s)",
             agent_name,
-            self.model,
+            self.config.model,
             role,
         )
 
@@ -410,39 +396,25 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         # SUPPORTED_EMIT): result.usage_metrics is cumulative-lifetime, not
         # per-turn. Proper per-turn capture is deferred — don't add emit_usage here.
         try:
-            # CrewAI's kickoff_async accepts str | list[dict], but a list is
-            # flattened internally into one role-blind "\n".join(...) of every
-            # message's content (crewai.agent.core.Agent._prepare_kickoff) --
-            # it does NOT preserve per-message turn/role structure the way a
-            # chat-completions API would. Passing a list here previously left
-            # an earlier turn's imperative ("do X, do not call any other
-            # tool") sitting unmarked next to the new turn's instruction, and
-            # models would sometimes replay the old instruction instead of the
-            # new one. Building the final prompt ourselves, with explicit
-            # "already handled" / "act on this now" markers, matches what
-            # CrewAI actually does with the input either way.
             prompt = "\n\n".join(sections)
             result = await self._kickoff_with_empty_response_retry(
                 self._crewai_agent, prompt, reply_tracker, room_id
             )
 
-        except Exception as e:
-            # An empty response is benign only once some tool ran this turn.
-            # Reaching here with no tool activity means the first-call retry
-            # also came back empty (or this was a different failure), which is
-            # indistinguishable from a genuine provider failure and must keep
-            # failing the delivery so the platform retries it.
-            if not (_is_empty_llm_response(e) and reply_tracker.any_tool_ran):
-                logger.exception("Error processing message")
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
-            # Keep the exception text: it is the only record that CrewAI raised,
-            # and this turn is no longer marked failed for the runtime to log.
-            logger.debug("Room %s: CrewAI returned no text: %s", room_id, e)
-            result = None
+        except Exception:
+            logger.exception("Error processing message")
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
 
+        self._message_history[room_id].extend(
+            {
+                "role": "assistant",
+                "content": f"[sent via {BandTool.SEND_MESSAGE}] {post}",
+            }
+            for post in reply_tracker.posts
+        )
         final_text = (result.raw or "") if result else ""
         if final_text:
             self._message_history[room_id].append(
@@ -451,25 +423,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                     "content": final_text,
                 }
             )
-
-        if not reply_tracker.did_productive_work:
-            logger.warning(
-                "Room %s: CrewAI turn produced nothing for the room", room_id
-            )
-            detail = missing_reply_error(
-                "CrewAI",
-                detail=(
-                    "Repeated tool failures may also have exhausted "
-                    f"max_iter={self.max_iter}."
-                ),
-            )
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            if not reply_tracker.any_tool_ran:
-                # Some tool activity (even read-only) means the turn did what it
-                # was asked and correctly had nothing left to say -- report but
-                # don't fail the delivery. Only true silence, no tool call at
-                # all, is a genuine no-response failure worth a retry.
-                raise TurnResultAlreadyReported(detail)
 
         logger.info(
             "Room %s: CrewAI turn over for %s (output=%s chars, history=%s)",
@@ -492,37 +445,26 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         reply_tracker: ReplyTracker,
         room_id: str,
     ) -> Any:
-        """Retry a first-call empty completion once before giving up.
-
-        CrewAI raises the identical ValueError whether the model correctly has
-        nothing left to say (fine once a tool has run -- handled by the
-        caller) or the turn's very first call came back empty. The second case
-        has run no tool yet, so there is nothing to duplicate: one immediate
-        retry absorbs a single-call fluke instead of failing the whole
-        delivery and leaving CrewAI to improvise on a cold redelivery.
-        """
-        try:
-            return await agent.kickoff_async(prompt)
-        except Exception as e:
-            if not (_is_empty_llm_response(e) and not reply_tracker.any_tool_ran):
-                raise
-            logger.info(
-                "Room %s: CrewAI's first LLM call came back empty before "
-                "any tool ran; retrying",
-                room_id,
-            )
+        """Retry an empty kickoff once only when no tool activity was recorded."""
+        for attempt in range(2):
             try:
-                return await agent.kickoff_async(prompt)
-            except Exception as retry_exc:
-                if _is_empty_llm_response(retry_exc):
-                    logger.warning(
-                        "Room %s: CrewAI's retry also came back empty; giving up",
-                        room_id,
-                    )
-                else:
-                    logger.warning(
-                        "Room %s: CrewAI's retry failed with a different error: %s",
-                        room_id,
-                        retry_exc,
-                    )
-                raise
+                result = await agent.kickoff_async(prompt)
+            except Exception as exc:
+                if not _is_empty_llm_response(exc):
+                    raise
+                logger.debug("Room %s: CrewAI returned no text: %s", room_id, exc)
+                result = None
+
+            if result and (result.raw or "").strip():
+                return result
+            if reply_tracker.any_tool_ran:
+                return None
+            if attempt == 0:
+                logger.warning(
+                    "Room %s: CrewAI kickoff returned no text before any tool "
+                    "ran; retrying",
+                    room_id,
+                )
+
+        logger.warning("Room %s: CrewAI retry returned no text; giving up", room_id)
+        return None

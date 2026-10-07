@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway_demo]>=1.2.0"]
+# dependencies = ["band-sdk[a2a_gateway_demo]>=4.0.0"]
 # ///
 """
 Run A2A Gateway with Demo Orchestrator Agent.
@@ -82,7 +82,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 
 from band import Agent, configure_logging
-from band.adapters import A2AGatewayAdapter
+from band.adapters import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.config import load_agent_config
 
 configure_logging(
@@ -120,7 +120,7 @@ class OrchestratorSettings(BaseSettings):
     )
 
     openai_api_key: str
-    openai_model: str = "gpt-5.4-mini"
+    openai_model: str = "gpt-6-luna"
     # Comma-separated peer handles (e.g. "weather,translator").
     available_peers: str = ""
 
@@ -154,8 +154,7 @@ async def run_gateway() -> None:
     gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"
 
     adapter = A2AGatewayAdapter(
-        gateway_url=gateway_url,
-        port=GATEWAY_PORT,
+        A2AGatewayAdapterConfig(gateway_url=gateway_url, port=GATEWAY_PORT)
     )
 
     logger.info("Starting A2A Gateway on %s...", gateway_url)

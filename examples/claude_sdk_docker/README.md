@@ -10,14 +10,18 @@ Run AI agents powered by Claude SDK with Docker - no coding required.
 
 ### 1. Configure your environment
 
-From the **repository root** directory:
+Create a `.env` file in **this directory** (`examples/claude_sdk_docker/`) —
+`docker-compose.yml` loads `env_file: .env` from here:
 
 ```bash
-cp .env.example .env
-# Edit .env - add your ANTHROPIC_API_KEY
+cd examples/claude_sdk_docker
+cat > .env <<'ENV'
+ANTHROPIC_API_KEY=sk-ant-...
+# Only for a non-production platform:
+# BAND_REST_URL=https://...
+# BAND_WS_URL=wss://.../api/v1/socket/websocket
+ENV
 ```
-
-> **Note:** This example uses the root `.env` file (not a local one).
 
 ### 2. Create your agent
 
@@ -45,28 +49,28 @@ You can create multiple agents by repeating these steps with different files (e.
 
 > **Note:** Files matching `agent*.yaml` are git-ignored to protect your credentials. Only `example_agent.yaml` is tracked.
 
-### 3. Update docker-compose.yml (optional)
+### 3. Match docker-compose.yml to your agent files
 
-**For a single agent:** No changes needed! The default configuration already uses `agent1.yaml`.
+The default `docker-compose.yml` runs two services, `planner` and `reviewer`,
+reading `planner.yaml` and `reviewer.yaml`. Either name your agent files that
+way, or register both agents in one step with a Band user key (it writes both
+files and records the new agent ids in `.agent_ids.txt` for cleanup):
 
-**For multiple agents:** Uncomment and add additional agent entries in `docker-compose.yml`:
+```bash
+BAND_API_KEY=band_u_... python create_agents.py
+```
+
+To run a different set of agents, edit the services in `docker-compose.yml`:
 
 ```yaml
 services:
   agent1:
     <<: *agent-base
+    container_name: band-agent1
     environment:
       AGENT_CONFIG: /app/config/agent1.yaml
-
-  # Uncomment and duplicate for additional agents:
-  # agent2:
-  #   <<: *agent-base
-  #   container_name: band-agent2
-  #   environment:
-  #     AGENT_CONFIG: /app/config/agent2.yaml
+      WORKSPACE: /workspace/repo
 ```
-
-Add as many agent entries as you created in step 2.
 
 ### 4. Build and run
 
@@ -93,7 +97,7 @@ docker compose up
 | `tools/` | Custom tools for your agent |
 | `entrypoint.sh` | Container entrypoint (configures git safe.directory at runtime) |
 
-> **Note:** Environment variables are loaded from the root `.env` file. Copy `.env.example` to `.env` in the repository root.
+> **Note:** Environment variables are loaded from this directory's `.env` file (see step 1).
 
 ## Agent Configuration
 

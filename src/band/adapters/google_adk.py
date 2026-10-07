@@ -15,12 +15,14 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from band_sdk_core import AgentFailure
-from pydantic import ValidationError
+from pydantic import PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import GEMINI_MODEL
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -52,8 +54,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "band"
-_DEFAULT_MAX_HISTORY_MESSAGES = 50
-_DEFAULT_MAX_TRANSCRIPT_CHARS = 100_000
 
 # Candidate method names that google-adk BaseTool may use to expose tool
 # declarations.  The bridge overrides every match found on the installed
@@ -250,7 +250,9 @@ def _get_tool_bridge_class() -> type:
             try:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, args)
+                    result = await execute_custom_tool(
+                        custom_tool, args, turn=self._tools.turn
+                    )
                 else:
                     result = await self._tools.execute_tool_call(self.name, args)
 
@@ -307,6 +309,26 @@ def _get_tool_bridge_class() -> type:
     return _BandToolBridge
 
 
+class GoogleADKAdapterConfig(BaseAdapterConfig):
+    """Settings for a Google ADK agent.
+
+    Attributes:
+        model: Gemini model name passed to the ADK agent.
+        system_prompt: Replaces the rendered Band system prompt entirely.
+        custom_section: Extra instructions appended to the rendered prompt.
+        max_history_messages: Most recent room messages replayed as a
+            transcript at the start of each turn.
+        max_transcript_chars: Character cap on that transcript; older lines
+            are dropped first.
+    """
+
+    model: str = GEMINI_MODEL
+    system_prompt: str | None = None
+    custom_section: str | None = None
+    max_history_messages: PositiveInt = 50
+    max_transcript_chars: PositiveInt = 100_000
+
+
 class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     """
     Google ADK adapter using SimpleAdapter pattern.
@@ -320,8 +342,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
     Example:
         adapter = GoogleADKAdapter(
-            model="gemini-2.5-flash",
-            custom_section="You are a helpful assistant.",
+            GoogleADKAdapterConfig(custom_section="You are a helpful assistant.")
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
@@ -334,15 +355,21 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
     def __init__(
         self,
-        model: str = "gemini-2.5-flash",
-        system_prompt: str | None = None,
-        custom_section: str | None = None,
+        config: GoogleADKAdapterConfig | None = None,
+        *,
         history_converter: GoogleADKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        max_history_messages: int = _DEFAULT_MAX_HISTORY_MESSAGES,
-        max_transcript_chars: int = _DEFAULT_MAX_TRANSCRIPT_CHARS,
         **features: Unpack[FeatureKwargs],
     ):
+        """Create an adapter that runs a Google ADK agent per turn.
+
+        Args:
+            config: Model, prompt and transcript settings; see
+                :class:`GoogleADKAdapterConfig`.
+            history_converter: Optional custom history converter.
+            additional_tools: Optional portable ``CustomToolDef``
+                (InputModel, handler) tuples.
+        """
         # Validate google-adk is installed early (cached, so cheap on repeat).
         _require_adk()
 
@@ -351,11 +378,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             **features,
         )
 
-        self.model = model
-        self._system_prompt_override = system_prompt
-        self.custom_section = custom_section
-        self.max_history_messages = max_history_messages
-        self.max_transcript_chars = max_transcript_chars
+        self.config = config or GoogleADKAdapterConfig()
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
@@ -378,7 +401,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         """Render system prompt and create ADK agent after metadata is fetched.
 
         Prompt precedence (matches Anthropic/Gemini):
-          1. If ``system_prompt`` was provided at construction time, it wins —
+          1. If ``config.system_prompt`` is set, it wins —
              ``custom_section`` and ``features``-based capability sections are
              ignored. The override is passed through verbatim.
           2. Otherwise, ``render_system_prompt`` renders the SDK base prompt
@@ -386,10 +409,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
              ``features.capabilities``.
         """
         await super().on_started(agent_name, agent_description)
-        self._system_prompt = self._system_prompt_override or render_system_prompt(
+        self._system_prompt = self.config.system_prompt or render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
-            custom_section=self.custom_section or "",
+            custom_section=self.config.custom_section or "",
             features=self.features,
         )
 
@@ -439,7 +462,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
         adk_agent = ADKAgent(
             name=_sanitize_adk_agent_name(self.agent_name),
-            model=self.model,
+            model=self.config.model,
             instruction=self._system_prompt,
             tools=adk_tools,
         )
@@ -516,12 +539,12 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # Apply sliding window to avoid unbounded transcript growth.
             room_history = self._room_history[room_id]
             if room_history:
-                windowed = room_history[-self.max_history_messages :]
+                windowed = room_history[-self.config.max_history_messages :]
                 transcript = self._format_history_transcript(windowed)
                 if transcript:
-                    if len(transcript) > self.max_transcript_chars:
+                    if len(transcript) > self.config.max_transcript_chars:
                         original_len = len(transcript)
-                        transcript = transcript[-self.max_transcript_chars :]
+                        transcript = transcript[-self.config.max_transcript_chars :]
                         # Cut to the next newline to avoid a partial first line
                         nl = transcript.find("\n")
                         if nl != -1:
@@ -567,6 +590,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # reported per model response on the event stream, so sum across
             # the loop into one per-turn TurnUsage.
             final_response_text = ""
+            model_failure: ProviderRunError | None = None
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
@@ -574,6 +598,15 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             ):
                 if Emit.USAGE in self.features.emit:
                     turn_usage = turn_usage + self._usage_from_event(event)
+
+                # ADK returns a model failure as an event. Its flow ends the
+                # run after one, so drain rather than break: breaking leaves
+                # ADK's nested generators open inside their tracing spans.
+                # ADK <= 1.10 reports an empty normal finish as "STOP".
+                if event.error_code and event.error_code != types.FinishReason.STOP:
+                    model_failure = ProviderRunError(
+                        event.error_code, event.error_message
+                    )
 
                 # Report tool calls/results if enabled
                 if Emit.TOOL_CALLS in self.features.emit:
@@ -589,11 +622,11 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         "Room %s: ADK agent completed with final response",
                         room_id,
                     )
-        except Exception:
+            if model_failure is not None:
+                raise model_failure
+        except Exception as e:
             logger.exception("Error running ADK agent in room %s", room_id)
-            await tools.send_failure(
-                AgentFailure("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
-            )
+            await tools.send_failure(generic_provider_failure("google_adk", e))
             raise
         finally:
             # Emit before close so a close() failure can't drop the usage, but
@@ -617,10 +650,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # Trim accumulated history to prevent unbounded memory growth.
         # Keep twice the window so the sliding window in the next call
         # still has a full page of messages to work with.
-        trim_threshold = self.max_history_messages * 2
+        trim_threshold = self.config.max_history_messages * 2
         if len(self._room_history[room_id]) > trim_threshold:
             self._room_history[room_id] = self._room_history[room_id][
-                -self.max_history_messages :
+                -self.config.max_history_messages :
             ]
 
         logger.debug("Message %s processed successfully", msg.id)

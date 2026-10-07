@@ -7,9 +7,12 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import band.runtime
+from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -28,6 +31,7 @@ class ControlRuntime:
         self._invocations = 0
         self.started = asyncio.Event()
         self.cancelled = asyncio.Event()
+        self.received_control_modes: list[ControlMode] = []
         self.completed_message_ids: list[str] = []
 
     async def on_execute(self, _ctx: object, event: object) -> None:
@@ -47,7 +51,17 @@ class ControlRuntime:
         try:
             await asyncio.wait_for(self.cancelled.wait(), timeout=deadline_s)
         except TimeoutError:
-            raise TimeoutError("STOP did not cancel the active cycle") from None
+            raise TimeoutError(
+                f"control signal did not cancel the active cycle; {self.diagnostics()}"
+            ) from None
+
+    def diagnostics(self) -> str:
+        """What the SDK saw and did, for a control test's failure message."""
+        modes = [mode.value for mode in self.received_control_modes]
+        return (
+            f"SDK received modes: {modes}; "
+            f"handler completed messages: {self.completed_message_ids}"
+        )
 
     async def wait_for_start(self, *, deadline_s: float) -> None:
         try:
@@ -64,23 +78,32 @@ async def running_control_runtime(
     user_ops: UserOps,
 ) -> AsyncGenerator[ControlRuntime, None]:
     """Run one controlled agent and leave its room playable on teardown."""
-    control = ControlRuntime()
     link = BandLink(
         agent_id=agent.id,
         api_key=agent.api_key,
         ws_url=settings.endpoints.ws_url,
         rest_url=settings.endpoints.rest_url,
     )
-    runtime = AgentRuntime(link=link, agent_id=agent.id, on_execute=control.on_execute)
-    link.on_control = runtime.handle_control
-    await runtime.start()
-    try:
-        yield control
-    finally:
+    # The SDK control path's DEBUG lines explain a failing control test.
+    with sdk_logs_at(band.runtime, logging.DEBUG):
+        control = ControlRuntime()
+        runtime = AgentRuntime(
+            link=link, agent_id=agent.id, on_execute=control.on_execute
+        )
+
+        async def record_control(payload: AgentControlPayload) -> None:
+            control.received_control_modes.append(payload.mode)
+            await runtime.handle_control(payload)
+
+        link.on_control = record_control
+        await runtime.start()
         try:
-            await user_ops.play_agent(room_id)
-        except Exception:
-            logger.warning(
-                "control cleanup play failed for room %s", room_id, exc_info=True
-            )
-        await runtime.stop()
+            yield control
+        finally:
+            try:
+                await user_ops.play_agent(room_id)
+            except Exception:
+                logger.warning(
+                    "control cleanup play failed for room %s", room_id, exc_info=True
+                )
+            await runtime.stop()

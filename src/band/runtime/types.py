@@ -11,34 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from band.core.types import ConflictPolicy
-
-# --- Constants for synthetic messages (injected by SDK, not from platform) ---
-#
-# These constants define the sender identity for SDK-generated messages that are
-# injected into the event queue but don't originate from the platform WebSocket.
-#
-# Primary use case: ContactEventHandler's HUB_ROOM strategy creates synthetic
-# MessageEvents to route contact events to the hub room for LLM processing.
-# These messages need a consistent sender identity that:
-#   1. Clearly indicates they're system-generated (not from a real user/agent)
-#   2. Can be filtered by preprocessing if needed
-#   3. Are recognizable in UI/logs for debugging
-#
-
-# Sender type for synthetic messages. Matches the platform's "System" type used
-# for other system-generated content.
-SYNTHETIC_SENDER_TYPE = "System"
-
-# Sender ID for synthetic contact event messages. This is a logical identifier
-# (not a UUID) that allows filtering/identification of contact-related synthetic
-# messages. Used in MessageEvent.payload.sender_id for hub room injections.
-SYNTHETIC_CONTACT_EVENTS_SENDER_ID = "contact-events"
-
-# Human-readable sender name displayed in UI/logs for synthetic contact event
-# messages. Used in MessageEvent.payload.sender_name.
-SYNTHETIC_CONTACT_EVENTS_SENDER_NAME = "Contact Events"
 
 
 def normalize_handle(handle: str | None) -> str | None:
@@ -143,6 +118,11 @@ class SessionConfig:
     # other handler error. None = unbounded (default — matches prior behavior
     # for callers that never opt in).
     max_cycle_seconds: float | None = None
+
+    # Post an `error` event when a message fails its final attempt and the
+    # adapter didn't report it; otherwise the room can't tell it from a message
+    # never received.
+    report_turn_failures_to_room: bool = True
 
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
@@ -256,6 +236,14 @@ ParticipantAddedCallback = Callable[[str, "ParticipantAddedEvent"], Awaitable[No
 ParticipantRemovedCallback = Callable[[str, "ParticipantRemovedEvent"], Awaitable[None]]
 
 
+def _require_uuid(name: str, value: str) -> None:
+    """The platform answers a non-UUID id with a 422 only once the agent runs."""
+    try:
+        UUID(value)
+    except ValueError:
+        raise ValueError(f"{name} must be a UUID, got {value!r}") from None
+
+
 @dataclass
 class ContactEventConfig:
     """Configuration for contact event handling.
@@ -314,3 +302,5 @@ class ContactEventConfig:
         """Validate configuration after initialization."""
         if self.strategy == ContactEventStrategy.CALLBACK and self.on_event is None:
             raise ValueError("CALLBACK strategy requires on_event callback")
+        if self.hub_task_id is not None:
+            _require_uuid("hub_task_id", self.hub_task_id)

@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import inspect
+import json
+from datetime import UTC, datetime
 from typing import get_type_hints
 
+import pytest
 from pydantic import BaseModel
 
 from band.runtime.tools import (
+    GetMemoryInput,
     get_tool_docstring_with_args,
     platform_tool,
     serialize_tool_result,
+    validate_tool_arguments,
 )
 
 
@@ -23,6 +28,11 @@ class _Result(BaseModel):
     sub: _Sub | None = None
 
 
+class _MemoryResult(BaseModel):
+    content: str
+    inserted_at: datetime
+
+
 class TestSerializeToolResult:
     def test_model_becomes_a_plain_dict(self) -> None:
         assert serialize_tool_result(_Result(id="r1")) == {"id": "r1", "sub": None}
@@ -30,6 +40,16 @@ class TestSerializeToolResult:
     def test_list_of_models_becomes_a_list_of_dicts(self) -> None:
         result = serialize_tool_result([_Result(id="r1"), _Result(id="r2")])
         assert result == [{"id": "r1", "sub": None}, {"id": "r2", "sub": None}]
+
+    def test_timestamped_memory_results_are_json_serializable(self) -> None:
+        result = _MemoryResult(
+            content="opaque-marker", inserted_at=datetime(2026, 9, 28, tzinfo=UTC)
+        )
+
+        assert json.loads(json.dumps(serialize_tool_result(result))) == {
+            "content": "opaque-marker",
+            "inserted_at": "2026-09-28T00:00:00Z",
+        }
 
     def test_a_list_of_non_models_passes_through_unchanged(self) -> None:
         assert serialize_tool_result(["a", "b"]) == ["a", "b"]
@@ -103,3 +123,17 @@ class TestPlatformTool:
             return _Result(id=identifier)
 
         assert band_example.__doc__ == get_tool_docstring_with_args("band_example")
+
+
+@pytest.mark.parametrize("value", ["", " ", ".", "#"])
+def test_path_id_feedback_identifies_tool_and_field(value: str) -> None:
+    with pytest.raises(
+        ValueError, match="Invalid arguments for band_get_memory: memory_id:"
+    ):
+        validate_tool_arguments("band_get_memory", GetMemoryInput, {"memory_id": value})
+
+
+def test_path_id_normalization_preserves_text() -> None:
+    assert validate_tool_arguments(
+        "band_get_memory", GetMemoryInput, {"memory_id": "ABC_123-x"}
+    ) == {"memory_id": "ABC_123-x"}

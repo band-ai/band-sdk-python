@@ -5,9 +5,11 @@ NOTE: The old BandAnthropicAgent has been removed.
 Use the new composition-based pattern instead:
 
     from band import Agent
-    from band.adapters import AnthropicAdapter
+    from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
-    adapter = AnthropicAdapter(model="claude-sonnet-4-5-20250929")
+    adapter = AnthropicAdapter(
+        AnthropicAdapterConfig(model="claude-sonnet-5-5")
+    )
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()
 """

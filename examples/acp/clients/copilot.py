@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0"]
+# dependencies = ["band-sdk[acp]>=4.0.0"]
 # ///
 """
 GitHub Copilot CLI ACP Client - Use GitHub Copilot from Band.
@@ -26,12 +26,11 @@ Prerequisites:
     1. GitHub Copilot CLI installed and on PATH:
        https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli
 
-    2. A Copilot-entitled GitHub token in the environment (Copilot checks
-       COPILOT_GITHUB_TOKEN, then GH_TOKEN, then GITHUB_TOKEN):
+    2. A Copilot-entitled GitHub token, passed to the CLI as GITHUB_TOKEN
+       (or leave it unset to use a stored `copilot login`):
        export GITHUB_TOKEN=...
 
-    3. Set environment variables:
-       - BAND_API_KEY: Your Band API key (required for tool injection)
+    3. A 'copilot_acp_agent' entry in agent_config.yaml.
 
     4. Optionally configure:
        - ACP_AGENT_CWD: Working directory for Copilot sessions (default: .)
@@ -48,7 +47,7 @@ import logging
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging, create_room_workspace_resolver
+from band import Agent, configure_logging
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
 configure_logging(
@@ -76,7 +75,7 @@ async def main() -> None:
     settings = Settings()
 
     config = CopilotACPAdapterConfig(
-        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
+        cwd=settings.acp_agent_cwd,
         github_token=settings.github_token or None,
         inject_band_tools=True,
     )

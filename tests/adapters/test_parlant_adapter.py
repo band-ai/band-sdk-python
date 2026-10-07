@@ -14,9 +14,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from band.adapters.parlant import PARLANT_PREAMBLE_TAG, ParlantAdapter
+from band.adapters.parlant import (
+    PARLANT_PREAMBLE_TAG,
+    ParlantAdapter,
+    ParlantAdapterConfig,
+)
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import PlatformMessage
+from band.testing import FakeAgentTools, reported_failures
 
 
 @pytest.fixture
@@ -36,16 +41,9 @@ def sample_message():
 
 
 @pytest.fixture
-def mock_tools():
-    """Create mock AgentToolsProtocol (MagicMock base, AsyncMock methods)."""
-    tools = MagicMock()
-    tools.get_tool_schemas = MagicMock(return_value=[])
-    tools.get_openai_tool_schemas = MagicMock(return_value=[])
-    tools.send_message = AsyncMock(return_value={"status": "sent"})
-    tools.send_event = AsyncMock(return_value={"status": "sent"})
-    tools.send_failure = AsyncMock(return_value={"status": "sent"})
-    tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
-    return tools
+def mock_tools() -> FakeAgentTools:
+    """The room's tools, recording what the adapter posted."""
+    return FakeAgentTools()
 
 
 @pytest.fixture
@@ -131,16 +129,38 @@ class TestInitialization:
         """system_prompt/custom_section only shape an adapter-created agent."""
         with pytest.raises(ValueError, match="parlant_agent"):
             ParlantAdapter(
+                ParlantAdapterConfig(system_prompt="You are a custom assistant."),
                 server=mock_parlant_server,
                 parlant_agent=mock_parlant_agent,
-                system_prompt="You are a custom assistant.",
             )
         with pytest.raises(ValueError, match="parlant_agent"):
             ParlantAdapter(
+                ParlantAdapterConfig(custom_section="Be helpful."),
                 server=mock_parlant_server,
                 parlant_agent=mock_parlant_agent,
-                custom_section="Be helpful.",
             )
+
+    def test_borrowed_agent_requires_its_server(self, mock_parlant_agent):
+        with pytest.raises(ValueError, match="requires the server"):
+            ParlantAdapter(parlant_agent=mock_parlant_agent)
+
+    @pytest.mark.parametrize(
+        "owned_server_kwargs",
+        [{"nlp_service": "svc"}, {"server_options": {"host": "127.0.0.1"}}],
+    )
+    def test_owned_server_options_rejected_with_borrowed_server(
+        self, mock_parlant_server, owned_server_kwargs
+    ):
+        with pytest.raises(ValueError, match="caller-provided server"):
+            ParlantAdapter(server=mock_parlant_server, **owned_server_kwargs)
+
+
+class TestConfig:
+    @pytest.mark.parametrize("field", ["response_timeout", "response_poll"])
+    @pytest.mark.parametrize("value", [0, -1.0])
+    def test_rejects_non_positive_response_budget(self, field, value):
+        with pytest.raises(ValueError, match="greater than 0"):
+            ParlantAdapterConfig(**{field: value})
 
 
 class TestOnStarted:
@@ -157,8 +177,8 @@ class TestOnStarted:
     ):
         """custom_section must reach the created Parlant agent's description."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(custom_section="Be helpful."),
             server=mock_parlant_server,
-            custom_section="Be helpful.",
         )
 
         mock_app = MagicMock()
@@ -185,8 +205,8 @@ class TestOnStarted:
     ):
         """system_prompt must fully replace the created agent's description."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(system_prompt="You are a custom assistant."),
             server=mock_parlant_server,
-            system_prompt="You are a custom assistant.",
         )
 
         mock_app = MagicMock()
@@ -270,7 +290,9 @@ class TestLifecycleOwnedServer:
         self, owned_server, mock_parlant_agent
     ):
         factory, cm, server = owned_server
-        adapter = ParlantAdapter(name="Tom", description="A cat", nlp_service="svc")
+        adapter = ParlantAdapter(
+            ParlantAdapterConfig(name="Tom", description="A cat"), nlp_service="svc"
+        )
 
         await adapter.on_started("BandName", "Band description")
 
@@ -298,7 +320,7 @@ class TestLifecycleOwnedServer:
     ):
         band_tools = ["band-tool-entry"]
         stub_band_tools.return_value = band_tools
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         adapter.add_guideline(condition="c1", action="a1")
         adapter.add_guideline(condition="c2", action="a2", tools=[])
         adapter.add_guideline(condition="c3", action="a3", metadata={"k": "v"})
@@ -348,7 +370,7 @@ class TestLifecycleOwnedServer:
         ] == ["first", "second", "second", "third"]
 
     async def test_add_guideline_after_start_raises(self, owned_server):
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         await adapter.on_started("BandName", "Band description")
 
         with pytest.raises(RuntimeError, match="before the agent starts"):
@@ -363,14 +385,16 @@ class TestLifecycleOwnedServer:
         async def configure(srv, agent):
             seen.append((srv, agent))
 
-        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+        adapter = ParlantAdapter(
+            ParlantAdapterConfig(name="X", description="Y"), configure=configure
+        )
         await adapter.on_started("BandName", "Band description")
 
         assert seen == [(server, mock_parlant_agent)]
 
     async def test_cleanup_all_closes_owned_server(self, owned_server):
         _, cm, _ = owned_server
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         await adapter.on_started("BandName", "Band description")
 
         await adapter.cleanup_all()
@@ -413,7 +437,7 @@ class TestLifecycleOwnedServer:
     async def test_restart_with_owned_server_applies_guidelines_to_fresh_agent(
         self, owned_server, mock_parlant_agent
     ):
-        adapter = ParlantAdapter(name="X", description="Y")
+        adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
         adapter.add_guideline(condition="c", action="a")
 
         await adapter.on_started("BandName", "Band description")
@@ -430,7 +454,9 @@ class TestLifecycleOwnedServer:
         async def configure(srv, agent):
             raise RuntimeError("configure blew up")
 
-        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+        adapter = ParlantAdapter(
+            ParlantAdapterConfig(name="X", description="Y"), configure=configure
+        )
 
         with pytest.raises(RuntimeError, match="configure blew up"):
             await adapter.on_started("BandName", "Band description")
@@ -448,10 +474,9 @@ class TestOnMessage:
     def initialized_adapter(self, mock_parlant_server, mock_parlant_agent):
         """Create an initialized adapter with mocked app."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.05, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.05,
-            response_poll=0.01,
         )
         adapter.agent_name = "TestBot"
         adapter.agent_description = "A test bot"
@@ -797,10 +822,9 @@ class TestErrorHandling:
             )
 
         # Should have tried to report the failure
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "parlant"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        [failure] = reported_failures(mock_tools)
+        assert failure["provider"] == "parlant"
+        assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_reports_error_on_session_init_failure(
@@ -829,10 +853,9 @@ class TestErrorHandling:
                 room_id="room-123",
             )
 
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "parlant"
-        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        [failure] = reported_failures(mock_tools)
+        assert failure["provider"] == "parlant"
+        assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_send_message_failure_is_not_reported_as_provider_failure(
@@ -847,10 +870,9 @@ class TestErrorHandling:
         (which reports ``send_failure``) ever sees it.
         """
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.2, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.2,
-            response_poll=0.01,
         )
         adapter.agent_name = "TestBot"
 
@@ -870,7 +892,7 @@ class TestErrorHandling:
         mock_app.sessions.find_events = AsyncMock(return_value=[agent_event])
         adapter._app = mock_app
 
-        mock_tools.send_message.side_effect = ConnectionError("band down")
+        mock_tools.send_message_error = ConnectionError("band down")
 
         mock_moderation = MagicMock()
         mock_moderation.NONE = "none"
@@ -901,7 +923,7 @@ class TestErrorHandling:
                 room_id="room-123",
             )
 
-        mock_tools.send_failure.assert_not_awaited()
+        assert not reported_failures(mock_tools)
 
     @pytest.mark.asyncio
     async def test_clears_tools_on_error(
@@ -976,11 +998,10 @@ class TestErrorHandling:
             )
 
         # No reply attempt, but the failure is reported.
-        mock_tools.send_message.assert_not_called()
-        mock_tools.send_failure.assert_awaited_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "parlant"
-        assert "not initialized" in failure.message
+        mock_tools.assert_no_messages_sent()
+        [failure] = reported_failures(mock_tools)
+        assert failure["provider"] == "parlant"
+        assert "not initialized" in failure["message"]
 
 
 class TestResponseWaitBudget:
@@ -1060,9 +1081,91 @@ class TestResponseWaitBudget:
 
         # The reply is only returned on the 3rd wait, so forwarding it proves the loop
         # retried past both empty windows instead of giving up on the first.
-        mock_tools.send_message.assert_awaited_once_with(
-            "Hello there!", mentions=["Alice"]
+        mock_tools.assert_message_sent(
+            content="Hello there!", mentions=["Alice"], count=1
         )
+
+    @pytest.mark.asyncio
+    async def test_relays_all_final_parts_in_one_batch_without_preamble(
+        self,
+        mock_parlant_server: MagicMock,
+        mock_parlant_agent: MagicMock,
+        mock_tools: FakeAgentTools,
+    ) -> None:
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter._app = self._app_with_waits(
+            wait_results=[True],
+            events=[
+                self._agent_event("One moment…", offset=1, tags=[PARLANT_PREAMBLE_TAG]),
+                self._agent_event("Your table has been booked!", offset=2),
+                self._agent_event(
+                    "Please note that our kitchen contains peanuts.", offset=3
+                ),
+            ],
+        )
+
+        await adapter._process_agent_response(
+            session_id="multipart-session",
+            room_id="room-1",
+            min_offset=0,
+            tools=mock_tools,
+            sender_name="Alice",
+        )
+
+        mock_tools.assert_message_sent(
+            content=(
+                "Your table has been booked!\n\n"
+                "Please note that our kitchen contains peanuts."
+            ),
+            mentions=["Alice"],
+            count=1,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "declined", [False, True], ids=["tool-reply", "tool-decline"]
+    )
+    async def test_tool_reply_or_decline_suppresses_entire_final_batch(
+        self,
+        mock_parlant_server: MagicMock,
+        mock_parlant_agent: MagicMock,
+        mock_tools: FakeAgentTools,
+        declined: bool,
+    ) -> None:
+        if declined:
+            await mock_tools.no_reply("No response needed.")
+        else:
+            await mock_tools.send_message("Already answered.", mentions=["Alice"])
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter._app = self._app_with_waits(
+            wait_results=[True],
+            events=[
+                self._agent_event("One moment…", offset=1, tags=[PARLANT_PREAMBLE_TAG]),
+                self._agent_event("Your table has been booked!", offset=2),
+                self._agent_event(
+                    "Please note that our kitchen contains peanuts.", offset=3
+                ),
+            ],
+        )
+
+        await adapter._process_agent_response(
+            session_id="tool-completed-session",
+            room_id="room-1",
+            min_offset=0,
+            tools=mock_tools,
+            sender_name="Alice",
+        )
+
+        if declined:
+            mock_tools.assert_no_messages_sent()
+        else:
+            mock_tools.assert_message_sent(
+                content="Already answered.", mentions=["Alice"], count=1
+            )
 
     @pytest.mark.asyncio
     async def test_gives_up_after_budget_when_no_reply_ever_arrives(
@@ -1071,10 +1174,9 @@ class TestResponseWaitBudget:
         """A genuinely silent turn is bounded: once the total budget elapses the wait
         returns (no hang) and nothing is forwarded."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.05, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.05,
-            response_poll=0.01,
         )
         # Never any event: every poll window is empty.
         app = MagicMock()
@@ -1096,7 +1198,7 @@ class TestResponseWaitBudget:
 
         # It gave up within the budget (the wait_for above would raise on a hang)
         # without forwarding anything.
-        mock_tools.send_message.assert_not_awaited()
+        mock_tools.assert_no_messages_sent()
 
     @pytest.mark.asyncio
     async def test_preamble_only_times_out_without_forwarding_a_reply(
@@ -1106,10 +1208,9 @@ class TestResponseWaitBudget:
         acknowledgment, not an answer, so the adapter must NOT forward it as the reply
         — the turn is given up honestly (no send_message) rather than faking success."""
         adapter = ParlantAdapter(
+            ParlantAdapterConfig(response_timeout=0.05, response_poll=0.01),
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
-            response_timeout=0.05,
-            response_poll=0.01,
         )
         # The preamble arrives on the first poll; no final ever follows.
         seen = {"delivered": False}
@@ -1143,7 +1244,7 @@ class TestResponseWaitBudget:
 
         # The preamble was NOT forwarded — a stalled turn fails honestly, not silently
         # dressed up as an answer.
-        mock_tools.send_message.assert_not_awaited()
+        mock_tools.assert_no_messages_sent()
 
     @pytest.mark.asyncio
     async def test_empty_find_events_then_final_still_forwards(
@@ -1174,6 +1275,6 @@ class TestResponseWaitBudget:
 
         # The final is only query-visible on the 2nd read, so forwarding it proves the
         # loop re-polled past the empty read instead of dropping the turn.
-        mock_tools.send_message.assert_awaited_once_with(
-            "The answer.", mentions=["Alice"]
+        mock_tools.assert_message_sent(
+            content="The answer.", mentions=["Alice"], count=1
         )

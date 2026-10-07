@@ -7,15 +7,17 @@ dispatch-boundary result types (``ToolCallOutcome``, ``serialize_tool_result``).
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel, ValidationError, create_model
+from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
 
 from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
+
+_JSON_VALUE = TypeAdapter(Any)
 
 
 def resolve_tool_model(name: str) -> type[BaseModel] | None:
@@ -203,6 +205,15 @@ class ToolCallOutcome:
     error_message: str | None = None
 
 
+def is_failed_tool_output(output: Any) -> bool:
+    """Recognize structured ``ok=False`` results and legacy error strings."""
+    if isinstance(output, Mapping):
+        return output.get("ok") is False
+    if isinstance(output, str):
+        return output.lower().startswith(("error:", "error executing "))
+    return False
+
+
 def serialize_tool_result(result: Any) -> Any:
     """Serialize Pydantic tool results to dicts at the adapter boundary.
 
@@ -213,10 +224,12 @@ def serialize_tool_result(result: Any) -> Any:
     output shape cannot drift from the real one.
     """
     if hasattr(result, "model_dump"):
-        return result.model_dump()
+        return _JSON_VALUE.dump_python(result.model_dump(), mode="json")
     if isinstance(result, list):
         return [
-            item.model_dump() if hasattr(item, "model_dump") else item
+            _JSON_VALUE.dump_python(item.model_dump(), mode="json")
+            if hasattr(item, "model_dump")
+            else item
             for item in result
         ]
     return result

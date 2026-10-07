@@ -35,6 +35,7 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
 
 from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
+    CrewAIFlowAdapterConfig,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
@@ -71,10 +72,14 @@ class TestInit:
     def test_init_defaults(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
         assert isinstance(adapter._state_source, RestCrewAIFlowStateSource)
-        assert adapter._max_delegation_rounds == 4
-        assert adapter._max_run_age == timedelta(days=7)
-        assert adapter._accept_agent_initiated is False
         assert adapter.metadata_namespace == ""
+
+    def test_default_converter_honors_config_max_run_age(self) -> None:
+        adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(max_run_age=timedelta(hours=2)),
+            flow_factory=_factory,
+        )
+        assert adapter.history_converter.max_run_age == timedelta(hours=2)
 
     def test_init_does_not_call_flow_factory(self) -> None:
         called = []
@@ -156,58 +161,31 @@ class TestValidation:
                 state_source=SyncSource(),  # type: ignore[arg-type]
             )
 
-    def test_join_policy_validation(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(
-                flow_factory=_factory,
-                join_policy="some_other",  # type: ignore[arg-type]
-            )
 
-    def test_metadata_namespace_must_be_non_empty(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(flow_factory=_factory, metadata_namespace="")
+class TestConfigValidation:
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("join_policy", "some_other", "'all' or 'first'"),
+            ("text_only_behavior", "bogus", "'error_event' or 'fallback_send'"),
+            ("tagged_peer_policy", "something_else", "'off'"),
+            ("metadata_namespace", "", "at least 1 character"),
+            ("max_delegation_rounds", 0, "greater than or equal to 1"),
+            ("max_delegation_rounds", 21, "less than or equal to 20"),
+            ("max_delegation_rounds", True, "valid integer"),
+            ("max_run_age", timedelta(0), "max_run_age must be positive"),
+            ("max_run_age", timedelta(seconds=-1), "max_run_age must be positive"),
+            ("sequential_chains", {"k": 123}, "valid string"),
+            ("accept_agent_initiated", "yes", "valid boolean"),
+        ],
+    )
+    def test_rejects_invalid_policy(self, field: str, value: Any, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            CrewAIFlowAdapterConfig.model_validate({field: value})
 
-    def test_max_delegation_rounds_bounds(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(flow_factory=_factory, max_delegation_rounds=0)
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(flow_factory=_factory, max_delegation_rounds=21)
-
-    def test_max_run_age_must_be_positive_timedelta(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(flow_factory=_factory, max_run_age=timedelta(0))
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(flow_factory=_factory, max_run_age=timedelta(seconds=-1))
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(flow_factory=_factory, max_run_age=86400)  # type: ignore[arg-type]
-
-    def test_text_only_behavior_validation(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(
-                flow_factory=_factory,
-                text_only_behavior="bogus",  # type: ignore[arg-type]
-            )
-
-    def test_tagged_peer_policy_validation(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(
-                flow_factory=_factory,
-                tagged_peer_policy="something_else",  # type: ignore[arg-type]
-            )
-
-    def test_sequential_chains_must_be_str_to_str(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(
-                flow_factory=_factory,
-                sequential_chains={"k": 123},  # type: ignore[dict-item]
-            )
-
-    def test_accept_agent_initiated_must_be_bool(self) -> None:
-        with pytest.raises(BandConfigError):
-            CrewAIFlowAdapter(
-                flow_factory=_factory,
-                accept_agent_initiated="yes",  # type: ignore[arg-type]
-            )
+    def test_max_run_age_accepts_seconds_from_plain_data(self) -> None:
+        config = CrewAIFlowAdapterConfig.model_validate({"max_run_age": 86400})
+        assert config.max_run_age == timedelta(days=1)
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +258,8 @@ class TestOnStartedAndNamespace:
     @pytest.mark.asyncio
     async def test_explicit_namespace_overrides_default(self) -> None:
         adapter = CrewAIFlowAdapter(
-            flow_factory=_factory, metadata_namespace="custom_ns"
+            CrewAIFlowAdapterConfig(metadata_namespace="custom_ns"),
+            flow_factory=_factory,
         )
         await adapter.on_started("agent-A", "")
         assert adapter.metadata_namespace == "custom_ns"
@@ -313,9 +292,9 @@ class TestOnCleanup:
                 cleared.append((room_id, metadata_namespace))
 
         adapter = CrewAIFlowAdapter(
+            CrewAIFlowAdapterConfig(metadata_namespace="crewai_flow:test-agent"),
             flow_factory=_factory,
             state_source=CacheAwareSource(acknowledge_test_only=True),
-            metadata_namespace="crewai_flow:test-agent",
         )
         await adapter.on_cleanup("room-A")
 

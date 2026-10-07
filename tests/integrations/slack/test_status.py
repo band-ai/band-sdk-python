@@ -24,7 +24,11 @@ from httpx import ASGITransport
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
-from band.integrations.slack.adapter import STATUS_THINKING, SlackAdapter
+from band.integrations.slack.adapter import (
+    STATUS_THINKING,
+    SlackAdapter,
+    SlackAdapterConfig,
+)
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.runtime.tools import AgentTools
@@ -99,8 +103,8 @@ def _make_adapter(
 
     rest = _make_rest_mock()
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=(_app(),)),
         inner=inner,
-        apps=[_app()],
         rest_client=rest,
         web_client_factory=lambda _a: slack_client,
     )
@@ -153,7 +157,7 @@ def _mention_event(
 async def test_slack_event_sets_thinking_status_then_clears_it():
     adapter, slack, _ = _make_adapter()
     await adapter.on_started("Bot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(adapter, app, _mention_event())
     await adapter.wait_idle()
@@ -199,7 +203,7 @@ async def test_status_thinking_is_set_before_brain_invocation():
 
     adapter, _, _ = _make_adapter(inner=_RecordingBrain(), slack_client=slack)
     await adapter.on_started("Bot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(adapter, app, _mention_event())
     await adapter.wait_idle()
@@ -215,7 +219,7 @@ async def test_status_thinking_is_set_before_brain_invocation():
 async def test_status_is_cleared_even_when_brain_raises():
     adapter, slack, _ = _make_adapter(inner=_CrashingBrain())
     await adapter.on_started("Bot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(adapter, app, _mention_event())
     await adapter.wait_idle()
@@ -240,7 +244,7 @@ async def test_setstatus_failure_is_swallowed():
     brain = _ReplyingBrain(reply="still works")
     adapter, _, _rest = _make_adapter(inner=brain, slack_client=slack)
     await adapter.on_started("Bot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     response = await _post_slack_event(adapter, app, _mention_event())
     await adapter.wait_idle()
@@ -258,7 +262,7 @@ async def test_setstatus_failure_is_swallowed():
 async def test_ws_message_in_bound_room_also_sets_and_clears_status():
     adapter, slack, rest = _make_adapter()
     await adapter.on_started("Bot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Seed a bound room via the Slack webhook path.
     await _post_slack_event(adapter, app, _mention_event(channel="C1", ts="100.0"))

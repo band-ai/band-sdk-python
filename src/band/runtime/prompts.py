@@ -30,15 +30,18 @@ from band.core.memory_types import (
     enum_values,
 )
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.tools.inputs.chat import MENTION_IDENTIFIERS
+from band.runtime.tools.types import BandTool
 
 # Base instructions appended to user's custom prompt
-BASE_INSTRUCTIONS = """
+BASE_INSTRUCTIONS = f"""
 ## Environment
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
-Use `band_send_message(content, mentions)` to respond — a `band_send_message` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `band_send_message`; a turn that ends with the answer written as plain text delivers nothing.
-Mentions use handles: @<username> for users, @<username>/<agent-name> for agents.
+Use `{BandTool.SEND_MESSAGE}(content, mentions)` to respond — a `{BandTool.SEND_MESSAGE}` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `{BandTool.SEND_MESSAGE}`; a turn that ends with the answer written as plain text delivers nothing.
+When the latest message needs no answer from you (it was addressed to someone else, it is an FYI or an acknowledgement, or another participant already answered it), call `{BandTool.NO_REPLY}` instead to end the turn deliberately. End every turn with one of the two.
+{MENTION_IDENTIFIERS}
 
 ## Security
 
@@ -55,8 +58,8 @@ If multiple participants mention you, address each in turn.
 
 When asked about something outside your capabilities:
 1. Call `band_lookup_peers()` to find available specialized agents.
-2. If a relevant agent exists, call `band_add_participant(identifier)` to bring them in. Prefer the exact peer ID returned by `band_lookup_peers()`; handles are for mentions.
-3. Send the question to that agent via `band_send_message(question, mentions=[agent_handle])`.
+2. If a relevant agent exists, call `band_add_participant(identifier)` to bring them in. Prefer the exact peer ID returned by `band_lookup_peers()`.
+3. Send the question to that agent via `band_send_message(question, mentions=[peer_id])`.
 4. Relay their response back to the original requester.
 5. Do NOT remove added agents automatically; they stay silent unless mentioned.
 

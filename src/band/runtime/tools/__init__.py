@@ -27,8 +27,6 @@ from band.runtime.tools.agent import (
     strip_handle_prefix,
 )
 from band.runtime.tools.effects import (
-    is_terminal_success,
-    settles_turn_reply,
     turn_effect,
 )
 from band.runtime.tools.human import HumanTools
@@ -124,7 +122,7 @@ from band.runtime.tools.registry import (
     is_mcp_content_result,
     iter_tool_definitions,
     mcp_tool_names,
-    missing_reply_error,
+    mcp_tool_spelling,
     redact_tool_call_args,
     resolve_capabilities,
 )
@@ -265,19 +263,17 @@ __all__ = [
     "image_block_placeholder",
     "is_image_passthrough_result",
     "is_mcp_content_result",
-    "is_terminal_success",
     "iter_chat_pages",
     "iter_tool_definitions",
     "matches_identifier",
     "mcp_tool_names",
-    "missing_reply_error",
+    "mcp_tool_spelling",
     "platform_args_schema",
     "platform_tool",
     "redact_tool_call_args",
     "resolve_capabilities",
     "resolve_tool_model",
     "serialize_tool_result",
-    "settles_turn_reply",
     "strip_handle_prefix",
     "turn_effect",
     "validate_tool_arguments",

@@ -25,6 +25,7 @@ In this repo, the CrewAI adapter lets those agents use Band rooms and Band tools
 | `06_jerry_agent.py` | **Character agent** - Jerry the mouse with a custom character prompt. |
 | `07_contact_and_memory_agent.py` | **Contacts + memory** - Shows CrewAI contact tools, memory tools, and broadcast contact updates. |
 | `08_flow_router.py` | **Flow router (experimental)** - Uses `CrewAIFlowAdapter` for room-native multi-turn orchestration with parallel join and sequential composition. |
+| `09_flow_custom_tools.py` | **Flow custom tools (experimental)** - Registers an adapter-level custom tool and calls it from inside a Flow via `get_current_flow_runtime()`. |
 | `10_memory_tool_usage.py` | **Memory tools** - Enables durable Band memory for user preferences, facts, and reusable instructions. |
 
 ## Adapter choice
@@ -156,7 +157,7 @@ jerry_agent:
   api_key: "your-jerry-agent-api-key"
 ```
 
-Contact, memory, and flow-router examples:
+Contact, memory, and flow examples:
 
 ```yaml
 crewai_contact_memory_agent:
@@ -166,6 +167,10 @@ crewai_contact_memory_agent:
 crewai_flow_router:
   agent_id: "your-crewai-flow-router-agent-id"
   api_key: "your-crewai-flow-router-agent-api-key"
+
+crewai_flow_custom_tools:
+  agent_id: "your-crewai-flow-custom-tools-agent-id"
+  api_key: "your-crewai-flow-custom-tools-agent-api-key"
 ```
 
 Memory tools example:
@@ -331,7 +336,7 @@ Use this example if:
 This example reads the model from the `CREWAI_MODEL` environment variable, so set it in `.env` before running:
 
 ```bash
-CREWAI_MODEL=gpt-5.4-mini
+CREWAI_MODEL=gpt-6-luna
 ```
 
 Run:
@@ -352,12 +357,14 @@ A typical adapter configuration looks like this:
 
 ```python notest
 adapter = CrewAIAdapter(
-    model="gpt-5.4-mini",
-    role="Research Assistant",
-    goal="Help users find and analyze information",
-    backstory="Expert researcher with deep domain knowledge",
-    custom_section="Extra instructions",
-    verbose=False,
+    CrewAIAdapterConfig(
+        model="gpt-6-luna",
+        role="Research Assistant",
+        goal="Help users find and analyze information",
+        backstory="Expert researcher with deep domain knowledge",
+        custom_section="Extra instructions",
+        verbose=False,
+    )
 )
 ```
 
@@ -402,9 +409,8 @@ The adapter uses an OpenAI-compatible model interface.
 
 That includes:
 
-- `gpt-5.4-mini`
-- `gpt-5.4-mini`
-- `gpt-4-turbo`
+- `gpt-6-luna`
+- `gpt-5.5`
 - other OpenAI-compatible models
 
 ## Common problems

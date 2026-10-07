@@ -28,7 +28,6 @@ from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterCo
 from band.integrations.a2a.gateway.adapter import (
     BandAgentExecutor,
     GatewayRequest,
-    _redact_credentials,
 )
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
@@ -96,16 +95,22 @@ class TestGatewayConfiguration:
         with pytest.raises(ValueError, match="response_timeout_s"):
             A2AGatewayAdapterConfig(response_timeout_s=0)
 
-    def test_gateway_url_derives_from_port(self) -> None:
+    def test_public_url_derives_from_port(self) -> None:
         """Passing only port must not leave agent cards on the default URL."""
-        adapter = A2AGatewayAdapter(port=8080, rest_client=MagicMock())
-        assert adapter.gateway_url == "http://localhost:8080"
+        config = A2AGatewayAdapterConfig(port=8080)
+        assert config.public_url == "http://localhost:8080"
 
     def test_explicit_gateway_url_wins(self) -> None:
-        adapter = A2AGatewayAdapter(
-            gateway_url="https://gw.example.com", port=8080, rest_client=MagicMock()
+        config = A2AGatewayAdapterConfig(
+            gateway_url="https://gw.example.com", port=8080
         )
-        assert adapter.gateway_url == "https://gw.example.com"
+        assert config.public_url == "https://gw.example.com"
+
+
+def test_peer_messages_are_not_judged_as_turns() -> None:
+    """Peer messages answer an A2A caller, not the room; judging them would
+    report each one as a missing reply."""
+    assert not A2AGatewayAdapter(rest_client=MagicMock()).judges_turns
 
 
 class TestGatewayStartup:
@@ -132,6 +137,29 @@ class TestGatewayStartup:
                 "request_options"
             ]
             == DEFAULT_REQUEST_OPTIONS
+        )
+
+    @pytest.mark.asyncio
+    async def test_server_listens_on_configured_port_and_advertises_its_url(
+        self,
+    ) -> None:
+        adapter = A2AGatewayAdapter(
+            A2AGatewayAdapterConfig(port=8080), rest_client=MagicMock()
+        )
+        adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
+            return_value=peers_page([])
+        )
+
+        with patch(
+            "band.integrations.a2a.gateway.adapter.GatewayServer"
+        ) as server_type:
+            server_type.return_value.start = AsyncMock()
+            await adapter.on_started("Gateway", "A2A Gateway")
+
+        server_args = server_type.call_args.kwargs
+        assert (server_args["port"], server_args["gateway_url"]) == (
+            8080,
+            "http://localhost:8080",
         )
 
 
@@ -238,7 +266,7 @@ class TestGatewayExecution:
         # Generous timeout: the test never needs it to fire, and a tight one
         # turns a loaded CI runner into a spurious FAILED terminal event.
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=30),
+            A2AGatewayAdapterConfig(response_timeout_s=30),
             rest_client=MagicMock(),
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
@@ -291,7 +319,7 @@ class TestGatewayExecution:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=0.01),
+            A2AGatewayAdapterConfig(response_timeout_s=0.01),
             rest_client=MagicMock(),
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
@@ -341,13 +369,14 @@ class TestGatewayExecution:
     @pytest.mark.asyncio
     async def test_send_failure_redacts_secrets_from_reported_metadata(self) -> None:
         """The sanitized exception text reaches the A2A client's metadata --
-        a leaked bearer token or API key must not."""
+        a leaked credential, including its comma-separated parts, must not."""
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=RuntimeError(
-                "upstream rejected Bearer abc123.def456 (api_key=sk-live-secret)"
+                "Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/x, "
+                "SignedHeaders=host;x-amz-date, Signature=abcdef0123"
             )
         )
         queue = EventQueueLegacy()
@@ -357,34 +386,7 @@ class TestGatewayExecution:
 
         await queue.dequeue_event()
         terminal = await queue.dequeue_event()
-        message = terminal.metadata["failure"]["message"]
-        assert "abc123.def456" not in message
-        assert "sk-live-secret" not in message
-        assert "Bearer [REDACTED]" in message
-        assert "api_key=[REDACTED]" in message
-
-    def test_redact_credentials_full_value_scheme_prefixed(self) -> None:
-        """A scheme-prefixed credential value (a space between the key and
-        the secret) must be redacted in full, not just up to that space."""
-        redacted = _redact_credentials("Authorization: ApiKey sk-live-abcdef123456")
-        assert "sk-live-abcdef123456" not in redacted
-        assert redacted == "Authorization=[REDACTED]"
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "password=hunter2",
-            "client_secret=abc123XYZ",
-            "AWS_SECRET_ACCESS_KEY=AKIAABCDEFGHIJKLMNOP",
-        ],
-    )
-    def test_redact_credentials_covers_non_token_keywords(self, text: str) -> None:
-        """token/authorization/api_key aren't the only credential-shaped
-        keywords a peer's error text can embed -- password, secret (and its
-        client_secret compound), and access_key must be redacted too."""
-        redacted = _redact_credentials(text)
-        secret_value = text.split("=", 1)[1]
-        assert secret_value not in redacted
+        assert terminal.metadata["failure"]["message"] == "Authorization=[REDACTED]"
 
     @pytest.mark.asyncio
     async def test_establish_request_raises_when_peer_missing(self) -> None:
@@ -650,7 +652,7 @@ class TestGatewayResponses:
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
-        secret_message = "upstream rejected token=sk-live-secret"
+        secret_message = "Invalid API key: sk-live-secret, retry"
         peer_failure = {
             "provider": "codex",
             "code": "Unauthorized",
@@ -669,17 +671,14 @@ class TestGatewayResponses:
         event = await queue.dequeue_event()
 
         assert event.status.state == TaskState.TASK_STATE_FAILED
-        assert "sk-live-secret" not in event.metadata["failure"]["message"]
-        assert "sk-live-secret" not in event.status.message.parts[0].text
+        assert event.metadata["failure"]["message"] == "Invalid API key=[REDACTED]"
+        assert event.status.message.parts[0].text == "Invalid API key=[REDACTED]"
 
     @pytest.mark.asyncio
     async def test_relayed_peer_failure_redacts_nested_credentials_in_detail(
         self,
     ) -> None:
-        """A peer's AgentFailure.detail can nest a credential-bearing string
-        inside a dict/list (e.g. Codex's own codex_additional_details) --
-        _redact_credentials_deep must recurse into it, not just the flat
-        message string."""
+        """Nested detail credentials are redacted before relay."""
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
@@ -690,6 +689,9 @@ class TestGatewayResponses:
             "detail": {
                 "codex_additional_details": {
                     "raw": ["upstream said: token=sk-live-nested-secret"],
+                    "token=sk-live-key-secret": "diagnostic value",
+                    "clientSecret": "sk-live-bare-secret",
+                    "body": '{"api_key": "sk-live-json"}',
                 },
             },
         }
@@ -707,6 +709,9 @@ class TestGatewayResponses:
         assert event.status.state == TaskState.TASK_STATE_FAILED
         detail = event.metadata["failure"]["detail"]
         assert "sk-live-nested-secret" not in str(detail)
+        assert "sk-live-key-secret" not in str(detail)
+        assert detail["codex_additional_details"]["clientSecret"] == "[REDACTED]"
+        assert detail["codex_additional_details"]["body"] == '{"api_key=[REDACTED]'
 
     @pytest.mark.asyncio
     async def test_drops_non_dict_peer_failure_metadata(self) -> None:

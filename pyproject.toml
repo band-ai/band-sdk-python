@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "3.2.1"
+version = "4.0.0"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,11 +19,12 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 dependencies = [
     "band-client-rest==0.0.41",
-    "band-sdk-core==2.6.0",
+    "band-sdk-core==2.8.0",
     "phoenix-channels-python-client>=0.2.4",
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
@@ -62,7 +63,7 @@ opencode = [
     "mcp>=1.28.1,<2",
 ]
 letta = [
-    "letta-client>=0.1.0",
+    "letta-client>=1.0.0",
     # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
     "mcp>=1.28.1,<2",
 ]
@@ -85,7 +86,7 @@ langgraph = [
     "beautifulsoup4>=4.12.0",
 ]
 claude_sdk = [
-    "claude-agent-sdk>=0.2.82",  # Floor: EffortLevel exported as a named type (ClaudeSDKAdapter's effort option); also carries ResultMessage.errors/api_error_status (used by the failure path). Requires Node.js 20+ and @anthropic-ai/claude-code CLI
+    "claude-agent-sdk>=0.2.159",  # Floor: EffortLevel exported as a named type (ClaudeSDKAdapter's effort option); also carries ResultMessage.errors/api_error_status (used by the failure path). Requires Node.js 20+ and @anthropic-ai/claude-code CLI
     "mcp>=1.28.1,<2",
 ]
 copilot_sdk = [
@@ -199,7 +200,7 @@ dev = [
     # Include anthropic for testing
     "anthropic>=0.75.0,<1",
     # Include claude_sdk for testing
-    "claude-agent-sdk>=0.2.82",
+    "claude-agent-sdk>=0.2.159",
     # Include copilot_sdk for testing
     "github-copilot-sdk>=1.0.5",
     # Include langgraph for testing
@@ -236,7 +237,7 @@ dev = [
     # Include Strands Agents for testing
     "strands-agents[openai]>=1.40,<2",
     # Include letta-client for testing
-    "letta-client>=0.1.0",
+    "letta-client>=1.0.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",

@@ -202,7 +202,7 @@ AgentCore Runtime:
 | Env var | What it does |
 |---|---|
 | `SYSTEM_PROMPT` | Your behaviour-only prompt (see above). |
-| `ANTHROPIC_MODEL` | Override the default model (`claude-sonnet-4-5-20250929`). |
+| `ANTHROPIC_MODEL` | Override the default model (`claude-sonnet-5-5`). |
 | `EMIT_EXECUTION` | `"true"` (default) — every `tool_call` / `tool_result` becomes a platform event visible in the Band UI. Set `"false"` to silence them. |
 
 ### Swapping in a different adapter
@@ -244,7 +244,7 @@ async def get_weather(args: WeatherInput) -> str:
 
 
 return AnthropicAdapter(
-    ...,
+    AnthropicAdapterConfig(...),
     additional_tools=[(WeatherInput, get_weather)],
 )
 ```

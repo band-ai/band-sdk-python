@@ -10,8 +10,10 @@ message history management, tool execution, custom tools, and error handling.
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -20,7 +22,7 @@ from anthropic import APIStatusError
 from anthropic.types import TextBlock, ToolUseBlock
 from pydantic import BaseModel, Field
 
-from band.adapters.anthropic import AnthropicAdapter
+from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import (
     USAGE_EVENT_TYPE,
@@ -30,7 +32,9 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
+from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
+from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
 
 def make_usage(inp: int, out: int) -> SimpleNamespace:
@@ -78,13 +82,28 @@ def mock_tools():
 class TestInitialization:
     """Tests for adapter initialization."""
 
-    def test_system_prompt_override(self):
-        """Should use custom system_prompt if provided."""
-        adapter = AnthropicAdapter(
-            system_prompt="You are a custom assistant.",
-        )
+    def test_provider_key_authenticates_the_client(self):
+        with patch("band.adapters.anthropic.AsyncAnthropic") as client_cls:
+            AnthropicAdapter(AnthropicAdapterConfig(provider_key="sk-test-key"))
 
-        assert adapter.system_prompt == "You are a custom assistant."
+        client_cls.assert_called_once_with(api_key="sk-test-key")
+
+    def test_rejects_non_positive_max_tokens(self):
+        with pytest.raises(ValueError, match="max_tokens"):
+            AnthropicAdapterConfig(max_tokens=0)
+
+    @pytest.mark.asyncio
+    async def test_requests_use_configured_model_and_max_tokens(self):
+        adapter = AnthropicAdapter(
+            AnthropicAdapterConfig(model="claude-test-model", max_tokens=123)
+        )
+        create = AsyncMock()
+        adapter.client = MagicMock(messages=MagicMock(create=create))
+
+        await adapter._call_anthropic(messages=[], tools=[])
+
+        assert create.call_args.kwargs["model"] == "claude-test-model"
+        assert create.call_args.kwargs["max_tokens"] == 123
 
 
 class TestOnStarted:
@@ -103,7 +122,11 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt_when_provided(self):
         """Should use custom system_prompt instead of rendered one."""
-        adapter = AnthropicAdapter(system_prompt="Custom prompt here.")
+        adapter = AnthropicAdapter(
+            AnthropicAdapterConfig(
+                system_prompt="Custom prompt here.", custom_section="Be terse."
+            )
+        )
 
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
 
@@ -809,6 +832,51 @@ async def failing_tool(args: EchoInput) -> str:
 
 class TestCustomTools:
     """Tests for custom tool support."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, sample_message, declare: Callable[..., Any], complete: bool
+    ):
+        @declare
+        async def file_echo(args: EchoInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = AnthropicAdapter(additional_tools=[(EchoInput, file_echo)])
+        await adapter.on_started("TestBot", "Test bot")
+        call_anthropic = AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[
+                        ToolUseBlock(
+                            type="tool_use",
+                            id="tool-1",
+                            name="echo",
+                            input={"message": "go"},
+                        )
+                    ],
+                    usage=make_usage(1, 1),
+                ),
+                SimpleNamespace(
+                    stop_reason="end_turn", content=[], usage=make_usage(1, 1)
+                ),
+            ]
+        )
+
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert tools.turn.complete is complete
 
     def test_accepts_additional_tools_parameter(self):
         """Adapter should accept list of (Model, func) tuples."""

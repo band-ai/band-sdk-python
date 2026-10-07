@@ -34,7 +34,11 @@ import pytest
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
+from tests.e2e.baseline.smoke.samples.sample_agents import (
+    LIVENESS_REPLY_PROMPT,
+    liveness_probe,
+    unique_marker,
+)
 from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
@@ -47,13 +51,14 @@ BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=INSTANCES)
 
 
 @per_adapter(
+    prompt=LIVENESS_REPLY_PROMPT,
     exclude=[
         ExcludedAdapter(
             Adapter.LETTA,
             "global-by-name MCP tools collide across concurrent same-adapter "
             "instances (see module docstring)",
         )
-    ]
+    ],
 )
 # Diagnosed live via the adapter's turn-phase logs: under K concurrent turns on
 # one shared serve + a throttled free model, a session's terminal event

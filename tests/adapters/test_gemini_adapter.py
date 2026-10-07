@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -12,9 +14,26 @@ from google.genai import types
 from google.genai.errors import ServerError
 from pydantic import BaseModel, Field, ValidationError
 
-from band.adapters.gemini import GeminiAdapter
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+)
 from band.core.types import Emit, PlatformMessage, ToolEventKey
+from band.runtime.tools import BandTool
+from band.testing import (
+    FakeAgentTools,
+    reported_failures,
+)
+from tests.adapters.genaikit import (
+    ModelFailureCases,
+    PlatformSchemaFakeTools,
+    text_reply,
+    tool_call,
+)
+from tests.framework_conformance.turnprobes import (
+    CUSTOM_TOOL_DECLARATIONS,
+    turn_input,
+)
 
 
 @pytest.fixture
@@ -72,10 +91,70 @@ def _response_with_function_call(
     return response
 
 
+@pytest.fixture
+def scripted_adapter() -> Callable[..., Awaitable[GeminiAdapter]]:
+    """Build a started adapter whose client returns ``responses`` in order."""
+
+    async def build(
+        *responses: types.GenerateContentResponse, **features: Any
+    ) -> GeminiAdapter:
+        adapter = GeminiAdapter(**features)
+        await adapter.on_started("TestBot", "Test bot")
+        adapter.client = MagicMock()
+        adapter.client.aio.models.generate_content = AsyncMock(
+            side_effect=list(responses)
+        )
+        return adapter
+
+    return build
+
+
+class TestConfig:
+    @pytest.mark.parametrize(
+        ("setting", "value"),
+        [
+            ("max_output_tokens", 0),
+            ("max_tool_rounds", 0),
+            ("max_retries", -1),
+            ("retry_base_delay_s", -0.5),
+            ("max_history_messages", 0),
+        ],
+    )
+    def test_rejects_out_of_range_settings(self, setting: str, value: float) -> None:
+        with pytest.raises(ValueError, match=setting):
+            GeminiAdapterConfig.model_validate({setting: value})
+
+    def test_provider_key_authenticates_the_client(self) -> None:
+        adapter = GeminiAdapter(GeminiAdapterConfig(provider_key="AIza-test-key"))
+
+        with patch("band.adapters.gemini.genai.Client") as client_cls:
+            adapter._ensure_client()
+
+        client_cls.assert_called_once_with(api_key="AIza-test-key")
+
+    @pytest.mark.asyncio
+    async def test_requests_use_configured_model_and_sampling(self) -> None:
+        adapter = GeminiAdapter(
+            GeminiAdapterConfig(
+                model="gemini-test-model", max_output_tokens=321, temperature=0.2
+            )
+        )
+        generate = AsyncMock(return_value=_response_with_text("ok"))
+        adapter.client = MagicMock()
+        adapter.client.aio.models.generate_content = generate
+
+        await adapter._call_gemini(contents=[], tools=[])
+
+        request = generate.call_args.kwargs
+        assert request["model"] == "gemini-test-model"
+        assert request["config"].max_output_tokens == 321
+        assert request["config"].temperature == 0.2
+
+
 class TestOnStarted:
     @pytest.mark.asyncio
     async def test_renders_system_prompt(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
         assert adapter._system_prompt != ""
         assert "TestBot" in adapter._system_prompt
@@ -83,8 +162,9 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt_when_provided(self):
         adapter = GeminiAdapter(
-            system_prompt="Custom prompt here.",
-            provider_key="test-key",
+            GeminiAdapterConfig(
+                system_prompt="Custom prompt here.", custom_section="Be terse."
+            )
         )
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
         assert adapter._system_prompt == "Custom prompt here."
@@ -93,7 +173,7 @@ class TestOnStarted:
 class TestOnMessage:
     @pytest.mark.asyncio
     async def test_initializes_history_on_bootstrap(self, sample_message, mock_tools):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
         with patch.object(
@@ -115,7 +195,6 @@ class TestOnMessage:
     async def test_executes_tool_loop(self, sample_message, mock_tools):
         adapter = GeminiAdapter(
             emit=Emit.TOOL_CALLS,
-            provider_key="test-key",
         )
         await adapter.on_started("TestBot", "Test bot")
 
@@ -153,7 +232,6 @@ class TestOnMessage:
     ):
         adapter = GeminiAdapter(
             emit=Emit.TOOL_CALLS,
-            provider_key="test-key",
         )
         await adapter.on_started("TestBot", "Test bot")
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
@@ -183,7 +261,7 @@ class TestOnMessage:
         mock_tools.execute_tool_call.assert_called_once()
 
     def test_extract_candidate_content_preserves_function_call_id_in_fallback(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         response = MagicMock()
         response.candidates = [MagicMock(content=None)]
         response.function_calls = [
@@ -205,7 +283,7 @@ class TestOnMessage:
 class TestErrorReporting:
     @pytest.mark.asyncio
     async def test_reports_generic_failure(self, sample_message, mock_tools):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
         with (
@@ -237,7 +315,7 @@ class TestErrorReporting:
     ):
         """ServerError's status/message are real provider data -- preserve
         them as code/detail rather than falling back to the generic shape."""
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
         error = ServerError(
             503, {"error": {"status": "UNAVAILABLE", "message": "overloaded"}}, None
@@ -270,7 +348,7 @@ class TestErrorReporting:
         crash failure reporting -- band_sdk_core's AgentFailure requires
         code: str | None, but ServerError.status is an unconstrained
         Optional[str] at runtime (parsed straight off the response JSON)."""
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
         error = ServerError(503, {"status": 503, "message": "backend overloaded"}, None)
 
@@ -295,13 +373,27 @@ class TestErrorReporting:
         assert failure.detail == "backend overloaded"
 
 
+class TestModelFailuresReturnedAsData(ModelFailureCases):
+    PROVIDER = "gemini"
+
+    @pytest.mark.asyncio
+    async def test_reply_cut_off_at_max_tokens_completes(self, scripted_adapter):
+        adapter = await scripted_adapter(
+            tool_call(BandTool.SEND_MESSAGE, {"content": "Hi", "mentions": ["Alice"]}),
+            text_reply("Anything else", finish=types.FinishReason.MAX_TOKENS),
+        )
+        tools = PlatformSchemaFakeTools()
+
+        await adapter.on_event(turn_input(tools))
+
+        assert reported_failures(tools) == []
+
+
 class TestRetries:
     @pytest.mark.asyncio
     async def test_retries_transient_server_errors(self):
         adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
+            GeminiAdapterConfig(max_retries=1, retry_base_delay_s=0)
         )
         adapter._system_prompt = "system"
         adapter.client = MagicMock()
@@ -357,7 +449,7 @@ class TestBuildGeminiTools:
                 }
             ]
         )
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
 
         tools = adapter._build_gemini_tools(mock_tools)
 
@@ -380,7 +472,6 @@ class TestCustomTools:
 
         adapter = GeminiAdapter(
             additional_tools=[(EchoInput, echo_tool)],
-            provider_key="test-key",
         )
         function_calls = [
             types.FunctionCall(name="echo", args={"text": "hello"}, id="c1")
@@ -394,6 +485,46 @@ class TestCustomTools:
         assert function_response.response == {"output": "hello"}
         mock_tools.execute_tool_call.assert_not_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, sample_message, declare: Callable[..., Any], complete: bool
+    ):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declare
+        async def file_report(inp: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = GeminiAdapter(additional_tools=[(FileInput, file_report)])
+        await adapter.on_started("TestBot", "Test bot")
+
+        with patch.object(
+            adapter,
+            "_call_gemini",
+            AsyncMock(
+                side_effect=[
+                    _response_with_function_call("file", {"note": "go"}, "call_1"),
+                    _response_with_text(""),
+                ]
+            ),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert tools.turn.complete is complete
+
 
 class TestReadRoomFileImagePassthrough:
     @pytest.mark.asyncio
@@ -405,7 +536,7 @@ class TestReadRoomFileImagePassthrough:
                 ]
             }
         )
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         function_calls = [
             types.FunctionCall(
                 name="band_read_room_file", args={"file_id": "f1"}, id="c1"
@@ -428,7 +559,7 @@ class TestReadRoomFileImagePassthrough:
         mock_tools.execute_tool_call = AsyncMock(
             return_value={"name": "notes.txt", "content_type": "text/plain"}
         )
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         function_calls = [
             types.FunctionCall(
                 name="band_read_room_file", args={"file_id": "f1"}, id="c1"
@@ -463,7 +594,7 @@ class TestToolEventRedaction:
                 ]
             }
         )
-        adapter = GeminiAdapter(provider_key="test-key", emit=Emit.TOOL_CALLS)
+        adapter = GeminiAdapter(emit=Emit.TOOL_CALLS)
         function_calls = [
             types.FunctionCall(
                 name="band_read_room_file", args={"file_id": "f1"}, id="c1"
@@ -486,7 +617,7 @@ class TestToolEventRedaction:
         (up to ~1MB) have no business in a platform-visible log event."""
 
         mock_tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
-        adapter = GeminiAdapter(provider_key="test-key", emit=Emit.TOOL_CALLS)
+        adapter = GeminiAdapter(emit=Emit.TOOL_CALLS)
         raw_content = "the quick brown fox" * 100
         function_calls = [
             types.FunctionCall(
@@ -509,7 +640,7 @@ class TestToolEventRedaction:
 class TestOnCleanup:
     @pytest.mark.asyncio
     async def test_removes_room_history(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         adapter._message_history["room-1"] = [
             types.Content(role="user", parts=[types.Part.from_text(text="hi")])
         ]
@@ -518,7 +649,7 @@ class TestOnCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_twice_is_idempotent(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         adapter._message_history["room-1"] = []
         await adapter.on_cleanup("room-1")
         await adapter.on_cleanup("room-1")  # Should not raise
@@ -526,12 +657,12 @@ class TestOnCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_unknown_room_is_noop(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_cleanup("nonexistent-room")  # Should not raise
         assert "nonexistent-room" not in adapter._message_history
 
     def test_trim_history_caps_at_max(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=5)
+        adapter = GeminiAdapter(GeminiAdapterConfig(max_history_messages=5))
         adapter._message_history["room-1"] = [
             types.Content(role="user", parts=[types.Part.from_text(text=f"msg-{i}")])
             for i in range(10)
@@ -542,7 +673,7 @@ class TestOnCleanup:
         assert adapter._message_history["room-1"][0].parts[0].text == "msg-5"
 
     def test_trim_history_noop_when_under_limit(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=50)
+        adapter = GeminiAdapter(GeminiAdapterConfig(max_history_messages=50))
         adapter._message_history["room-1"] = [
             types.Content(role="user", parts=[types.Part.from_text(text="hi")])
         ]
@@ -550,7 +681,7 @@ class TestOnCleanup:
         assert len(adapter._message_history["room-1"]) == 1
 
     def test_trim_history_drops_leading_model_entry(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=3)
+        adapter = GeminiAdapter(GeminiAdapterConfig(max_history_messages=3))
         adapter._message_history["room-1"] = [
             types.Content(role="user", parts=[types.Part.from_text(text="msg-0")]),
             types.Content(role="model", parts=[types.Part.from_text(text="reply-0")]),
@@ -568,7 +699,7 @@ class TestOnCleanup:
         assert trimmed[1].parts[0].text == "reply-1"
 
     def test_trim_history_strips_orphaned_leading_tool_response_parts(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=3)
+        adapter = GeminiAdapter(GeminiAdapterConfig(max_history_messages=3))
         adapter._message_history["room-1"] = [
             types.Content(role="user", parts=[types.Part.from_text(text="msg-0")]),
             types.Content(
@@ -609,7 +740,7 @@ class TestOnCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_before_any_messages(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
         await adapter.on_cleanup("room-never-used")  # Should not raise
 
@@ -617,7 +748,7 @@ class TestOnCleanup:
 class TestValidationErrorHandling:
     @pytest.mark.asyncio
     async def test_validation_error_returns_friendly_message(self, mock_tools):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
 
         mock_tools.execute_tool_call = AsyncMock(
             side_effect=ValidationError.from_exception_data(
@@ -650,10 +781,7 @@ class TestMaxToolRounds:
     async def test_raises_runtime_error_when_max_rounds_exceeded(
         self, sample_message, mock_tools
     ):
-        adapter = GeminiAdapter(
-            max_tool_rounds=2,
-            provider_key="test-key",
-        )
+        adapter = GeminiAdapter(GeminiAdapterConfig(max_tool_rounds=2))
         await adapter.on_started("TestBot", "Test bot")
 
         # Always return a function call so the loop never terminates naturally
@@ -690,9 +818,7 @@ class TestHttpxRetries:
     @pytest.mark.asyncio
     async def test_retries_on_timeout_exception(self):
         adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
+            GeminiAdapterConfig(max_retries=1, retry_base_delay_s=0)
         )
         adapter._system_prompt = "system"
         adapter.client = MagicMock()
@@ -721,9 +847,7 @@ class TestHttpxRetries:
     @pytest.mark.asyncio
     async def test_retries_on_transport_error(self):
         adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
+            GeminiAdapterConfig(max_retries=1, retry_base_delay_s=0)
         )
         adapter._system_prompt = "system"
         adapter.client = MagicMock()
@@ -752,9 +876,7 @@ class TestHttpxRetries:
     @pytest.mark.asyncio
     async def test_raises_after_exhausting_retries(self):
         adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
+            GeminiAdapterConfig(max_retries=1, retry_base_delay_s=0)
         )
         adapter._system_prompt = "system"
         adapter.client = MagicMock()
@@ -783,7 +905,7 @@ class TestParticipantsContactsInjection:
     async def test_participants_msg_injected_into_history(
         self, sample_message, mock_tools
     ):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
         with patch.object(
@@ -805,7 +927,7 @@ class TestParticipantsContactsInjection:
 
     @pytest.mark.asyncio
     async def test_contacts_msg_injected_into_history(self, sample_message, mock_tools):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
         with patch.object(
@@ -828,7 +950,7 @@ class TestParticipantsContactsInjection:
     async def test_both_participants_and_contacts_injected(
         self, sample_message, mock_tools
     ):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
         with patch.object(
@@ -855,7 +977,7 @@ class TestParticipantsContactsInjection:
 
 class TestEmptyCandidates:
     def test_extract_candidate_content_returns_none_for_empty_response(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         response = MagicMock()
         response.candidates = []
         response.function_calls = []
@@ -864,7 +986,7 @@ class TestEmptyCandidates:
         assert content is None
 
     def test_extract_candidate_content_returns_none_when_no_candidates(self):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = GeminiAdapter()
         response = MagicMock()
         response.candidates = None
         response.function_calls = []

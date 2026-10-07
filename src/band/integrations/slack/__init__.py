@@ -7,20 +7,22 @@ peer-slug gateway.
 
 Example:
     from band import Agent
-    from band.adapters import AnthropicAdapter
-    from band.integrations.slack import SlackAdapter, SlackApp
+    from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
+    from band.integrations.slack import SlackAdapter, SlackAdapterConfig, SlackApp
 
-    brain = AnthropicAdapter(model="claude-sonnet-4-6")
+    brain = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-5-5"))
 
     slack = SlackAdapter(
-        inner=brain,
-        apps=[
-            SlackApp(
-                slug="recruit",
-                signing_secret="...",
-                bot_token="xoxb-...",
+        SlackAdapterConfig(
+            apps=(
+                SlackApp(
+                    slug="recruit",
+                    signing_secret="...",
+                    bot_token="xoxb-...",
+                ),
             ),
-        ],
+        ),
+        inner=brain,
     )
 
     agent = Agent.create(adapter=slack, agent_id="slack-bridge", api_key="...")
@@ -38,6 +40,9 @@ from band.exports import lazy_exports
 
 if TYPE_CHECKING:
     from band.integrations.slack.adapter import SlackAdapter as SlackAdapter
+    from band.integrations.slack.adapter import (
+        SlackAdapterConfig as SlackAdapterConfig,
+    )
     from band.integrations.slack.types import (
         SlackApp as SlackApp,
     )
@@ -47,6 +52,6 @@ if TYPE_CHECKING:
 
 __all__, __getattr__ = lazy_exports(
     __name__,
-    adapter=["SlackAdapter"],
+    adapter=["SlackAdapter", "SlackAdapterConfig"],
     types=["SlackApp", "SlackSessionState"],
 )

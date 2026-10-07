@@ -54,6 +54,20 @@ class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
 
 
+class ProviderRunError(BandError):
+    """A provider or framework returned a failed run as data instead of raising.
+    Actionable by the adapter: raise it inside the turn so the turn is reported
+    failed.
+
+    ``code`` is coarse and safe to post; ``detail`` is provider text, which can
+    echo the prompt, so it belongs only in logs.
+    """
+
+    def __init__(self, code: str, detail: str | None = None) -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+
+
 def _levenshtein(a: str, b: str) -> int:
     """Iterative Levenshtein distance. Pure Python, no dependencies."""
     if a == b:

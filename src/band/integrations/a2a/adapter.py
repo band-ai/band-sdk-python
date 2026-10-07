@@ -47,7 +47,7 @@ from band.integrations.a2a.protocol import (
     task_id_from_stream_event,
     task_response_text,
 )
-from band.integrations.a2a.types import A2AAuth, A2ASessionState
+from band.integrations.a2a.types import A2AAdapterConfig, A2ASessionState
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +78,10 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     Example:
         from band import Agent
-        from band.integrations.a2a import A2AAdapter
+        from band.integrations.a2a import A2AAdapter, A2AAdapterConfig
 
         adapter = A2AAdapter(
-            remote_url="https://currency-agent.example.com",
-            streaming=True,
+            A2AAdapterConfig(remote_url="https://currency-agent.example.com")
         )
         agent = Agent.create(
             adapter=adapter,
@@ -95,27 +94,27 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
+    @property
+    def judges_turns(self) -> bool:
+        """The remote A2A agent owns its replies, so its turns are not judged."""
+        return False
+
     def __init__(
         self,
-        remote_url: str,
-        auth: A2AAuth | None = None,
-        streaming: bool = True,
+        config: A2AAdapterConfig,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize A2A adapter.
 
         Args:
-            remote_url: Base URL of the remote A2A agent.
-            auth: Optional authentication configuration.
-            streaming: Whether to use streaming mode (SSE) for responses.
+            config: Remote agent URL, auth, and streaming mode — see
+                :class:`A2AAdapterConfig`.
         """
         super().__init__(
             history_converter=A2AHistoryConverter(),
             **features,
         )
-        self.remote_url = remote_url
-        self.auth = auth
-        self.streaming = streaming
+        self.config = config
         self._client: Client | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._contexts: dict[str, str] = {}  # room_id → A2A context_id
@@ -128,7 +127,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """Initialize A2A client connection."""
         await super().on_started(agent_name, agent_description)
 
-        headers = self.auth.to_headers() if self.auth else {}
+        headers = self.config.auth.to_headers() if self.config.auth else {}
 
         # httpx's default 5s read timeout fires on the normal, multi-second
         # gap between SSE events during a real remote turn (a live LLM call,
@@ -139,14 +138,16 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             timeout=httpx.Timeout(10.0, read=_SSE_READ_TIMEOUT_S),
         )
         factory = ClientFactory(
-            ClientConfig(streaming=self.streaming, httpx_client=self._http_client)
+            ClientConfig(
+                streaming=self.config.streaming, httpx_client=self._http_client
+            )
         )
-        self._client = await factory.create_from_url(self.remote_url)
+        self._client = await factory.create_from_url(self.config.remote_url)
 
         logger.info(
             "Connected to A2A agent at %s (streaming=%s, auth=%s)",
-            self.remote_url,
-            self.streaming,
+            self.config.remote_url,
+            self.config.streaming,
             bool(headers),
         )
 

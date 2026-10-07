@@ -15,3 +15,14 @@ Before writing a workaround for a bug in the generated client:
 4. **Make a test against the real dependency the tripwire** (not a stubbed exception), and
    confirm the CI result is real: a grouped Dependabot bump (`uv-minor-and-patch`) can fail at
    collection from an unrelated package first and hide it.
+
+## Tool path identifiers
+
+Tool inputs validate REST path identifiers before dispatch using the shared
+[identifier definitions](../src/band/runtime/tools/inputs/identifiers.py). IDs
+contain ASCII letters, digits, underscores and hyphens; empty values, whitespace
+and routing delimiters are rejected with standard field-specific tool feedback.
+Accepted strings retain their exact spelling. Task references also accept the
+existing leading `#` shorthand, including board numbers and UUIDs. This lexical
+check does not establish resource existence. Direct REST client calls remain
+responsible for their own input validation.

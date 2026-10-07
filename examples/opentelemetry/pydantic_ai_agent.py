@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[pydantic-ai,logging]>=1.2.0",
+#   "band-sdk[pydantic-ai,logging]>=4.0.0",
 #   "opentelemetry-sdk>=1.44.0",
 #   "opentelemetry-instrumentation-logging>=0.65b0",
 # ]
@@ -30,7 +30,7 @@ from otel_setup import telemetry
 from pydantic_ai import InstrumentationSettings
 
 from band import Agent, LoggingStyle, LogSettings, chatty_logger_levels
-from band.adapters import PydanticAIAdapter
+from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
 SERVICE = "band-pydantic-ai-agent"
 
@@ -59,8 +59,10 @@ async def main() -> None:
         # a global one — `instrument=True` would resolve whatever the process
         # published globally, which is nothing here.
         adapter = PydanticAIAdapter(
-            model="openai:gpt-5.4-mini",
-            custom_section="You are a helpful assistant. Be concise and friendly.",
+            PydanticAIAdapterConfig(
+                model="openai:gpt-6-luna",
+                custom_section="You are a helpful assistant. Be concise and friendly.",
+            ),
             instrument=InstrumentationSettings(tracer_provider=otel.tracer_provider),
         )
 

@@ -72,9 +72,11 @@ class DeliveryStatus(StrEnum):
 
     Mirrors the backend's allowed values. The lifecycle for a recipient is
     ``DELIVERED -> PROCESSING -> PROCESSED | FAILED``. ``FAILED`` is **not**
-    terminal: the platform retries failed messages (bounded by max retries), so
-    a message may cycle ``FAILED -> PROCESSING`` again before reaching
-    ``PROCESSED``. ``PROCESSED`` is the only success terminal.
+    terminal: the platform's ``/next`` serves a failed message again, so a new
+    agent process (or execution context) may cycle it ``FAILED -> PROCESSING``
+    before ``PROCESSED``. The running agent itself skips a message once it has
+    failed ``max_message_retries`` times (default 1). ``PROCESSED`` is the only
+    success terminal.
     """
 
     DELIVERED = "delivered"

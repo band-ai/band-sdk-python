@@ -10,7 +10,7 @@ from band_sdk_core import RoomMembership
 
 # Import test helpers from conftest
 from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
-from band.runtime.presence import RoomPresence
+from band.runtime.presence import JOIN_RETRY_DELAYS_S, RoomPresence
 from tests.conftest import (
     make_message_event,
     make_room_added_event,
@@ -402,6 +402,62 @@ class TestJoiningOnce:
 
         assert presence.roster.tracked_room_ids() == ["room-1"]
         assert mock_link.subscribe_room.call_count == 2  # startup attempt + reconnect
+
+
+@pytest.mark.looptime
+class TestRetryingAFailedJoin:
+    """A failed channel join is retried in the background instead of leaving
+    the room silent until the next reconnect."""
+
+    ALL_RETRIES_S = sum(JOIN_RETRY_DELAYS_S) + 1
+
+    async def test_a_join_that_recovers_is_announced_once_and_retrying_stops(
+        self, mock_link, presences
+    ):
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        mock_link.is_room_subscribed = MagicMock(side_effect=[False, False, True])
+        joined = []
+        presence = presences(auto_subscribe_existing=True)
+        presence.on_room_joined = AsyncMock(side_effect=lambda *a: joined.append(a[0]))
+
+        await presence.start()
+        await asyncio.sleep(self.ALL_RETRIES_S)
+
+        assert joined == ["room-1"]
+        assert presence.roster.tracked_room_ids() == ["room-1"]
+        assert mock_link.subscribe_room.await_count == 3
+
+    async def test_a_room_left_while_retrying_is_never_joined_again(
+        self, mock_link, presences
+    ):
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        mock_link.is_room_subscribed = MagicMock(return_value=False)
+        presence = presences(auto_subscribe_existing=True)
+        await presence.start()
+
+        await presence._on_platform_event(make_room_removed_event("room-1"))
+        mock_link.is_room_subscribed = MagicMock(return_value=True)
+        await asyncio.sleep(self.ALL_RETRIES_S)
+
+        assert mock_link.subscribe_room.await_count == 1
+        assert presence.roster.tracked_room_ids() == []
+
+    async def test_a_room_that_never_recovers_is_left_to_the_next_reconnect(
+        self, mock_link, presences
+    ):
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        mock_link.is_room_subscribed = MagicMock(return_value=False)
+        presence = presences(auto_subscribe_existing=True)
+        await presence.start()
+        await asyncio.sleep(self.ALL_RETRIES_S * 2)
+        attempts = mock_link.subscribe_room.await_count
+
+        mock_link.is_room_subscribed = MagicMock(return_value=True)
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        await presence._handle_reconnect()
+
+        assert attempts == 1 + len(JOIN_RETRY_DELAYS_S), "retries are bounded"
+        assert presence.roster.tracked_room_ids() == ["room-1"]
 
 
 class TestAdmissionRaces:

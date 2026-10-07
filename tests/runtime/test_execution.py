@@ -7,9 +7,15 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from band_sdk_core import ClaimRegistry, RetryTracker
+from band_sdk_core import AgentFailure, ClaimRegistry, RetryTracker
 
 from band.client.streaming import MessageMetadata
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
+    TurnResultAlreadyReported,
+)
+from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
     BacklogProcessResult,
@@ -18,6 +24,7 @@ from band.runtime.execution import (
     ExecutionState,
     _error_label,
 )
+from band.runtime.tools import AgentTools
 from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
@@ -66,6 +73,7 @@ def mock_link():
     link.mark_failed = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.report_activity = AsyncMock(return_value=True)
 
     return link
 
@@ -641,6 +649,7 @@ class TestCrashRecoverySync:
         link.mark_failed = AsyncMock()
         link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
         link.get_stale_processing_messages = AsyncMock(return_value=[])  # No stale msgs
+        link.report_activity = AsyncMock(return_value=True)
 
         return link
 
@@ -1597,6 +1606,40 @@ class TestCrashRecoverySync:
         mock_handler.assert_not_called()
         assert "msg-startup-claim-fails" not in ctx.claims.completed_ids(ctx.room_id)
 
+    async def test_refused_claims_never_spend_the_retry_budget(
+        self, mock_link_with_next, mock_handler
+    ):
+        """A platform that refuses claims under load must not poison the message:
+        it runs once a claim finally lands, however many refusals came first."""
+        msg = PlatformMessage(
+            id="msg-claim-refused-under-load",
+            room_id="room-123",
+            content="claim refused under load",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(UTC),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(side_effect=[msg] * 4 + [None])
+        mock_link_with_next.mark_processing = AsyncMock(
+            side_effect=[False, False, False, True]
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False, max_message_retries=1),
+        )
+
+        for _ in range(3):
+            assert await ctx._synchronize_with_next() is False
+        assert await ctx._synchronize_with_next() is True
+
+        mock_handler.assert_awaited_once()
+        assert not ctx._retry_tracker.is_permanently_failed(msg.id)
+
     async def test_startup_backlog_claim_failure_does_not_process_newer_ws_event(
         self, mock_link_with_next, mock_handler
     ):
@@ -1837,6 +1880,196 @@ class TestCrashRecoverySync:
 
         assert result == BacklogProcessResult.ADVANCED
         assert failing_handler.await_count == 1
+
+
+class TestTurnFailureReport:
+    """A final failed turn is reported to the room as an ``error`` event
+    instead of failing silently (report_turn_failures_to_room)."""
+
+    @pytest.fixture
+    def error_events(self, mock_link, mock_rest_client) -> AsyncMock:
+        """The real-signature event-create mock ``send_failure`` posts through."""
+        mock_link.rest.agent_api_events = mock_rest_client.agent_api_events
+        return mock_rest_client.agent_api_events.create_agent_chat_event
+
+    @staticmethod
+    def _reporters(error_events: AsyncMock) -> list[str]:
+        """The ``AgentFailure.provider`` of each error event posted, in order."""
+        return [
+            call.kwargs["event"].metadata["failure"]["provider"]
+            for call in error_events.call_args_list
+        ]
+
+    @staticmethod
+    async def _failing_handler(ctx, event) -> None:
+        raise RuntimeError("upstream rejected api_key=sk-live-secret")
+
+    @classmethod
+    def _context(cls, mock_link, handler=None, **config) -> ExecutionContext:
+        return ExecutionContext(
+            "room-123",
+            mock_link,
+            handler or cls._failing_handler,
+            config=SessionConfig(enable_context_hydration=False, **config),
+        )
+
+    @staticmethod
+    def _backlog_message(msg_id: str) -> PlatformMessage:
+        return PlatformMessage(
+            id=msg_id,
+            room_id="room-123",
+            content="Test",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(UTC),
+        )
+
+    async def test_backlog_final_failure_posts_a_generic_error_event(
+        self, mock_link, mock_rest_client, error_events
+    ):
+        """The room sees the generic failure text, never the exception text
+        (which can carry secrets) or its class name, and nobody is mentioned."""
+        mock_link.rest.agent_api_messages = mock_rest_client.agent_api_messages
+
+        await self._context(mock_link)._process_backlog_message(
+            self._backlog_message("msg-backlog")
+        )
+
+        mock_link.mark_failed.assert_awaited_once()
+        request = error_events.call_args.kwargs["event"]
+        assert request.message_type == MessageType.ERROR
+        assert request.content == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "sk-live-secret" not in str(request.metadata)
+        assert "RuntimeError" not in str(request.metadata)
+        mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+
+    async def test_websocket_final_failure_posts_an_error_event(
+        self, mock_link, error_events
+    ):
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-ws", sender_id="user-1"
+        )
+
+        assert await self._context(mock_link)._process_event(event) is True
+
+        mock_link.mark_failed.assert_awaited_once()
+        assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
+
+    async def test_report_waits_for_the_final_attempt(self, mock_link, error_events):
+        """A failure the message will be retried from is not final; only the
+        last attempt in the retry budget reports, exactly once."""
+        ctx = self._context(mock_link, max_message_retries=2)
+        event = make_message_event(
+            room_id="room-123", msg_id="msg-retried", sender_id="user-1"
+        )
+
+        assert await ctx._process_event(event) is True
+        mock_link.mark_failed.assert_awaited_once()
+        error_events.assert_not_awaited()
+
+        assert await ctx._process_event(event) is True
+        assert mock_link.mark_failed.await_count == 2
+        error_events.assert_awaited_once()
+
+        assert await ctx._process_event(event) is True
+        error_events.assert_awaited_once()
+
+    @pytest.mark.parametrize("sender_type", ["Agent", "System"])
+    async def test_non_human_sender_failure_is_reported(
+        self, mock_link, error_events, sender_type
+    ):
+        """An error event is never delivered as a turn, so an agent's failed
+        message is reported too without two failing agents looping."""
+        event = make_message_event(
+            room_id="room-123",
+            msg_id="msg-non-human",
+            sender_id="other-1",
+            sender_type=sender_type,
+        )
+
+        assert await self._context(mock_link)._process_event(event) is True
+
+        error_events.assert_awaited_once()
+
+    async def test_disabled_flag_suppresses_report(self, mock_link, error_events):
+        await self._context(
+            mock_link, report_turn_failures_to_room=False
+        )._process_backlog_message(self._backlog_message("msg-off"))
+
+        mock_link.mark_failed.assert_awaited_once()
+        error_events.assert_not_awaited()
+
+    @pytest.mark.parametrize("path", ["websocket", "backlog"])
+    async def test_hydration_failure_is_reported_on_either_path(
+        self, mock_link, error_events, path
+    ):
+        """A history outage is charged to the retry budget before hydration on
+        both delivery paths, so it is reported the same whichever carried it."""
+        ctx = self._context(mock_link)
+        ctx._ensure_fresh_context = AsyncMock(side_effect=RuntimeError("history down"))
+
+        if path == "websocket":
+            await ctx._process_event(
+                make_message_event(
+                    room_id="room-123", msg_id="msg-hydration", sender_id="user-1"
+                )
+            )
+        else:
+            await ctx._process_backlog_message(self._backlog_message("msg-hydration"))
+
+        mock_link.mark_failed.assert_awaited_once()
+        error_events.assert_awaited_once()
+
+    async def test_failure_the_adapter_reported_is_not_repeated(
+        self, mock_link, error_events
+    ):
+        """An adapter that posts its own error event and re-raises gets no
+        second, runtime report; the next turn's unreported failure still does."""
+
+        async def reporting_handler(ctx, event):
+            if event.payload.id == "msg-reported":
+                tools = AgentTools.from_context(ctx)
+                await tools.send_failure(AgentFailure("codex", "boom"))
+            raise RuntimeError("provider down")
+
+        ctx = self._context(mock_link, reporting_handler)
+
+        await ctx._process_backlog_message(self._backlog_message("msg-reported"))
+        assert self._reporters(error_events) == ["codex"]
+
+        await ctx._process_backlog_message(self._backlog_message("msg-unreported"))
+        assert self._reporters(error_events) == ["codex", TURN_FAILURE_PROVIDER]
+
+    async def test_an_already_reported_claim_without_a_post_is_still_reported(
+        self, mock_link, error_events
+    ):
+        """Only a failure post that landed suppresses the runtime's report."""
+
+        async def handler(ctx, event):
+            raise TurnResultAlreadyReported("reported by a nested handler")
+
+        await self._context(mock_link, handler)._process_backlog_message(
+            self._backlog_message("msg-already-reported")
+        )
+
+        mock_link.mark_failed.assert_awaited_once()
+        assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
+
+    async def test_report_post_failure_is_swallowed(self, mock_link, error_events):
+        """The turn is already marked failed; a failed report must not stop
+        processing from advancing."""
+        error_events.side_effect = RuntimeError("network down")
+
+        result = await self._context(mock_link)._process_backlog_message(
+            self._backlog_message("msg-post-fails")
+        )
+
+        assert result is BacklogProcessResult.ADVANCED
+        mock_link.mark_failed.assert_awaited_once()
+        error_events.assert_awaited_once()
 
 
 class TestSessionConfigDefaults:
@@ -2345,10 +2578,15 @@ class TestGracefulStopWithTimeout:
         assert result is True
 
     async def test_stop_returns_false_when_timeout_exceeded(self, mock_link):
-        """stop(timeout) should return False when timeout exceeded."""
+        """stop(timeout) should return False and cancel the in-flight handler."""
+        handler_cancelled = asyncio.Event()
 
         async def slow_handler(ctx, event):
-            await asyncio.sleep(10)  # Very slow
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                handler_cancelled.set()
+                raise
 
         ctx = ExecutionContext(
             "room-123",
@@ -2366,15 +2604,12 @@ class TestGracefulStopWithTimeout:
         # Wait for the handler to actually be in flight
         await wait_for_condition(lambda: ctx.is_processing)
 
-        # Stop with short timeout
-        start = asyncio.get_running_loop().time()
         result = await ctx.stop(timeout=0.1)
-        elapsed = asyncio.get_running_loop().time() - start
 
-        # Should return False (cancelled mid-processing)
+        # A wall-clock bound here is flaky: cancellation cleanup may legitimately
+        # take up to CYCLE_CANCEL_GRACE_SECONDS on a slow runner.
         assert result is False
-        # Should have taken roughly the timeout
-        assert elapsed < 0.5  # Should timeout quickly
+        assert handler_cancelled.is_set()
 
     async def test_wait_for_idle_returns_true_when_already_idle(
         self, mock_link, mock_handler

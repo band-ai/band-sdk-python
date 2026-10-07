@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=1.2.0",
+#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=4.0.0",
 #   "python-dotenv>=1.1.1",
 # ]
 # ///
@@ -18,10 +18,10 @@ Usage:
     uv run python examples/run_agent.py --example pydantic_ai --contacts hub       # LLM decides in hub room
     uv run python examples/run_agent.py --example pydantic_ai --contacts broadcast # Broadcast-only awareness
     uv run python examples/run_agent.py --example pydantic_ai_contacts     # Contact management via chat (legacy)
-    uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-4-5
+    uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-5-5
     uv run python examples/run_agent.py --example anthropic
     uv run python examples/run_agent.py --example anthropic --streaming  # With tool_call/tool_result events
-    uv run python examples/run_agent.py --example anthropic --model claude-sonnet-4-5-20250929
+    uv run python examples/run_agent.py --example anthropic --model claude-sonnet-5-5
     uv run python examples/run_agent.py --example claude_sdk
     uv run python examples/run_agent.py --example claude_sdk --streaming  # With tool_call/tool_result events
     uv run python examples/run_agent.py --example claude_sdk --thinking   # Enable extended thinking
@@ -64,7 +64,7 @@ from dotenv import load_dotenv
 
 from band import Agent, LogSettings
 from band.config import load_agent_config
-from band.core.types import Emit
+from band.core.types import Capability, Emit
 from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -160,14 +160,14 @@ CREWAI_DEFAULTS = {
 # adapter / underlying CLI picks its own default.  The user can always pass
 # --model to override.
 _DEFAULT_MODELS: dict[str, str] = {
-    "pydantic_ai": "openai:gpt-5.4-mini",  # preserve previous global-default behavior
-    "pydantic_ai_contacts": "anthropic:claude-sonnet-4-5",
-    "contacts_auto": "anthropic:claude-sonnet-4-5",
-    "contacts_hub": "anthropic:claude-sonnet-4-5",
-    "contacts_broadcast": "anthropic:claude-sonnet-4-5",
-    "anthropic": "claude-sonnet-4-5-20250929",
+    "pydantic_ai": "openai:gpt-6-luna",  # preserve previous global-default behavior
+    "pydantic_ai_contacts": "anthropic:claude-sonnet-5-5",
+    "contacts_auto": "anthropic:claude-sonnet-5-5",
+    "contacts_hub": "anthropic:claude-sonnet-5-5",
+    "contacts_broadcast": "anthropic:claude-sonnet-5-5",
+    "anthropic": "claude-sonnet-5-5",
     # parlant: deliberately omitted — its model comes from the NLP service.
-    "crewai": "gpt-5.4-mini",
+    "crewai": "gpt-6-luna",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
 
@@ -229,12 +229,13 @@ async def run_langgraph_agent(
 
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         LangGraphAdapter,
+        LangGraphAdapterConfig,
     )
 
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-5.4-mini"),
+        LangGraphAdapterConfig(custom_section=custom_section),
+        llm=ChatOpenAI(model="gpt-6-luna"),
         checkpointer=InMemorySaver(),
-        custom_section=custom_section,
     )
 
     logger.info("Starting LangGraph agent...")
@@ -258,6 +259,7 @@ async def run_pydantic_ai_agent(
     """Run the Pydantic AI agent."""
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     # Augment custom_section for contact modes
@@ -273,8 +275,7 @@ async def run_pydantic_ai_agent(
             )
 
     adapter = PydanticAIAdapter(
-        model=model,
-        custom_section=section,
+        PydanticAIAdapterConfig(model=model, custom_section=section),
         emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
@@ -311,11 +312,11 @@ async def run_anthropic_agent(
     """Run the Anthropic SDK agent."""
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         AnthropicAdapter,
+        AnthropicAdapterConfig,
     )
 
     adapter = AnthropicAdapter(
-        model=model,
-        prompt=custom_section,
+        AnthropicAdapterConfig(model=model, custom_section=custom_section),
         emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
@@ -352,13 +353,16 @@ async def run_claude_sdk_agent(
     """Run the Claude Agent SDK agent."""
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         ClaudeSDKAdapter,
+        ClaudeSDKAdapterConfig,
     )
 
     adapter = ClaudeSDKAdapter(
-        model=model,
-        fallback_model=fallback_model,
-        custom_section=custom_section,
-        max_thinking_tokens=10000 if enable_thinking else None,
+        ClaudeSDKAdapterConfig(
+            model=model,
+            fallback_model=fallback_model,
+            custom_section=custom_section,
+            max_thinking_tokens=10000 if enable_thinking else None,
+        ),
         emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
@@ -397,6 +401,7 @@ async def run_parlant_agent(
 
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         ParlantAdapter,
+        ParlantAdapterConfig,
     )
 
     # Parlant chooses its model via the NLP service, not a model string;
@@ -406,7 +411,7 @@ async def run_parlant_agent(
     # this file.
     del enable_streaming
     adapter = ParlantAdapter(
-        custom_section=custom_section,
+        ParlantAdapterConfig(custom_section=custom_section),
         nlp_service=p.NLPServices.openai,
     )
     for guideline in PARLANT_GUIDELINES:
@@ -432,14 +437,17 @@ async def run_crewai_agent(
     """Run the CrewAI agent."""
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         CrewAIAdapter,
+        CrewAIAdapterConfig,
     )
 
     adapter = CrewAIAdapter(
-        model=model,
-        role=CREWAI_DEFAULTS["role"],
-        goal=CREWAI_DEFAULTS["goal"],
-        backstory=CREWAI_DEFAULTS["backstory"],
-        custom_section=custom_section,
+        CrewAIAdapterConfig(
+            model=model,
+            role=CREWAI_DEFAULTS["role"],
+            goal=CREWAI_DEFAULTS["goal"],
+            backstory=CREWAI_DEFAULTS["backstory"],
+            custom_section=custom_section,
+        ),
         emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
@@ -528,12 +536,13 @@ async def run_pydantic_ai_contacts_agent(
     """
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     adapter = PydanticAIAdapter(
-        model=model,
-        custom_section=CONTACTS_INSTRUCTIONS,
+        PydanticAIAdapterConfig(model=model, custom_section=CONTACTS_INSTRUCTIONS),
         emit=Emit.TOOL_CALLS,  # Show tool calls
+        capabilities=Capability.CONTACTS,
     )
 
     logger.info("Starting Pydantic AI contacts agent with model: %s", model)
@@ -561,6 +570,7 @@ async def run_contacts_auto_agent(
     """
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
@@ -578,9 +588,11 @@ async def run_contacts_auto_agent(
     )
 
     adapter = PydanticAIAdapter(
-        model=model,
-        custom_section="""You are a helpful assistant. Contact requests are handled automatically.
+        PydanticAIAdapterConfig(
+            model=model,
+            custom_section="""You are a helpful assistant. Contact requests are handled automatically.
 When you see system messages about new contacts, acknowledge them to the user.""",
+        ),
         emit=Emit.TOOL_CALLS,
     )
 
@@ -612,17 +624,18 @@ async def run_contacts_hub_agent(
     """
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.HUB_ROOM,
-        hub_task_id="contacts-hub",  # Custom task ID for the hub room
         broadcast_changes=True,
     )
 
     adapter = PydanticAIAdapter(
-        model=model,
-        custom_section="""You are a helpful assistant that also manages contact requests.
+        PydanticAIAdapterConfig(
+            model=model,
+            custom_section="""You are a helpful assistant that also manages contact requests.
 
 When you receive contact request notifications in the hub room:
 1. Review the request details (who sent it, any message included)
@@ -637,6 +650,7 @@ Actions available:
 - band_respond_contact_request(action="approve", handle="...")
 - band_respond_contact_request(action="reject", handle="...")
 """,
+        ),
         emit=Emit.TOOL_CALLS,
     )
 
@@ -667,6 +681,7 @@ async def run_contacts_broadcast_agent(
     """
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     config = ContactEventConfig(
@@ -675,16 +690,19 @@ async def run_contacts_broadcast_agent(
     )
 
     adapter = PydanticAIAdapter(
-        model=model,
-        custom_section=CONTACTS_INSTRUCTIONS
-        + """
+        PydanticAIAdapterConfig(
+            model=model,
+            custom_section=CONTACTS_INSTRUCTIONS
+            + """
 
 ## System Messages
 You will receive system messages when contacts are added or removed.
 These appear as "[Contacts]: @handle (name) is now a contact" or similar.
 Acknowledge these updates to the user when you see them.
 """,
+        ),
         emit=Emit.TOOL_CALLS,
+        capabilities=Capability.CONTACTS,
     )
 
     logger.info("Starting contacts broadcast-only agent with model: %s", model)
@@ -709,6 +727,7 @@ async def run_a2a_agent(
     """Run the A2A bridge agent."""
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         A2AAdapter,
+        A2AAdapterConfig,
     )
 
     # Enable debug logging for A2A adapter to trace context_id and rehydration
@@ -716,10 +735,7 @@ async def run_a2a_agent(
         logging.getLogger("band.integrations.a2a").setLevel(logging.DEBUG)
         logging.getLogger("band.converters.a2a").setLevel(logging.DEBUG)
 
-    adapter = A2AAdapter(
-        remote_url=a2a_url,
-        streaming=True,
-    )
+    adapter = A2AAdapter(A2AAdapterConfig(remote_url=a2a_url))
 
     logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
     async with Agent.create(
@@ -745,24 +761,24 @@ async def run_a2a_gateway_agent(
     """
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         A2AGatewayAdapter,
+        A2AGatewayAdapterConfig,
     )
 
     # Enable debug logging for gateway adapter
     if enable_debug:
         logging.getLogger("band.integrations.a2a.gateway").setLevel(logging.DEBUG)
 
-    adapter = A2AGatewayAdapter(
-        port=gateway_port,
-    )
+    adapter = A2AGatewayAdapter(A2AGatewayAdapterConfig(port=gateway_port))
 
-    logger.info("Starting A2A Gateway on %s...", adapter.gateway_url)
+    logger.info("Starting A2A Gateway on %s...", adapter.config.public_url)
     logger.info("Peers will be exposed at:")
     logger.info(
         "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
-        adapter.gateway_url,
+        adapter.config.public_url,
     )
     logger.info(
-        "  - %s/agents/{peer_id}/v1/message:stream (messaging)", adapter.gateway_url
+        "  - %s/agents/{peer_id}/v1/message:stream (messaging)",
+        adapter.config.public_url,
     )
     async with Agent.create(
         adapter=adapter,
@@ -782,7 +798,7 @@ Examples:
   uv run python examples/run_agent.py --example langgraph                 # LangGraph with OpenAI
   uv run python examples/run_agent.py --example pydantic_ai               # Pydantic AI with OpenAI
   uv run python examples/run_agent.py --example pydantic_ai --streaming   # With tool_call/tool_result events
-  uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-4-5
+  uv run python examples/run_agent.py --example pydantic_ai --model anthropic:claude-sonnet-5-5
   uv run python examples/run_agent.py --example pydantic_ai --contacts auto      # Auto-approve contacts
   uv run python examples/run_agent.py --example pydantic_ai --contacts hub       # LLM decides in hub room
   uv run python examples/run_agent.py --example pydantic_ai --contacts broadcast # Broadcast-only awareness

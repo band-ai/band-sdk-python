@@ -142,6 +142,7 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
+        self._accepting_rooms = True
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -182,7 +183,12 @@ class AgentRuntime:
         2. Creates execution contexts for existing rooms
         """
         logger.info("Starting AgentRuntime for agent %s", self.agent_id)
-        await self.presence.start()
+        self._accepting_rooms = True
+        try:
+            await self.presence.start()
+        except BaseException:
+            self._accepting_rooms = False
+            raise
 
     async def stop(self, timeout: float | None = None) -> bool:
         """
@@ -199,6 +205,7 @@ class AgentRuntime:
         1. Stops all execution contexts (with timeout)
         2. Stops RoomPresence
         """
+        self._accepting_rooms = False
         logger.info("Stopping AgentRuntime for agent %s", self.agent_id)
 
         # Stop all executions with timeout
@@ -229,7 +236,8 @@ class AgentRuntime:
 
     async def _on_room_joined(self, room_id: str, payload: dict) -> None:
         """Handle room joined - create execution context."""
-        await self._create_execution(room_id)
+        if self._accepting_rooms:
+            await self._create_execution(room_id)
 
     async def _on_room_left(self, room_id: str) -> None:
         """Handle room left - destroy execution context."""
@@ -372,6 +380,8 @@ class AgentRuntime:
 
     async def _create_execution(self, room_id: str) -> Execution:
         """Create and start execution context for a room."""
+        if not self._accepting_rooms:
+            raise RuntimeError("Agent runtime is stopping or stopped")
         if room_id in self.executions:
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]

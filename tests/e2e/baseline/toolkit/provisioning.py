@@ -5,8 +5,8 @@ pre-configured agent: register an agent (getting its own credentials), create
 rooms, and force-delete everything on teardown. A prefix-guarded orphan sweep
 reaps leftovers from crashed prior runs.
 
-Provisioned agents are named ``e2e-band-{run_id}-{label}`` so the sweep can
-recognise its own resources by prefix and never touch a non-test agent.
+Provisioned agents are named by :func:`agent_name` under ``NAME_PREFIX`` so the
+sweep can recognise its own resources by prefix and never touch a non-test agent.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from contextlib import (
     asynccontextmanager,
     contextmanager,
 )
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +37,7 @@ from band_rest import (
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.types import AgentConfig
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -75,12 +76,21 @@ def run_id_len() -> int:
     return MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - MAX_MENTIONED_LABEL_LEN
 
 
+def agent_name(*, run_id: str, label: str) -> str:
+    """The provisioned name for ``label`` in run ``run_id``.
+
+    Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
+    repeating a name, so an adapter-id label must already be in the form they echo.
+    """
+    return f"{NAME_PREFIX}{run_id}-{label.replace('_', '-')}"
+
+
 def new_run_id() -> str:
     """Short token identifying a single test session's provisioned resources.
 
     Its length is *derived* from the mention-handle cap (see :func:`run_id_len`) so
-    the longest @mentioned peer name — ``{NAME_PREFIX}{run_id}-{label}`` — still
-    surfaces in full rather than as a truncated handle. The resulting entropy
+    the longest @mentioned peer name (see :func:`agent_name`) still surfaces in
+    full rather than as a truncated handle. The resulting entropy
     (~1M at 5 hex) is ample given the run-id + age guards in ``sweep_orphans``.
     """
     return uuid.uuid4().hex[: run_id_len()]
@@ -98,7 +108,7 @@ class ProvisionedAgent:
     """
 
     id: str
-    api_key: str
+    api_key: str = field(repr=False)
     name: str
     adapter_id: str | None = None
     description: str = ""
@@ -288,9 +298,6 @@ class ResourceManager:
     def user_ops(self) -> UserOps:
         return self._user_ops
 
-    def _agent_name(self, label: str) -> str:
-        return f"{NAME_PREFIX}{self._run_id}-{label}"
-
     async def provision_agent(
         self, label: str, *, description: str | None = None
     ) -> ProvisionedAgent:
@@ -300,7 +307,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = self._agent_name(label)
+        name = agent_name(run_id=self._run_id, label=label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
@@ -589,16 +596,23 @@ class AdapterCell:
         prompt: str | None = None,
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
     ) -> SimpleAdapter[Any]:
         """Construct (do not run) this cell's adapter; arguments override cell defaults."""
         # Overrides use None-means-"cell default" (not a sentinel): no test needs to
         # clear a default back to "no prompt", so the sentinel would be dead machinery.
+        kwargs = (
+            {}
+            if workspace_for_room is None
+            else {"workspace_for_room": workspace_for_room}
+        )
         return build_adapter(
             self.adapter_id,
             self.settings,
             prompt=self.prompt if prompt is None else prompt,
             features=self.features if features is None else features,
             tools=self.tools if tools is None else tools,
+            **kwargs,
         )
 
     async def provision(self, *, label: str | None = None) -> ProvisionedAgent:

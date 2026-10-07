@@ -20,8 +20,10 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 import warnings
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -32,6 +34,7 @@ import pytest
 from httpx import ASGITransport
 
 from band.core.exceptions import BandToolError
+from band.core.protocols import TurnResultAlreadyReported
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -39,17 +42,20 @@ from band.core.types import (
     Capability,
     Emit,
     HistoryProvider,
+    MessageType,
     PlatformMessage,
 )
 from band.integrations.slack.adapter import (
     SLACK_CONTEXT_NOTE,
     SLACK_SEND_MESSAGE_TOOL_NAME,
     SlackAdapter,
+    SlackAdapterConfig,
     SlackTeeingTools,
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.runtime.tools import AgentTools, ToolCallOutcome
+from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from band.testing.platform import platform_connection_stub
 
 # ── Test doubles ─────────────────────────────────────────────────────────────
@@ -70,7 +76,8 @@ class _SlackReplyBrain(SimpleAdapter[Any]):
     """Brain that replies to Slack via the new ``slack_send_message`` tool.
 
     Calls ``await tools.slack_send_message(reply)`` directly to mimic how
-    a real framework adapter would dispatch the tool the LLM picked.
+    a real framework adapter would dispatch the tool the LLM picked; with
+    ``reply=None`` it declines the turn instead.
     """
 
     def __init__(
@@ -110,7 +117,9 @@ class _SlackReplyBrain(SimpleAdapter[Any]):
                 "room_id": room_id,
             }
         )
-        if self.reply is not None and hasattr(tools, "slack_send_message"):
+        if self.reply is None:
+            await tools.no_reply("nothing to add")
+        elif hasattr(tools, "slack_send_message"):
             await tools.slack_send_message(self.reply)
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -149,7 +158,8 @@ def _make_adapter(
     apps: list[SlackApp] | None = None,
     room_ids: list[str] | None = None,
     bridge_agent_id: str = "bridge-uuid",
-    **adapter_kwargs: Any,
+    mirror_slack_context: bool = True,
+    **features: Any,
 ) -> tuple[
     SlackAdapter,
     _SlackReplyBrain | SimpleAdapter[Any],
@@ -196,11 +206,11 @@ def _make_adapter(
 
     rest = _make_rest_mock(room_ids)
     adapter = SlackAdapter(
+        SlackAdapterConfig(apps=tuple(apps), mirror_slack_context=mirror_slack_context),
         inner=inner,
-        apps=apps,
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
-        **adapter_kwargs,
+        **features,
     )
     adapter.platform = platform_connection_stub(agent_id=bridge_agent_id)
     return adapter, inner, web_mocks, rest
@@ -269,7 +279,7 @@ async def test_on_started_propagates_to_inner_and_sets_agent_id():
 @pytest.mark.asyncio
 async def test_on_started_requires_platform_when_no_rest_client_injected():
     inner = _SlackReplyBrain()
-    adapter = SlackAdapter(inner=inner, apps=[_slack_app()])
+    adapter = SlackAdapter(SlackAdapterConfig(apps=(_slack_app(),)), inner=inner)
     with pytest.raises(RuntimeError, match="platform connection"):
         await adapter.on_started("MyBot", "")
 
@@ -375,7 +385,7 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
         room_ids=["room-1"],
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     response = await _post_slack_event(
         adapter,
@@ -444,7 +454,7 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
 async def test_second_event_in_same_thread_reuses_room():
     adapter, inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="first")
@@ -507,7 +517,7 @@ async def test_concurrent_events_same_thread_create_one_room():
     """
     adapter, _inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     gate = asyncio.Event()
     create_calls = {"n": 0}
@@ -552,7 +562,7 @@ async def test_concurrent_events_same_thread_create_one_room():
 async def test_dm_event_creates_room_and_invokes_brain():
     adapter, inner, _, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -581,7 +591,7 @@ async def test_dm_event_creates_room_and_invokes_brain():
 async def test_bot_authored_messages_are_ignored():
     adapter, inner, _, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -609,7 +619,7 @@ async def test_bot_authored_messages_are_ignored():
 async def test_unsupported_event_type_is_ignored():
     adapter, inner, _, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     response = await _post_slack_event(
         adapter,
@@ -674,7 +684,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
     """When a peer messages in a Slack-bound room, brain gets the tee + note."""
     adapter, inner, web_mocks, rest = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Seed a Slack-bound room.
     await _post_slack_event(
@@ -723,7 +733,7 @@ async def test_on_message_merges_existing_participants_msg_with_context_note():
     """Caller-provided participants_msg is preserved when we inject our note."""
     adapter, inner, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="hi")
@@ -766,7 +776,7 @@ async def test_on_message_merges_existing_participants_msg_with_context_note():
 async def test_on_cleanup_drops_binding_and_calls_inner():
     adapter, inner, _, _ = _make_adapter()
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(adapter, app, _mention_event(channel="C1", ts="100.0"))
     await adapter.wait_idle()
@@ -804,7 +814,7 @@ async def test_ack_returns_before_brain_finishes():
     brain = _SlowBrain()
     adapter, _, _, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     start = time.monotonic()
     response = await _post_slack_event(
@@ -841,7 +851,7 @@ async def test_brain_exception_does_not_break_subsequent_events():
 
     adapter, _, _, _ = _make_adapter(inner=_CrashingBrain(), room_ids=["r1", "r2"])
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="first")
@@ -858,15 +868,22 @@ async def test_brain_exception_does_not_break_subsequent_events():
 # ── SlackTeeingTools — new behavior ─────────────────────────────────────────
 
 
-def _make_tee_tools(
-    slack: AsyncMock | None = None,
-) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
+def _make_band_tools() -> AgentTools:
     rest = MagicMock()
     rest.agent_api_events.create_agent_chat_event = AsyncMock()
     rest.agent_api_messages.create_agent_chat_message = AsyncMock(
         return_value=SimpleNamespace(data=SimpleNamespace(id="m"))
     )
-    base = AgentTools(room_id="r1", rest=rest, participants=[])
+    return AgentTools(room_id="r1", rest=rest, participants=[])
+
+
+def _make_tee_tools(
+    slack: AsyncMock | None = None,
+    *,
+    wrap: AgentTools | None = None,
+) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
+    base = wrap or _make_band_tools()
+    rest = base.rest
     if slack is None:
         # Only set defaults when constructing a fresh mock; a caller-provided
         # ``slack`` may have custom side_effects we mustn't overwrite.
@@ -903,6 +920,28 @@ async def test_slack_send_message_returns_error_dict_on_failure():
     result = await tools.slack_send_message("hello")
     assert result["ok"] is False
     assert "kaboom" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chat_post_message", "replied"),
+    [
+        pytest.param(AsyncMock(return_value={"ok": True}), True, id="posted"),
+        pytest.param(AsyncMock(side_effect=RuntimeError("kaboom")), False, id="failed"),
+    ],
+)
+async def test_slack_reply_settles_the_wrapped_turn_only_when_posted(
+    chat_post_message: AsyncMock, replied: bool
+):
+    """The adapter judges the turn on the tools it handed out, not the tee."""
+    slack = AsyncMock()
+    slack.chat_postMessage = chat_post_message
+    band_tools = _make_band_tools()
+    tools, _, _ = _make_tee_tools(slack=slack, wrap=band_tools)
+
+    await tools.execute_tool_call(SLACK_SEND_MESSAGE_TOOL_NAME, {"content": "hi"})
+
+    assert band_tools.turn.replied is replied
 
 
 def test_get_anthropic_tool_schemas_includes_slack_send_message():
@@ -991,7 +1030,7 @@ async def test_channel_top_level_mention_does_not_fetch_thread_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1011,7 +1050,7 @@ async def test_channel_mention_in_existing_thread_pulls_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Slack returns the full thread when we ask. Includes a human-only
     # exchange that happened before the trigger plus the trigger itself
@@ -1065,7 +1104,7 @@ async def test_subsequent_mention_in_same_thread_refetches_history():
         room_ids=["room-1", "room-2"],
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1116,7 +1155,7 @@ async def test_bot_replies_in_thread_history_become_assistant_role():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1173,7 +1212,7 @@ async def test_bridge_progress_blocks_excluded_from_thread_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1235,7 +1274,7 @@ async def test_foreign_bot_replies_are_external_not_assistant():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         return_value={
@@ -1282,7 +1321,7 @@ async def test_fresh_dm_does_not_fetch_thread_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1312,7 +1351,7 @@ async def test_thread_history_fetch_failure_falls_back_to_empty_history():
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
     adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     web_mocks[app.slug].conversations_replies = AsyncMock(
         side_effect=RuntimeError("missing_scope: channels:history")
@@ -1390,6 +1429,99 @@ def _agent_input_with_history(
         is_session_bootstrap=bootstrap,
         room_id=room_id,
     )
+
+
+class IdleBrain(_SlackReplyBrain):
+    """A brain whose turn does nothing at all."""
+
+    def __init__(self, *, judges_turns: bool) -> None:
+        super().__init__()
+        self._judges_turns = judges_turns
+
+    @property
+    def judges_turns(self) -> bool:
+        return self._judges_turns
+
+    async def on_message(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("brain_judges_turns", "verdict", "failures"),
+    [
+        pytest.param(
+            True,
+            pytest.raises(TurnResultAlreadyReported),
+            [MISSING_REPLY_FAILURE],
+            id="judged-brain",
+        ),
+        pytest.param(False, nullcontext(), [], id="exempt-brain"),
+    ],
+)
+async def test_an_idle_turn_is_judged_by_the_brains_rule(
+    brain_judges_turns: bool,
+    verdict: AbstractContextManager[Any],
+    failures: list[tuple[str, str]],
+):
+    adapter, _, _, _ = _make_adapter(inner=IdleBrain(judges_turns=brain_judges_turns))
+    tools = FakeAgentTools(room_id="room-1")
+    inp = _agent_input_with_history(
+        room_id="room-1", raw_history=[], bootstrap=False, tools=tools
+    )
+
+    with verdict:
+        await adapter.on_event(inp)
+
+    assert failure_reports(tools) == failures
+
+
+@pytest.mark.asyncio
+async def test_an_idle_slack_originated_turn_is_reported(
+    caplog: pytest.LogCaptureFixture,
+):
+    """A turn that arrives from Slack rather than the platform is judged too,
+    and its reported failure is not logged again as a crash."""
+    adapter, _, _, rest = _make_adapter(
+        inner=IdleBrain(judges_turns=True), room_ids=["room-1"]
+    )
+    await adapter.on_started("MyBot", "")
+
+    with caplog.at_level(logging.WARNING):
+        await _post_slack_event(adapter, adapter.config.apps[0], _mention_event())
+        await adapter.wait_idle()
+
+    (error,) = _posted_events(rest, MessageType.ERROR)
+    assert error.content == MISSING_REPLY_FAILURE[1]
+    assert max(r.levelno for r in caplog.records) == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_a_slack_turn_whose_report_failed_is_not_logged_as_a_crash(
+    caplog: pytest.LogCaptureFixture,
+):
+    """A Slack turn has no runtime to fall back to; the failed post is logged
+    where it failed, and the handler does not log the turn again as a crash."""
+    adapter, _, _, rest = _make_adapter(
+        inner=IdleBrain(judges_turns=True), room_ids=["room-1"]
+    )
+    await adapter.on_started("MyBot", "")
+    create = rest.agent_api_events.create_agent_chat_event
+
+    async def fail_error_events(**kwargs: Any) -> Any:
+        if kwargs["event"].message_type == MessageType.ERROR:
+            raise RuntimeError("503")
+        return create.return_value
+
+    create.side_effect = fail_error_events
+
+    with caplog.at_level(logging.WARNING):
+        await _post_slack_event(adapter, adapter.config.apps[0], _mention_event())
+        await adapter.wait_idle()
+
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == [
+        "send_failure could not post the failure event"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1485,7 +1617,7 @@ async def test_rehydration_then_slack_event_reuses_room_without_new_chat():
         inner=_SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter()),
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     # Simulate restart: WS delivers a bootstrap message in an existing
     # Slack-bridged room. Rehydration restores the binding.
@@ -1573,7 +1705,7 @@ async def test_context_event_metadata_includes_slack_room_id():
     can recover the binding from history alone."""
     adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1600,11 +1732,11 @@ async def test_context_event_metadata_includes_slack_room_id():
 # ── Slack context mirroring (audit timeline) ────────────────────────────────
 
 
-def _thought_events(rest: MagicMock) -> list[Any]:
+def _posted_events(rest: MagicMock, message_type: MessageType) -> list[Any]:
     return [
         c.kwargs["event"]
         for c in rest.agent_api_events.create_agent_chat_event.await_args_list
-        if c.kwargs["event"].message_type == "thought"
+        if c.kwargs["event"].message_type == message_type
     ]
 
 
@@ -1614,7 +1746,7 @@ async def test_user_turn_mirrored_as_thought_with_thread_id():
     Slack thread id, and no real Band message is posted (no peer loop)."""
     adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter,
@@ -1633,7 +1765,7 @@ async def test_user_turn_mirrored_as_thought_with_thread_id():
     )
     await adapter.wait_idle()
 
-    thoughts = _thought_events(rest)
+    thoughts = _posted_events(rest, MessageType.THOUGHT)
     assert len(thoughts) == 1
     mirror = thoughts[0]
     assert mirror.message_type == "thought"
@@ -1656,14 +1788,14 @@ async def test_mirroring_disabled_emits_no_thought():
         mirror_slack_context=False,
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="<@BOT> hi")
     )
     await adapter.wait_idle()
 
-    assert _thought_events(rest) == []
+    assert _posted_events(rest, MessageType.THOUGHT) == []
     # Only the bootstrap context (task) event is emitted.
     assert rest.agent_api_events.create_agent_chat_event.await_count == 1
     assert (
@@ -1692,7 +1824,7 @@ async def test_mirror_failure_does_not_break_reply():
         side_effect=fail_only_thought
     )
     await adapter.on_started("MyBot", "")
-    app = adapter.apps[0]
+    app = adapter.config.apps[0]
 
     await _post_slack_event(
         adapter, app, _mention_event(channel="C1", ts="100.0", text="<@BOT> hi")

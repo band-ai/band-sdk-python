@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from band.runtime.tools.inputs.identifiers import ResourceId
+
 
 class ListMyChatsInput(BaseModel):
     """List chat rooms where the user is a participant."""
@@ -19,7 +21,7 @@ class ListMyChatsInput(BaseModel):
 class GetMyChatRoomInput(BaseModel):
     """Get a specific chat room by ID."""
 
-    chat_id: str = Field(..., description="The chat room ID (required).")
+    chat_id: ResourceId = Field(..., description="The chat room ID (required).")
 
 
 class CreateMyChatRoomInput(BaseModel):

@@ -50,7 +50,6 @@ from band.integrations.crewai.reporting import (
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
-    custom_tool_effects,
     execute_custom_tool,
     get_custom_tool_name,
 )
@@ -58,11 +57,9 @@ from band.runtime.tools import (
     CAPABILITY_TOOL_NAMES,
     EVENT_TOOL_NAMES,
     BandTool,
-    TurnEffect,
     append_available_mention_handles,
     get_band_tool_category,
     get_tool_description,
-    is_terminal_success,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,7 +75,7 @@ def _execute_tool(
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-    custom_effects: Mapping[str, TurnEffect] | None = None,
+    arguments: Mapping[str, Any],
 ) -> str:
     """Execute a tool with common error handling and reporting.
 
@@ -117,42 +114,38 @@ def _execute_tool(
     result = run_async(_execute(), fallback_loop=fallback_loop)
 
     if context.reply_tracker is not None:
-        _mark_productive_work(
-            context.reply_tracker,
-            tool_name,
-            result,
-            custom_effects=custom_effects,
-        )
+        _note_tool_activity(context.reply_tracker, tool_name, result, arguments)
     return result
 
 
-def _mark_productive_work(
+def _note_tool_activity(
     tracker: ReplyTracker,
     tool_name: str,
     result: str,
-    *,
-    custom_effects: Mapping[str, TurnEffect] | None,
+    arguments: Mapping[str, Any],
 ) -> None:
-    """Record that the turn did real work, so an empty final answer stays benign.
+    """Note that a tool ran, and what a successful ``band_send_message`` said.
 
-    CrewAI raises on an empty final answer; that is a genuine no-response
-    failure only when nothing terminal ran. ``is_terminal_success`` is the
-    shared rule for what counts (read-only Band tools and undeclared custom
-    tools do not) toward the missing-reply decision. ``any_tool_ran`` is
-    separate and coarser: it flips on this call alone, whether the tool
-    succeeded or not, so a turn that tried *something* is never mistaken for
-    one where the model's very first response came back empty.
+    ``any_tool_ran`` flips on this call alone, whether the tool succeeded or
+    not, so a turn that tried *something* is never mistaken for one where the
+    model's very first response came back empty.
     """
     tracker.any_tool_ran = True
+    if tool_name != BandTool.SEND_MESSAGE:
+        return
     try:
         if json.loads(result).get("status") != "success":
             return
     except (json.JSONDecodeError, AttributeError, TypeError):
         return
-    if is_terminal_success(tool_name, succeeded=True, custom_effects=custom_effects):
-        tracker.tool_executed = True
-    if tool_name == BandTool.SEND_MESSAGE:
-        tracker.replied = True
+    tracker.posts.append(_describe_post(arguments))
+
+
+def _describe_post(arguments: Mapping[str, Any]) -> str:
+    content = arguments.get("content", "")
+    if mentions := " ".join(arguments.get("mentions") or []):
+        return f"(to {mentions}) {content}"
+    return content
 
 
 # --- Tool factory ---
@@ -191,6 +184,7 @@ def _platform_tool(
                 get_context=get_context,
                 reporter=reporter,
                 fallback_loop=fallback_loop,
+                arguments=kwargs,
             )
 
     return PlatformTool()
@@ -210,9 +204,6 @@ def _custom_tool(
 
     input_model, _ = definition
     tool_name = get_custom_tool_name(input_model)
-    # Only a custom tool that declared an effect lets an empty final answer be
-    # treated as benign; undeclared customs fail loud.
-    effects = custom_tool_effects([definition])
 
     class CustomCrewAITool(BaseTool):
         name: str = tool_name
@@ -223,7 +214,9 @@ def _custom_tool(
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             async def execute(tools: AgentToolsProtocol) -> str:
                 await reporter.report_call(tools, tool_name, kwargs)
-                result = await execute_custom_tool(definition, kwargs)
+                result = await execute_custom_tool(
+                    tool=definition, arguments=kwargs, turn=tools.turn
+                )
                 await reporter.report_result(tools, tool_name, result)
                 return json.dumps({"status": "success", "result": result}, default=str)
 
@@ -233,7 +226,7 @@ def _custom_tool(
                 get_context=get_context,
                 reporter=reporter,
                 fallback_loop=fallback_loop,
-                custom_effects=effects,
+                arguments=kwargs,
             )
 
     return CustomCrewAITool()

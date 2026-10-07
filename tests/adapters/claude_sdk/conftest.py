@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 from unittest.mock import patch
 
+import looptime
 import pytest
 import pytest_asyncio
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.fakecli import FakeClaude
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -18,12 +21,13 @@ from tests.adapters.claude_sdk.helpers import ClaudeRoom
 def claude() -> Iterator[FakeClaude]:
     """The scripted Claude CLI behind every ``ClaudeSDKClient`` the test opens.
 
-    The constructor is the one seam patched: past it the SDK would spawn the
+    The transport factory is the one seam patched: past it the SDK would spawn the
     real CLI subprocess.
     """
     claude = FakeClaude()
     with patch(
-        "band.integrations.claude_sdk.session_manager.ClaudeSDKClient", claude.client
+        "band.integrations.claude_sdk.session_manager.create_transport",
+        claude.transport,
     ):
         yield claude
     claude.assert_done()
@@ -37,14 +41,27 @@ async def claude_room(
 ) -> AsyncIterator[Callable[..., Awaitable[ClaudeRoom]]]:
     """Open a room on a freshly started adapter; every adapter is torn down
     at the end, cancelling whatever its turns still wait on."""
-    adapters: list[ClaudeSDKAdapter] = []
+    adapters: list[tuple[ClaudeSDKAdapter, AbstractContextManager[None]]] = []
 
-    async def open_room(room_id: str = "room-1", **adapter_config: Any) -> ClaudeRoom:
-        adapter = ClaudeSDKAdapter(**adapter_config)
+    async def open_room(
+        config: ClaudeSDKAdapterConfig | None = None,
+        *,
+        room_id: str = "room-1",
+        **adapter_kwargs: Any,
+    ) -> ClaudeRoom:
+        adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
         await adapter.on_started("Test Agent", "An agent under test")
-        adapters.append(adapter)
+        loop = asyncio.get_running_loop()
+        cleanup_clock = (
+            looptime.enabled(strict=True)
+            if isinstance(loop, looptime.LoopTimeEventLoop) and loop.looptime_on
+            else nullcontext()
+        )
+        adapters.append((adapter, cleanup_clock))
         return ClaudeRoom(adapter, claude, room_id)
 
     yield open_room
-    for adapter in adapters:
-        await adapter.cleanup_all()
+    # Uvicorn's pending timers must finish on the clock that scheduled them.
+    for adapter, cleanup_clock in adapters:
+        with cleanup_clock:
+            await adapter.cleanup_all()

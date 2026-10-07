@@ -28,7 +28,12 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.types import PlatformMessage
-from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
+from band.integrations.a2a import (
+    A2AAdapter,
+    A2AAdapterConfig,
+    A2AAuth,
+    A2ASessionState,
+)
 from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
 from band.testing import FakeAgentTools, reported_failures
 
@@ -145,8 +150,9 @@ class TestA2AAdapterStartup:
     @pytest.mark.asyncio
     async def test_creates_client_with_auth_headers(self) -> None:
         adapter = A2AAdapter(
-            remote_url="http://localhost:10000",
-            auth=A2AAuth(api_key="key"),
+            A2AAdapterConfig(
+                remote_url="http://localhost:10000", auth=A2AAuth(api_key="key")
+            )
         )
 
         async with started_adapter(adapter) as (client, factory_type):
@@ -161,6 +167,29 @@ class TestA2AAdapterStartup:
                 "A2A request"
             )
 
+    def test_config_requires_remote_url(self) -> None:
+        with pytest.raises(ValueError, match="remote_url"):
+            A2AAdapterConfig()  # type: ignore[call-arg]
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_config_reaches_the_client(self) -> None:
+        adapter = A2AAdapter(
+            A2AAdapterConfig(remote_url="http://localhost:10000", streaming=False)
+        )
+
+        async with started_adapter(adapter) as (_, factory_type):
+            assert factory_type.call_args.args[0].streaming is False
+            factory_type.return_value.create_from_url.assert_awaited_once_with(
+                "http://localhost:10000"
+            )
+
+    def test_turns_are_not_judged(self) -> None:
+        """The remote agent owns its replies; judging its turns would report
+        a remote that answers nothing as this agent's missing reply."""
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
+
+        assert not adapter.judges_turns
+
     @pytest.mark.asyncio
     async def test_owned_http_client_has_a_generous_bounded_read_timeout(self) -> None:
         """A real remote turn (a live LLM call, a tool loop) routinely leaves
@@ -168,7 +197,7 @@ class TestA2AAdapterStartup:
         read timeout would misreport that as a dead connection. The bound
         must still be finite, though, so a peer that hangs after accepting
         the connection fails the turn instead of blocking the room forever."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
 
         async with started_adapter(adapter):
             assert adapter._http_client is not None
@@ -178,7 +207,7 @@ class TestA2AAdapterStartup:
 class TestA2AAdapterMessageFlow:
     @pytest.fixture
     def adapter(self) -> A2AAdapter:
-        return A2AAdapter(remote_url="http://localhost:10000")
+        return A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
 
     @pytest.mark.asyncio
     async def test_forwards_band_message_as_a2a_request(
@@ -574,7 +603,7 @@ class TestA2AAdapterShutdown:
     async def test_cleanup_all_closes_owned_clients(self) -> None:
         """Agent.stop() reaches the adapter only via cleanup_all, so the
         owned httpx transport must be released there."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.close = AsyncMock()
         adapter._http_client = httpx.AsyncClient()
@@ -591,7 +620,7 @@ class TestA2AAdapterShutdown:
         self,
     ) -> None:
         """A broken remote client must not leak the owned httpx transport."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.close = AsyncMock(
             side_effect=RuntimeError("client close failed")
@@ -614,7 +643,7 @@ class TestA2AAdapterSession:
     async def test_bootstrap_history_restores_context_for_the_turn(self) -> None:
         """Rehydration is gated on the bootstrap flag and must feed the
         restored context into the very message that triggered it."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.send_message = MagicMock(return_value=stream())
         state = A2ASessionState(context_id="ctx-9")
@@ -636,7 +665,7 @@ class TestA2AAdapterSession:
 
     @pytest.mark.asyncio
     async def test_history_is_ignored_off_bootstrap(self) -> None:
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.send_message = MagicMock(return_value=stream())
         state = A2ASessionState(context_id="ctx-9")
@@ -659,7 +688,7 @@ class TestA2AAdapterSession:
     @pytest.mark.asyncio
     async def test_legacy_terminal_state_value_is_not_resubscribed(self) -> None:
         """Rooms with pre-migration history hold 0.x state strings."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.subscribe = MagicMock()
 
@@ -676,7 +705,7 @@ class TestA2AAdapterSession:
 
     @pytest.mark.asyncio
     async def test_resubscribe_failure_does_not_break_bootstrap(self) -> None:
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.subscribe = MagicMock(side_effect=RuntimeError("gone"))
 
@@ -695,7 +724,7 @@ class TestA2AAdapterSession:
 
     @pytest.mark.asyncio
     async def test_rehydrates_context_and_resubscribes_active_task(self) -> None:
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.subscribe = MagicMock(
             return_value=stream(task_event(make_task(TaskState.TASK_STATE_WORKING)))
@@ -716,7 +745,7 @@ class TestA2AAdapterSession:
     @pytest.mark.asyncio
     async def test_cleanup_reclaims_tasks_cached_by_resubscribe(self) -> None:
         """A resubscribed task has no sender entry, but must not outlive its room."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.subscribe = MagicMock(
             return_value=stream(task_event(make_task(TaskState.TASK_STATE_WORKING)))
@@ -739,7 +768,7 @@ class TestA2AAdapterSession:
 
     @pytest.mark.asyncio
     async def test_does_not_resubscribe_terminal_task(self) -> None:
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
         adapter._client = MagicMock()
         adapter._client.subscribe = MagicMock()
 

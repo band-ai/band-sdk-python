@@ -28,7 +28,13 @@ from typing import (
     runtime_checkable,
 )
 
-from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker, is_self_echo
+from band_sdk_core import (
+    AgentFailure,
+    ClaimRegistry,
+    ParticipantRoster,
+    RetryTracker,
+    is_self_echo,
+)
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import (
@@ -37,7 +43,12 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
-from band.core.types import metadata_to_dict
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
+    TurnResultAlreadyReported,
+)
+from band.core.types import is_contact_hub_turn, metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
@@ -49,9 +60,8 @@ from band.platform.event import (
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
+from band.runtime.tools.agent import AgentTools
 from band.runtime.types import (
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-    SYNTHETIC_SENDER_TYPE,
     ConversationContext,
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
@@ -65,7 +75,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
+
+
+def _log_turn_error(error: Exception, message: str, *args: object) -> None:
+    """Log a failed turn; one whose failure already reached the room was logged
+    where it was reported, so it stays out of ERROR alerting."""
+    reported = isinstance(error, TurnResultAlreadyReported)
+    level = logging.DEBUG if reported else logging.ERROR
+    logger.log(level, message, *args, exc_info=not reported)
 
 
 class ResyncRequest:
@@ -333,6 +352,11 @@ class ExecutionContext:
         # signal can never leak onto a later cycle.
         self._cycle_armed: bool = False
         self._pending_interrupt: ControlMode | None = None
+
+        # Set when the adapter posted this turn's failure itself (via
+        # ``AgentTools.send_failure``), so the runtime notice doesn't repeat it.
+        # Cleared in the per-message ``finally``.
+        self._turn_failure_reported: bool = False
 
         # Durable stop (play to resume). Trigger suppression is
         # platform-authoritative (dispatch gated server-side, persists across
@@ -1435,6 +1459,7 @@ class ExecutionContext:
         self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
+        attempts: int | None = None
         try:
             if (
                 self._delivery_status_for_agent(msg.metadata)
@@ -1464,7 +1489,7 @@ class ExecutionContext:
             # Mark as processing on server BEFORE we start. If this fails, do not
             # invoke the adapter; otherwise the platform will keep returning the
             # same message and the agent may replay side effects.
-            if not await self.link.mark_processing(self.room_id, msg_id):
+            if not await self._claim(msg_id):
                 logger.warning(
                     "ExecutionContext %s: Could not claim backlog message %s",
                     self.room_id,
@@ -1551,15 +1576,9 @@ class ExecutionContext:
             logger.debug("Message %s processed successfully", msg_id)
             return BacklogProcessResult.ADVANCED
 
-        except Exception as e:
-            # FAILURE: Mark as failed on server
-            logger.exception("Error processing backlog message %s", msg_id)
-            if not await self.link.mark_failed(self.room_id, msg_id, _error_label(e)):
-                logger.warning(
-                    "ExecutionContext %s: Failed to mark backlog message %s as failed",
-                    self.room_id,
-                    msg_id,
-                )
+        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+            _log_turn_error(e, "Error processing backlog message %s", msg_id)
+            await self._handle_turn_failure(msg_id, attempts, e)
             return BacklogProcessResult.ADVANCED
 
         finally:
@@ -1567,6 +1586,7 @@ class ExecutionContext:
             # can't leak onto the next backlog message.
             self._cycle_armed = False
             self._pending_interrupt = None
+            self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
 
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
@@ -1822,6 +1842,14 @@ class ExecutionContext:
         finally:
             self._active_cycle_task = None
 
+    async def _claim(self, msg_id: str) -> bool:
+        """Mark ``msg_id`` processing on the platform; a refused claim never
+        ran the handler, so it gives back the attempt already charged."""
+        if await self.link.mark_processing(self.room_id, msg_id):
+            return True
+        self._retry_tracker.discard_attempt(msg_id)
+        return False
+
     async def _abort_cycle(self, kind: ControlMode, msg_id: str | None) -> bool:
         """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
 
@@ -1942,9 +1970,8 @@ class ExecutionContext:
 
             # Detect synthetic messages (e.g., contact events injected into hub room)
             # These don't exist in the database, so skip all tracking and marking
-            is_synthetic = (
-                payload.sender_type == SYNTHETIC_SENDER_TYPE
-                and payload.sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+            is_synthetic = is_contact_hub_turn(
+                sender_type=payload.sender_type, sender_id=payload.sender_id
             )
             if is_synthetic:
                 logger.debug("Processing synthetic contact event message")
@@ -1979,6 +2006,56 @@ class ExecutionContext:
 
         return await self._process_event_body(event, msg_id, payload)
 
+    def note_turn_failure_reported(self) -> None:
+        """Record that the adapter already told the room this turn failed."""
+        self._turn_failure_reported = True
+
+    async def _handle_turn_failure(
+        self,
+        msg_id: str,
+        attempts: int | None,
+        error: Exception,
+    ) -> None:
+        """Mark a failed turn failed and, on its final attempt, report it to
+        the room as an ``error`` event.
+
+        An event mentions no one and is never delivered as a turn, so it is
+        safe for agent senders too. ``attempts`` is None when the failure
+        preceded ``record_attempt``, which can't be judged final.
+        """
+        if not await self.link.mark_failed(self.room_id, msg_id, _error_label(error)):
+            logger.warning(
+                "ExecutionContext %s: Failed to mark message %s as failed",
+                self.room_id,
+                msg_id,
+            )
+
+        is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
+        # Only a post that landed counts: an adapter raises
+        # TurnResultAlreadyReported even when its send_failure did not post.
+        already_reported = self._turn_failure_reported
+        if not (
+            self.config.report_turn_failures_to_room
+            and is_final
+            and not already_reported
+        ):
+            logger.debug(
+                "ExecutionContext %s: No turn-failure report for message %s "
+                "(enabled=%s, final=%s, already_reported=%s)",
+                self.room_id,
+                msg_id,
+                self.config.report_turn_failures_to_room,
+                is_final,
+                already_reported,
+            )
+            return
+
+        # The exception text can carry credentials; it stays in mark_failed
+        # and the logs, and the room gets the generic message.
+        await AgentTools.from_context(self).send_failure(
+            AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+        )
+
     async def _process_event_body(
         self, event: PlatformEvent, msg_id: str | None, payload: Any
     ) -> bool:
@@ -2000,23 +2077,11 @@ class ExecutionContext:
         self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
 
+        attempts: int | None = None
         try:
-            # Hydrate before claiming real WebSocket messages when payload
-            # metadata did not prove they were already processed. Hydrated
-            # context may contain the durable delivery status for replayed events.
             if isinstance(event, MessageEvent) and msg_id and payload:
-                if not self._context_hydrated:
-                    await self._ensure_fresh_context()
-                if self._message_processed_for_agent(msg_id, payload.metadata):
-                    logger.info(
-                        "Skipping processed replay message %s in room %s after hydration",
-                        msg_id,
-                        self.room_id,
-                    )
-                    self.claims.remember_completed(self.room_id, msg_id)
-                    return True
-
-                # Track attempts
+                # Charged before hydration, as on the backlog path, so a
+                # hydration failure counts toward the retry budget.
                 attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
                 if exceeded:
                     logger.warning(
@@ -2026,13 +2091,29 @@ class ExecutionContext:
                     )
                     return True
 
+                # Hydrate before claiming real WebSocket messages when payload
+                # metadata did not prove they were already processed. Hydrated
+                # context may contain the durable delivery status for replayed
+                # events.
+                if not self._context_hydrated:
+                    await self._ensure_fresh_context()
+                if self._message_processed_for_agent(msg_id, payload.metadata):
+                    logger.info(
+                        "Skipping processed replay message %s in room %s after hydration",
+                        msg_id,
+                        self.room_id,
+                    )
+                    self._retry_tracker.discard_attempt(msg_id)
+                    self.claims.remember_completed(self.room_id, msg_id)
+                    return True
+
                 # Open the claim->cycle window: from here until _run_cycle
                 # creates the cancellable task, an interrupt/stop has no task to
                 # cancel, so interrupt() records it as pending instead.
                 self._cycle_armed = True
 
                 # For messages: mark as processing on server
-                if not await self.link.mark_processing(self.room_id, msg_id):
+                if not await self._claim(msg_id):
                     logger.warning(
                         "ExecutionContext %s: Could not claim message %s",
                         self.room_id,
@@ -2095,22 +2176,10 @@ class ExecutionContext:
             logger.debug("Event %s processed successfully", event.type)
             return True
 
-        except Exception as e:
-            logger.exception(
-                "Error processing %s", event.type
-            )  # For messages: mark as failed on server
-            if (
-                isinstance(event, MessageEvent)
-                and msg_id
-                and not await self.link.mark_failed(
-                    self.room_id, msg_id, _error_label(e)
-                )
-            ):
-                logger.warning(
-                    "ExecutionContext %s: Failed to mark message %s as failed",
-                    self.room_id,
-                    msg_id,
-                )
+        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+            _log_turn_error(e, "Error processing %s", event.type)
+            if isinstance(event, MessageEvent) and msg_id:
+                await self._handle_turn_failure(msg_id, attempts, e)
             return True
 
         finally:
@@ -2119,4 +2188,5 @@ class ExecutionContext:
             # leak onto the next message.
             self._cycle_armed = False
             self._pending_interrupt = None
+            self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)

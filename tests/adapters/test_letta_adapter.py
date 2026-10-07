@@ -10,10 +10,14 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from letta_client.types.agents.text_content import TextContent
+from letta_client.types.agents.tool_call import ToolCall
+from letta_client.types.agents.tool_return import ToolReturn
+from letta_client.types.tool_return_message import ToolReturnMessage
 
 from band.adapters.letta import (
     LettaAdapter,
@@ -26,28 +30,59 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
-from band.core.types import Emit
+from band.core.types import Capability, Emit, ToolEventKey
 from band.runtime.tools import BandTool
-from band.testing import FakeAgentTools, reported_failures
+from band.testing import (
+    MISSING_REPLY_FAILURE,
+    FakeAgentTools,
+    events_of_type,
+    failure_reports,
+    reported_failures,
+)
 from tests.adapters.lettakit import (
+    call_id,
     default_enforcement,
     make_assistant_message,
+    make_grouped_call_message,
+    make_grouped_return_message,
     make_letta_response,
     make_mock_agent,
     make_mock_async_stream,
     make_mock_conversation,
     make_mock_tool_page,
+    make_parallel_tool_messages,
     make_platform_message,
     make_tool_call_message,
     make_tool_return_message,
+    ready_letta_adapter,
+    scripted_letta_turn,
 )
+from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, turn_tools
 
-# The tools whose call settles the turn's reply, so no assistant text is relayed.
-REPLY_SETTLING_TOOLS = [
-    BandTool.SEND_MESSAGE,
-    BandTool.SEND_ROOM_FILE,
-    BandTool.NO_REPLY,
+# Band tool calls that settle the turn's reply, so no assistant text is relayed.
+REPLY_SETTLING_CALLS = [
+    pytest.param(
+        BandTool.SEND_MESSAGE, {"content": "Hi", "mentions": ["@alice"]}, id="message"
+    ),
+    pytest.param(
+        BandTool.SEND_ROOM_FILE,
+        {"content": "notes", "filename": "notes.txt", "mentions": ["@alice"]},
+        id="room-file",
+    ),
+    pytest.param(BandTool.NO_REPLY, {"reason": "FYI only"}, id="no-reply"),
 ]
+
+
+def sent_contents(tools: FakeAgentTools) -> list[str]:
+    return [message["content"] for message in tools.messages_sent]
+
+
+def reported_tool_names(tools: FakeAgentTools, event_type: str) -> list[str]:
+    return [
+        json.loads(event["content"])[ToolEventKey.NAME]
+        for event in events_of_type(tools, event_type)
+    ]
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Initialization
@@ -130,6 +165,21 @@ class TestLettaAdapterOnMessagePerRoom:
         assert "conversation_id" not in call_kwargs
 
     @pytest.mark.asyncio
+    async def test_configured_memory_blocks_follow_the_persona_block(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        adapter, mock_client = adapter_with_client
+        human = {"label": "human", "value": "Prefers short answers."}
+        adapter.config = LettaAdapterConfig(memory_blocks=(human,))
+        mock_client.agents.create.return_value = make_mock_agent("agent-1")
+
+        await adapter._create_agent("room-1")
+
+        blocks = mock_client.agents.create.call_args.kwargs["memory_blocks"]
+        assert [block["label"] for block in blocks] == ["persona", "human"]
+        assert blocks[1] == human
+
+    @pytest.mark.asyncio
     async def test_auto_relay_when_no_send_message(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -198,43 +248,37 @@ class TestLettaAdapterOnMessagePerRoom:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("reply_tool", REPLY_SETTLING_TOOLS)
+    @pytest.mark.parametrize(("reply_tool", "arguments"), REPLY_SETTLING_CALLS)
     async def test_skip_auto_relay_when_a_reply_tool_settled_the_turn(
-        self, adapter_with_client: tuple[LettaAdapter, AsyncMock], reply_tool: str
+        self, reply_tool: str, arguments: dict[str, Any]
     ) -> None:
-        adapter, mock_client = adapter_with_client
-
-        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
-
-        mock_client.agents.messages.create.return_value = make_letta_response(
-            make_tool_call_message(reply_tool),
-            make_tool_return_message(reply_tool),
-            make_assistant_message("Done!"),
+        adapter, mock_client = ready_letta_adapter(capabilities={Capability.FILES})
+        mock_client.agents.messages.create.side_effect = scripted_letta_turn(
+            adapter,
+            room_id="room-1",
+            tool_calls=[(reply_tool, arguments)],
+            final_text="Done!",
         )
-
         tools = FakeAgentTools()
-        msg = make_platform_message()
-        history = LettaSessionState()
 
         await adapter.on_message(
-            msg,
+            make_platform_message(),
             tools,
-            history,
+            LettaSessionState(),
             None,
             None,
             is_session_bootstrap=False,
             room_id="room-1",
         )
 
-        # No auto-relay — the agent settled its reply via an MCP tool
-        assert len(tools.messages_sent) == 0
+        assert "Done!" not in sent_contents(tools)
 
     @pytest.mark.asyncio
     async def test_timeout_reports_error(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = adapter_with_client
-        adapter.config.turn_timeout_s = 0.01
+        adapter.config = adapter.config.model_copy(update={"turn_timeout_s": 0.01})
 
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
@@ -273,7 +317,7 @@ class TestLettaAdapterOnMessagePerRoom:
         is merely slow (not the Letta call) must not be misreported as a
         Letta provider timeout -- it must be given time to complete."""
         adapter, mock_client = adapter_with_client
-        adapter.config.turn_timeout_s = 0.05
+        adapter.config = adapter.config.model_copy(update={"turn_timeout_s": 0.05})
 
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
@@ -578,7 +622,9 @@ class TestLettaAdapterSharedMode:
         self, shared_adapter: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = shared_adapter
-        adapter.config.agent_id = "pre-existing-agent"
+        adapter.config = adapter.config.model_copy(
+            update={"agent_id": "pre-existing-agent"}
+        )
 
         mock_client.agents.retrieve.return_value = make_mock_agent("pre-existing-agent")
         mock_client.agents.tools.list.return_value = make_mock_tool_page()
@@ -800,6 +846,51 @@ class TestExecutionReporting:
         ]
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_reports_every_parallel_call_and_its_result(self) -> None:
+        adapter, mock_client = ready_letta_adapter(emit=Emit.TOOL_CALLS)
+        calls = [
+            ToolCall(name=BandTool.GET_PARTICIPANTS, arguments="{}", tool_call_id="a"),
+            ToolCall(name=BandTool.LOOKUP_PEERS, arguments="{}", tool_call_id="b"),
+        ]
+        multimodal_output = [TextContent(type="text", text="no peers")]
+        returns = [
+            ToolReturn(
+                type="tool",
+                status="success",
+                tool_call_id="b",
+                tool_return=multimodal_output,
+            ),
+            ToolReturn(
+                type="tool", status="success", tool_call_id="a", tool_return="[]"
+            ),
+        ]
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_grouped_call_message(calls),
+            make_grouped_return_message(returns, name=calls[0].name),
+            make_assistant_message("Done"),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert reported_tool_names(tools, "tool_call") == [
+            BandTool.GET_PARTICIPANTS,
+            BandTool.LOOKUP_PEERS,
+        ]
+        assert reported_tool_names(tools, "tool_result") == [
+            BandTool.LOOKUP_PEERS,
+            BandTool.GET_PARTICIPANTS,
+        ]
 
     @pytest.mark.asyncio
     async def test_silent_tools_not_reported(self) -> None:
@@ -1359,18 +1450,15 @@ class TestSendToolResolution:
     @pytest.mark.asyncio
     async def test_relay_detection_uses_resolved_name(self) -> None:
         """A send via the resolved (external) tool name suppresses auto-relay."""
-        adapter = LettaAdapter()
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-        adapter._system_prompt = "Test"
-        adapter._mcp.server_id = "mcp-server-1"
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"))
+        )
         adapter._mcp.resolve_send_tools(
             ["create_agent_chat_message", "create_agent_chat_event"]
         )
-        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
-
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_call_message("create_agent_chat_message"),
+            make_tool_return_message("create_agent_chat_message"),
             make_assistant_message("Done!"),
         )
 
@@ -1386,6 +1474,202 @@ class TestSendToolResolution:
         )
 
         assert len(tools.messages_sent) == 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Turn recording of out-of-process tool calls
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestExternalToolRecording:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mcp_mode", "status", "replied"),
+        [
+            pytest.param("external", "success", True, id="external-success"),
+            pytest.param("external", "error", False, id="external-error"),
+            # Self-hosted calls run on the room's own tools, which record them.
+            pytest.param("self_host", "success", False, id="self-host"),
+        ],
+    )
+    async def test_streamed_tool_return_records_only_for_external_band_mcp(
+        self,
+        mcp_mode: Literal["self_host", "external"],
+        status: Literal["success", "error"],
+        replied: bool,
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode=mcp_mode))
+        )
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message(BandTool.SEND_MESSAGE),
+            make_tool_return_message(BandTool.SEND_MESSAGE, status=status),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.turn.replied is replied
+
+    @pytest.mark.asyncio
+    async def test_ungrouped_tool_return_is_matched_to_its_call(self) -> None:
+        """A server that sends no ``tool_returns`` puts the one result on the
+        message itself."""
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"))
+        )
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message(BandTool.SEND_MESSAGE),
+            ToolReturnMessage(
+                id="message-return",
+                date=datetime.now(UTC),
+                message_type="tool_return_message",
+                status="success",
+                tool_call_id=call_id(BandTool.SEND_MESSAGE),
+                tool_return="result",
+            ),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert tools.turn.replied
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("effect_tool", "replied"),
+        [
+            pytest.param(BandTool.ADD_PARTICIPANT, False, id="act"),
+            pytest.param(BandTool.SEND_MESSAGE, True, id="reply"),
+            pytest.param(BandTool.NO_REPLY, True, id="decline"),
+        ],
+    )
+    @pytest.mark.parametrize("reverse_calls", [False, True])
+    async def test_parallel_success_completes_turn_independent_of_order(
+        self,
+        effect_tool: str,
+        replied: bool,
+        reverse_calls: bool,
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"), auto_relay=False),
+            room_id=ROOM_ID,
+        )
+        results: list[tuple[str, Literal["success", "error"]]] = [
+            (BandTool.GET_PARTICIPANTS, "success"),
+            (effect_tool, "success"),
+        ]
+        if reverse_calls:
+            results.reverse()
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            *make_parallel_tool_messages(results, reverse_returns=False)
+        )
+        tools = turn_tools()
+
+        await adapter.on_event(turn_input(tools))
+
+        assert tools.turn.complete
+        assert tools.turn.replied is replied
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "effect_tool",
+        [BandTool.ADD_PARTICIPANT, BandTool.SEND_MESSAGE, BandTool.NO_REPLY],
+    )
+    @pytest.mark.parametrize("reverse_returns", [False, True])
+    async def test_parallel_failed_effect_does_not_complete_turn(
+        self, effect_tool: str, reverse_returns: bool
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"), auto_relay=False),
+            room_id=ROOM_ID,
+        )
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            *make_parallel_tool_messages(
+                [
+                    (BandTool.GET_PARTICIPANTS, "success"),
+                    (effect_tool, "error"),
+                ],
+                reverse_returns=reverse_returns,
+            )
+        )
+        tools = turn_tools()
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_event(turn_input(tools))
+
+        assert not tools.turn.replied
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("effect_tool", [BandTool.SEND_MESSAGE, BandTool.NO_REPLY])
+    @pytest.mark.parametrize("reverse_returns", [False, True])
+    async def test_parallel_failed_reply_does_not_suppress_fallback(
+        self, effect_tool: str, reverse_returns: bool
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external")),
+            room_id=ROOM_ID,
+        )
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            *make_parallel_tool_messages(
+                [(effect_tool, "error"), (BandTool.GET_PARTICIPANTS, "success")],
+                reverse_returns=reverse_returns,
+            ),
+            make_assistant_message("Fallback reply"),
+        )
+        tools = turn_tools()
+
+        await adapter.on_event(turn_input(tools))
+
+        assert sent_contents(tools) == ["Fallback reply"]
+        assert failure_reports(tools) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reverse_returns", [False, True])
+    async def test_parallel_results_match_call_ids_not_positions(
+        self, reverse_returns: bool
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"), auto_relay=False),
+            room_id=ROOM_ID,
+        )
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            *make_parallel_tool_messages(
+                [
+                    (BandTool.SEND_MESSAGE, "error"),
+                    (BandTool.ADD_PARTICIPANT, "success"),
+                ],
+                reverse_returns=reverse_returns,
+            )
+        )
+        tools = turn_tools()
+
+        await adapter.on_event(turn_input(tools))
+
+        assert tools.turn.complete
+        assert not tools.turn.replied
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == []
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1395,53 +1679,54 @@ class TestSendToolResolution:
 
 class TestAutoRelayDisabled:
     @pytest.mark.asyncio
-    async def test_disabled_relay_fails_loud_instead_of_sending(self) -> None:
-        """With auto_relay off, an unused MCP send path surfaces as an error
-        event and the assistant text is dropped — nothing is silently relayed."""
-        adapter = LettaAdapter(config=LettaAdapterConfig(auto_relay=False))
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-        adapter._system_prompt = "Test"
-        adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
-
-        mock_client.agents.messages.create.return_value = make_letta_response(
-            make_assistant_message("I'll help you!")
+    async def test_disabled_relay_drops_the_text_and_the_verdict_reports_it(
+        self,
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(auto_relay=False), room_id=ROOM_ID
+        )
+        mock_client.agents.messages.create.side_effect = scripted_letta_turn(
+            adapter, room_id=ROOM_ID, tool_calls=[], final_text="I'll help you!"
         )
 
-        tools = FakeAgentTools()
+        tools = turn_tools()
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
-                make_platform_message(),
-                tools,
-                LettaSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+            await adapter.on_event(turn_input(tools))
 
-        assert len(tools.messages_sent) == 0
-        failures = reported_failures(tools)
-        assert len(failures) == 1
-        assert failures[0]["provider"] == "letta"
-        assert "band_send_message" in failures[0]["message"]
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("reply_tool", REPLY_SETTLING_TOOLS)
-    async def test_disabled_relay_quiet_when_a_reply_tool_settled_the_turn(
-        self, reply_tool: str
-    ) -> None:
-        adapter = LettaAdapter(config=LettaAdapterConfig(auto_relay=False))
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-        adapter._system_prompt = "Test"
-        adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+    async def test_disabled_relay_completes_a_turn_that_did_real_work(self) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(auto_relay=False), room_id=ROOM_ID
+        )
+        mock_client.agents.messages.create.side_effect = scripted_letta_turn(
+            adapter,
+            room_id=ROOM_ID,
+            tool_calls=[(BandTool.CREATE_CHATROOM, {})],
+            final_text="Created it.",
+        )
 
-        mock_client.agents.messages.create.return_value = make_letta_response(
-            make_tool_call_message(reply_tool),
-            make_assistant_message("Done!"),
+        tools = turn_tools()
+        await adapter.on_event(turn_input(tools))
+
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("reply_tool", "arguments"), REPLY_SETTLING_CALLS)
+    async def test_disabled_relay_quiet_when_a_reply_tool_settled_the_turn(
+        self, reply_tool: str, arguments: dict[str, Any]
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(
+            LettaAdapterConfig(auto_relay=False), capabilities={Capability.FILES}
+        )
+        mock_client.agents.messages.create.side_effect = scripted_letta_turn(
+            adapter,
+            room_id="room-1",
+            tool_calls=[(reply_tool, arguments)],
+            final_text="Done!",
         )
 
         tools = FakeAgentTools()
@@ -1455,7 +1740,7 @@ class TestAutoRelayDisabled:
             room_id="room-1",
         )
 
-        assert len(tools.messages_sent) == 0
+        assert "Done!" not in sent_contents(tools)
         assert not reported_failures(tools)
 
 
@@ -1525,16 +1810,15 @@ class TestColdBootSeeding:
             make_assistant_message("The response was not sent through the tool.")
         )
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
-                make_platform_message(),
-                FakeAgentTools(),
-                LettaSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        await adapter.on_message(
+            make_platform_message(),
+            FakeAgentTools(),
+            LettaSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
 
         assert room_ctx.pending_seed == []
         assert room_ctx.last_interaction is not None
@@ -1575,7 +1859,9 @@ class TestColdBootSeeding:
         """config.agent_id is not a per-room resume target — each room without
         persisted history must get its own Letta agent."""
         adapter, mock_client = adapter_with_client
-        adapter.config.agent_id = "shared-bootstrap-id"
+        adapter.config = adapter.config.model_copy(
+            update={"agent_id": "shared-bootstrap-id"}
+        )
         mock_client.agents.create.return_value = make_mock_agent("room-agent")
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_assistant_message("Hello!")
@@ -1827,3 +2113,11 @@ class TestConfigEnvSourcing:
         monkeypatch.setenv("LETTA_API_KEY", "env-key")
 
         assert LettaAdapterConfig(provider_key="kwarg-key").provider_key == "kwarg-key"
+
+    def test_prefixed_env_fills_a_field_and_an_explicit_value_beats_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_MODEL", "openai/env-model")
+
+        assert LettaAdapterConfig().model == "openai/env-model"
+        assert LettaAdapterConfig(model="openai/explicit").model == "openai/explicit"

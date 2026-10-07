@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[google_adk]>=1.2.0"]
+# dependencies = ["band-sdk[google_adk]>=4.0.0"]
 # ///
 """
 Basic Google ADK agent example.
@@ -28,7 +28,7 @@ import logging
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import GoogleADKAdapter
+from band.adapters import GoogleADKAdapter, GoogleADKAdapterConfig
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,8 +39,10 @@ async def main() -> None:
 
     # Create adapter with Google ADK settings
     adapter = GoogleADKAdapter(
-        model="gemini-2.5-flash",
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        GoogleADKAdapterConfig(
+            model="gemini-3.8-flash",
+            custom_section="You are a helpful assistant. Be concise and friendly.",
+        )
     )
 
     logger.info("Starting Google ADK agent...")

@@ -235,5 +235,6 @@ def make_link_mock(
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    link.report_activity = AsyncMock(return_value=True)
     link.disconnect = AsyncMock()
     return link

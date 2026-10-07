@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import quote
 
 import httpx
@@ -13,6 +13,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _EVENT_READ_TIMEOUT_S = 60.0
+
+
+ApprovalReply = Literal["once", "always", "reject"]
 
 
 class OpencodeClientProtocol(Protocol):
@@ -41,18 +44,12 @@ class OpencodeClientProtocol(Protocol):
     ) -> None: ...
 
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
     ) -> None: ...
 
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]
     ) -> None: ...
-
-    async def reject_question(self, request_id: str) -> None: ...
 
     async def abort_session(self, session_id: str) -> None: ...
 
@@ -166,18 +163,19 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         response.raise_for_status()
 
     async def reply_permission(
-        self,
-        session_id: str,
-        permission_id: str,
-        *,
-        response: str,
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
     ) -> None:
-        resp = await self._client.post(
-            f"/session/{session_id}/permissions/{permission_id}",
+        # Only this route carries ``message``. OpenCode ends the turn on a bare
+        # reject but hands a reject with a message back to the model.
+        payload: dict[str, str] = {"reply": reply}
+        if message:
+            payload["message"] = message
+        response = await self._client.post(
+            f"/permission/{permission_id}/reply",
             params=self._query_params(),
-            json={"response": response},
+            json=payload,
         )
-        resp.raise_for_status()
+        response.raise_for_status()
 
     async def reply_question(
         self, request_id: str, *, answers: list[list[str]]
@@ -186,13 +184,6 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             f"/question/{request_id}/reply",
             params=self._query_params(),
             json={"answers": answers},
-        )
-        response.raise_for_status()
-
-    async def reject_question(self, request_id: str) -> None:
-        response = await self._client.post(
-            f"/question/{request_id}/reject",
-            params=self._query_params(),
         )
         response.raise_for_status()
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[letta]>=1.2.0", "pydantic-settings", "python-dotenv"]
+# dependencies = ["band-sdk[letta]>=4.0.0", "pydantic-settings", "python-dotenv"]
 # ///
 """
 Basic Letta agent example.
@@ -16,9 +16,9 @@ Environment variables:
                         Set to http://localhost:8283 for self-hosted.
     LETTA_API_KEY       Letta API key (required for Cloud, optional for self-hosted)
     LETTA_PROJECT       Letta Cloud project name (optional)
-    LETTA_MODEL         LLM model ID (default: openai/gpt-5.4-mini)
+    LETTA_MODEL         LLM model ID (default: openai/gpt-6-luna)
                         Must include the provider prefix, e.g.
-                        openai/gpt-5.4-mini or
+                        openai/gpt-6-luna or
                         anthropic/claude-haiku-4-5
     LETTA_EMBEDDING     Embedding model for agent create (required by Letta's
                         Docker server, e.g. openai/text-embedding-3-small)
@@ -45,13 +45,13 @@ Self-hosted usage:
     # No LETTA_API_KEY and no MCP_SERVER_URL needed: the adapter self-hosts
     # the MCP server and the dockerized Letta reaches it through the host.
     docker run --add-host=host.docker.internal:host-gateway \
-        -p 8283:8283 letta/letta:latest
+        -p 8283:8283 letta/letta:0.16.8
     uv run examples/letta/01_basic_agent.py
 
 Troubleshooting:
     If Letta returns "INVALID_ARGUMENT: The model handle should be in the
     format provider/model-name", set LETTA_MODEL to a full Letta model handle
-    such as "openai/gpt-5.4-mini" or
+    such as "openai/gpt-6-luna" or
     "anthropic/claude-haiku-4-5". A bare model name from another
     variable, for example "claude-haiku-4-5-20251001", is not accepted.
     If Letta returns "Handle ... not found", check the handles exposed by your
@@ -80,7 +80,7 @@ class ExampleSettings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
+    letta_model: str = "openai/gpt-6-luna"  # LETTA_MODEL
     letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str | None = None  # MCP_SERVER_URL (external band-mcp)
 

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=1.2.0",
+#   "band-sdk[anthropic]>=4.0.0",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 # ]
@@ -26,7 +26,7 @@ Environment variables:
     BAND_WS_URL   — defaults to wss://app.band.ai/api/v1/socket/websocket
                        (unused by the container; reserved for SDK consistency)
     BAND_REST_URL — defaults to https://app.band.ai
-    ANTHROPIC_MODEL  — defaults to claude-sonnet-4-5-20250929
+    ANTHROPIC_MODEL  — defaults to claude-sonnet-5-5
     SYSTEM_PROMPT    — optional custom system prompt for the adapter
     EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
                        events; set "false" to silence them
@@ -50,7 +50,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
-from band.adapters.anthropic import AnthropicAdapter
+from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    anthropic_model: str = "claude-sonnet-4-5-20250929"
+    anthropic_model: str = "claude-sonnet-5-5"
     system_prompt: str = ""
     emit_execution: bool = True
     port: int = 8080
@@ -85,9 +85,11 @@ def _build_adapter(settings: Settings) -> AnthropicAdapter:
     """
     emit = Emit.TOOL_CALLS if settings.emit_execution else ()
     return AnthropicAdapter(
-        model=settings.anthropic_model,
-        provider_key=settings.anthropic_api_key,
-        prompt=settings.system_prompt or None,
+        AnthropicAdapterConfig(
+            model=settings.anthropic_model,
+            provider_key=settings.anthropic_api_key,
+            custom_section=settings.system_prompt,
+        ),
         emit=emit,
     )
 

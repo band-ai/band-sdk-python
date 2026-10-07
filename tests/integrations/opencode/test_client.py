@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from band.integrations.opencode import ApprovalReply
 from band.integrations.opencode.client import HttpOpencodeClient
 
 
@@ -40,18 +41,13 @@ class FakeOpencodeServer:
                     methods=["POST"],
                 ),
                 Route(
-                    "/session/{session_id}/permissions/{permission_id}",
+                    "/permission/{permission_id}/reply",
                     self._reply_permission,
                     methods=["POST"],
                 ),
                 Route(
                     "/question/{request_id}/reply",
                     self._reply_question,
-                    methods=["POST"],
-                ),
-                Route(
-                    "/question/{request_id}/reject",
-                    self._reject_question,
                     methods=["POST"],
                 ),
                 Route(
@@ -95,10 +91,6 @@ class FakeOpencodeServer:
         return Response(status_code=200)
 
     async def _reply_question(self, request: Request) -> Response:
-        await self._record(request)
-        return Response(status_code=200)
-
-    async def _reject_question(self, request: Request) -> Response:
         await self._record(request)
         return Response(status_code=200)
 
@@ -278,15 +270,29 @@ async def test_prompt_async_sends_all_optional_fields_when_given(
         await client.close()
 
 
-async def test_reply_permission_posts_response_to_permission_path(
+@pytest.mark.parametrize(
+    ("reply", "message", "body"),
+    [
+        ("once", None, {"reply": "once"}),
+        (
+            "reject",
+            "Declined in the room.",
+            {"reply": "reject", "message": "Declined in the room."},
+        ),
+    ],
+)
+async def test_reply_permission_posts_the_reply_and_optional_message(
     fake_server: FakeOpencodeServer,
+    reply: ApprovalReply,
+    message: str | None,
+    body: dict[str, str],
 ) -> None:
     client = make_client(fake_server)
     try:
-        await client.reply_permission("sess-existing", "perm-1", response="once")
+        await client.reply_permission("perm-1", reply=reply, message=message)
         request = fake_server.requests[-1]
-        assert request["path"] == "/session/sess-existing/permissions/perm-1"
-        assert request["body"] == {"response": "once"}
+        assert request["path"] == "/permission/perm-1/reply"
+        assert request["body"] == body
     finally:
         await client.close()
 
@@ -298,17 +304,6 @@ async def test_reply_question_posts_answers(fake_server: FakeOpencodeServer) -> 
         request = fake_server.requests[-1]
         assert request["path"] == "/question/req-1/reply"
         assert request["body"] == {"answers": [["blue"], ["yes"]]}
-    finally:
-        await client.close()
-
-
-async def test_reject_question_posts_to_reject_path(
-    fake_server: FakeOpencodeServer,
-) -> None:
-    client = make_client(fake_server)
-    try:
-        await client.reject_question("req-1")
-        assert fake_server.requests[-1]["path"] == "/question/req-1/reject"
     finally:
         await client.close()
 

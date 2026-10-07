@@ -23,9 +23,12 @@ import weakref
 from typing import Any
 
 from band import create_room_workspace_resolver
+from band.adapters.codex import CodexSandboxMode
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
+from band.integrations.omp import omp_provider_env
 from band.testing import feature_kwargs
+from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
     Adapter,
@@ -34,6 +37,11 @@ from tests.e2e.baseline.toolkit.adapters import (
     adapter,
 )
 from tests.e2e.baseline.toolkit.deps import Dep
+from tests.e2e.baseline.toolkit.omp_credentials import (
+    omp_command,
+    omp_model,
+    omp_provider_api_key,
+)
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 # Spelled out rather than derived from the Capability enum: an adapter's
@@ -58,12 +66,15 @@ def _build_anthropic(
 ) -> SimpleAdapter[Any]:
     from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file builds
         AnthropicAdapter,
+        AnthropicAdapterConfig,
     )
 
     return AnthropicAdapter(
-        model=s.llm_models.anthropic_model,
-        provider_key=s.llm_credentials.anthropic_api_key or None,
-        prompt=prompt,
+        AnthropicAdapterConfig(
+            model=s.llm_models.anthropic_model,
+            provider_key=s.llm_credentials.anthropic_api_key or None,
+            custom_section=prompt or "",
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -76,19 +87,21 @@ def _build_claude_sdk(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import (  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
         ClaudeSDKAdapter,
+        ClaudeSDKAdapterConfig,
     )
 
-    # Claude Code gets real Bash/filesystem tools; an unset cwd falls back to
-    # the process cwd (this repo's own checkout). Mirrors _build_copilot_acp's
-    # per-cell disposable sandbox.
     sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-claude-sdk-")
     adapter = ClaudeSDKAdapter(
-        model=s.llm_models.anthropic_model,
-        custom_section=prompt,
-        cwd=sandbox.name,
+        ClaudeSDKAdapterConfig(
+            model=s.llm_models.anthropic_model,
+            custom_section=prompt,
+        ),
+        workspace_for_room=workspace_for_room
+        or create_room_workspace_resolver(sandbox.name),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -111,7 +124,7 @@ def _build_copilot_sdk(
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
-    # ask_user / base_directory / a shared client are bespoke knobs exercised by
+    # ask_user / a shared client are bespoke knobs exercised by
     # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
     from copilot import (  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
         ProviderConfig,
@@ -122,20 +135,26 @@ def _build_copilot_sdk(
         CopilotSDKAdapterConfig,
     )
 
-    return CopilotSDKAdapter(
+    # A per-cell COPILOT_HOME, as copilot_acp gets: host hooks and extensions
+    # in ~/.copilot otherwise steer or deny the turn under test.
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-sdk-")
+    adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
-            provider=ProviderConfig(
-                type="anthropic",
-                base_url="https://api.anthropic.com",
-                api_key=s.llm_credentials.anthropic_api_key,
-            ),
             use_logged_in_user=False,
+            base_directory=copilot_home_dir(sandbox.name),
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
+        provider=ProviderConfig(
+            type="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key=s.llm_credentials.anthropic_api_key,
+        ),
         **feature_kwargs(features),
     )
+    weakref.finalize(adapter, sandbox.cleanup)
+    return adapter
 
 
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
@@ -155,9 +174,11 @@ def _build_langgraph(
 
     from band.adapters.langgraph import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file builds
         LangGraphAdapter,
+        LangGraphAdapterConfig,
     )
 
     return LangGraphAdapter(
+        LangGraphAdapterConfig(custom_section=prompt or ""),
         llm=ChatOpenAI(
             model=s.llm_models.openai_model,
             api_key=s.llm_credentials.openai_api_key or None,
@@ -169,7 +190,6 @@ def _build_langgraph(
         # in a persistent checkpointer keyed by room_id would silently move langgraph
         # into the codex/opencode "backend session resume" class and invalidate that.
         checkpointer=MemorySaver(),
-        custom_section=prompt or "",
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -189,6 +209,7 @@ def _build_pydantic_ai(
 
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
         PydanticAIAdapter,
+        PydanticAIAdapterConfig,
     )
 
     # pydantic-ai takes native callables with a RunContext-first signature.
@@ -196,8 +217,9 @@ def _build_pydantic_ai(
         [t.as_callable(ctx_annotation=RunContext) for t in tools] if tools else None
     )
     return PydanticAIAdapter(
-        model=f"openai:{s.llm_models.openai_model}",
-        custom_section=prompt,
+        PydanticAIAdapterConfig(
+            model=f"openai:{s.llm_models.openai_model}", custom_section=prompt
+        ),
         additional_tools=native,
         **feature_kwargs(features),
     )
@@ -217,17 +239,18 @@ def _build_strands(
 
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
         StrandsAdapter,
+        StrandsAdapterConfig,
     )
 
     # Strands has no provider-prefix string shorthand (a bare string means a
     # Bedrock model id), so the OpenAI provider is constructed explicitly.
     api_key = s.llm_credentials.openai_api_key
     return StrandsAdapter(
-        model=OpenAIModel(
+        StrandsAdapterConfig(custom_section=prompt),
+        llm=OpenAIModel(
             client_args={"api_key": api_key} if api_key else None,
             model_id=s.llm_models.openai_model,
         ),
-        custom_section=prompt,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -243,12 +266,15 @@ def _build_gemini(
 ) -> SimpleAdapter[Any]:
     from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file builds
         GeminiAdapter,
+        GeminiAdapterConfig,
     )
 
     return GeminiAdapter(
-        model=s.llm_models.gemini_model,
-        provider_key=s.llm_credentials.google_api_key or None,
-        prompt=prompt,
+        GeminiAdapterConfig(
+            model=s.llm_models.gemini_model,
+            provider_key=s.llm_credentials.google_api_key or None,
+            custom_section=prompt or "",
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -264,12 +290,12 @@ def _build_google_adk(
 ) -> SimpleAdapter[Any]:
     from band.adapters.google_adk import (  # noqa: PLC0415 -- isolates the google_adk extra from the other frameworks this file builds
         GoogleADKAdapter,
+        GoogleADKAdapterConfig,
     )
 
     # google-adk reads the provider key / Vertex config from the environment.
     return GoogleADKAdapter(
-        model=s.llm_models.gemini_model,
-        custom_section=prompt,
+        GoogleADKAdapterConfig(model=s.llm_models.gemini_model, custom_section=prompt),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -285,14 +311,17 @@ def _build_crewai(
 ) -> SimpleAdapter[Any]:
     from band.adapters.crewai import (  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file builds
         CrewAIAdapter,
+        CrewAIAdapterConfig,
     )
 
     return CrewAIAdapter(
-        model=s.llm_models.openai_model,
-        role="Test Assistant",
-        goal="Help users with simple tasks for testing.",
-        backstory="A test agent for E2E validation.",
-        custom_section=prompt,
+        CrewAIAdapterConfig(
+            model=s.llm_models.openai_model,
+            role="Test Assistant",
+            goal="Help users with simple tasks for testing.",
+            backstory="A test agent for E2E validation.",
+            custom_section=prompt,
+        ),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -324,7 +353,7 @@ def _build_agno(
     # and re-offers them alongside the platform tools each run.
     native = [t.as_callable() for t in tools] if tools else None
     return AgnoAdapter(
-        AgnoAgent(
+        agent=AgnoAgent(
             model=Claude(id=s.llm_models.anthropic_model),
             instructions=prompt,
             tools=native,
@@ -346,6 +375,7 @@ def _build_crewai_flow(
     # capabilities. The minimal flow echoes back so the reply path is observable.
     from band.adapters.crewai_flow import (  # noqa: PLC0415 -- isolates the crewai_flow extra from the other frameworks this file builds
         CrewAIFlowAdapter,
+        CrewAIFlowAdapterConfig,
     )
 
     class _E2EFlow:
@@ -355,7 +385,6 @@ def _build_crewai_flow(
             return {"decision": "direct_response", "content": content, "mentions": []}
 
     return CrewAIFlowAdapter(
-        flow_factory=_E2EFlow,
         # In the baseline room scenarios crewai_flow is a live participant that must
         # react to peer (agent-authored) messages — e.g. the loop_suppression positive,
         # where a peer's directed probe has to drive a turn. The SDK default is the
@@ -363,7 +392,8 @@ def _build_crewai_flow(
         # loops); opting in here is safe because the runtime already drops an agent's
         # OWN messages before dispatch (execution.py self-filter), so crewai_flow reacts
         # to peers without ever looping on its own output.
-        accept_agent_initiated=True,
+        CrewAIFlowAdapterConfig(accept_agent_initiated=True),
+        flow_factory=_E2EFlow,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -375,11 +405,9 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
     builder doesn't expose -- so both stay in sync on cwd/model/command instead
     of a bespoke test hand-copying this logic and silently drifting from it.
 
-    Only overrides what's explicitly configured. ``CODEX_MODEL`` is left unset by
-    default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
-    catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
-    adapter discover/select a valid Codex model. ``CODEX_COMMAND`` likewise: an absent
-    value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
+    The model is ``Backends.codex_model`` (``CODEX_MODEL``). An absent
+    ``CODEX_COMMAND`` spawns the stock `codex` binary. Splits mirror the gates
+    in deps.py.
     """
     config_kwargs: dict[str, Any] = {
         # CodexAdapterConfig reads CODEX_-prefixed env, so the exported CODEX_CWD
@@ -387,10 +415,10 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
         # through workspace_for_room instead.
         "cwd": None,
         "workspace_for_room": create_room_workspace_resolver(s.backends.codex_cwd),
+        "sandbox": CodexSandboxMode.WORKSPACE_WRITE,
         "custom_section": prompt or "",
+        "model": s.backends.codex_model,
     }
-    if s.backends.codex_model.strip():
-        config_kwargs["model"] = s.backends.codex_model
     if s.backends.codex_command.strip():
         config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
     return config_kwargs
@@ -408,14 +436,18 @@ def _build_codex(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import (  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file builds
         CodexAdapter,
         CodexAdapterConfig,
     )
 
+    config_kwargs = codex_config_kwargs(s, prompt=prompt)
+    if workspace_for_room is not None:
+        config_kwargs["workspace_for_room"] = workspace_for_room
     return CodexAdapter(
-        config=CodexAdapterConfig(**codex_config_kwargs(s, prompt=prompt)),
+        config=CodexAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -503,6 +535,7 @@ def _build_copilot_acp(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- isolates the copilot_acp extra from the other frameworks this file builds
         CopilotACPAdapter,
@@ -532,14 +565,17 @@ def _build_copilot_acp(
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
-        "workspace_for_room": create_room_workspace_resolver(sandbox),
+        "cwd": sandbox,
         "env": copilot_acp_env(s, copilot_home_dir(sandbox)),
     }
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
+    if workspace_for_room is not None:
+        config_kwargs.pop("cwd")
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -553,17 +589,8 @@ def omp_agent_home_dir(work_dir: str) -> str:
 
 
 def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
-    """Hermetic OMP child env: model, provider key, and isolated agent state dir."""
-    from band.integrations.omp import (  # noqa: PLC0415 -- keep builder imports lazy like sibling adapters
-        DEFAULT_OMP_MODEL,
-        omp_provider_env,
-    )
-    from tests.e2e.baseline.toolkit.omp_credentials import (  # noqa: PLC0415
-        omp_provider_api_key,
-    )
-
-    model = s.backends.omp_model.strip() or DEFAULT_OMP_MODEL
-    env = omp_provider_env(model=model, api_key=omp_provider_api_key(s))
+    """Hermetic OMP child env: provider key and isolated agent state dir."""
+    env = omp_provider_env(model=omp_model(s), api_key=omp_provider_api_key(s))
     env["PI_CODING_AGENT_DIR"] = agent_home
     return env
 
@@ -580,6 +607,7 @@ def _build_omp_acp(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.omp_acp import (  # noqa: PLC0415
         OmpACPAdapter,
@@ -588,18 +616,35 @@ def _build_omp_acp(
 
     sandbox = tempfile.mkdtemp(prefix="band-e2e-omp-acp-")
     config_kwargs: dict[str, Any] = {
+        "command": omp_command(s),
         "custom_section": prompt or "",
         "cwd": sandbox,
+        "model": omp_model(s),
         "env": omp_acp_env(s, omp_agent_home_dir(sandbox)),
     }
-    if s.backends.omp_command.strip():
-        config_kwargs["command"] = tuple(s.backends.omp_command.split())
 
+    if workspace_for_room is not None:
+        config_kwargs.pop("cwd")
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+
+
+def cursor_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str, Any]:
+    """``CursorACPAdapterConfig`` kwargs shared by the matrix builder and the
+    bespoke Cursor workflow and approval adapters, so the key and command
+    override stay in one place. Questions always resolve on their own."""
+    config_kwargs: dict[str, Any] = {
+        "api_key": s.backends.cursor_api_key,
+        "custom_section": prompt or "",
+        "question_mode": "auto_first",
+    }
+    if s.backends.cursor_command.strip():
+        config_kwargs["command"] = tuple(s.backends.cursor_command.split())
+    return config_kwargs
 
 
 @adapter(
@@ -607,12 +652,6 @@ def _build_omp_acp(
     requires=[Dep.CURSOR_CLI],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
-    e2e_pending=(
-        "no way to run Cursor CLI live in CI: it has no BYOK provider knob "
-        "(unlike copilot_acp's COPILOT_PROVIDER_* env vars), so it needs "
-        "either a real Cursor account API key or a full AWS Bedrock setup, "
-        "neither of which is provisioned"
-    ),
 )
 def _build_cursor_acp(
     s: BaselineSettings,
@@ -620,6 +659,7 @@ def _build_cursor_acp(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.cursor_acp import (  # noqa: PLC0415 -- isolates the ACP extra from other framework builders
         CursorACPAdapter,
@@ -627,21 +667,20 @@ def _build_cursor_acp(
     )
 
     sandbox = tempfile.mkdtemp(prefix="band-e2e-cursor-acp-")
-    config_kwargs: dict[str, Any] = {
-        "api_key": s.backends.cursor_api_key,
-        "custom_section": prompt or "",
+    config_kwargs = {
+        **cursor_config_kwargs(s, prompt=prompt),
         "cwd": sandbox,
         # Nothing in the baseline matrix answers /cursor prompts, so a
         # decision request must resolve on its own or the cell stalls for
         # decision_timeout_s and then fails or denies.
         "approval_mode": "auto_accept",
-        "question_mode": "auto_first",
         "plan_mode": "auto_accept",
     }
-    if s.backends.cursor_command.strip():
-        config_kwargs["command"] = tuple(s.backends.cursor_command.split())
+    if workspace_for_room is not None:
+        config_kwargs.pop("cwd")
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )

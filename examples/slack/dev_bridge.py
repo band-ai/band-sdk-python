@@ -26,7 +26,7 @@ Run with:
     # optional:
     export BAND_REST_URL=https://app.band.ai
     export BAND_WS_URL=wss://app.band.ai/api/v1/socket/websocket
-    export SLACK_BOT_MODEL=claude-sonnet-4-6
+    export SLACK_BOT_MODEL=claude-sonnet-5-5
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 
 from band import Agent, LogSettings
-from band.adapters import AnthropicAdapter
-from band.integrations.slack import SlackAdapter, SlackApp
+from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
+from band.integrations.slack import SlackAdapter, SlackAdapterConfig, SlackApp
 
 # slack_sdk raised alongside band, not a bare LogSettings().configure(): this
 # driver exists to debug the bridge, and slack_sdk's own INFO diagnostics are
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     slack_signing_secret: str = ""
     slack_app_token: str = ""
-    slack_bot_model: str = "claude-sonnet-4-6"
+    slack_bot_model: str = "claude-sonnet-5-5"
 
 
 async def main() -> None:
@@ -92,18 +92,20 @@ async def main() -> None:
     # tools wrapper. The brain's default ``emit`` already records
     # ``tool_call``/``tool_result`` events on the Band side too; narrow it
     # with ``emit=`` if that's not wanted.
-    brain = AnthropicAdapter(model=model)
+    brain = AnthropicAdapter(AnthropicAdapterConfig(model=model))
     slack = SlackAdapter(
-        inner=brain,
-        apps=[
-            SlackApp(
-                slug="dev",
-                bot_token=settings.slack_bot_token,
-                signing_secret=signing_secret,
-                app_token=app_token,
+        SlackAdapterConfig(
+            apps=(
+                SlackApp(
+                    slug="dev",
+                    bot_token=settings.slack_bot_token,
+                    signing_secret=signing_secret,
+                    app_token=app_token,
+                ),
             ),
-        ],
-        transport=transport,  # type: ignore[arg-type]
+            transport=transport,  # type: ignore[arg-type]
+        ),
+        inner=brain,
     )
     agent = Agent.create(
         adapter=slack,

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0"]
+# dependencies = ["band-sdk[langgraph]>=4.0.0"]
 # ///
 """
 Example: Using graph_as_tool to wrap a standalone graph as a tool.
@@ -65,7 +65,7 @@ async def main() -> None:
 
     # Create adapter with calculator tool
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-6-luna")),
         checkpointer=InMemorySaver(),
         additional_tools=[calculator_tool],
     )

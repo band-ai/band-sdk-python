@@ -75,7 +75,7 @@ uv pip install anthropic      # or: openai, google-genai, groq, ...
 
 ## Quick Start
 
-```python
+```python notest
 # Requires: pip install 'band-sdk[agno]' anthropic   (ANTHROPIC_API_KEY set)
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
@@ -85,12 +85,12 @@ from band.adapters import AgnoAdapter
 
 # You own the Agno agent — model, instructions, tools.
 agno_agent = AgnoAgent(
-    model=Claude(id="claude-sonnet-4-6"),
+    model=Claude(id="claude-sonnet-5-5"),
     instructions="You are a helpful assistant. Be concise and friendly.",
 )
 
 # Bridge it to Band.
-adapter = AgnoAdapter(agno_agent)
+adapter = AgnoAdapter(agent=agno_agent)
 agent = Agent.from_config("agno_agent", adapter=adapter)
 await agent.run()
 ```
@@ -99,13 +99,16 @@ Agno is model-agnostic — swap the model and the rest is unchanged. For OpenAI:
 
 ```python
 # Requires: pip install 'band-sdk[agno]' openai   (OPENAI_API_KEY set)
+from agno.agent import Agent as AgnoAgent
 from agno.models.openai import OpenAIChat
 
+from band.adapters import AgnoAdapter
+
 agno_agent = AgnoAgent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-6-luna"),
     instructions="You are a helpful assistant. Be concise and friendly.",
 )
-adapter = AgnoAdapter(agno_agent)
+adapter = AgnoAdapter(agent=agno_agent)
 ```
 
 The adapter runs against the agent instance you pass and takes ownership of it:

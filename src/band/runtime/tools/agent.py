@@ -47,9 +47,11 @@ from band.core.task_types import (
     TaskIncludeOption,
     TaskLifecycleState,
     TaskListState,
+    task_ref,
     validate_include,
 )
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.turn import Turn
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
@@ -67,6 +69,7 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.turn import records_turn_effects
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -266,6 +269,7 @@ class AttachmentCache(Protocol):
     def cache_parameters(self) -> Any: ...
 
 
+@records_turn_effects
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -324,6 +328,7 @@ class AgentTools(AgentToolsProtocol):
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+        self.turn = Turn()
 
     @property
     def agent_id(self) -> str | None:
@@ -360,6 +365,7 @@ class AgentTools(AgentToolsProtocol):
             agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
+        tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 
     # --- Tool methods ---
@@ -376,8 +382,8 @@ class AgentTools(AgentToolsProtocol):
 
         Args:
             content: Message content to send
-            mentions: List of participant handles (strings). SDK resolves handles to IDs.
-                      Format: @<username> for users, @<username>/<agent-name> for agents.
+            mentions: List of participant IDs, handles, or names (strings).
+                      SDK resolves them to IDs for the platform.
                       Passing list[dict[str, str]] is deprecated; use list[str] instead.
             attachment_ids: File ids to show with this message. Not part of the
                       ``band_send_message`` tool schema -- only a Python caller
@@ -405,6 +411,27 @@ class AgentTools(AgentToolsProtocol):
                 stacklevel=2,
             )
 
+        return await self._post_message(
+            content, mentions, attachment_ids=attachment_ids
+        )
+
+    async def send_notice(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> Any:
+        """Post the adapter's own message (a prompt, a status reply, a notice).
+
+        Unlike ``send_message`` it never counts as the turn's reply: a notice
+        posted mid-turn must not stand in for the model's answer.
+        """
+        return await self._post_message(content, mentions)
+
+    async def _post_message(
+        self,
+        content: str,
+        mentions: list[str] | list[dict[str, str]] | None,
+        *,
+        attachment_ids: list[str] | None = None,
+    ) -> Any:
         resolved_mentions = self._resolve_required_mentions(mentions)
 
         logger.debug("Sending message to room %s", self.room_id)
@@ -480,10 +507,16 @@ class AgentTools(AgentToolsProtocol):
         """
         content, metadata = to_failure_event(failure)
         try:
-            return await self.send_event(content, MessageType.ERROR, metadata)
+            response = await self.send_event(content, MessageType.ERROR, metadata)
         except Exception as exc:
             logger.exception("send_failure could not post the failure event")
             return {"ok": False, "error": str(exc)}
+        self.turn.note_reported()
+        # A detached turn reports after its delivery was released, while the
+        # context may already be processing a later message.
+        if self._ctx is not None and not self.turn.detached:
+            self._ctx.note_turn_failure_reported()
+        return response
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         """
@@ -1495,7 +1528,7 @@ class AgentTools(AgentToolsProtocol):
         if detail is not None:
             kwargs["detail"] = detail
         if supersedes_id is not None:
-            kwargs["supersedes_id"] = supersedes_id
+            kwargs["supersedes_id"] = task_ref(supersedes_id)
         response = await self.rest.agent_api_chat_tasks.create_chat_task(
             chat_id=self.room_id,
             subject=subject,
@@ -1522,7 +1555,7 @@ class AgentTools(AgentToolsProtocol):
         validate_include(include)
         response = await self.rest.agent_api_chat_tasks.get_chat_task(
             chat_id=self.room_id,
-            id=id,
+            id=task_ref(id),
             include=include,
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
@@ -1585,7 +1618,7 @@ class AgentTools(AgentToolsProtocol):
             kwargs["state"] = state
         response = await self.rest.agent_api_chat_tasks.update_chat_task(
             chat_id=self.room_id,
-            id=id,
+            id=task_ref(id),
             request_options=DEFAULT_REQUEST_OPTIONS,
             **kwargs,
         )
@@ -1613,7 +1646,7 @@ class AgentTools(AgentToolsProtocol):
         )
         response = await self.rest.agent_api_chat_tasks.get_chat_task_history(
             chat_id=self.room_id,
-            id=id,
+            id=task_ref(id),
             cursor=cursor,
             limit=limit,
             request_options=DEFAULT_REQUEST_OPTIONS,

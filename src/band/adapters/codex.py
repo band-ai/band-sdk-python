@@ -27,9 +27,12 @@ from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
+from band.core.adapterconfig import EnvAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
-    deliver_reply,
+    deliver_notice,
+    relay_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -40,9 +43,11 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
+    ApprovalMode,
     Capability,
     Emit,
     FeatureKwargs,
@@ -61,6 +66,7 @@ from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
+    CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
     build_agent_failure,
@@ -68,7 +74,6 @@ from band.integrations.codex.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
-    custom_tool_effects,
     custom_tool_to_openai_schema,
     execute_custom_tool,
     find_custom_tool,
@@ -81,13 +86,11 @@ from band.runtime.tools import (
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
-    settles_turn_reply,
 )
 from band.workspaces import (
+    RoomWorkspaces,
     WorkspaceResolver,
-    claim_room_workspace,
-    release_room_workspace,
-    resolve_room_workspace,
+    is_host_absolute,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,7 +112,6 @@ def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 TransportKind = Literal["stdio", "ws"]
-ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
@@ -235,8 +237,18 @@ _TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
         CodexItemType.WEB_SEARCH,
         CodexItemType.IMAGE_VIEW,
         CodexItemType.COLLAB_AGENT_TOOL_CALL,
-        CodexItemType.DYNAMIC_TOOL_CALL,
     }
+)
+
+# Tools Codex asks the adapter to run (item/tool/call). The adapter reports them
+# there, with the real result, so their item/completed is the same call again.
+_REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.DYNAMIC_TOOL_CALL}
+)
+
+# The prompt and the reply; the reply's text is read by the turn loop.
+_MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
 )
 
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
@@ -282,12 +294,6 @@ class SetReasoningInput(BaseModel):
         default=None,
         description="Reasoning summary detail: auto, concise, detailed, or none. Omit to keep current.",
     )
-
-
-# Hardcoded default — update when OpenAI rotates model IDs.
-# Override at construction via CodexAdapterConfig(model=...) or the
-# CODEX_MODEL environment variable.
-_DEFAULT_MODEL = "gpt-5.5"
 
 
 class CodexClientProtocol(Protocol):
@@ -344,7 +350,6 @@ class TurnResult:
     final_text: str = ""
     turn_status: str = "failed"
     turn_error: str = ""
-    settled_reply: bool = False
 
 
 @dataclass
@@ -354,6 +359,7 @@ class RoomCodexClient:
     workspace: str
     client: CodexClientProtocol | None = None
     initialized: bool = False
+    unusable: bool = False
     model_override: str | None = None
     selected_model: str | None = None
     reasoning_effort: str | None = None
@@ -395,7 +401,7 @@ class _WithoutCwdBinding(PydanticBaseSettingsSource):
         return values
 
 
-class CodexAdapterConfig(BaseSettings):
+class CodexAdapterConfig(EnvAdapterConfig):
     """Runtime configuration for Codex adapter sessions.
 
     Every field can be set explicitly (highest priority) or via a
@@ -419,16 +425,10 @@ class CodexAdapterConfig(BaseSettings):
         when its extra metadata is desired.
     """
 
-    # extra="forbid" (not the usual settings "ignore"): this config is
-    # commonly built with many explicit kwargs, so a typo'd field name
-    # must fail construction instead of silently vanishing.
     # populate_by_name: an aliased field stays constructible by its field name
     # and keeps its prefix-derived environment variable.
     model_config = SettingsConfigDict(
         env_prefix="CODEX_",
-        case_sensitive=False,
-        extra="forbid",
-        env_ignore_empty=True,
         populate_by_name=True,
         arbitrary_types_allowed=True,
     )
@@ -478,6 +478,8 @@ class CodexAdapterConfig(BaseSettings):
     )
     enable_self_config_tools: bool = False
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
+    # CODEX_SKILL_ROOTS is a JSON list.
+    skill_roots: list[str] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
     max_pending_approvals_per_room: int = Field(default=50, ge=1)
@@ -537,6 +539,13 @@ class CodexAdapterConfig(BaseSettings):
             return value.split()
         return value
 
+    @field_validator("skill_roots")
+    @classmethod
+    def _require_absolute_paths(cls, roots: list[str]) -> list[str]:
+        if relative := [root for root in roots if not is_host_absolute(root)]:
+            raise ValueError(f"skill_roots must be absolute paths: {relative}")
+        return roots
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -595,7 +604,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
-        self._custom_effects = custom_tool_effects(self._custom_tools)
         if self.config.cwd is not None:
             raise ValueError(
                 "cwd is not supported; use workspace_for_room or the default"
@@ -609,7 +617,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "custom Codex clients cannot guarantee room process isolation"
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
-        self._workspace_rooms: dict[str, str] = {}
+        self._workspaces = RoomWorkspaces(self.config.workspace_for_room)
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
         )
@@ -642,17 +650,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     def _release_room_workspace(self, room: RoomCodexClient, room_id: str) -> None:
         """Release this room's workspace claim (see ``release_room_workspace``)."""
-        release_room_workspace(room_id, room.workspace, self._workspace_rooms)
+        self._workspaces.release(room_id, room.workspace)
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
         if room is None:
-            workspace = resolve_room_workspace(room_id, self.config.workspace_for_room)
-            claim_room_workspace(room_id, workspace, self._workspace_rooms)
+            workspace = self._workspaces.claim(room_id)
             room = RoomCodexClient(workspace=workspace)
             self._room_clients[room_id] = room
         else:
-            claim_room_workspace(room_id, room.workspace, self._workspace_rooms)
+            self._workspaces.claim(room_id, room.workspace)
         return room
 
     def _active_client_state(self) -> RoomCodexClient | None:
@@ -770,6 +777,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
+        if self._room_clients:
+            await self.cleanup_all()
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
         self._log_startup_config(agent_name)
@@ -849,13 +858,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             if handled:
+                tools.turn.settle()
                 return
 
         running = self._turn_tasks.get(room_id)
         if running is not None and not running.done():
-            await tools.send_message(
+            await tools.send_notice(
                 TURN_IN_PROGRESS_MESSAGE, mentions=self._sender_mention(msg)
             )
+            tools.turn.settle()
             return
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -919,6 +930,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         args=command[1],
                     )
                     if handled:
+                        tools.turn.settle()
                         return
 
                 thread_id = await self._ensure_thread(
@@ -1074,9 +1086,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     turn_status=result.turn_status,
                     turn_error=result.turn_error,
                     final_text=result.final_text,
-                    settled_reply=result.settled_reply,
                     duration_s=_turn_duration_s,
                 )
+                # A turn wound down by room cleanup was aborted, not missed.
+                if room_id not in self._closing_rooms:
+                    await judge_detached_turn(tools, room_id=room_id)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             except TurnResultAlreadyReported:
@@ -1098,10 +1112,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 raise
 
-    def _release_turn(self, room_id: str) -> None:
-        """Let on_message return while the room's turn waits on a human."""
+    def _release_turn(self, room_id: str, tools: AgentToolsProtocol) -> None:
+        """Let on_message return while the room's turn waits on a human; the
+        turn is then judged at its real end, not when on_message returns."""
         release = self._turn_release.get(room_id)
         if release is not None and not release.done():
+            tools.turn.detach()
             release.set_result(None)
 
     def _forget_turn(self, room_id: str, task: asyncio.Task[None]) -> None:
@@ -1166,7 +1182,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             turn_status=result.turn_status,
             turn_error=result.turn_error,
             final_text=result.final_text,
-            settled_reply=result.settled_reply,
             duration_s=_time.perf_counter() - turn_start,
             include_reply=False,
         )
@@ -1195,13 +1210,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 event = await self._client.recv_event(timeout_s=_remaining)
                 if event.kind == "request":
-                    settled_reply_now = await self._handle_server_request(
+                    await self._handle_server_request(
                         tools=tools,
                         msg=msg,
                         room_id=room_id,
                         event=event,
                     )
-                    result.settled_reply = result.settled_reply or settled_reply_now
                     continue
 
                 params = event.params if isinstance(event.params, dict) else {}
@@ -1394,21 +1408,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 if event.method == "transport/closed":
                     result.turn_status = "failed"
                     result.turn_error = "Codex transport closed unexpectedly"
-                    # Reset client state so _ensure_client_ready() rebuilds
-                    # on the next message instead of reusing a dead client.
-                    self._client = None
-                    self._initialized = False
-                    # Clear per-room state that references the dead session so
-                    # the next turn does a fresh thread/start instead of reusing
-                    # a cached thread_id the new subprocess doesn't know about.
-                    # Also drop token-usage entries keyed by the dead thread
-                    # ids; otherwise they leak until the last-room teardown
-                    # because on_cleanup can no longer resolve their keys.
-                    stale_thread = self._room_threads.pop(room_id, None)
-                    self._raw_history_by_room.pop(room_id, None)
-                    if stale_thread:
-                        self._token_usage.pop(stale_thread, None)
-                    self._clear_pending_approvals_for_room(room_id)
+                    logger.warning(
+                        "Room %s: %s (thread=%s turn=%s)",
+                        room_id,
+                        result.turn_error,
+                        thread_id,
+                        turn_id,
+                    )
+                    # EOF or a failed reader does not prove the child exited.
+                    await self._retire_client(self._require_active_client_state())
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
                     # twice -- but the turn still fails either way.
@@ -1468,7 +1476,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if turn_id:
                 try:
                     await self._client.request(
-                        "turn/interrupt",
+                        CodexRequestMethod.TURN_INTERRUPT,
                         {"threadId": thread_id, "turnId": turn_id},
                     )
                 except Exception:
@@ -1520,64 +1528,58 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:
-            thread_id = self._room_threads.pop(room_id, None)
-            if thread_id:
-                self._token_usage.pop(thread_id, None)
+            await self._retire_client(room)
             self._prompt_injected_rooms.discard(room_id)
-            self._raw_history_by_room.pop(room_id, None)
             self._needs_history_injection.discard(room_id)
             self._approval_audit.pop(room_id, None)
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
             self._room_task_titles.pop(room_id, None)
-            if self._client is None:
-                self._room_clients.pop(room_id, None)
-                self._release_room_workspace(room, room_id)
-                return
-            try:
-                close_coro = self._client.close()
-                timeout = self.config.client_close_timeout_s
-                if timeout is not None:
-                    try:
-                        await asyncio.wait_for(close_coro, timeout=timeout)
-                    except TimeoutError:
-                        logger.warning(
-                            "Codex client.close() exceeded %ss timeout; "
-                            "dropping client reference",
-                            timeout,
-                        )
-                else:
-                    await close_coro
-            finally:
-                self._client = None
-                self._initialized = False
-                self._selected_model = None
-                self._room_clients.pop(room_id, None)
-                self._release_room_workspace(room, room_id)
+            self._room_clients.pop(room_id, None)
+            self._release_room_workspace(room, room_id)
+
+    async def _retire_client(self, room: RoomCodexClient) -> None:
+        """Retain an unusable client and its claim until cleanup succeeds."""
+        room.unusable = True
+        room.initialized = False
+        room.selected_model = None
+        # A replacement process cannot use the retired process's thread.
+        if (room_id := self._active_room.get()) is not None:
+            thread_id = self._room_threads.pop(room_id, None)
+            self._raw_history_by_room.pop(room_id, None)
+            if thread_id:
+                self._token_usage.pop(thread_id, None)
+            self._clear_pending_approvals_for_room(room_id)
+        if room.client is not None:
+            await asyncio.wait_for(
+                room.client.close(), timeout=self.config.client_close_timeout_s
+            )
+            room.client = None
+        room.unusable = False
 
     async def cleanup_all(self) -> None:
-        """Close every room-owned Codex process during agent shutdown."""
-        room_ids = list(self._room_clients)
+        """Attempt every room, retaining failed handles and claims for retry."""
         results = await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in room_ids),
+            *(self.on_cleanup(room_id) for room_id in list(self._room_clients)),
             return_exceptions=True,
         )
-        for room_id, result in zip(room_ids, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.warning(
-                    "Failed to clean up Codex client for room %s: %s",
-                    room_id,
-                    result,
-                )
+        errors: list[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                errors.append(result)
+        if errors:
+            raise ExceptionGroup("Codex session cleanup failed", errors)
 
     async def _ensure_client_ready(self) -> None:
-        if self._client is None:
-            self._client = self._build_client(self.config)
-
-        client = self._client
-        if client is None:
-            raise RuntimeError("Codex client was not created")
-        if self._initialized:
+        room = self._require_active_client_state()
+        if room.unusable:
+            await self._retire_client(room)
+        if room.client is None:
+            room.client = self._build_client(self.config)
+        client = room.client
+        if room.initialized:
             return
         try:
             await client.connect()
@@ -1587,28 +1589,24 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 client_version=self.config.client_version,
                 experimental_api=self.config.experimental_api,
             )
-            self._selected_model = await self._select_model()
-            self._initialized = True
-        except Exception:
-            if self._client is client:
-                self._client = None
-                try:
-                    await client.close()
-                except Exception:
-                    logger.warning(
-                        "Failed to close unsuccessfully initialized Codex client",
-                        exc_info=True,
-                    )
-                # Release the workspace claim (unconditionally -- whether or not
-                # close() itself also raised) but keep the room's RoomCodexClient,
-                # so model_override/reasoning settings survive a failed rebuild
-                # for the next retry. _release_room_workspace's ownership check
-                # keeps this safe even though the stale entry outlives the claim.
-                room_id = self._active_room.get()
-                state = self._active_client_state()
-                if room_id is not None and state is not None:
-                    self._release_room_workspace(state, room_id)
+            await self._register_skill_roots(client)
+            room.selected_model = await self._select_model()
+            logger.info("Codex model selected: %s", room.selected_model)
+            room.initialized = True
+        except BaseException:
+            await self._retire_client(room)
             raise
+
+    async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
+        roots = self.config.skill_roots
+        if not roots:
+            return
+        try:
+            await client.request(
+                CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET, {"extraRoots": roots}
+            )
+        except CodexJsonRpcError as exc:
+            raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
 
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
         state = self._active_client_state()
@@ -1630,18 +1628,19 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("Codex client not initialized")
         try:
-            result = await self._client.request("model/list", {})
+            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; using default Codex model",
                 exc_info=True,
             )
-            return _DEFAULT_MODEL
+            return OPENAI_MODEL
 
         visible_model_ids = self._visible_model_ids(result)
         if visible_model_ids:
             return visible_model_ids[0]
-        return _DEFAULT_MODEL
+        logger.warning("model/list has no visible models; using default Codex model")
+        return OPENAI_MODEL
 
     async def _ensure_thread(
         self,
@@ -1661,7 +1660,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if is_session_bootstrap and history.has_thread():
             try:
                 result = await self._client.request(
-                    "thread/resume",
+                    CodexRequestMethod.THREAD_RESUME,
                     {
                         "threadId": history.thread_id,
                         "personality": self.config.personality,
@@ -1714,7 +1713,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await self._client.request("thread/start", start_params)
+        started = await self._client.request(
+            CodexRequestMethod.THREAD_START, start_params
+        )
         thread = started.get("thread") if isinstance(started, dict) else {}
         thread_id = str((thread or {}).get("id") or "")
         if not thread_id:
@@ -1872,7 +1873,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         msg: PlatformMessage,
         room_id: str,
         event: RpcEvent,
-    ) -> bool:
+    ) -> None:
         """Dispatch a server-initiated request (tool call, approval).
 
         Concurrency model: this coroutine mutates room-scoped adapter state
@@ -1891,7 +1892,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
         if event.id is None:
-            return False
+            return
 
         params = event.params if isinstance(event.params, dict) else {}
 
@@ -1901,7 +1902,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if not isinstance(arguments, dict):
                 arguments = {}
             call_id = str(params.get("callId") or "")
-            tool_call_succeeded = False
 
             # Don't emit reporting for codex-local slash commands — they already
             # surface their outcome in the room themselves.
@@ -1927,12 +1927,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, arguments)
+                    result = await execute_custom_tool(
+                        custom_tool, arguments, turn=tools.turn
+                    )
                     success = True
                 else:
                     # Structured: a base tool (e.g. band_send_message) can fail without
                     # raising (bad args, API error) via ok=False; the plain variant would
-                    # report success and wrongly suppress the final-text fallback.
+                    # report that failure to Codex as success.
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, arguments
                     )
@@ -1955,7 +1957,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         "success": success,
                     },
                 )
-                tool_call_succeeded = success
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -2011,10 +2012,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
 
-            return (
-                settles_turn_reply(tool_name, custom_effects=self._custom_effects)
-                and tool_call_succeeded
-            )
+            return
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(
@@ -2024,14 +2022,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 event=event,
                 params=params,
             )
-            return False
+            return
 
         await self._client.respond_error(
             event.id,
             code=-32601,
             message=f"Unhandled server request: {event.method}",
         )
-        return False
 
     async def _handle_approval_request(
         self,
@@ -2116,7 +2113,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 }
             ]
             try:
-                await tools.send_message(
+                await tools.send_notice(
                     f"Approval requested ({summary}). Policy decision: {decision}.",
                     mentions=mention,
                 )
@@ -2175,7 +2172,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         turn_status: str,
         turn_error: str,
         final_text: str,
-        settled_reply: bool,
         duration_s: float = 0.0,
         include_reply: bool = True,
     ) -> None:
@@ -2264,28 +2260,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         mention = self._sender_mention(msg)
 
         if turn_status == "completed":
-            if (
-                self.config.fallback_send_agent_text
-                and final_text.strip()
-                and not settled_reply
-            ):
-                await deliver_reply(tools, final_text.strip(), mentions=mention)
+            if self.config.fallback_send_agent_text:
+                await relay_reply(tools, final_text.strip(), mentions=mention)
             return
 
         if turn_status == "interrupted":
-            await deliver_reply(
-                tools,
-                "I stopped before completing this request.",
-                mentions=mention,
+            outcome_text = "I stopped before completing this request."
+        elif turn_error:
+            outcome_text = (
+                f"I couldn't complete this request ({turn_status}): {turn_error}"
             )
-            return
-
-        error_text = (
-            f"I couldn't complete this request ({turn_status})."
-            if not turn_error
-            else f"I couldn't complete this request ({turn_status}): {turn_error}"
-        )
-        await deliver_reply(tools, error_text, mentions=mention)
+        else:
+            outcome_text = f"I couldn't complete this request ({turn_status})."
+        await deliver_notice(tools, outcome_text, mentions=mention)
+        tools.turn.settle()
 
     async def _emit_item_completed_events(
         self,
@@ -2384,8 +2372,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        # Skip known non-actionable types
-        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
+        if item_type in _REQUESTED_TOOL_ITEM_TYPES or item_type in _MESSAGE_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -2406,8 +2393,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return CodexAdapter._extract_image_view(item)
             case CodexItemType.COLLAB_AGENT_TOOL_CALL:
                 return CodexAdapter._extract_collab_agent_tool_call(item)
-            case CodexItemType.DYNAMIC_TOOL_CALL:
-                return CodexAdapter._extract_dynamic_tool_call(item)
             case _:
                 return CodexToolItem(item_type, {}, "completed")
 
@@ -2488,51 +2473,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             item.get("result"), default="completed", raw_fallback=True
         )
         return CodexToolItem(name, collab_args, output)
-
-    @staticmethod
-    def _extract_dynamic_tool_call(item: dict[str, Any]) -> CodexToolItem:
-        tool = item.get("tool") or item.get("name") or item.get("toolName")
-        if isinstance(tool, dict):
-            tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
-        name = str(tool or "dynamic_tool")
-
-        raw_args = (
-            item.get("arguments")
-            if "arguments" in item
-            else item.get("args")
-            if "args" in item
-            else item.get("input")
-            if "input" in item
-            else item.get("inputJson", {})
-        )
-        args = CodexAdapter._coerce_tool_args(raw_args)
-
-        output = CodexAdapter._stringify_tool_output(
-            item.get("result"),
-            item.get("output"),
-            item.get("content"),
-            item.get("error"),
-            item.get("contentItems"),
-            default=str(item.get("status", "completed")),
-        )
-        return CodexToolItem(name, args, output)
-
-    @staticmethod
-    def _coerce_tool_args(value: Any) -> dict[str, Any]:
-        """Return a dict for Codex tool args across protocol variants."""
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return {"input": value}
-            if isinstance(parsed, dict):
-                return parsed
-            return {"input": parsed}
-        if value is None:
-            return {}
-        return {"input": value}
 
     @staticmethod
     def _stringify_tool_output(
@@ -2701,7 +2641,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     log_level=logging.DEBUG,
                 )
             try:
-                await tools.send_message(approval_msg, mentions=mention)
+                await tools.send_notice(approval_msg, mentions=mention)
             except Exception:
                 logger.exception(
                     "Failed to notify room %s about pending approval %s",
@@ -2725,7 +2665,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     )
                     raise
 
-            self._release_turn(room_id)
+            self._release_turn(room_id, tools)
             decision = await registry.wait(
                 entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
             )
@@ -2733,7 +2673,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return decision
             timeout_decision = self.config.approval_timeout_decision
             try:
-                await tools.send_message(
+                await tools.send_notice(
                     APPROVAL_TIMED_OUT_TEMPLATE.format(
                         token=token, decision=timeout_decision
                     ),
@@ -3115,7 +3055,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         mention = self._sender_mention(msg)
 
         if command == CodexCommand.HELP:
-            await deliver_reply(tools, _HELP_TEXT, mentions=mention)
+            await deliver_notice(tools, _HELP_TEXT, mentions=mention)
             return True
 
         if command == CodexCommand.STATUS:
@@ -3144,13 +3084,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 f"- token_usage: {usage_line}\n"
                 f"- turn_task_markers: {self.config.emit_turn_task_markers}"
             )
-            await deliver_reply(tools, status_text, mentions=mention)
+            await deliver_notice(tools, status_text, mentions=mention)
             return True
 
         if command in {CodexCommand.MODEL, CodexCommand.MODELS}:
             model_arg = args.strip()
             if not model_arg:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     "Current model: "
                     f"`{self._selected_model or 'unknown'}` "
@@ -3164,19 +3104,19 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if model_arg.lower() in _MODEL_LIST_WORDS:
                 if self._client is None:
                     raise RuntimeError("Codex client not initialized")
-                result = await self._client.request("model/list", {})
+                result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
                 models = self._visible_model_ids(result)
                 if models:
                     preview = ", ".join(models[:10])
                     if len(models) > 10:
                         preview += ", ..."
-                    await deliver_reply(
+                    await deliver_notice(
                         tools,
                         f"Available models ({len(models)}): {preview}",
                         mentions=mention,
                     )
                 else:
-                    await deliver_reply(
+                    await deliver_notice(
                         tools,
                         "No visible models returned by Codex app-server.",
                         mentions=mention,
@@ -3187,7 +3127,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             state = self._require_active_client_state()
             state.model_override = model_arg
             self._selected_model = model_arg
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Model override set to `{model_arg}` for subsequent turns.",
                 mentions=mention,
@@ -3200,7 +3140,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             supported = ", ".join(efforts)
             if not effort_arg:
                 hint = f"`{model_id}` supports: {supported}. " if efforts else ""
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
@@ -3211,7 +3151,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             # A person's typo would otherwise fail every later turn; the
             # setreasoning tool can't check this because it runs mid-turn.
             if efforts and effort_arg not in efforts:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"`{model_id}` doesn't support reasoning effort `{effort_arg}`. "
                     f"Supported: {supported}.",
@@ -3219,7 +3159,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 return True
             self._require_active_client_state().reasoning_effort = effort_arg
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Reasoning effort set to `{effort_arg}` for subsequent turns.",
                 mentions=mention,
@@ -3229,7 +3169,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # --- Phase 1: /sandbox and /permissions commands ---
         if command == CodexCommand.SANDBOX:
             if self.config.sandbox_policy is not None:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     "Cannot override sandbox: a `sandbox_policy` is configured. "
                     "Remove `sandbox_policy` from config to use per-room "
@@ -3240,7 +3180,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             mode_arg = args.strip()
             if not mode_arg:
                 effective = self._effective_sandbox(room_id) or "default"
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"Current sandbox: `{effective}`. "
                     f"Use `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}>` to change.",
@@ -3253,7 +3193,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             confirm_flag = _SANDBOX_CONFIRM_FLAG in tokens
             mode_tokens = [tok for tok in tokens if tok != _SANDBOX_CONFIRM_FLAG]
             if len(mode_tokens) != 1:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"Usage: `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}> "
                     f"[{_SANDBOX_CONFIRM_FLAG}]`.",
@@ -3263,7 +3203,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             mode_token = mode_tokens[0]
             normalized = self._normalize_sandbox_mode(mode_token)
             if normalized is None:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"Invalid sandbox mode `{mode_token}`. "
                     f"Valid: {', '.join(CodexSandboxMode)}.",
@@ -3272,7 +3212,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return True
             escalating = normalized == CodexSandboxMode.DANGER_FULL_ACCESS
             if escalating and not confirm_flag:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"Escalating to `{normalized}` removes all sandbox "
                     f"restrictions. Re-run with `{_SANDBOX_CONFIRM_FLAG}` to proceed:\n"
@@ -3289,7 +3229,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     msg.sender_name or msg.sender_type or "unknown",
                 )
             self._sandbox_overrides[room_id] = normalized
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Sandbox mode set to `{normalized}` for subsequent turns in this room.",
                 mentions=mention,
@@ -3314,7 +3254,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         f"  - [{entry.timestamp}] {entry.method}: "
                         f"{entry.decision} by {entry.decided_by}"
                     )
-            await deliver_reply(tools, "\n".join(lines), mentions=mention)
+            await deliver_notice(tools, "\n".join(lines), mentions=mention)
             return True
 
         # --- Phase 2: /threads, /thread info, /thread archive ---
@@ -3323,7 +3263,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if command == CodexCommand.THREADS or not subcommand:
                 # List all room->thread mappings
                 if not self._room_threads:
-                    await deliver_reply(
+                    await deliver_notice(
                         tools, "No active thread mappings.", mentions=mention
                     )
                     return True
@@ -3331,13 +3271,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 for rid, tid in self._room_threads.items():
                     current = " (current)" if rid == room_id else ""
                     lines.append(f"- room `{rid}` → thread `{tid}`{current}")
-                await deliver_reply(tools, "\n".join(lines), mentions=mention)
+                await deliver_notice(tools, "\n".join(lines), mentions=mention)
                 return True
 
             if subcommand == CodexSubcommand.INFO:
                 mapped_thread = self._room_threads.get(room_id)
                 if not mapped_thread:
-                    await deliver_reply(
+                    await deliver_notice(
                         tools, "No thread mapped for this room.", mentions=mention
                     )
                     return True
@@ -3353,7 +3293,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     f"- room_id: {room_id}\n"
                     f"- token_usage: {usage_line}"
                 )
-                await deliver_reply(tools, info_text, mentions=mention)
+                await deliver_notice(tools, info_text, mentions=mention)
                 return True
 
             if subcommand == CodexSubcommand.ARCHIVE:
@@ -3362,7 +3302,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 self._token_usage.pop(mapped_thread or "", None)
                 self._raw_history_by_room.pop(room_id, None)
                 self._needs_history_injection.discard(room_id)
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     f"Thread `{mapped_thread or 'none'}` archived. "
                     "A new thread will be created on next message.",
@@ -3376,7 +3316,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if command == CodexCommand.USAGE:
             mapped_thread = self._room_threads.get(room_id)
             if not mapped_thread:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     "No thread mapped for this room — no usage data.",
                     mentions=mention,
@@ -3384,13 +3324,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return True
             usage = self._token_usage.get(mapped_thread)
             if not usage or usage.total_tokens == 0:
-                await deliver_reply(
+                await deliver_notice(
                     tools,
                     "No token usage recorded for this thread.",
                     mentions=mention,
                 )
                 return True
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Thread `{mapped_thread}` — {usage.format_summary()}",
                 mentions=mention,
@@ -3413,21 +3353,21 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         if command == CodexCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
-                await deliver_reply(tools, "No pending approvals.", mentions=mention)
+                await deliver_notice(tools, "No pending approvals.", mentions=mention)
                 return True
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
             for entry in open_entries:
                 age_s = int((now - entry.payload.created_at).total_seconds())
                 lines.append(f"- {entry.token}: {entry.payload.summary} ({age_s}s)")
-            await deliver_reply(tools, "\n".join(lines), mentions=mention)
+            await deliver_notice(tools, "\n".join(lines), mentions=mention)
             return True
 
         if (decision_value := _APPROVAL_COMMAND_DECISIONS.get(command)) is None:
             return False
 
         if not pending:
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 NO_APPROVALS_TO_RESOLVE_MESSAGE,
                 mentions=mention,
@@ -3439,14 +3379,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if not token:
             match open_ids:
                 case []:
-                    await deliver_reply(
+                    await deliver_notice(
                         tools, NO_APPROVALS_TO_RESOLVE_MESSAGE, mentions=mention
                     )
                     return True
                 case [only]:
                     token = only
                 case _:
-                    await deliver_reply(
+                    await deliver_notice(
                         tools,
                         "Multiple approvals pending. "
                         f"Use `/{command} <id>`. Pending: {', '.join(open_ids)}",
@@ -3455,7 +3395,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     return True
 
         if (selected := pending.get(token)) is None:
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Unknown approval id `{token}`. "
                 f"Pending: {', '.join(open_ids) or 'none'}",
@@ -3469,7 +3409,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # an empty string in _session_approved or report a misleading
         # "Future `` requests will be auto-approved" message to the user.
         if is_session and not selected.session_key:
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Approval `{token}` cannot be resolved as session-level: "
                 "this request has no command signature to match against. "
@@ -3479,7 +3419,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return True
 
         if pending.try_claim(token) is None:
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 f"Approval `{token}` is no longer pending.",
                 mentions=mention,
@@ -3491,7 +3431,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # Session-level: register the session key for auto-approval
         if is_session:
             self._record_session_approval(room_id, selected.session_key)
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value)
                 + " This session-level approval auto-approves future "
@@ -3499,7 +3439,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 mentions=mention,
             )
         else:
-            await deliver_reply(
+            await deliver_notice(
                 tools,
                 APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value),
                 mentions=mention,
@@ -3536,7 +3476,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        return await self._client.request("turn/start", params)
+        return await self._client.request(CodexRequestMethod.TURN_START, params)
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None
@@ -3914,7 +3854,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             raise RuntimeError("Codex client not initialized")
         model_id = self._selected_model or await self._select_model()
         try:
-            result = await self._client.request("model/list", {})
+            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; supported reasoning efforts are unknown",

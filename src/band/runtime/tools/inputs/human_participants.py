@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from band.runtime.tools.inputs.identifiers import ResourceId
+
 
 class ListMyChatParticipantsInput(BaseModel):
     """List participants in a chat room."""
 
-    chat_id: str = Field(..., description="The chat room ID (required).")
+    chat_id: ResourceId = Field(..., description="The chat room ID (required).")
     participant_type: str | None = Field(
         None, description="Filter by type: 'User' or 'Agent' (optional)."
     )
@@ -21,7 +23,7 @@ class ListMyChatParticipantsInput(BaseModel):
 class AddMyChatParticipantInput(BaseModel):
     """Add a participant to a chat room."""
 
-    chat_id: str = Field(..., description="The chat room ID (required).")
+    chat_id: ResourceId = Field(..., description="The chat room ID (required).")
     participant_id: str = Field(
         ..., description="ID of user or agent to add (required)."
     )
@@ -34,7 +36,7 @@ class AddMyChatParticipantInput(BaseModel):
 class RemoveMyChatParticipantInput(BaseModel):
     """Remove a participant from a chat room."""
 
-    chat_id: str = Field(..., description="The chat room ID (required).")
-    participant_id: str = Field(
+    chat_id: ResourceId = Field(..., description="The chat room ID (required).")
+    participant_id: ResourceId = Field(
         ..., description="ID of participant to remove (required)."
     )

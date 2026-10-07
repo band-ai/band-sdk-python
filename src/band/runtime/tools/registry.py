@@ -89,6 +89,11 @@ BAND_MCP_SERVER_NAME = "band"
 LEGACY_SEND_MESSAGE_TOOL = "create_agent_chat_message"
 
 
+def mcp_tool_spelling(server: str, tool: str) -> str:
+    """``tool`` of MCP ``server`` in the hyphen-joined spelling the resolver reads."""
+    return f"{server}-{tool}"
+
+
 def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None:
     """The member of ``names`` behind ``tool_name``'s MCP spelling, if any.
 
@@ -99,13 +104,12 @@ def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None
     ``band-create_agent_chat_message``). Anchored to ``BAND_MCP_SERVER_NAME``
     specifically -- not any prefix before a hyphen -- so an unrelated MCP
     server's own tool (e.g. ``other-band_send_message``) never resolves as a
-    Band tool. Other spellings (``mcp__server__tool``, ``server.tool``) are
-    not matched either -- no wired backend uses them. Extend here when such a
-    backend is added.
+    Band tool. A backend that reports the server and tool separately joins
+    them with ``mcp_tool_spelling`` first.
     """
     if tool_name in names:
         return tool_name
-    prefix = f"{BAND_MCP_SERVER_NAME}-"
+    prefix = mcp_tool_spelling(BAND_MCP_SERVER_NAME, "")
     suffix = tool_name.removeprefix(prefix)
     return suffix if suffix != tool_name and suffix in names else None
 
@@ -158,7 +162,8 @@ AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
 # canonical field name. The Python-side variable is still `room_id`
 # everywhere; only text the model sees (schemas, prompts) uses this. Single
 # source of truth so a producer (schema field name) and its consumers
-# (per-turn prompt text in opencode/letta/acp/claude_sdk) can't drift apart.
+# (per-turn prompt text in opencode/letta and an external-MCP acp) can't
+# drift apart.
 CHAT_ID_FIELD_NAME = "chat_id"
 
 # The chat_id field's max length wherever an MCP front door adds or pins it
@@ -612,10 +617,8 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# Event-emitting tools are observational, not terminal work: band_send_event posts a
-# thought/error/task event (narration/status) — not a chat reply or a durable requested
-# action. Like read-only tools, a turn that only sends an event and then yields an empty
-# final answer is a genuine no-response failure, not benign (see is_terminal_success).
+# Event-emitting tools narrate (a thought/error/task event): never a chat reply or a
+# durable requested action.
 EVENT_TOOL_NAMES: frozenset[str] = frozenset({BandTool.SEND_EVENT})
 
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
@@ -664,23 +667,6 @@ def band_tool_errored(tool_name: str | None, content: Any) -> bool:
         and isinstance(content, str)
         and content.startswith("Error ")
     )
-
-
-def missing_reply_error(framework: str, *, detail: str = "") -> str:
-    """The room-visible error for a turn that ended without a reply going out.
-
-    Raised by every adapter that answers through tools, so the wording lives
-    once. Both endings are named because they look identical from the room and
-    are told apart only by the model's last response: a plain-text final answer
-    the adapter cannot post, or no output at all (empty or thinking-only), which
-    is what a model that considers the exchange finished actually returns.
-    """
-    reasons = (
-        f"{framework} finished a turn without calling band_send_message, so "
-        "nothing reached the room. The model either answered in plain text "
-        "instead of using the tool, or returned no output at all."
-    )
-    return f"{reasons} {detail}" if detail else reasons
 
 
 # Fail fast on typos — catch at import time, not in a test run.

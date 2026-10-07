@@ -1,6 +1,6 @@
 """Room routing for Copilot's ``ask_user`` tool.
 
-``CopilotSDKAdapterConfig(ask_user="room")`` bridges the model's built-in
+``CopilotSDKAdapter(..., ask_user="room")`` bridges the model's built-in
 ``ask_user`` tool to the Band room itself: the question is posted as a
 room message (mentioning whoever triggered the turn) and the tool call
 resolves immediately with :data:`QUESTION_DELIVERED_ANSWER`, so the turn
@@ -89,7 +89,7 @@ def question_delivered_answer(rendered_question: str) -> UserInputResponse:
     return freeform_answer(QUESTION_DELIVERED_ANSWER.format(rendered=rendered_question))
 
 
-def delivery_failed_answer(error: Exception) -> UserInputResponse:
+def delivery_failed_answer(error: BaseException) -> UserInputResponse:
     """The answer when posting the question to the room failed."""
     return freeform_answer(DELIVERY_FAILED_ANSWER.format(error=error))
 

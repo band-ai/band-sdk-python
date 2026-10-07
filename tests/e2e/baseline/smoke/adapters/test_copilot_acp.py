@@ -24,6 +24,7 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
     emit_event_instruction,
+    liveness_probe,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.builders import copilot_acp_env, copilot_home_dir
@@ -61,7 +62,7 @@ async def test_acp_band_tool_call_is_narrated(
     unescaped ``name`` field is enough to prove the call was narrated -- no
     need to decode it for that.
     """
-    marker = unique_marker("acp-event")
+    marker = unique_marker("acpevent")
     room_id = await resource_manager.provision_room(
         title="e2e-acp-tool-call-narrated", participants=[agent.id]
     )
@@ -111,7 +112,7 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
     ``BAND_EVENT_TOOL_NAME``): Copilot also narrates its own internal tools
     (e.g. skill loading), whose outputs are legitimately plain text.
     """
-    marker = unique_marker("acp-result")
+    marker = unique_marker("acpresult")
     room_id = await resource_manager.provision_room(
         title="e2e-acp-tool-result-clean", participants=[agent.id]
     )
@@ -197,7 +198,7 @@ async def reply_with(
     mark = capture.messages.snapshot()
     mid = await user_ops.send_message(
         capture.room_id,
-        f"Reply with one short sentence that includes the marker {marker}.",
+        liveness_probe(marker),
         mention_id=identity.id,
         mention_name=identity.name,
     )
@@ -436,10 +437,10 @@ async def test_copilot_switches_model_and_effort_in_a_live_room(
         running_agent(identity, adapter, baseline_settings),
         reply_capture(room_id) as capture,
     ):
-        await turn(capture, marker=unique_marker("before-switch"))
+        await turn(capture, marker=unique_marker("before"))
         await adapter.apply_model_selection(SWITCHED, room_id=room_id)
         # Also the prompt Copilot persists the switched session on.
-        await turn(capture, marker=unique_marker("after-switch"))
+        await turn(capture, marker=unique_marker("after"))
         session_id = room_session_id(
             await capture.tasks(sender_id=identity.id), room_id
         )
@@ -486,7 +487,7 @@ async def test_acp_recall_via_room_replay_when_session_load_misses(
         CopilotACPAdapter,
     )
 
-    tracking_marker = unique_marker("acp-replay")
+    tracking_marker = unique_marker("acpreplay")
     agent_fact = "blue"
 
     def make_adapter(phase: str) -> CopilotACPAdapter:

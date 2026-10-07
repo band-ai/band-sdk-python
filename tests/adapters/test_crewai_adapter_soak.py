@@ -76,9 +76,7 @@ def _make_msg(idx: int, room_id: str) -> PlatformMessage:
 async def test_soak_100_turns_3_rooms(crewai_mocks):
     """Drive 100 on_message calls across 3 rooms; assert no leaks."""
     module = importlib.import_module("band.adapters.crewai")
-    CrewAIAdapter = module.CrewAIAdapter
-
-    adapter = CrewAIAdapter(model="gpt-5.4-mini")
+    adapter = module.CrewAIAdapter(module.CrewAIAdapterConfig(model="gpt-6-luna"))
     fake_agent = MagicMock()
     fake_agent.kickoff_async = AsyncMock(return_value=MagicMock(raw="ok"))
     adapter._crewai_agent = fake_agent

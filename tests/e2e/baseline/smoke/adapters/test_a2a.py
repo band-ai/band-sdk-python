@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from band.integrations.a2a import A2AAdapter
+from band.integrations.a2a import A2AAdapter, A2AAdapterConfig
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.adapters.a2a_server import (
@@ -52,7 +52,7 @@ async def test_a2a_adapter_relays_a_real_counterparty_reply(
     """A live ``A2AAdapter`` forwards a Band room message to a real,
     independent A2A server and relays its reply back into the room."""
     async with running(A2ACounterparty()) as counterparty:
-        adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url=counterparty.url))
         async with running_provisioned_agent(
             adapter, resource_manager, label="a2a"
         ) as agent:
@@ -88,7 +88,7 @@ async def test_a2a_adapter_surfaces_a_remote_task_failure(
     itself ends up FAILED once Band's own retries are exhausted against this
     deterministically-failing counterparty."""
     async with running(A2ACounterparty()) as counterparty:
-        adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url=counterparty.url))
         async with running_provisioned_agent(
             adapter, resource_manager, label="a2a"
         ) as agent:

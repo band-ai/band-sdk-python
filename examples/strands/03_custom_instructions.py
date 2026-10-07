@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=1.6.0"]
+# dependencies = ["band-sdk[strands]>=4.0.0"]
 # ///
 """
 Strands agent with a fully custom system prompt.
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from strands.models.openai import OpenAIModel
 
 from band import Agent, configure_logging
-from band.adapters import StrandsAdapter
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
 from band.core.types import Emit
 
 configure_logging(logging.INFO)
@@ -53,9 +53,9 @@ async def main() -> None:
     load_dotenv()
 
     adapter = StrandsAdapter(
-        model=OpenAIModel(model_id="gpt-5.4-mini"),
         # Full override: custom_section would be ignored alongside this.
-        system_prompt=SUPPORT_PROMPT,
+        StrandsAdapterConfig(system_prompt=SUPPORT_PROMPT),
+        llm=OpenAIModel(model_id="gpt-6-luna"),
         # Post each tool call and result into the room for visibility.
         emit=Emit.TOOL_CALLS,
     )
