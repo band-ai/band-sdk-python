@@ -661,6 +661,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
 
 CLAUDE_POLICY_DECISION = template_pattern(APPROVAL_POLICY_DECISION_TEMPLATE)
 CLAUDE_SHELL_TOOLS = ("Bash", "PowerShell")
+NATIVE_SHELL_COMMAND_MISSING = "expected native shell command"
 
 
 def assert_shell_write_attempted(
@@ -669,7 +670,7 @@ def assert_shell_write_attempted(
     expected = marker_command(marker, target)
     shells = tool_calls.named(*CLAUDE_SHELL_TOOLS)
     assert any(call.args.get("command") == expected for call in shells), (
-        f"expected native shell command {expected!r}; "
+        f"{NATIVE_SHELL_COMMAND_MISSING} {expected!r}; "
         f"observed: {[(call.name, call.args.get('command')) for call in tool_calls]}"
     )
 
@@ -677,7 +678,9 @@ def assert_shell_write_attempted(
 def assert_file_write_attempted(
     tool_calls: ToolCalls, marker: str, target: Path
 ) -> None:
-    tool_calls.assert_fired("Write")
+    tool_calls.assert_fired(
+        "Write", with_args={"file_path": str(target), "content": marker}
+    )
 
 
 class ClosingRequest(Protocol):
