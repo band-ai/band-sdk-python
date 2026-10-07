@@ -39,7 +39,7 @@ from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_notice,
-    handle_leftover_text,
+    handle_assistant_text,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -55,10 +55,10 @@ from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     AgentInput,
     ApprovalMode,
+    AssistantTextMode,
     Capability,
     Emit,
     FeatureKwargs,
-    LeftoverText,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -468,8 +468,8 @@ class CodexAdapterConfig(EnvAdapterConfig):
     )
     fallback_send_agent_text: bool = True
     # What the text fallback posts: the reply, or a thought that ends the turn
-    # without one (see LeftoverText).
-    leftover_text: LeftoverText = LeftoverText.REPLY
+    # without one (see AssistantTextMode).
+    assistant_text_mode: AssistantTextMode = AssistantTextMode.REPLY
     approval_mode: ApprovalMode = "manual"
     approval_text_notifications: bool = True
     approval_wait_timeout_s: float = 300.0
@@ -558,12 +558,12 @@ class CodexAdapterConfig(EnvAdapterConfig):
         return roots
 
     @model_validator(mode="after")
-    def _leftover_text_needs_the_fallback(self) -> Self:
-        if self.leftover_text is not LeftoverText.REPLY and (
+    def _assistant_text_mode_needs_the_fallback(self) -> Self:
+        if self.assistant_text_mode is not AssistantTextMode.REPLY and (
             not self.fallback_send_agent_text
         ):
             raise ValueError(
-                "leftover_text applies only while fallback_send_agent_text is on"
+                "assistant_text_mode applies only while fallback_send_agent_text is on"
             )
         return self
 
@@ -2282,11 +2282,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         if turn_status == "completed":
             if self.config.fallback_send_agent_text:
-                await handle_leftover_text(
+                await handle_assistant_text(
                     tools,
                     final_text.strip(),
                     mention,
-                    mode=self.config.leftover_text,
+                    mode=self.config.assistant_text_mode,
                     emit=self.features.emit,
                 )
             return

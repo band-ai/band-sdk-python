@@ -6,9 +6,9 @@ import logging
 from collections.abc import Mapping
 from typing import Self
 
-from band.core.delivery import handle_leftover_text
+from band.core.delivery import handle_assistant_text
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import Emit, LeftoverText
+from band.core.types import AssistantTextMode, Emit
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -40,7 +40,7 @@ class RoomTurnEmitter:
     or declined via a Band tool — if so the text would duplicate the reply already
     in the room.
 
-    On a clean close the held text is handled as ``leftover_text`` says (unless
+    On a clean close the held text is handled as ``assistant_text_mode`` says (unless
     the turn already replied), and the session bookkeeping ``task`` event is
     posted last.
 
@@ -61,7 +61,7 @@ class RoomTurnEmitter:
         room_id: str,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
-        leftover_text: LeftoverText = LeftoverText.REPLY,
+        assistant_text_mode: AssistantTextMode = AssistantTextMode.REPLY,
         custom_effects: Mapping[str, TurnEffect] | None = None,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
@@ -79,7 +79,7 @@ class RoomTurnEmitter:
         self._session_id = session_id
         self._room_id = room_id
         self._records_tool_effects = records_tool_effects
-        self._leftover_text = leftover_text
+        self._assistant_text_mode = assistant_text_mode
         self._custom_effects = custom_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
@@ -216,11 +216,11 @@ class RoomTurnEmitter:
             self._tools.turn.note_reply_attempt()
         # The held runs only ever post together at close, so they are handled
         # as the turn's one closing text.
-        await handle_leftover_text(
+        await handle_assistant_text(
             self._tools,
             "\n\n".join(self._pending_text),
             self._mentions,
-            mode=self._leftover_text,
+            mode=self._assistant_text_mode,
             emit=self._emit,
         )
         # Posted regardless of the emit set: this is resume state read back by

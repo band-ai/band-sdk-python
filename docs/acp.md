@@ -38,7 +38,7 @@ assert adapter.config.command == ("codex-acp",)
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
-- **Assistant text is held to turn close** and handled as `leftover_text` says, unless
+- **Assistant text is held to turn close** and handled as `assistant_text_mode` says, unless
   the turn already replied or declined: `REPLY` (the default) relays it as one reply
   through `relay_reply`; `THOUGHT` posts it as a `thought` event and settles the turn
   without a reply, for agents that answer only through Band tools and would otherwise

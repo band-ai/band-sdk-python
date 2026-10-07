@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from band.core.delivery import handle_leftover_text
-from band.core.types import LeftoverText
+from band.core.delivery import handle_assistant_text
+from band.core.types import AssistantTextMode
 from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import (
     AgentTools,
@@ -108,11 +108,11 @@ async def test_a_reply_refused_for_its_arguments_leaves_the_reply_owed(
     outcome = await tools.execute_tool_call_structured(
         BandTool.SEND_MESSAGE, {"content": "The answer."}
     )
-    await handle_leftover_text(
+    await handle_assistant_text(
         tools,
         "I sent the answer.",
         [],
-        mode=LeftoverText.THOUGHT,
+        mode=AssistantTextMode.THOUGHT,
         emit=frozenset(),
     )
 

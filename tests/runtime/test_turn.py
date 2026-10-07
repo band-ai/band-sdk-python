@@ -16,9 +16,9 @@ import band_sdk_core
 import pytest
 from pydantic import BaseModel
 
-from band.core.delivery import deliver_reply, handle_leftover_text, relay_reply
+from band.core.delivery import deliver_reply, handle_assistant_text, relay_reply
 from band.core.turn import Turn, judge_detached_turn, report_unsettled_turn
-from band.core.types import LeftoverText
+from band.core.types import AssistantTextMode
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import declares_turn_effect, execute_custom_tool
 from band.runtime.tools import AgentTools, BandTool, TurnEffect
@@ -187,7 +187,7 @@ class TestCustomTools:
             pytest.param("unused", {}, id="invalid-arguments"),
         ],
     )
-    async def test_a_failed_declared_reply_leaves_leftover_text_owing(
+    async def test_a_failed_declared_reply_leaves_assistant_text_owing(
         self, handler_output: Any, arguments: dict[str, Any]
     ) -> None:
         """A reply tool that did not deliver is not a silence the model chose;
@@ -202,8 +202,8 @@ class TestCustomTools:
         tools = FakeAgentTools()
         with contextlib.suppress(Exception):
             await execute_custom_tool((LookupInput, reply), arguments, turn=tools.turn)
-        await handle_leftover_text(
-            tools, "Sent.", [], mode=LeftoverText.THOUGHT, emit=frozenset()
+        await handle_assistant_text(
+            tools, "Sent.", [], mode=AssistantTextMode.THOUGHT, emit=frozenset()
         )
 
         assert not tools.turn.complete

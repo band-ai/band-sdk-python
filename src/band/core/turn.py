@@ -48,7 +48,7 @@ class Turn:
 
     def settle(self) -> None:
         """The adapter ended this turn itself (a control reply, a busy notice,
-        or closing text reported as a thought under ``LeftoverText.THOUGHT``)."""
+        or closing text reported as a thought under ``AssistantTextMode.THOUGHT``)."""
         self._ledger.settle()
 
     def note_reported(self) -> None:

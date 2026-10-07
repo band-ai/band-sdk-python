@@ -39,9 +39,9 @@ from band.core.protocols import (
 )
 from band.core.types import (
     AgentInput,
+    AssistantTextMode,
     Emit,
     HistoryProvider,
-    LeftoverText,
     PlatformMessage,
 )
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
@@ -353,7 +353,7 @@ class TestCodexAdapter:
         assert tools.messages_sent[0]["mentions"][0]["id"] == "user-1"
 
     @pytest.mark.asyncio
-    async def test_leftover_text_as_thought_posts_no_reply(self) -> None:
+    async def test_assistant_text_as_thought_posts_no_reply(self) -> None:
         """Final text from a turn that called no Band reply tool is narration:
         it must not mention (and wake) the sender, and the turn is settled so
         it is not reported and retried as a missing reply."""
@@ -366,7 +366,7 @@ class TestCodexAdapter:
         ]
         adapter = make_codex_adapter(
             FakeCodexClient(events=events),
-            config=CodexAdapterConfig(leftover_text=LeftoverText.THOUGHT),
+            config=CodexAdapterConfig(assistant_text_mode=AssistantTextMode.THOUGHT),
         )
         tools = ToolSchemaFakeTools()
 
@@ -386,12 +386,13 @@ class TestCodexAdapter:
         assert [e["content"] for e in thoughts] == ["(Waiting on the review.)"]
         assert tools.turn.complete
 
-    def test_leftover_text_as_thought_needs_the_text_fallback(
+    def test_assistant_text_as_thought_needs_the_text_fallback(
         self, assert_no_leaked_adapter_config_env: None
     ) -> None:
         with pytest.raises(ValidationError, match="fallback_send_agent_text"):
             CodexAdapterConfig(
-                fallback_send_agent_text=False, leftover_text=LeftoverText.THOUGHT
+                fallback_send_agent_text=False,
+                assistant_text_mode=AssistantTextMode.THOUGHT,
             )
 
     @pytest.mark.asyncio

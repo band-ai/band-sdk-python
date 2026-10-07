@@ -158,7 +158,7 @@ class Emit(_FlagEnum):
     USAGE = "usage"
 
 
-class LeftoverText(StrEnum):
+class AssistantTextMode(StrEnum):
     """What an adapter does with model text a turn did not deliver through a
     Band reply tool (``band_send_message`` or ``band_no_reply``).
 

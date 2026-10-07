@@ -14,7 +14,7 @@ from typing import ClassVar
 import pytest
 
 from band.converters.acp_client import ACPClientHistoryConverter
-from band.core.types import Emit, LeftoverText
+from band.core.types import AssistantTextMode, Emit
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import (
     ACPToolCall,
@@ -480,7 +480,7 @@ class TestRoomTurnEmitterReplyRelay:
         assert tools.turn.complete
 
 
-async def run_leftover_turn(
+async def run_assistant_text_turn(
     tools: FakeAgentTools,
     *chunks: CollectedChunk,
     emit: frozenset[Emit] | None = None,
@@ -493,15 +493,15 @@ async def run_leftover_turn(
         room_id="room-1",
         emit=emit,
         records_tool_effects=records_tool_effects,
-        leftover_text=LeftoverText.THOUGHT,
+        assistant_text_mode=AssistantTextMode.THOUGHT,
     )
     async with emitter:
         for chunk in chunks:
             await emitter.emit(chunk)
 
 
-class TestRoomTurnEmitterLeftoverTextAsThought:
-    """With ``LeftoverText.THOUGHT``, text the model wrote outside a Band tool
+class TestRoomTurnEmitterAssistantTextAsThought:
+    """With ``AssistantTextMode.THOUGHT``, text the model wrote outside a Band tool
     is the agent's own narration: it never becomes a reply that mentions (and
     so wakes) the sender, and a turn that produced only such text ends without
     a missing-reply failure, which would otherwise be retried."""
@@ -510,7 +510,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
     async def test_text_only_turn_posts_a_thought_and_no_reply(self) -> None:
         tools = FakeAgentTools()
 
-        await run_leftover_turn(
+        await run_assistant_text_turn(
             tools, text("(Waiting on the review."), text("Nothing to change.)")
         )
 
@@ -527,7 +527,9 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
     async def test_thoughts_outside_the_emit_set_leave_the_room_silent(self) -> None:
         tools = FakeAgentTools()
 
-        await run_leftover_turn(tools, text("Nothing to change."), emit=frozenset())
+        await run_assistant_text_turn(
+            tools, text("Nothing to change."), emit=frozenset()
+        )
 
         assert tools.messages_sent == []
         assert [e["content"] for e in tools.events_sent] == ["ACP client session"]
@@ -537,7 +539,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
     async def test_a_turn_without_text_still_owes_a_reply(self) -> None:
         tools = FakeAgentTools()
 
-        await run_leftover_turn(tools, text("   "))
+        await run_assistant_text_turn(tools, text("   "))
 
         assert tools.messages_sent == []
         assert not tools.turn.complete
@@ -547,7 +549,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
         tools = FakeAgentTools()
         await tools.send_message("Posted by the tool.", mentions=["u1"])
 
-        await run_leftover_turn(
+        await run_assistant_text_turn(
             tools,
             tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED),
             text("I posted it."),
@@ -566,7 +568,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
         with pytest.raises(RuntimeError):
             await tools.send_message("The answer.", mentions=["u1"])
 
-        await run_leftover_turn(tools, text("I posted the answer."))
+        await run_assistant_text_turn(tools, text("I posted the answer."))
 
         assert tools.messages_sent == []
         assert not tools.turn.complete
@@ -575,7 +577,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
     async def test_a_failed_out_of_process_reply_still_owes_the_reply(self) -> None:
         tools = FakeAgentTools()
 
-        await run_leftover_turn(
+        await run_assistant_text_turn(
             tools,
             tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.FAILED),
             text("I posted the answer."),
@@ -593,7 +595,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
         failed validation); the stream's failed status is the only record."""
         tools = FakeAgentTools()
 
-        await run_leftover_turn(
+        await run_assistant_text_turn(
             tools,
             tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.FAILED),
             text("I posted the answer."),
@@ -613,7 +615,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
             mentions=[{"id": "u1", "name": "User"}],
             session_id="s1",
             room_id="room-1",
-            leftover_text=LeftoverText.THOUGHT,
+            assistant_text_mode=AssistantTextMode.THOUGHT,
             custom_effects={"post_answer": TurnEffect.REPLY},
         )
         async with emitter:
@@ -630,7 +632,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
         never reported a result) did not deliver."""
         tools = FakeAgentTools()
 
-        await run_leftover_turn(
+        await run_assistant_text_turn(
             tools,
             tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.PENDING),
             text("I posted the answer."),
@@ -647,7 +649,7 @@ class TestRoomTurnEmitterLeftoverTextAsThought:
             session_id="s1",
             room_id="room-1",
             emit=frozenset(),
-            leftover_text=LeftoverText.THOUGHT,
+            assistant_text_mode=AssistantTextMode.THOUGHT,
         )
         async with emitter:
             await emitter.open_permission(

@@ -58,11 +58,11 @@ from .core.exceptions import (
 # Core types (v0.3.0)
 from .core.types import (
     AdapterFeatures,
+    AssistantTextMode,
     Capability,
     ConflictPolicy,
     Emit,
     FeatureKwargs,
-    LeftoverText,
 )
 from .logging_config import (
     CHATTY_LOGGERS,
@@ -133,6 +133,7 @@ __all__ = [
     # Runtime - Core
     "AgentRuntime",
     "AgentTools",
+    "AssistantTextMode",
     "BandConfigError",
     "BandConnectionError",
     "BandError",
@@ -151,7 +152,6 @@ __all__ = [
     "FormatStyle",
     # Runtime - Shutdown
     "GracefulShutdown",
-    "LeftoverText",
     "LogLevel",
     "LogSettings",
     "LogStream",

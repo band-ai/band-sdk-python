@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from band.core.content import has_visible_content
 from band.core.protocols import send_event_safe
-from band.core.types import Emit, LeftoverText, MessageType
+from band.core.types import AssistantTextMode, Emit, MessageType
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
@@ -82,12 +82,12 @@ async def relay_reply(
     return await deliver_reply(tools, text, mentions) is not None
 
 
-async def handle_leftover_text(
+async def handle_assistant_text(
     tools: AgentToolsProtocol,
     text: str | None,
     mentions: list[str] | list[dict[str, str]] | None,
     *,
-    mode: LeftoverText,
+    mode: AssistantTextMode,
     emit: frozenset[Emit],
 ) -> bool:
     """Deliver the model's final text as ``mode`` says; return whether it
@@ -99,7 +99,7 @@ async def handle_leftover_text(
     missing. After a reply attempt that did not land it does not: that text
     may describe a reply the room never received, so the turn still owes one.
     """
-    if mode is LeftoverText.REPLY:
+    if mode is AssistantTextMode.REPLY:
         return await relay_reply(tools, text, mentions)
     if text is None or tools.turn.replied or not has_visible_content(text):
         return False
@@ -108,7 +108,7 @@ async def handle_leftover_text(
             tools,
             content=text,
             message_type=MessageType.THOUGHT,
-            log_label="leftover text thought",
+            log_label="assistant text thought",
         )
     if not tools.turn.reply_attempted:
         tools.turn.settle()

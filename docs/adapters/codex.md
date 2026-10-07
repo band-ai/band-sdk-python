@@ -32,7 +32,7 @@ workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
   finish releasing ownership. Shutdown attempts every room and reports failures.
 - **Codex's final text is a fallback reply.** With `fallback_send_agent_text`
   (on by default) it is posted when the turn did not reply through a Band tool.
-  `leftover_text=LeftoverText.THOUGHT` posts it as a `thought` event instead and
+  `assistant_text_mode=AssistantTextMode.THOUGHT` posts it as a `thought` event instead and
   ends the turn without a reply; it requires the fallback to stay on.
 - **`reasoning_effort` is not validated.** The valid values depend on the model
   and the Codex CLI version, and the backend rejects unknown ones.

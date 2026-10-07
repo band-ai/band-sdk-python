@@ -16,7 +16,7 @@ A turn is **complete** when it:
 - did real work (any Band tool whose effect is `act`, such as
   `band_add_participant`)
 - was settled by the adapter itself (a control reply, a busy notice, or closing
-  text reported as a thought under `LeftoverText.THOUGHT`)
+  text reported as a thought under `AssistantTextMode.THOUGHT`)
 - already reported a failure (`send_failure`)
 
 Anything else is a **missing reply**. Fetching state or narrating through
@@ -221,7 +221,7 @@ without that line models more often send their closing narration as a second
 ### Closing text as a thought
 
 The ACP client adapters (OMP, Copilot, Cursor) and Codex take
-`leftover_text=LeftoverText.THOUGHT` for agents told to answer only through
+`assistant_text_mode=AssistantTextMode.THOUGHT` for agents told to answer only through
 Band tools. For them, text written outside a tool is the agent's own narration:
 relaying it would mention the sender and start that participant's next turn.
 In this mode the text, when visible, is posted as a `thought` event (if
@@ -245,7 +245,7 @@ to its call by `tool_call_id` and records that core tool's turn effect. Failed
 returns record nothing; self-hosted tools record their own effects.
 
 `tests/framework_conformance/test_reply_boundary.py` pins every `send_message`,
-`deliver_reply`, `relay_reply` and `handle_leftover_text` call outside the tool
+`deliver_reply`, `relay_reply` and `handle_assistant_text` call outside the tool
 implementations, per file with the reason it carries the model's words, so a
 new one fails until it is justified.
 
