@@ -265,9 +265,7 @@ class PlatformRuntime:
                     await self._link.unsubscribe_agent_contacts()
                     logger.debug("Unsubscribed from contacts channel")
                 except Exception:
-                    logger.exception(
-                        "Failed to unsubscribe contacts before disconnect"
-                    )
+                    logger.exception("Failed to unsubscribe contacts before disconnect")
                 finally:
                     self._contacts_subscribed = False
             if self._runtime:
