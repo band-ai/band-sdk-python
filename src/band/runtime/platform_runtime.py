@@ -256,28 +256,37 @@ class PlatformRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
+        graceful = True
         try:
-            graceful = True
+            # Unsubscribe while the socket is still up; AgentRuntime.stop
+            # disconnects so a later unsubscribe would be too late.
+            if self._link and self._contacts_subscribed:
+                try:
+                    await self._link.unsubscribe_agent_contacts()
+                    logger.debug("Unsubscribed from contacts channel")
+                except Exception:
+                    logger.exception("Failed to unsubscribe contacts before disconnect")
+                finally:
+                    self._contacts_subscribed = False
             if self._runtime:
                 graceful = await self._runtime.stop(timeout=timeout)
-
-            # Unsubscribe from contacts channel before disconnecting
-            if self._link and self._contacts_subscribed:
-                await self._link.unsubscribe_agent_contacts()
-                self._contacts_subscribed = False
-                logger.debug("Unsubscribed from contacts channel")
-
-            if self._link:
-                await self._link.disconnect()
         finally:
-            self.release_single_instance()
+            # Idempotent if AgentRuntime.stop already disconnected — with
+            # install_signal_handlers=False disconnect is what wakes run_forever.
+            try:
+                if self._link:
+                    await self._link.disconnect()
+            finally:
+                self.release_single_instance()
         logger.info("Platform runtime stopped")
         return graceful
 
-    async def run_forever(self) -> None:
-        """Run until interrupted."""
+    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
+        """Run until the link ends (see ``BandLink.run_forever``)."""
         if self._link:
-            await self._link.run_forever()
+            await self._link.run_forever(
+                install_signal_handlers=install_signal_handlers
+            )
 
     async def _fetch_agent_metadata(self) -> None:
         """Fetch agent metadata from platform."""
