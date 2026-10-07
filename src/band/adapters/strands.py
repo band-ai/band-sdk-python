@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 try:
     from strands import Agent
+    from strands.agent import AgentResult
     from strands.hooks import HookProvider, HookRegistry
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
@@ -39,6 +40,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
+from band.core.redaction import redact_credentials_deep
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import Turn
@@ -78,6 +80,7 @@ from band.runtime.tools.schema import is_failed_tool_output
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "strands"
+TURN_DIAGNOSTICS_LOG = "Room %s: Strands turn diagnostics: %s"
 
 
 def _format_tool_output(value: object) -> str:
@@ -370,6 +373,7 @@ class BandTurnHooks(HookProvider):
         self._tools = tools
         self._emit_execution = emit_execution
         self._custom_effects = custom_effects
+        self._calls: list[dict[ToolEventKey, object]] = []
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         del kwargs
@@ -377,17 +381,19 @@ class BandTurnHooks(HookProvider):
         registry.add_callback(AfterToolCallEvent, self._on_after_tool)
 
     async def _on_before_tool(self, event: BeforeToolCallEvent) -> None:
+        call: dict[ToolEventKey, object] = {
+            ToolEventKey.NAME: event.tool_use["name"],
+            ToolEventKey.ARGS: redact_tool_call_args(
+                event.tool_use["name"], event.tool_use["input"]
+            ),
+            ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
+        }
+        self._calls.append(call)
         if not self._emit_execution:
             return
         await self._emit_event(
             MessageType.TOOL_CALL,
-            {
-                ToolEventKey.NAME: event.tool_use["name"],
-                ToolEventKey.ARGS: redact_tool_call_args(
-                    event.tool_use["name"], event.tool_use["input"]
-                ),
-                ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
-            },
+            call,
         )
 
     async def _on_after_tool(self, event: AfterToolCallEvent) -> None:
@@ -396,6 +402,19 @@ class BandTurnHooks(HookProvider):
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
             name, output
         )
+        call = next(
+            call
+            for call in reversed(self._calls)
+            if call[ToolEventKey.TOOL_CALL_ID] == event.tool_use["toolUseId"]
+        )
+        result_payload = {
+            ToolEventKey.NAME: name,
+            ToolEventKey.OUTPUT: output,
+            ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
+            # A restart must not replay a failed operation as a success.
+            ToolEventKey.IS_ERROR: not succeeded,
+        }
+        call.update(result_payload)
         # Native Strands tools run outside execute_custom_tool, so their
         # declared effect is recorded here.
         if (
@@ -408,15 +427,28 @@ class BandTurnHooks(HookProvider):
             return
         await self._emit_event(
             MessageType.TOOL_RESULT,
-            {
-                ToolEventKey.NAME: name,
-                ToolEventKey.OUTPUT: output,
-                ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
-                # Without this the event replays as a success on the next
-                # bootstrap, telling the model a failed operation worked.
-                ToolEventKey.IS_ERROR: not succeeded,
-            },
+            result_payload,
         )
+
+    def log_failure(self, room_id: str, result: AgentResult | None) -> None:
+        """Keep the failed attempt's tool outcomes even when event emission is off."""
+        calls = []
+        for call in self._calls:
+            output = call.get(ToolEventKey.OUTPUT)
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except ValueError:
+                    pass
+            calls.append({**call, ToolEventKey.OUTPUT: output})
+        payload = redact_credentials_deep(
+            {
+                "tool_calls": calls,
+                "stop_reason": result.stop_reason if result is not None else None,
+                "final_text": str(result) if result is not None else None,
+            }
+        )
+        logger.warning(TURN_DIAGNOSTICS_LOG, room_id, json.dumps(payload, default=str))
 
     async def _emit_event(
         self,
@@ -593,9 +625,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> None:
         """Run the framework loop while preserving transcript and usage on failure."""
         agent: Agent | None = None
+        result: AgentResult | None = None
         try:
             agent = self._build_agent(history, tools, hooks)
-            await agent.invoke_async(message)
+            result = await agent.invoke_async(message)
         except Exception:
             logger.exception("Room %s: Strands turn failed", room_id)
             await tools.send_failure(
@@ -603,6 +636,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             )
             raise
         finally:
+            # Unjudged turns (contact hub) often end without a reply; those are
+            # not failures, so quiet completion still skips diagnostics.
+            if result is None or (tools.turn.judged and not tools.turn.complete):
+                hooks.log_failure(room_id, result)
             if agent is not None:
                 self._message_history[room_id] = agent.messages
                 await self.emit_usage(tools, self._usage_from_agent(agent))
