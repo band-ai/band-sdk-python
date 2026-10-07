@@ -12,12 +12,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agno.media import Image
 from agno.tools.function import ToolResult
-from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.core.adapterconfig import BaseAdapterConfig
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -73,7 +73,7 @@ _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
 )
 
 
-class AgnoRunError(RuntimeError):
+class AgnoRunError(ProviderRunError):
     """An Agno run finished in an error state instead of raising.
 
     Agno catches exceptions inside ``Agent.arun`` (model/API failures included)
@@ -83,6 +83,9 @@ class AgnoRunError(RuntimeError):
     runtime's retry budget), instead of being recorded as a successful turn
     that produced no output.
     """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(RunStatus.error.value, detail)
 
 
 def _error_summary(detail: str | None) -> str:
@@ -485,18 +488,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             if response is not None and response.status == RunStatus.error:
                 raise AgnoRunError(_error_summary(response.content))
         except Exception as e:
-            # Keep the user-facing payload generic; the full traceback is in the
-            # agent log via logger.exception. Exception text can include DB
-            # strings, paths, and tokens that must not surface in chat. Only
-            # the coarse RunStatus.error code -- never response.content -- is
-            # safe to attach.
             logger.exception(
                 "Room %s msg %s: error running Agno agent", room_id, msg_id
             )
-            code = RunStatus.error.value if isinstance(e, AgnoRunError) else None
-            await tools.send_failure(
-                AgentFailure("agno", GENERIC_PROVIDER_FAILURE_MESSAGE, code)
-            )
+            await tools.send_failure(generic_provider_failure("agno", e))
             raise
 
         if response is None:
