@@ -112,10 +112,8 @@ from band.runtime.tools import (
     iter_tool_definitions,
 )
 from band.workspaces import (
+    RoomWorkspaces,
     WorkspaceResolver,
-    claim_room_workspace,
-    release_room_workspace,
-    resolve_room_workspace,
     workspace_resolver_for,
 )
 
@@ -414,8 +412,7 @@ class ACPClientAdapter(
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
         self._runtimes: dict[str, ACPRuntime] = {}
-        self._room_workspaces: dict[str, str] = {}
-        self._workspace_rooms: dict[str, str] = {}
+        self._workspaces = RoomWorkspaces(self._workspace_for_room)
 
         self._room_to_session: dict[str, RoomSession] = {}
         # Outlives the room's sessions; see apply_model_selection.
@@ -598,18 +595,13 @@ class ACPClientAdapter(
             canonicalize_tool_name=self._canonical_tool_name,
         )
 
-    def _workspace(self, room_id: str) -> str:
-        return resolve_room_workspace(room_id, self._workspace_for_room)
-
     async def _runtime_for(self, room_id: str) -> ACPRuntime:
         async with self._session_lock:
             runtime = self._runtimes.get(room_id)
             if runtime is None:
-                workspace = self._workspace(room_id)
-                claim_room_workspace(room_id, workspace, self._workspace_rooms)
+                workspace = self._workspaces.claim(room_id)
                 runtime = self._build_runtime(workspace)
                 self._runtimes[room_id] = runtime
-                self._room_workspaces[room_id] = workspace
             return runtime
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -1149,7 +1141,7 @@ class ACPClientAdapter(
             return None
 
         loaded = await runtime.load_session_response(
-            cwd=self._room_workspaces[room_id],
+            cwd=self._workspaces.workspace(room_id),
             session_id=session_id,
             mcp_servers=mcp.servers,
         )
@@ -1202,7 +1194,7 @@ class ACPClientAdapter(
     ) -> AsyncIterator[NewSessionResponse]:
         """Yield a new session, closing it unless initialization completes."""
         session = await runtime.create_session_response(
-            cwd=self._room_workspaces[room_id],
+            cwd=self._workspaces.workspace(room_id),
             mcp_servers=mcp_servers,
         )
         try:
@@ -1499,9 +1491,7 @@ class ACPClientAdapter(
             if session is not None:
                 self._bootstrapped_sessions.discard(session.session_id)
             runtime = self._runtimes.pop(room_id, None)
-            workspace = self._room_workspaces.pop(room_id, None)
-            if workspace is not None:
-                release_room_workspace(room_id, workspace, self._workspace_rooms)
+            self._workspaces.release(room_id)
 
         try:
             await self._cancel_session_initializers(initializer)
@@ -1540,8 +1530,8 @@ class ACPClientAdapter(
             self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())
             self._runtimes.clear()
-            self._room_workspaces.clear()
-            self._workspace_rooms.clear()
+            for room_id in self._workspaces.rooms:
+                self._workspaces.release(room_id)
         await self._cancel_session_initializers(*initializers)
         await self._drain_background_tasks()
         await self._mcp.close(final=final)

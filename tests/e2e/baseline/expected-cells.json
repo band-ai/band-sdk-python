@@ -654,6 +654,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[approve]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[decline]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_thoughts_are_not_placeholders",
       "adapter": "suite",
       "lanes": [
@@ -5711,6 +5729,51 @@
       "adapter": "strands",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null

@@ -17,15 +17,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from band.workspaces import RoomWorkspaces
+
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
         ClaudeAgentOptions,
         ClaudeSDKClient,
     )
+    from claude_agent_sdk._internal.transport import Transport
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
         McpServerConfig,
     )
+
+    from band.integrations.claude_sdk.transport import create_transport
 
     _CLAUDE_SDK_AVAILABLE = True
 except ImportError:
@@ -46,6 +51,7 @@ class SessionCommand:
     room_id: str | None = None
     resume_session_id: str | None = None
     result_future: asyncio.Future[Any] | None = None
+    release_workspace: bool = True
 
 
 class ClaudeSessionManager:
@@ -87,7 +93,8 @@ class ClaudeSessionManager:
         base_options: ClaudeAgentOptions,
         can_use_tool_factory: Callable[[str], CanUseTool] | None = None,
         mcp_servers_factory: Callable[[str], dict[str, McpServerConfig]] | None = None,
-    ):
+        workspaces: RoomWorkspaces | None = None,
+    ) -> None:
         """
         Initialize session manager.
 
@@ -100,11 +107,15 @@ class ClaudeSessionManager:
             mcp_servers_factory: Optional factory that returns a room's
                 ``mcp_servers``.  When set, it replaces
                 ``base_options.mcp_servers`` for each new session.
+            workspaces: Adapter-local claims; omit to preserve base_options.cwd.
         """
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
         self._sessions: dict[str, ClaudeSDKClient] = {}
+        self._transports: dict[str, Transport] = {}
+        self._unusable: set[str] = set()
+        self._workspaces = workspaces
         self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._shutdown: asyncio.Task[None] | None = None
@@ -128,17 +139,21 @@ class ClaudeSessionManager:
         """Stop the background task and cleanup all sessions, for good: the
         adapter builds a new manager when it starts again. Every caller
         awaits the same shutdown, which a cancelled caller doesn't abandon."""
-        if self._shutdown is None:
-            # Queued now, so it orders by when stop() was called.
-            if self._loop_running:
-                self._command_queue.put_nowait(SessionCommand(action="stop"))
+        if self._shutdown is None or (
+            self._shutdown.done() and self._shutdown.exception() is not None
+        ):
             self._shutdown = asyncio.create_task(self._shut_down())
         await asyncio.shield(self._shutdown)
 
     async def _shut_down(self) -> None:
         if self._task is None:
             return
-        await self._task  # the loop exits after handling its stop command
+        result = asyncio.get_running_loop().create_future()
+        self._command_queue.put_nowait(
+            SessionCommand(action="stop", result_future=result)
+        )
+        await result
+        await self._task
         self._task = None
         self._fail_pending_commands()
         logger.info("ClaudeSessionManager background task stopped")
@@ -170,29 +185,30 @@ class ClaudeSessionManager:
                     client = await self._do_create_session(
                         cmd.room_id, cmd.resume_session_id
                     )
-                    if cmd.result_future:
+                    if cmd.result_future is not None and not cmd.result_future.done():
                         cmd.result_future.set_result(client)
 
                 elif cmd.action == "cleanup":
-                    await self._do_cleanup_session(cmd.room_id)
-                    if cmd.result_future:
+                    await self._do_cleanup_session(
+                        cmd.room_id, release_workspace=cmd.release_workspace
+                    )
+                    if cmd.result_future is not None and not cmd.result_future.done():
                         cmd.result_future.set_result(None)
 
                 elif cmd.action == "invalidate":
-                    self._do_invalidate_session(cmd.room_id)
-                    if cmd.result_future:
+                    await self._do_invalidate_session(cmd.room_id)
+                    if cmd.result_future is not None and not cmd.result_future.done():
                         cmd.result_future.set_result(None)
 
                 elif cmd.action == "cleanup_all":
                     await self._do_cleanup_all()
-                    if cmd.result_future:
+                    if cmd.result_future is not None and not cmd.result_future.done():
                         cmd.result_future.set_result(None)
 
                 elif cmd.action == "stop":
-                    try:
-                        await self._do_cleanup_all()
-                    except Exception:
-                        logger.exception("Error cleaning up sessions on stop")
+                    await self._do_cleanup_all()
+                    if cmd.result_future is not None and not cmd.result_future.done():
+                        cmd.result_future.set_result(None)
                     break
 
                 self._command_queue.task_done()
@@ -216,6 +232,8 @@ class ClaudeSessionManager:
         ``base_options``, then applies room-specific overrides.
         """
         overrides: dict[str, Any] = {}
+        if self._workspaces is not None:
+            overrides["cwd"] = self._workspaces.claim(room_id)
 
         if resume_session_id:
             overrides["resume"] = resume_session_id
@@ -235,11 +253,11 @@ class ClaudeSessionManager:
         if not room_id:
             raise ValueError("room_id is required")
 
-        if (client := self._sessions.get(room_id)) is not None and not (
-            self._is_current(room_id, client)
+        if (client := self._sessions.get(room_id)) is not None and (
+            room_id in self._unusable or not self._is_current(room_id, client)
         ):
-            logger.info("MCP servers changed; recycling session for room %s", room_id)
-            await self._do_cleanup_session(room_id)
+            logger.info("Replacing unusable or outdated session for room %s", room_id)
+            await self._do_cleanup_session(room_id, release_workspace=False)
 
         if room_id not in self._sessions:
             if resume_session_id:
@@ -253,14 +271,19 @@ class ClaudeSessionManager:
 
             options = self._build_options(room_id, resume_session_id)
 
-            # Create new client with options
-            client = ClaudeSDKClient(options=options)
-
-            # Connect the client (establishes session with Claude)
-            await client.connect()
-
-            # Store for reuse
+            transport = create_transport(options)
+            client = ClaudeSDKClient(options=options, transport=transport)
+            # Retain both handles before connect: SDK disconnect cannot close a
+            # subprocess when startup fails before its Query is constructed.
             self._sessions[room_id] = client
+            self._transports[room_id] = transport
+            self._unusable.add(room_id)
+            try:
+                await client.connect()
+            except BaseException:
+                await self._do_cleanup_session(room_id, release_workspace=False)
+                raise
+            self._unusable.discard(room_id)
 
             logger.info(
                 "Session created for room %s (total sessions: %s)",
@@ -278,54 +301,49 @@ class ClaudeSessionManager:
             return True
         return client.options.mcp_servers == self._mcp_servers_factory(room_id)
 
-    def _do_invalidate_session(self, room_id: str | None) -> None:
-        """Evict a dead session without calling disconnect() (runs in background task).
-
-        Use this when the CLI process has already terminated — calling
-        disconnect() on a dead process would raise or hang.
-        """
-        if not room_id or room_id not in self._sessions:
-            logger.debug("No session to invalidate for room: %s", room_id)
+    async def _do_invalidate_session(self, room_id: str | None) -> None:
+        """Evict an exited CLI while retaining the room's workspace."""
+        if not room_id:
             return
+        if (transport := self._transports.get(room_id)) is not None:
+            self._unusable.add(room_id)
+            await transport.close()
+            del self._transports[room_id]
+        self._sessions.pop(room_id, None)
+        self._unusable.discard(room_id)
 
-        del self._sessions[room_id]
-        logger.info(
-            "Invalidated dead session for room %s (remaining sessions: %s)",
-            room_id,
-            len(self._sessions),
-        )
-
-    async def _do_cleanup_session(self, room_id: str | None) -> None:
-        """Cleanup single session (runs in background task)."""
-        if not room_id or room_id not in self._sessions:
-            logger.debug("No session to cleanup for room: %s", room_id)
+    async def _do_cleanup_session(
+        self, room_id: str | None, *, release_workspace: bool = True
+    ) -> None:
+        """Retain failed cleanup handles and claims so teardown can be retried."""
+        if not room_id:
             return
-
-        logger.info("Cleaning up session for room: %s", room_id)
-
-        try:
-            await self._sessions[room_id].disconnect()
-            logger.debug("Disconnected client for room %s", room_id)
-        except Exception as e:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
-            logger.warning("Error disconnecting session for room %s: %s", room_id, e)
-
-        del self._sessions[room_id]
-
-        logger.info(
-            "Session cleaned up for room %s (remaining sessions: %s)",
-            room_id,
-            len(self._sessions),
-        )
+        if (client := self._sessions.get(room_id)) is not None:
+            self._unusable.add(room_id)
+            try:
+                await client.disconnect()
+            finally:
+                if (transport := self._transports.get(room_id)) is not None:
+                    await transport.close()
+            del self._sessions[room_id]
+            self._transports.pop(room_id, None)
+            self._unusable.discard(room_id)
+        if release_workspace and self._workspaces is not None:
+            self._workspaces.release(room_id)
 
     async def _do_cleanup_all(self) -> None:
-        """Cleanup all sessions (runs in background task)."""
-        logger.info("Cleaning up all sessions (count: %s)", len(self._sessions))
-
-        room_ids = list(self._sessions.keys())
-        for room_id in room_ids:
-            await self._do_cleanup_session(room_id)
-
-        logger.info("All sessions cleaned up")
+        """Attempt every room, reporting failures without discarding ownership."""
+        rooms = dict.fromkeys(self._sessions)
+        if self._workspaces is not None:
+            rooms.update(dict.fromkeys(self._workspaces.rooms))
+        errors: list[Exception] = []
+        for room_id in rooms:
+            try:
+                await self._do_cleanup_session(room_id)
+            except Exception as error:  # noqa: BLE001 -- every room needs a cleanup attempt
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("Claude session cleanup failed", errors)
 
     async def get_or_create_session(
         self, room_id: str, resume_session_id: str | None = None
@@ -360,7 +378,9 @@ class ClaudeSessionManager:
         )
         return await result_future
 
-    async def cleanup_session(self, room_id: str) -> None:
+    async def cleanup_session(
+        self, room_id: str, *, release_workspace: bool = True
+    ) -> None:
         """
         Disconnect and remove session for a room.
 
@@ -371,6 +391,7 @@ class ClaudeSessionManager:
 
         Args:
             room_id: Band chat room ID
+            release_workspace: False when replacing a client within the same membership.
         """
         if not self._loop_running:
             return
@@ -380,6 +401,7 @@ class ClaudeSessionManager:
             SessionCommand(
                 action="cleanup",
                 room_id=room_id,
+                release_workspace=release_workspace,
                 result_future=result_future,
             )
         )

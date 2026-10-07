@@ -412,12 +412,16 @@ def _claude_sdk_notice(outcome: Outcome, request: re.Match[str]) -> Notice:
 
 
 def _codex(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
-    # A read-only sandbox under "on-request" makes Codex escalate any write to the
-    # room for approval; "never" (the matrix default) would never ask.
-    config = codex_config_kwargs(settings, prompt=SHELL_PROMPT) | {
+    prompt = (
+        f"{SHELL_PROMPT} Submit requested shell commands with default permissions. "
+        "The harness asks for human approval before executing writes, including "
+        "in the read-only sandbox. Do not refuse based on the sandbox description. "
+        "Do not set sandbox_permissions or justification."
+    )
+    config = codex_config_kwargs(settings, prompt=prompt) | {
         "workspace_for_room": lambda _room_id: str(setup.workdir),
         "approval_mode": "manual",
-        "approval_policy": "on-request",
+        "approval_policy": "untrusted",
         "sandbox": CodexSandboxMode.READ_ONLY,
         "approval_wait_timeout_s": setup.wait_timeout_s,
     }

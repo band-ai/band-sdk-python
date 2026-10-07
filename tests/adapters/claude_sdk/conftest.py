@@ -21,12 +21,13 @@ from tests.adapters.claude_sdk.helpers import ClaudeRoom
 def claude() -> Iterator[FakeClaude]:
     """The scripted Claude CLI behind every ``ClaudeSDKClient`` the test opens.
 
-    The constructor is the one seam patched: past it the SDK would spawn the
+    The transport factory is the one seam patched: past it the SDK would spawn the
     real CLI subprocess.
     """
     claude = FakeClaude()
     with patch(
-        "band.integrations.claude_sdk.session_manager.ClaudeSDKClient", claude.client
+        "band.integrations.claude_sdk.session_manager.create_transport",
+        claude.transport,
     ):
         yield claude
     claude.assert_done()

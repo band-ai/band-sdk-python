@@ -176,7 +176,7 @@ class TestACPClientAdapterConfig:
         adapter = ACPClientAdapter(CODEX)
 
         assert adapter._runtimes == {}
-        assert adapter._room_workspaces == {}
+        assert adapter._workspaces.rooms == ()
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
 
@@ -310,8 +310,7 @@ class TestACPClientAdapterLocalMcpConfig:
         runtime = adapter._build_runtime()
         runtime._agent_mcp_transport = BandMCPTransport.SSE
         adapter._runtimes["room-1"] = runtime
-        adapter._room_workspaces["room-1"] = "/tmp/room-1"
-        adapter._workspace_rooms["/tmp/room-1"] = "room-1"
+        adapter._workspaces.claim("room-1", "/tmp/room-1")
 
         try:
             server = await adapter._get_or_start_band_mcp_server("room-1")
@@ -1686,8 +1685,7 @@ class TestACPClientAdapterStop:
         runtime._conn = AsyncMock()
         runtime._client = BandACPClient()
         adapter._runtimes[_MOCK_ROOM] = runtime
-        adapter._room_workspaces[_MOCK_ROOM] = "/tmp/room-123"
-        adapter._workspace_rooms["/tmp/room-123"] = _MOCK_ROOM
+        adapter._workspaces.claim(_MOCK_ROOM, "/tmp/room-123")
         adapter._room_to_session[_MOCK_ROOM] = RoomSession("session-123", band_url=None)
         adapter._room_tools[_MOCK_ROOM] = MagicMock()
         backend = await hold_backend(adapter._mcp)
@@ -1723,8 +1721,7 @@ class TestACPClientAdapterStop:
         runtime._ctx = AsyncMock()
         runtime._ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("Cleanup error"))
         adapter._runtimes[_MOCK_ROOM] = runtime
-        adapter._room_workspaces[_MOCK_ROOM] = "/tmp/room-123"
-        adapter._workspace_rooms["/tmp/room-123"] = _MOCK_ROOM
+        adapter._workspaces.claim(_MOCK_ROOM, "/tmp/room-123")
 
         # Should not raise
         await adapter.stop()
