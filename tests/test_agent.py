@@ -314,6 +314,74 @@ class TestStop:
         mock_adapter.cleanup_all.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_stop_during_start_is_honored_after_start(
+        self, mock_runtime, mock_adapter
+    ):
+        """A host stop() mid-start tears down once start finishes."""
+        start_entered = asyncio.Event()
+        release_start = asyncio.Event()
+
+        async def blocked_start(**kwargs: object) -> None:
+            start_entered.set()
+            await release_start.wait()
+
+        mock_runtime.start.side_effect = blocked_start
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+        starting = asyncio.create_task(agent.start())
+        await start_entered.wait()
+
+        # Returns immediately; start() applies the request when it finishes.
+        assert await agent.stop(timeout=12.0) is True
+        mock_runtime.stop.assert_not_awaited()
+
+        release_start.set()
+        await starting
+
+        mock_runtime.stop.assert_awaited_once_with(timeout=12.0)
+        assert not agent.is_running
+
+    @pytest.mark.asyncio
+    async def test_idle_stop_does_not_poison_later_start(
+        self, mock_runtime, mock_adapter
+    ):
+        """stop() when idle stays a no-op and does not latch a deferred stop."""
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        assert await agent.stop() is True
+        await agent.start()
+
+        mock_runtime.stop.assert_not_awaited()
+        assert agent.is_running
+
+    @pytest.mark.asyncio
+    async def test_run_returns_cleanly_after_stop_during_start(
+        self, mock_runtime, mock_adapter
+    ):
+        """SIGTERM mid-start must not leave run() raising Not connected."""
+        start_entered = asyncio.Event()
+        release_start = asyncio.Event()
+
+        async def blocked_start(**kwargs: object) -> None:
+            start_entered.set()
+            await release_start.wait()
+
+        mock_runtime.start.side_effect = blocked_start
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        async def stop_once_start_blocks() -> None:
+            await start_entered.wait()
+            await agent.stop(timeout=5.0)
+            release_start.set()
+
+        stopper = asyncio.create_task(stop_once_start_blocks())
+        await agent.run(install_signal_handlers=False)
+        await stopper
+
+        mock_runtime.stop.assert_awaited_once_with(timeout=5.0)
+        mock_runtime.run_forever.assert_not_awaited()
+        assert not agent.is_running
+
+    @pytest.mark.asyncio
     async def test_calls_adapter_cleanup_all(self, mock_runtime, mock_adapter):
         """Should give the adapter its shutdown teardown hook."""
         mock_runtime.stop.return_value = True
@@ -341,14 +409,23 @@ class TestRun:
     """Tests for Agent.run() method."""
 
     @pytest.mark.asyncio
-    async def test_starts_then_runs_forever(self, mock_runtime, mock_adapter):
-        """Should start and run forever."""
+    @pytest.mark.parametrize(
+        ("kwargs", "installs"),
+        [({}, True), ({"install_signal_handlers": False}, False)],
+        ids=["script-default", "host-owns-signals"],
+    )
+    async def test_starts_then_runs_forever(
+        self, mock_runtime, mock_adapter, kwargs, installs
+    ):
+        """run() hands the host's signal choice to run_forever."""
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
 
-        await agent.run()
+        await agent.run(**kwargs)
 
         mock_runtime.start.assert_awaited_once()
-        mock_runtime.run_forever.assert_awaited_once()
+        mock_runtime.run_forever.assert_awaited_once_with(
+            install_signal_handlers=installs
+        )
 
     @pytest.mark.asyncio
     async def test_stops_on_completion(self, mock_runtime, mock_adapter):

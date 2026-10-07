@@ -256,21 +256,28 @@ class PlatformRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
+        graceful = True
         try:
-            graceful = True
             if self._runtime:
                 graceful = await self._runtime.stop(timeout=timeout)
-
-            # Unsubscribe from contacts channel before disconnecting
-            if self._link and self._contacts_subscribed:
-                await self._link.unsubscribe_agent_contacts()
-                self._contacts_subscribed = False
-                logger.debug("Unsubscribed from contacts channel")
-
-            if self._link:
-                await self._link.disconnect()
         finally:
-            self.release_single_instance()
+            # Disconnect even when stop/unsubscribe fails — with
+            # install_signal_handlers=False that is the only way to wake
+            # run_forever.
+            try:
+                if self._link and self._contacts_subscribed:
+                    try:
+                        await self._link.unsubscribe_agent_contacts()
+                        self._contacts_subscribed = False
+                        logger.debug("Unsubscribed from contacts channel")
+                    except Exception:
+                        logger.exception(
+                            "Failed to unsubscribe contacts before disconnect"
+                        )
+                if self._link:
+                    await self._link.disconnect()
+            finally:
+                self.release_single_instance()
         logger.info("Platform runtime stopped")
         return graceful
 

@@ -974,7 +974,7 @@ class WebSocketClient:
         return await self._require_client().unsubscribe_from_topic(topic)
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
-        """Pass-through to ``PHXChannelsClient.run_forever``."""
+        """Block until the connection ends; see ``Agent.run_forever``."""
         await self._require_client().run_forever(
             install_signal_handlers=install_signal_handlers
         )

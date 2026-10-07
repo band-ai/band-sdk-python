@@ -216,7 +216,7 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 `agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) passes `install_signal_handlers=False` and calls `agent.stop()` from its own handler; `run_forever` then returns. `GracefulShutdown` is a ready-made handler that does this, and `run_with_graceful_shutdown(agent)` wraps it:
 
 ```python notest
-async with agent, GracefulShutdown(agent):
+async with GracefulShutdown(agent), agent:
     await agent.run_forever(install_signal_handlers=False)
 ```
 
@@ -912,7 +912,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | ---- | ---- |
 | **Connect** | `agent = Agent.create(adapter=..., agent_id=..., api_key=...); await agent.run()` |
 | **Connect from config** | `agent = Agent.from_config("agent_name", adapter=...); await agent.run()` |
-| **Embed in a host** | `async with agent: await agent.run_forever(install_signal_handlers=False)` |
+| **Embed in a host** | `async with GracefulShutdown(agent), agent: await agent.run_forever(install_signal_handlers=False)` |
 | **Send message** | `band_send_message(content, mentions)` |
 | **Find peers** | `band_lookup_peers()` |
 | **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |

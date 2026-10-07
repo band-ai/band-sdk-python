@@ -217,15 +217,18 @@ class AgentRuntime:
         await self.presence.stop()
         return all_graceful
 
-    async def run(self) -> None:
+    async def run(self, *, install_signal_handlers: bool = True) -> None:
         """
         Run the agent until stopped or interrupted.
 
         Starts the runtime and keeps the WebSocket connection alive.
+
+        ``install_signal_handlers`` is passed to ``BandLink.run_forever``;
+        see ``Agent.run_forever`` for when a host turns it off.
         """
         await self.start()
         try:
-            await self.link.run_forever()
+            await self.link.run_forever(install_signal_handlers=install_signal_handlers)
         except Exception as e:
             logger.error("AgentRuntime error: %s", e)
             raise

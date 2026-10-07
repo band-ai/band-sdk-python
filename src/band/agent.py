@@ -105,6 +105,13 @@ class Agent:
         # A host's signal handler can stop the agent while ``__aexit__`` stops
         # it too; the second caller waits for the first instead of racing it.
         self._stop_lock = asyncio.Lock()
+        # True only while ``start()`` is in flight. ``stop()`` then records a
+        # pending request that ``start()`` honors once the agent is up — so a
+        # host-owned SIGTERM mid-initialize still tears down. Idle/post-stop
+        # ``stop()`` must not latch (that would poison the next start).
+        self._starting = False
+        self._stop_requested = False
+        self._pending_stop_timeout: float | None = None
         # Tracks shutdown_timeout from run() for use in __aexit__
         # Uses sentinel to distinguish "not set" from "explicitly set to None"
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
@@ -244,56 +251,73 @@ class Agent:
         return self._runtime.is_contacts_subscribed
 
     async def start(self) -> None:
-        """Start agent."""
+        """Start agent.
+
+        If ``stop()`` ran while start was in flight, the pending stop is applied
+        before return and the agent is left not running (``is_running`` is
+        False). Callers that chain into ``run_forever`` must tolerate that.
+        """
         if self._started:
             logger.warning("Agent already started")
             return
 
-        # 0. Refuse a duplicate instance BEFORE the adapter boots anything
-        # (subprocesses, on-disk sessions). runtime.start() re-claims
-        # idempotently for callers driving PlatformRuntime directly.
-        self._runtime.claim_single_instance()
+        self._starting = True
         try:
-            # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
-            await self._runtime.initialize()
-
-            # 2. Initialize adapter with agent metadata BEFORE message processing.
-            # setattr rather than assignment: FrameworkAdapter is a Protocol, so
-            # a duck-typed adapter may not declare the attribute.
-            setattr(self._adapter, "platform", self._runtime.connection)  # noqa: B010
-            await start_adapter(
-                self._adapter,
-                agent_name=self._runtime.agent_name,
-                agent_description=self._runtime.agent_description,
-                feature_flags=self._runtime.feature_flags,
-            )
-
-            # 3. NOW start message processing (connects WebSocket)
+            # 0. Refuse a duplicate instance BEFORE the adapter boots anything
+            # (subprocesses, on-disk sessions). runtime.start() re-claims
+            # idempotently for callers driving PlatformRuntime directly.
+            self._runtime.claim_single_instance()
             try:
-                await self._runtime.start(
-                    on_execute=self._on_execute,
-                    on_cleanup=self._adapter.on_cleanup,
-                    # A bare FrameworkAdapter predates on_interrupt and needn't
-                    # implement it -- degrade to a no-op signal like other
-                    # optional protocol additions (e.g. Execution.request_resync).
-                    on_control=getattr(self._adapter, "on_interrupt", None),
-                )
-            except BaseException:
-                # Adapter startup may have acquired resources (e.g. a CLI
-                # runtime subprocess); a failed start must release them —
-                # stop() won't run for an agent that never started.
-                await release_adapter(self._adapter)
-                raise
-        except BaseException:
-            # Idempotent: a failure inside runtime.start() already released.
-            self._runtime.release_single_instance()
-            raise
+                # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
+                await self._runtime.initialize()
 
-        self._started = True
-        _running_agents.add(self)
-        logger.info(
-            "Agent started: %s (band-sdk %s)", self._runtime.agent_name, _SDK_VERSION
-        )
+                # 2. Initialize adapter with agent metadata BEFORE message processing.
+                # setattr rather than assignment: FrameworkAdapter is a Protocol, so
+                # a duck-typed adapter may not declare the attribute.
+                setattr(self._adapter, "platform", self._runtime.connection)  # noqa: B010
+                await start_adapter(
+                    self._adapter,
+                    agent_name=self._runtime.agent_name,
+                    agent_description=self._runtime.agent_description,
+                    feature_flags=self._runtime.feature_flags,
+                )
+
+                # 3. NOW start message processing (connects WebSocket)
+                try:
+                    await self._runtime.start(
+                        on_execute=self._on_execute,
+                        on_cleanup=self._adapter.on_cleanup,
+                        # A bare FrameworkAdapter predates on_interrupt and needn't
+                        # implement it -- degrade to a no-op signal like other
+                        # optional protocol additions (e.g. Execution.request_resync).
+                        on_control=getattr(self._adapter, "on_interrupt", None),
+                    )
+                except BaseException:
+                    # Adapter startup may have acquired resources (e.g. a CLI
+                    # runtime subprocess); a failed start must release them —
+                    # stop() won't run for an agent that never started.
+                    await release_adapter(self._adapter)
+                    raise
+            except BaseException:
+                # A stop requested during this failed start must not apply to a
+                # later successful start.
+                self._stop_requested = False
+                self._pending_stop_timeout = None
+                # Idempotent: a failure inside runtime.start() already released.
+                self._runtime.release_single_instance()
+                raise
+
+            self._started = True
+            _running_agents.add(self)
+            logger.info(
+                "Agent started: %s (band-sdk %s)",
+                self._runtime.agent_name,
+                _SDK_VERSION,
+            )
+            if self._stop_requested:
+                await self.stop(timeout=self._pending_stop_timeout)
+        finally:
+            self._starting = False
 
     async def stop(self, timeout: float | None = None) -> bool:
         """
@@ -313,8 +337,13 @@ class Agent:
         """
         async with self._stop_lock:
             if not self._started:
+                if self._starting:
+                    self._stop_requested = True
+                    self._pending_stop_timeout = timeout
                 return True
 
+            self._stop_requested = False
+            self._pending_stop_timeout = None
             try:
                 graceful = await self._runtime.stop(timeout=timeout)
             finally:
@@ -346,6 +375,8 @@ class Agent:
         """
         self._shutdown_timeout = shutdown_timeout
         await self.start()
+        if not self._started:
+            return
         try:
             await self.run_forever(install_signal_handlers=install_signal_handlers)
         finally:
@@ -406,6 +437,8 @@ class Agent:
         passes ``install_signal_handlers=False`` and calls ``stop()`` from its
         own handler; ``run_forever`` then returns normally.
         """
+        if not self._started:
+            return
         await self._runtime.run_forever(install_signal_handlers=install_signal_handlers)
 
     async def _on_execute(

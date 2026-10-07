@@ -398,18 +398,25 @@ class TestAgentRuntimePresenceIntegration:
 class TestAgentRuntimeRun:
     """Test AgentRuntime.run() method."""
 
-    async def test_run_starts_and_runs_forever(self, mock_link, mock_handler):
-        """run() should start and call link.run_forever()."""
+    @pytest.mark.parametrize(
+        ("kwargs", "installs"),
+        [({}, True), ({"install_signal_handlers": False}, False)],
+        ids=["script-default", "host-owns-signals"],
+    )
+    async def test_run_starts_and_runs_forever(
+        self, mock_link, mock_handler, kwargs, installs
+    ):
+        """run() hands the host's signal choice to link.run_forever()."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
         # Mock start to track it was called
         runtime.start = AsyncMock()
         runtime.stop = AsyncMock()
 
-        await runtime.run()
+        await runtime.run(**kwargs)
 
         runtime.start.assert_called_once()
-        mock_link.run_forever.assert_called_once()
+        mock_link.run_forever.assert_awaited_once_with(install_signal_handlers=installs)
         runtime.stop.assert_called_once()
 
     async def test_run_stops_on_error(self, mock_link, mock_handler):
