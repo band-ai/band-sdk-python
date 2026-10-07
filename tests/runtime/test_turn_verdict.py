@@ -134,6 +134,7 @@ def link(mock_rest_client: MagicMock) -> MagicMock:
     link.mark_failed = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.report_activity = AsyncMock(return_value=True)
     return link
 
 

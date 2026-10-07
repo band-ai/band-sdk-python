@@ -396,34 +396,17 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         # SUPPORTED_EMIT): result.usage_metrics is cumulative-lifetime, not
         # per-turn. Proper per-turn capture is deferred — don't add emit_usage here.
         try:
-            # CrewAI's kickoff_async accepts str | list[dict], but a list is
-            # flattened internally into one role-blind "\n".join(...) of every
-            # message's content (crewai.agent.core.Agent._prepare_kickoff) --
-            # it does NOT preserve per-message turn/role structure the way a
-            # chat-completions API would. Passing a list here previously left
-            # an earlier turn's imperative ("do X, do not call any other
-            # tool") sitting unmarked next to the new turn's instruction, and
-            # models would sometimes replay the old instruction instead of the
-            # new one. Building the final prompt ourselves, with explicit
-            # "already handled" / "act on this now" markers, matches what
-            # CrewAI actually does with the input either way.
             prompt = "\n\n".join(sections)
             result = await self._kickoff_with_empty_response_retry(
                 self._crewai_agent, prompt, reply_tracker, room_id
             )
 
-        except Exception as e:
-            # An empty completion is how a tool-only turn ends; whether the
-            # turn is complete is the shared verdict's call, not this error's.
-            if not _is_empty_llm_response(e):
-                logger.exception("Error processing message")
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
-            # Keep the exception text: it is the only record that CrewAI raised.
-            logger.debug("Room %s: CrewAI returned no text: %s", room_id, e)
-            result = None
+        except Exception:
+            logger.exception("Error processing message")
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
 
         self._message_history[room_id].extend(
             {
@@ -462,36 +445,26 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         reply_tracker: ReplyTracker,
         room_id: str,
     ) -> Any:
-        """Retry a first-call empty completion once before giving up.
-
-        CrewAI raises the identical ValueError whether the model correctly has
-        nothing left to say after its tool calls or the turn's very first call
-        came back empty. The second case has run no tool yet, so there is
-        nothing to duplicate: one immediate retry absorbs a single-call fluke
-        instead of ending the turn with nothing done.
-        """
-        try:
-            return await agent.kickoff_async(prompt)
-        except Exception as e:
-            if not (_is_empty_llm_response(e) and not reply_tracker.any_tool_ran):
-                raise
-            logger.info(
-                "Room %s: CrewAI's first LLM call came back empty before "
-                "any tool ran; retrying",
-                room_id,
-            )
+        """Retry an empty kickoff once only when no tool activity was recorded."""
+        for attempt in range(2):
             try:
-                return await agent.kickoff_async(prompt)
-            except Exception as retry_exc:
-                if _is_empty_llm_response(retry_exc):
-                    logger.warning(
-                        "Room %s: CrewAI's retry also came back empty; giving up",
-                        room_id,
-                    )
-                else:
-                    logger.warning(
-                        "Room %s: CrewAI's retry failed with a different error: %s",
-                        room_id,
-                        retry_exc,
-                    )
-                raise
+                result = await agent.kickoff_async(prompt)
+            except Exception as exc:
+                if not _is_empty_llm_response(exc):
+                    raise
+                logger.debug("Room %s: CrewAI returned no text: %s", room_id, exc)
+                result = None
+
+            if result and (result.raw or "").strip():
+                return result
+            if reply_tracker.any_tool_ran:
+                return None
+            if attempt == 0:
+                logger.warning(
+                    "Room %s: CrewAI kickoff returned no text before any tool "
+                    "ran; retrying",
+                    room_id,
+                )
+
+        logger.warning("Room %s: CrewAI retry returned no text; giving up", room_id)
+        return None
