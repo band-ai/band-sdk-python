@@ -153,6 +153,41 @@ class TestAgentRuntimeLifecycle:
 class TestAgentRuntimeExecutionManagement:
     """Test execution context management."""
 
+    async def test_shutdown_rejects_new_joins_until_restart(
+        self, mock_link, mock_handler
+    ):
+        cleanup_started = asyncio.Event()
+        finish_cleanup = asyncio.Event()
+        cleaned_rooms: list[str] = []
+
+        async def cleanup(room_id: str) -> None:
+            cleaned_rooms.append(room_id)
+            cleanup_started.set()
+            await finish_cleanup.wait()
+
+        runtime = AgentRuntime(
+            mock_link, "agent-123", mock_handler, on_session_cleanup=cleanup
+        )
+        await runtime.presence.on_room_joined("room-1", {})
+        stopping = asyncio.create_task(runtime.stop())
+        try:
+            await cleanup_started.wait()
+            await runtime.presence.on_room_joined("room-1", {})
+            await runtime.presence.on_room_joined("room-2", {})
+            assert runtime.active_sessions == {}
+        finally:
+            finish_cleanup.set()
+            await stopping
+        assert cleaned_rooms == ["room-1"]
+        await runtime.presence.on_room_joined("room-2", {})
+        assert runtime.active_sessions == {}
+        await runtime.start()
+        try:
+            await runtime.presence.on_room_joined("room-2", {})
+            assert set(runtime.active_sessions) == {"room-2"}
+        finally:
+            await runtime.stop()
+
     async def test_creates_execution_on_room_joined(self, mock_link, mock_handler):
         """Room joined should create execution context."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)

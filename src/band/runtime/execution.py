@@ -45,9 +45,10 @@ from band.client.streaming import (
 )
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
     TurnResultAlreadyReported,
 )
-from band.core.types import metadata_to_dict
+from band.core.types import is_contact_hub_turn, metadata_to_dict
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
@@ -61,8 +62,6 @@ from band.runtime.formatters import build_participants_message, format_history_f
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import (
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-    SYNTHETIC_SENDER_TYPE,
     ConversationContext,
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
@@ -76,7 +75,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
+
+
+def _log_turn_error(error: Exception, message: str, *args: object) -> None:
+    """Log a failed turn; one whose failure already reached the room was logged
+    where it was reported, so it stays out of ERROR alerting."""
+    reported = isinstance(error, TurnResultAlreadyReported)
+    level = logging.DEBUG if reported else logging.ERROR
+    logger.log(level, message, *args, exc_info=not reported)
 
 
 class ResyncRequest:
@@ -105,11 +113,6 @@ class ExecutionState(StrEnum):
 def _error_label(e: Exception) -> str:
     """Return a non-empty label for an exception, falling back to the class name."""
     return str(e).strip() or type(e).__name__
-
-
-# ``AgentFailure.provider`` for a turn failure the runtime reports on the
-# adapter's behalf.
-_TURN_FAILURE_PROVIDER = "band-runtime"
 
 
 @runtime_checkable
@@ -1573,8 +1576,8 @@ class ExecutionContext:
             logger.debug("Message %s processed successfully", msg_id)
             return BacklogProcessResult.ADVANCED
 
-        except Exception as e:
-            logger.exception("Error processing backlog message %s", msg_id)
+        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+            _log_turn_error(e, "Error processing backlog message %s", msg_id)
             await self._handle_turn_failure(msg_id, attempts, e)
             return BacklogProcessResult.ADVANCED
 
@@ -1967,9 +1970,8 @@ class ExecutionContext:
 
             # Detect synthetic messages (e.g., contact events injected into hub room)
             # These don't exist in the database, so skip all tracking and marking
-            is_synthetic = (
-                payload.sender_type == SYNTHETIC_SENDER_TYPE
-                and payload.sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+            is_synthetic = is_contact_hub_turn(
+                sender_type=payload.sender_type, sender_id=payload.sender_id
             )
             if is_synthetic:
                 logger.debug("Processing synthetic contact event message")
@@ -2029,9 +2031,9 @@ class ExecutionContext:
             )
 
         is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
-        already_reported = self._turn_failure_reported or isinstance(
-            error, TurnResultAlreadyReported
-        )
+        # Only a post that landed counts: an adapter raises
+        # TurnResultAlreadyReported even when its send_failure did not post.
+        already_reported = self._turn_failure_reported
         if not (
             self.config.report_turn_failures_to_room
             and is_final
@@ -2051,7 +2053,7 @@ class ExecutionContext:
         # The exception text can carry credentials; it stays in mark_failed
         # and the logs, and the room gets the generic message.
         await AgentTools.from_context(self).send_failure(
-            AgentFailure(_TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
         )
 
     async def _process_event_body(
@@ -2174,8 +2176,8 @@ class ExecutionContext:
             logger.debug("Event %s processed successfully", event.type)
             return True
 
-        except Exception as e:
-            logger.exception("Error processing %s", event.type)
+        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+            _log_turn_error(e, "Error processing %s", event.type)
             if isinstance(event, MessageEvent) and msg_id:
                 await self._handle_turn_failure(msg_id, attempts, e)
             return True

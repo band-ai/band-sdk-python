@@ -99,7 +99,6 @@ from band.integrations.mcp import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
-    custom_tool_effects,
     get_custom_tool_name,
 )
 from band.runtime.formatters import messages_before
@@ -113,10 +112,8 @@ from band.runtime.tools import (
     iter_tool_definitions,
 )
 from band.workspaces import (
+    RoomWorkspaces,
     WorkspaceResolver,
-    claim_room_workspace,
-    release_room_workspace,
-    resolve_room_workspace,
     workspace_resolver_for,
 )
 
@@ -409,15 +406,13 @@ class ACPClientAdapter(
             config.cwd, workspace_for_room
         )
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._custom_effects = custom_tool_effects(self._custom_tools)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._profile = profile
         self._resolve_session_config = resolve_session_config
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
         self._runtimes: dict[str, ACPRuntime] = {}
-        self._room_workspaces: dict[str, str] = {}
-        self._workspace_rooms: dict[str, str] = {}
+        self._workspaces = RoomWorkspaces(self._workspace_for_room)
 
         self._room_to_session: dict[str, RoomSession] = {}
         # Outlives the room's sessions; see apply_model_selection.
@@ -558,8 +553,8 @@ class ACPClientAdapter(
             # is already covered via iter_tool_definitions). Without it, an
             # external band-mcp's MCP-prefixed legacy call
             # (band-create_agent_chat_message) would canonicalize to nothing and
-            # narrate under the raw prefixed name — the one case reply-suppression
-            # (settles_turn_reply) already tolerates.
+            # narrate under the raw prefixed name (turn_effect would still
+            # resolve its effect).
             | {LEGACY_SEND_MESSAGE_TOOL}
         )
         return definitions, names
@@ -600,18 +595,13 @@ class ACPClientAdapter(
             canonicalize_tool_name=self._canonical_tool_name,
         )
 
-    def _workspace(self, room_id: str) -> str:
-        return resolve_room_workspace(room_id, self._workspace_for_room)
-
     async def _runtime_for(self, room_id: str) -> ACPRuntime:
         async with self._session_lock:
             runtime = self._runtimes.get(room_id)
             if runtime is None:
-                workspace = self._workspace(room_id)
-                claim_room_workspace(room_id, workspace, self._workspace_rooms)
+                workspace = self._workspaces.claim(room_id)
                 runtime = self._build_runtime(workspace)
                 self._runtimes[room_id] = runtime
-                self._room_workspaces[room_id] = workspace
             return runtime
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -678,7 +668,7 @@ class ACPClientAdapter(
         # The emitter posts the turn's events live, in the order the ACP stream
         # delivers them (see RoomTurnEmitter), so narration stays interleaved with
         # the permission pair and any in-room tool post. On a clean turn its
-        # __aexit__ relays the held text (if not already posted) and the session
+        # __aexit__ relays the held text (unless the turn replied) and the session
         # bookkeeping event; on failure it posts nothing and the error is handled
         # below.
         try:
@@ -688,7 +678,8 @@ class ACPClientAdapter(
                 session_id=session_id,
                 room_id=room_id,
                 emit=self.features.emit,
-                custom_effects=self._custom_effects,
+                # Injected Band tools record their own effects in process.
+                records_tool_effects=not self.config.inject_band_tools,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,
@@ -1150,7 +1141,7 @@ class ACPClientAdapter(
             return None
 
         loaded = await runtime.load_session_response(
-            cwd=self._room_workspaces[room_id],
+            cwd=self._workspaces.workspace(room_id),
             session_id=session_id,
             mcp_servers=mcp.servers,
         )
@@ -1203,7 +1194,7 @@ class ACPClientAdapter(
     ) -> AsyncIterator[NewSessionResponse]:
         """Yield a new session, closing it unless initialization completes."""
         session = await runtime.create_session_response(
-            cwd=self._room_workspaces[room_id],
+            cwd=self._workspaces.workspace(room_id),
             mcp_servers=mcp_servers,
         )
         try:
@@ -1500,9 +1491,7 @@ class ACPClientAdapter(
             if session is not None:
                 self._bootstrapped_sessions.discard(session.session_id)
             runtime = self._runtimes.pop(room_id, None)
-            workspace = self._room_workspaces.pop(room_id, None)
-            if workspace is not None:
-                release_room_workspace(room_id, workspace, self._workspace_rooms)
+            self._workspaces.release(room_id)
 
         try:
             await self._cancel_session_initializers(initializer)
@@ -1541,8 +1530,8 @@ class ACPClientAdapter(
             self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())
             self._runtimes.clear()
-            self._room_workspaces.clear()
-            self._workspace_rooms.clear()
+            for room_id in self._workspaces.rooms:
+                self._workspaces.release(room_id)
         await self._cancel_session_initializers(*initializers)
         await self._drain_background_tasks()
         await self._mcp.close(final=final)

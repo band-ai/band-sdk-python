@@ -353,11 +353,11 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
         title="e2e-copilot-shared-b", participants=[identity.id]
     )
 
-    async def smoke(room_id: str) -> None:
+    async def smoke(room_id: str, *, prompt: str = "Please say hello.") -> None:
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
-                "Please say hello.",
+                prompt,
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
@@ -384,6 +384,8 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
         async with running_agent(
             identity, make_shared_adapter(client), baseline_settings
         ):
-            await smoke(room_a)
+            # A new request: the resumed session already answered the first,
+            # and a repeat of it may rightly be declined with band_no_reply.
+            await smoke(room_a, prompt="Please say goodbye.")
     finally:
         await client.stop()

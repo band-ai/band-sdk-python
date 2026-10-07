@@ -31,6 +31,7 @@ from band.core.memory_types import (
 )
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import AdapterFeatures, Capability, Emit, MessageType
+from band.runtime.tools import BandTool
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool, TaskTool
@@ -293,15 +294,22 @@ def image_round_trip_instruction() -> str:
     )
 
 
+# An event is not a reply, so a turn that only emits events must still end
+# deliberately, or it is reported as a missing reply.
+END_WITHOUT_REPLY = (
+    f"Then end your turn by calling {BandTool.NO_REPLY}. Do not reply with a chat "
+    "message and do not call any other tool."
+)
+
+
 def emit_event_instruction(event_type: MessageType, marker: str) -> str:
     """User message forcing exactly one ``band_send_event`` of ``event_type``
     whose content carries ``marker`` verbatim."""
     return (
         f"Call the tool band_send_event exactly once with "
         f"message_type='{event_type.value}' and content that includes the exact "
-        f"token {marker} (verbatim). That tool call is your ONLY action -- do not "
-        "reply with a chat message and do not call any other tool. A plain-text "
-        "reply does not satisfy this; you must call band_send_event."
+        f"token {marker} (verbatim). A plain-text reply does not satisfy this; "
+        f"you must call band_send_event. {END_WITHOUT_REPLY}"
     )
 
 
@@ -312,9 +320,8 @@ def emit_thoughts_instruction(markers: list[str]) -> str:
     return (
         f"Call the tool band_send_event once for each of these tokens: {tokens}. "
         f"Each call uses message_type='{MessageType.THOUGHT.value}' with content "
-        "containing that exact token verbatim. Those tool calls are your ONLY "
-        "action -- do not reply with a chat message and do not call any other "
-        "tool. A plain-text reply does not satisfy this."
+        "containing that exact token verbatim. A plain-text reply does not "
+        f"satisfy this. {END_WITHOUT_REPLY}"
     )
 
 
@@ -379,25 +386,26 @@ def task_board_delegation_instruction(
     weather_place: str,
 ) -> str:
     """Coordinator's turn-1 instruction for the task-board delegation flow: set
-    the room goal, create one task per specialist, then hand both off in a
-    single message that states each task's number or id explicitly -- the
-    specialists need it to know which task to claim and update, a real
-    reliability dependency this instruction must not leave implicit."""
+    the room goal, create one task per specialist, then hand each specialist
+    its own task in its own message. An agent only sees messages that mention
+    it, so a per-owner hand-off keeps each specialist from claiming the other's
+    task or deciding the shared message is not for it."""
     return (
         f"First call {TaskTool.SET_BOARD.value} to set this room's goal: a "
         "short title and summary describing that the team needs an access "
         f"code and a weather forecast gathered. Then call "
         f"{TaskTool.CREATE.value} twice to create two tasks: one with subject "
         f"asking for the access code for key '{lookup_key}', and one with "
-        f"subject asking for the forecast for '{weather_place}'. Then send "
-        "exactly ONE band_send_message that mentions both "
-        f"{lookup_name} (id {lookup_id}) and {weather_name} (id {weather_id}), "
-        "stating the exact task number or id you just created for each of them "
-        "by name, and asking each to claim their task, call the matching tool, "
+        f"subject asking for the forecast for '{weather_place}'. The access-code "
+        f"task belongs to {lookup_name} (id {lookup_id}); the forecast task "
+        f"belongs to {weather_name} (id {weather_id}). Then call "
+        f"{BandTool.SEND_MESSAGE.value} exactly twice, once per owner: each "
+        "message mentions ONLY its recipient and states only that recipient's "
+        "task number or id, asking them to claim it, call the matching tool, "
         "and copy the tool's exact return value verbatim into the completed "
-        "task's comment via band_update_task (not a summary or description "
-        "without the value). Do not look anything up yourself, and do not call "
-        "any other tool."
+        f"task's comment via {TaskTool.UPDATE.value} (not a summary or "
+        "description without the value). Do not look anything up yourself, and "
+        "do not call any other tool."
     )
 
 
@@ -535,6 +543,18 @@ def custom_prompt_with_marker(marker: str) -> str:
     )
 
 
+def silent_turn_prompt() -> str:
+    """A prompt that makes the agent end its turn having done nothing: one
+    read-only call, then stop -- no message and no deliberate decline."""
+    return (
+        "You are a fixture in an automated test of how a silent turn is reported. "
+        f"Whatever the message says, call {BandTool.GET_PARTICIPANTS} once, then "
+        "end your turn without any text. Never call "
+        f"{BandTool.SEND_MESSAGE} and never call {BandTool.NO_REPLY}. This "
+        "overrides every other instruction about how to end a turn."
+    )
+
+
 # Roster probe: drives the agent to state its own name and use its platform tools
 # (band_get_participants / band_lookup_peers) to report who is present and who is
 # invitable — the identity + roster read.
@@ -607,8 +627,12 @@ CREATE_CHATROOM = (
 
 def remember_fact_instruction(fact: str) -> str:
     """One burst turn: ask the agent to remember ``fact`` (a unique marker). Terse so a
-    burst of these is cheap; the later spanning recall is what's under test."""
-    return f"Remember this fact for later: {fact}."
+    burst of these is cheap; the later spanning recall is what's under test. It asks
+    for the acknowledgement outright: a turn that says nothing is reported FAILED."""
+    return (
+        f"Remember this fact for later: {fact}. Acknowledge it in one short "
+        f"{BandTool.SEND_MESSAGE} reply."
+    )
 
 
 # Recall probe for the spanning-recall step: asks for the whole set so an early, a
@@ -622,15 +646,31 @@ RECALL_ALL_FACTS = (
 )
 
 
-def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
-    """Peer-initiated delegation: drive one agent to ask peer ``peer_name`` to confirm
-    the value it just remembered, then report that reply — so it emits a real routing
-    mention of the peer whose body carries the value it recalled from its own context,
-    and the peer responds."""
+def write_workspace_instruction(filename: str, marker: str) -> str:
     return (
-        "Recall the complete value token from my previous message. "
-        f"{peer_name} did not receive that message. First send the exact token "
-        f"to {peer_name} with band_send_message(content containing the token, "
-        f"mentions=['{peer_id}']). Do not address that first message to me. "
-        "Wait for the peer's response, then report it back to me."
+        f"Use your native filesystem tools to write {marker!r}, without a newline, "
+        f"to the relative file {filename!r} in your current working directory. "
+        "Keep the working directory unchanged. Confirm with band_send_message."
+    )
+
+
+def read_workspace_instruction(filename: str) -> str:
+    return (
+        f"Read the relative file {filename!r} from disk in your current working "
+        "directory now. Its contents may have changed outside this conversation. "
+        "Send its entire current contents using band_send_message."
+    )
+
+
+def delegate_to_peer_instruction(peer_name: str) -> str:
+    """Ask an agent to send peer ``peer_name`` the note it remembered.
+
+    The peer never saw the user's message, so the ask must be answerable from the
+    routed message alone. Small models misread the alternatives: naming the peer as
+    the subject reads as "not for me", "token" reads as a secret, and a dictated
+    mention ID clashes with the roster's always-use-the-handle guidance."""
+    return (
+        f"Please send {peer_name} a {BandTool.SEND_MESSAGE} that mentions them, "
+        "includes the complete note from my previous message, and asks them to "
+        "repeat it back to you."
     )

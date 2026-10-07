@@ -106,6 +106,15 @@ class Events(ContentAssertions, list[ChatMessage]):
         )
         assert_nonempty(len(self), label=label)
 
+    def assert_none(self) -> None:
+        """Assert no event of this type was emitted (e.g. no error on a clean turn)."""
+        if self:
+            label = self.MESSAGE_TYPE.value if self.MESSAGE_TYPE else "matching"
+            observed = [event.content for event in self]
+            raise AssertionError(
+                f"expected no {label} event, but found {len(self)}: {observed}"
+            )
+
 
 class Thoughts(Events):
     """Captured ``thought`` events."""

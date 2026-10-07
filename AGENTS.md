@@ -19,6 +19,16 @@ text. `tests/framework_conformance/test_tool_text_drift.py` is the drift
 guard; an adapter that builds its own tool schemas sets `advertised_arg_text`
 on its test config so the guard can read what the model actually sees.
 
+## Turn Outcome
+
+`SimpleAdapter.run_judged_turn` (called by `on_event`) judges every turn with band-sdk-core's rule: a turn
+that replied, declined via `band_no_reply`, did real work, was settled by the
+adapter, or already reported a failure completes; anything else is reported
+once and marked FAILED. Adapters never judge turns themselves. Post an
+adapter's own messages with `send_notice` (never `send_message`, which counts as
+the reply) and relay a model's final text only through `relay_reply`. See
+[docs/turn-outcome.md](docs/turn-outcome.md).
+
 ## Adapter Constructor Shape
 
 Every adapter is built as `XAdapter(config: XAdapterConfig | None = None, *,
@@ -94,7 +104,7 @@ confined to an explicit AST-enforced allowlist
 `OpencodeAdapter` maps each Band room to a session on a running `opencode
 serve`. Band tools are never gated behind approval, unlike other tool
 calls — see [docs/adapters/opencode.md](docs/adapters/opencode.md) for this
-and three more invariants that are easy to break.
+and four more invariants that are easy to break.
 
 ## ACP (Agent Client Protocol) Integration
 
@@ -239,7 +249,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline readers are the Copilot-hosted smokes (`test_copilot_hosted_auth_replies`, `test_copilot_switches_model_and_effort_in_a_live_room`, and the `hosted-effort` cell of `test_copilot_turn_fails_loudly_on_an_unadvertised_selection`, which skip when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
-- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which older Haiku models do not support)
+- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-sonnet-5-5`; must support structured outputs, which the baseline judge uses)
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
 - `E2E_TIMEOUT`: Per-turn response timeout in seconds for E2E tests (default: `120`; a slow test can add headroom with `@pytest.mark.timeout(extra=n)`)
 - `DOCKER_TESTS_ENABLED`: Set to `true` to run `docker_build`-marked tests (e.g. `tests/docker/test_band_python_kit.py`), which shell out to a real `docker build`/`docker run` (default: disabled everywhere, including CI — CI runners do have a Docker daemon, unlike the nested-virtualization `sbx` tests, so this needs the same explicit opt-in as `E2E_TESTS_ENABLED` rather than a plain Docker-availability check)

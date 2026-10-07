@@ -9,14 +9,27 @@ workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
 - **Room approvals need a non-default `approval_policy`.** It is forwarded to
   Codex unchanged, and the default `"never"` means Codex never asks.
   `approval_mode` only decides how Band answers the requests Codex does send.
-  To get requests into the room, pair e.g. `approval_policy="on-request"` with a
-  restrictive `sandbox` such as `"read-only"`.
+  `"on-request"` with `"read-only"` does not guarantee a request: Codex may
+  attempt the command inside the sandbox and receive a denial without asking.
+  The model may need to request escalation explicitly. For commands that need
+  approval without model-requested escalation, the app-server RPC supports
+  `"untrusted"` (verified with CLI 0.149.0 and 0.160.0). Commands must use
+  default sandbox permissions: Codex rejects explicit `require_escalated`
+  overrides under this policy before requesting approval. The model must still
+  attempt the tool call; the policy cannot force it to act. This is distinct from
+  the [retired user/project TOML setting](https://learn.chatgpt.com/docs/agent-approvals-security);
+  see the [released RPC schema](https://github.com/openai/codex/blob/rust-v0.149.0/codex-rs/app-server-protocol/schema/typescript/v2/AskForApproval.ts).
 - **`sandbox_policy` pins the sandbox.** While it is set, the `/sandbox` room
   command is refused.
 - **One workspace per room.** The default is `./.band-workspaces/<room-id>`, and
   a custom `workspace_for_room` must return a distinct absolute path for every
   live room. `cwd`, a non-stdio `transport` and a custom `client_factory` are
   rejected at construction because they cannot guarantee per-room isolation.
+- **Ownership survives recovery and failed cleanup.** The workspace stays
+  claimed until the room leaves and its process is closed. Failed startup,
+  close errors and close timeouts retain the claim for retry. A timed-out or
+  cancelled caller does not abandon subprocess cleanup; retry room cleanup to
+  finish releasing ownership. Shutdown attempts every room and reports failures.
 - **Codex's final text is a fallback reply.** With `fallback_send_agent_text`
   (on by default) it is posted when the turn did not reply through a Band tool.
 - **`reasoning_effort` is not validated.** The valid values depend on the model

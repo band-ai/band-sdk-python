@@ -21,12 +21,15 @@ from pydantic import BaseModel, ValidationError
 from band.core.exceptions import BandToolError
 from band.core.memory_types import memory_type_field_description
 from band.core.types import AdapterFeatures, Capability, Emit
-from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import (
+    BandTool,
+    TurnEffect,
     file_content_placeholder,
     image_block_placeholder,
     iter_tool_definitions,
 )
+from band.testing.fake_tools import FakeAgentTools
 
 
 class MockBaseTool:
@@ -285,122 +288,6 @@ class TestToolSetComposition:
         reported = json.loads(result_event.kwargs["content"])
         assert reported["output"] == {"peers": [{"id": "p1"}]}
         assert reported["is_error"] is False
-
-    def test_send_message_marks_reply_tracker(self, builder_mod):
-        """A successful band_send_message flips both ReplyTracker markers so the
-        adapter can treat a later empty final answer as benign."""
-        tools_obj = MagicMock()
-        tools_obj.send_message = AsyncMock(return_value={"status": "sent"})
-        tracker = builder_mod.ReplyTracker()
-        context = builder_mod.CrewAIToolContext(
-            room_id="room-1", tools=tools_obj, reply_tracker=tracker
-        )
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: context,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(),
-        )
-        send_message = next(t for t in tools if t.name == "band_send_message")
-
-        result = json.loads(send_message._run(content="hello", mentions=[]))
-
-        assert result["status"] == "success"
-        tools_obj.send_message.assert_awaited_once()
-        assert tracker.replied is True
-        assert tracker.tool_executed is True
-
-    def test_no_reply_marks_reply_tracker_terminal_work(self, builder_mod):
-        """A successful band_no_reply flips tool_executed (DECLINE) so an empty
-        final answer is benign, without treating the turn as a room post."""
-        tools_obj = MagicMock()
-        tools_obj.no_reply = AsyncMock(return_value={"status": "no_reply"})
-        tracker = builder_mod.ReplyTracker()
-        context = builder_mod.CrewAIToolContext(
-            room_id="room-1", tools=tools_obj, reply_tracker=tracker
-        )
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: context,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(),
-        )
-        no_reply = next(t for t in tools if t.name == "band_no_reply")
-
-        result = json.loads(no_reply._run(reason="not for me"))
-
-        assert result["status"] == "success"
-        assert result["result_status"] == "no_reply"
-        tools_obj.no_reply.assert_awaited_once()
-        assert tracker.replied is False
-        assert tracker.tool_executed is True
-
-    def test_send_event_is_not_terminal_work(self, builder_mod):
-        """band_send_event emits an observational event (thought/error/task), not
-        terminal work — it must NOT flip tool_executed. So a turn that only sends an
-        event and then yields an empty final answer is a genuine no-response failure
-        the adapter still surfaces, not benign noise (see is_terminal_success)."""
-        tools_obj = MagicMock()
-        tools_obj.send_event = AsyncMock(return_value=None)
-        tracker = builder_mod.ReplyTracker()
-        context = builder_mod.CrewAIToolContext(
-            room_id="room-1", tools=tools_obj, reply_tracker=tracker
-        )
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: context,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(),
-        )
-        send_event = next(t for t in tools if t.name == "band_send_event")
-
-        result = json.loads(send_event._run(content="thinking", message_type="task"))
-
-        assert result["status"] == "success"
-        assert tracker.tool_executed is False
-        assert tracker.replied is False
-
-    def test_read_only_tool_does_not_mark_tool_executed(self, builder_mod):
-        """A successful read-only tool (lookup/listing) must NOT flip either
-        marker. Fetching state is not a terminal action, so a turn that runs only
-        a lookup and then yields an empty final answer is a genuine no-response
-        failure the adapter must still surface — not benign noise."""
-        tools_obj = MagicMock()
-        tools_obj.lookup_peers = AsyncMock(return_value={"peers": []})
-        tracker = builder_mod.ReplyTracker()
-        context = builder_mod.CrewAIToolContext(
-            room_id="room-1", tools=tools_obj, reply_tracker=tracker
-        )
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: context,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(),
-        )
-        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
-
-        result = json.loads(lookup_peers._run())
-
-        assert result["status"] == "success"
-        assert tracker.tool_executed is False
-        assert tracker.replied is False
-
-    def test_reply_tracker_not_marked_on_send_failure(self, builder_mod):
-        """A failed send must NOT mark either tracker — the turn produced nothing."""
-        tools_obj = MagicMock()
-        tools_obj.send_message = AsyncMock(side_effect=RuntimeError("boom"))
-        tracker = builder_mod.ReplyTracker()
-        context = builder_mod.CrewAIToolContext(
-            room_id="room-1", tools=tools_obj, reply_tracker=tracker
-        )
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: context,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset(),
-        )
-        send_message = next(t for t in tools if t.name == "band_send_message")
-
-        result = json.loads(send_message._run(content="hello", mentions=[]))
-
-        assert result["status"] == "error"
-        assert tracker.replied is False
-        assert tracker.tool_executed is False
 
     def test_send_failure_appends_available_handles(self, builder_mod):
         """The real empty-mentions error already lists the room's handles, so the
@@ -818,6 +705,126 @@ class TestMissingContext:
         result = json.loads(result_str)
         assert result["status"] == "error"
         assert "No room context available" in result["message"]
+
+
+# --- Turn ledger and tracker: the catalog calls the recording tool methods ---
+
+
+class RecordInput(BaseModel):
+    """Record a value."""
+
+    value: str
+
+
+async def record_value(args: RecordInput) -> str:
+    return args.value
+
+
+@declares_turn_effect(TurnEffect.ACT)
+async def record_value_for_real(args: RecordInput) -> str:
+    return args.value
+
+
+@pytest.fixture
+def room_tools() -> FakeAgentTools:
+    return FakeAgentTools()
+
+
+@pytest.fixture
+def tracker(builder_mod):
+    return builder_mod.ReplyTracker()
+
+
+@pytest.fixture
+def crew_tools(builder_mod, room_tools, tracker):
+    """The crew's tools by name, bound to ``room_tools`` as the room context."""
+
+    def build(custom_tools: list[Any] | None = None) -> dict[str, Any]:
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=room_tools, reply_tracker=tracker
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            custom_tools=custom_tools,
+        )
+        return {tool.name: tool for tool in tools}
+
+    return build
+
+
+class TestTurnLedger:
+    @pytest.mark.parametrize(
+        ("tool", "arguments", "replied", "complete"),
+        [
+            (
+                BandTool.SEND_MESSAGE,
+                {"content": "hi", "mentions": ["@alice"]},
+                True,
+                True,
+            ),
+            (BandTool.NO_REPLY, {"reason": "FYI only"}, True, True),
+            (BandTool.CREATE_CHATROOM, {}, False, True),
+            (BandTool.LOOKUP_PEERS, {}, False, False),
+            (
+                BandTool.SEND_EVENT,
+                {"content": "hm", "message_type": "thought"},
+                False,
+                False,
+            ),
+        ],
+        ids=["reply", "decline", "act", "observe", "narrate"],
+    )
+    def test_a_tool_call_records_its_effect_on_the_turn(
+        self, crew_tools, room_tools, tool, arguments, replied, complete
+    ):
+        crew_tools()[tool]._run(**arguments)
+
+        assert (room_tools.turn.replied, room_tools.turn.complete) == (
+            replied,
+            complete,
+        )
+
+    def test_failed_send_then_event_leaves_the_turn_incomplete(
+        self, crew_tools, room_tools
+    ):
+        """A rejected reply followed by narration is still a turn owed a reply."""
+        room_tools.send_message_error = BandToolError("Unknown participant 'user1'")
+        tools = crew_tools()
+
+        tools[BandTool.SEND_MESSAGE]._run(content="hi", mentions=["@user1"])
+        tools[BandTool.SEND_EVENT]._run(content="thinking", message_type="thought")
+
+        assert (room_tools.messages_sent, len(room_tools.events_sent)) == ([], 1)
+        assert not room_tools.turn.complete
+
+    def test_tracker_keeps_what_a_successful_send_said(self, crew_tools, tracker):
+        crew_tools()[BandTool.SEND_MESSAGE]._run(content="hi", mentions=["@alice"])
+
+        assert (tracker.posts, tracker.any_tool_ran) == (["(to @alice) hi"], True)
+
+    def test_a_failed_send_still_counts_as_a_tool_that_ran(
+        self, crew_tools, room_tools, tracker
+    ):
+        room_tools.send_message_error = BandToolError("boom")
+
+        crew_tools()[BandTool.SEND_MESSAGE]._run(content="hi", mentions=["@alice"])
+
+        assert (tracker.posts, tracker.any_tool_ran) == ([], True)
+
+    @pytest.mark.parametrize(
+        ("handler", "completes"),
+        [(record_value, False), (record_value_for_real, True)],
+        ids=["undeclared-observes", "declared-act"],
+    )
+    def test_custom_tool_records_its_declared_effect(
+        self, crew_tools, room_tools, handler, completes
+    ):
+        tool_name = get_custom_tool_name(RecordInput)
+
+        crew_tools([(RecordInput, handler)])[tool_name]._run(value="x")
+
+        assert room_tools.turn.complete is completes
 
 
 # --- run_async + nest_asyncio lazy patch ---

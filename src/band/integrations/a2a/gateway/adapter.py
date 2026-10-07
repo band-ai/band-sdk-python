@@ -144,6 +144,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
+    @property
+    def judges_turns(self) -> bool:
+        """Peer messages go back to an A2A caller, not the room: never judged."""
+        return False
+
     def __init__(
         self,
         config: A2AGatewayAdapterConfig | None = None,

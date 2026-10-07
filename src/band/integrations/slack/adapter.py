@@ -8,8 +8,8 @@ ingress/egress. One process, one Band identity, two transports:
   room is bound to a Slack thread, the tools are wrapped so the brain's
   outgoing ``send_message`` is also posted to Slack.
 - **Slack webhook path**: ``SlackAdapter`` synthesises a
-  ``PlatformMessage`` from the Slack event and invokes
-  ``inner.on_message`` directly with REST-backed tools that tee replies
+  ``PlatformMessage`` from the Slack event and runs it as a judged turn
+  (``inner.run_judged_turn``) with REST-backed tools that tee replies
   back to the originating Slack thread.
 """
 
@@ -33,7 +33,7 @@ from band.client.rest import (
 )
 from band.converters.slack import SlackHistoryConverter
 from band.core.adapterconfig import BaseAdapterConfig
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import AgentToolsProtocol, TurnResultAlreadyReported
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -55,7 +55,7 @@ from band.integrations.slack.block_kit import (
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.platform.posting import post_event
-from band.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools, TurnEffect
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -151,8 +151,10 @@ class SlackTeeingTools(AgentTools):
             hub_room_id=wrap._hub_room_id,
         )
         # Carry ExecutionContext over so any tool methods that lean on
-        # it (e.g. lookup_peers) keep working.
+        # it (e.g. lookup_peers) keep working, and share the turn so the
+        # adapter judging ``wrap`` sees what the brain did through this tee.
         self._ctx = wrap._ctx
+        self.turn = wrap.turn
         self._slack = slack
         self._binding = binding
         self._write_tool_names: frozenset[str] = (
@@ -216,6 +218,7 @@ class SlackTeeingTools(AgentTools):
                 self._binding.thread_ts,
             )
             return {"ok": False, "error": str(exc)}
+        self.turn.record(TurnEffect.REPLY)
         return {"ok": True}
 
     # ── Schema injection ────────────────────────────────────────────
@@ -553,6 +556,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         return self._inner
 
     @property
+    def judges_turns(self) -> bool:
+        """The brain answers each turn, so whether it is judged is the brain's."""
+        return self._inner.judges_turns
+
+    @property
     def transport(self) -> SlackTransport:
         """Which inbound transport this adapter was configured with."""
         return self.config.transport
@@ -797,7 +805,7 @@ class SlackAdapter(SimpleAdapter[Any]):
     async def _invoke_brain_for_slack_event(
         self, app: SlackApp, event: dict[str, Any]
     ) -> None:
-        """Synthesize a ``PlatformMessage`` and call ``inner.on_message``."""
+        """Synthesize a ``PlatformMessage`` and run it as the brain's judged turn."""
         text = event.get("text", "")
         channel = event.get("channel")
         slack_user = event.get("user", "")
@@ -887,15 +895,19 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         await self._set_status(slack_client, channel, thread_ts, STATUS_THINKING)
         try:
-            await self._inner.on_message(
-                synthesized,
-                tools,
-                history,
-                SLACK_CONTEXT_NOTE,
-                None,
+            await self._inner.run_judged_turn(
+                msg=synthesized,
+                tools=tools,
+                history=history,
+                participants_msg=SLACK_CONTEXT_NOTE,
+                contacts_msg=None,
                 is_session_bootstrap=is_new_room,
                 room_id=room_id,
             )
+        except TurnResultAlreadyReported:
+            # The room already has the failure, and a Slack event has no
+            # delivery to mark FAILED.
+            logger.debug("Room %s: Slack turn failure already reported", room_id)
         finally:
             await self._set_status(slack_client, channel, thread_ts, "")
 

@@ -36,7 +36,6 @@ from band.runtime.tools import (
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
-    settles_turn_reply,
 )
 
 try:
@@ -80,8 +79,9 @@ class AgnoRunError(RuntimeError):
     Agno catches exceptions inside ``Agent.arun`` (model/API failures included)
     and reports them as an error-status result rather than propagating. Raising
     here restores the cross-adapter contract: a failed turn must reach the
-    runtime so the message is marked failed and the platform retries it,
-    instead of being recorded as a successful turn that produced no output.
+    runtime so the message is marked failed (and runs again only up to the
+    runtime's retry budget), instead of being recorded as a successful turn
+    that produced no output.
     """
 
 
@@ -89,14 +89,6 @@ def _error_summary(detail: str | None) -> str:
     """A bounded, log-safe summary of Agno's swallowed error text."""
     text = (detail or "unknown error").strip() or "unknown error"
     return text if len(text) <= 500 else f"{text[:500]}..."
-
-
-def _tool_executions(response: RunOutput) -> list[Any]:
-    return list(getattr(response, "tools", None) or [])
-
-
-def _tool_name(execution: Any) -> str:
-    return getattr(execution, "tool_name", None) or ""
 
 
 def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolResult]]:
@@ -363,16 +355,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         await self.emit_usage(tools, self._usage_from_response(response))
 
         self._persist_turn(room_id, response)
-
-        if not any(
-            settles_turn_reply(_tool_name(execution))
-            for execution in _tool_executions(response)
-        ):
-            logger.debug(
-                "Room %s msg %s: agent did not settle its reply; nothing delivered",
-                room_id,
-                msg.id,
-            )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""

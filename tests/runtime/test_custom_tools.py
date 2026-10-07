@@ -242,7 +242,7 @@ class TestExecuteCustomTool:
         """Should await async tool functions."""
         tool: CustomToolDef = (WeatherInput, async_weather)
 
-        result = await execute_custom_tool(tool, {"city": "NYC"})
+        result = await execute_custom_tool(tool, {"city": "NYC"}, turn=None)
 
         assert result == "Weather in NYC: Sunny, 72F"
 
@@ -252,7 +252,7 @@ class TestExecuteCustomTool:
         tool: CustomToolDef = (CalculatorInput, sync_calculator)
 
         result = await execute_custom_tool(
-            tool, {"operation": "add", "left": 5.0, "right": 3.0}
+            tool, {"operation": "add", "left": 5.0, "right": 3.0}, turn=None
         )
 
         assert result == "8.0"
@@ -269,7 +269,7 @@ class TestExecuteCustomTool:
 
         tool: CustomToolDef = (WeatherInput, AsyncTool())
 
-        result = await execute_custom_tool(tool, {"city": "NYC"})
+        result = await execute_custom_tool(tool, {"city": "NYC"}, turn=None)
 
         assert result == "Weather in NYC: from async-callable"
 
@@ -287,7 +287,7 @@ class TestExecuteCustomTool:
 
         tool: CustomToolDef = (WeatherInput, UnhashableTool())
 
-        result = await execute_custom_tool(tool, {"city": "LA"})
+        result = await execute_custom_tool(tool, {"city": "LA"}, turn=None)
 
         assert result == "Weather in LA: unhashable-ok"
 
@@ -297,7 +297,9 @@ class TestExecuteCustomTool:
         tool: CustomToolDef = (CalculatorInput, sync_calculator)
 
         with pytest.raises(ValueError, match="Invalid arguments for calculator"):
-            await execute_custom_tool(tool, {"operation": "add"})  # Missing left, right
+            await execute_custom_tool(
+                tool, {"operation": "add"}, turn=None
+            )  # Missing left, right
 
     @pytest.mark.asyncio
     async def test_validation_error_has_details(self):
@@ -305,7 +307,7 @@ class TestExecuteCustomTool:
         tool: CustomToolDef = (WeatherInput, async_weather)
 
         with pytest.raises(ValueError) as exc_info:
-            await execute_custom_tool(tool, {})  # Missing required 'city'
+            await execute_custom_tool(tool, {}, turn=None)  # Missing required 'city'
 
         # Should mention the missing field in formatted message
         error_msg = str(exc_info.value)
@@ -318,7 +320,7 @@ class TestExecuteCustomTool:
         tool: CustomToolDef = (WeatherInput, failing_tool)
 
         with pytest.raises(ValueError, match="API unavailable"):
-            await execute_custom_tool(tool, {"city": "NYC"})
+            await execute_custom_tool(tool, {"city": "NYC"}, turn=None)
 
     @pytest.mark.asyncio
     async def test_passes_validated_model_to_function(self):
@@ -331,7 +333,9 @@ class TestExecuteCustomTool:
 
         tool: CustomToolDef = (CalculatorInput, capture_args)
 
-        await execute_custom_tool(tool, {"operation": "add", "left": 1, "right": 2})
+        await execute_custom_tool(
+            tool, {"operation": "add", "left": 1, "right": 2}, turn=None
+        )
 
         assert len(received_args) == 1
         assert isinstance(received_args[0], CalculatorInput)
@@ -346,7 +350,7 @@ class TestExecuteCustomTool:
 
         # Pass ints instead of floats
         result = await execute_custom_tool(
-            tool, {"operation": "multiply", "left": 4, "right": 5}
+            tool, {"operation": "multiply", "left": 4, "right": 5}, turn=None
         )
 
         assert result == "20.0"
@@ -362,6 +366,6 @@ class TestExecuteCustomTool:
 
         tool: CustomToolDef = (SearchWebInput, capture_search)
 
-        await execute_custom_tool(tool, {"query": "test"})  # No max_results
+        await execute_custom_tool(tool, {"query": "test"}, turn=None)  # No max_results
 
         assert received_args[0].max_results == 10  # Default value

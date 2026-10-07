@@ -43,6 +43,7 @@ from pydantic.json_schema import SkipJsonSchema
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.turn import Turn
 from band.core.types import Capability, EventMessageType, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -559,31 +560,48 @@ def build_tool_registration(
     )
 
 
+RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
+
+
+def room_turn(get_tools: RoomToolResolver | None, chat_id: str | None) -> Turn | None:
+    """The turn of the room ``chat_id`` names, if the tool is room-bound."""
+    if get_tools is None or chat_id is None:
+        return None
+    tools = get_tools(chat_id)
+    return tools.turn if tools is not None else None
+
+
 def build_custom_tool_registration(
     spec: CustomToolSpec | CustomToolDef,
     *,
-    advertise_chat_id: bool = False,
+    get_tools: RoomToolResolver | None = None,
+    room_from_connection: bool = False,
 ) -> MCPToolRegistration:
     """Build a registration for a user-provided custom tool.
 
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
     Dispatches straight through ``execute_custom_tool`` -- there is no
-    ``AgentTools``/``HumanTools`` method behind a custom tool, so no
-    resolver is involved. ``advertise_chat_id`` adds the ``chat_id`` a
-    multi-room endpoint requires of every tool; the room is dropped before
-    the handler runs, since a custom tool never acts in one.
+    ``AgentTools``/``HumanTools`` method behind a custom tool. With
+    ``get_tools`` the tool is room-bound and its declared effect is recorded
+    on that room's turn; the room comes from a ``chat_id`` argument, or with
+    ``room_from_connection`` from the endpoint path. Either way it is dropped
+    before the handler runs, since a custom tool never acts in a room.
     """
     tool_def: CustomToolDef = (
         (spec.input_model, spec.handler) if isinstance(spec, CustomToolSpec) else spec
     )
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
-    model = extend_with_chat_id(input_model, None) if advertise_chat_id else input_model
+    advertises_chat_id = get_tools is not None and not room_from_connection
+    model = (
+        extend_with_chat_id(input_model, None) if advertises_chat_id else input_model
+    )
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
-        kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        result = await execute_custom_tool(tool_def, kwargs)
+        chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
+        turn = room_turn(get_tools, chat_id)
+        result = await execute_custom_tool(tool_def, kwargs, turn=turn)
         return _serialize(result)
 
     return MCPToolRegistration(
@@ -591,10 +609,8 @@ def build_custom_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=model,
         execute=execute,
+        room_from_connection=room_from_connection,
     )
-
-
-RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
 
 def _filter_to_agent_surface(
@@ -689,7 +705,7 @@ def build_resolved_band_mcp_tool_registrations(
     ]
     registrations.extend(
         build_custom_tool_registration(
-            tool_def, advertise_chat_id=not room_from_connection
+            tool_def, get_tools=get_tools, room_from_connection=room_from_connection
         )
         for tool_def in additional_tools or []
     )

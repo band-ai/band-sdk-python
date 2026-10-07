@@ -654,6 +654,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[approve]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[decline]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_thoughts_are_not_placeholders",
       "adapter": "suite",
       "lanes": [
@@ -1087,15 +1105,6 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_control_signals.py::test_interrupt_cancels_and_consumes",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/behavior/test_control_signals.py::test_stop_cancels_then_play_replays",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -4384,6 +4393,211 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "anthropic",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "relays the model's final text, so an empty turn can't be scripted reliably"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "gemini",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "google_adk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "parlant"
+      ],
+      "status": "na",
+      "reason": "ignores exclude_tools, so band_no_reply stays callable"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "adapter": "strands",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "adapter": "strands",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/matrix/test_noisy_room.py::test_recall_and_ignore_crosstalk_in_busy_room",
       "adapter": "agno",
       "lanes": [
@@ -5515,6 +5729,51 @@
       "adapter": "strands",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null

@@ -38,12 +38,15 @@ assert adapter.config.command == ("codex-acp",)
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
-- **Assistant text is held to turn close** and relayed only if no completed call settled
-  the reply (`turn_replied_in_room`, `settles_turn_reply`). Detection matches the
-  `tool_call` title, because tools may run out-of-process. Narrated names are canonicalized
-  (`canonicalize_mcp_tool_name`) so Copilot's `band-` prefix never reaches the room.
-- **`emit=` never gates** chunk recording (the reply decision must see the whole turn),
-  the held text, or the closing `task` event. That event is resume state:
+- **Assistant text is held to turn close** and relayed as one reply through `relay_reply`,
+  unless the turn already replied or declined. Injected Band tools record their own effect
+  on `tools.turn`. With `inject_band_tools=False` an external band-mcp runs out of process,
+  so the emitter records each completed call's `turn_effect` from the `tool_call` title
+  instead, and only in that mode, so no call is counted twice. Narrated names are
+  canonicalized (`canonicalize_mcp_tool_name`) so Copilot's `band-` prefix never reaches
+  the room.
+- **`emit=` never gates** that recording, the held text, or the closing `task` event.
+  That event is resume state:
   `ACPClientHistoryConverter` reads `acp_client_session_id` / `acp_client_room_id` from it
   to `session/load` after a restart.
 - **Approved permissions are silent.** Only a denied request posts a synthetic
@@ -76,7 +79,12 @@ failure fails that room turn visibly instead of falling back.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
-  session; Cursor turns are serialized.
+  session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
+  replies post through `send_notice`, so they never count as the model's reply, and a
+  `/cursor` message settles its own turn without reaching the agent. A turn parked on a
+  decision releases its message early (`tools.turn.detach()`), so it is judged when the
+  ACP turn completes normally; a failed or cancelled turn is never reported as a missing
+  reply.
   The adapter does not pick a plan/agent mode itself; a caller selects one through
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`

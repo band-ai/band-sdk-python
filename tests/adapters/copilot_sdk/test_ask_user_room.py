@@ -78,7 +78,7 @@ class TestAskUserRoom:
 
         await run_message(adapter, tools)
 
-        contents = [m["content"] for m in tools.messages_sent]
+        contents = tools.chat
         assert contents == [render_room_question(QUESTION)]
 
     @pytest.mark.asyncio
@@ -108,9 +108,7 @@ class TestAskUserRoom:
 
         assert answers == [delivery_failed_answer(RuntimeError("platform down"))]
         # The turn itself survives: the model's reply reaches the room.
-        assert [m["content"] for m in tools.messages_sent] == [
-            "Proceeding without input."
-        ]
+        assert tools.chat == ["Proceeding without input."]
 
     @pytest.mark.asyncio
     async def test_late_dispatch_after_turn_end_degrades_gracefully(self):

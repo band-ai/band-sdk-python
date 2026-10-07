@@ -23,6 +23,7 @@ from band.adapters.copilot_sdk import (
 from band.converters.copilot_sdk import CopilotSDKSessionState
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
+from tests.framework_conformance.turnprobes import turn_input
 
 requires_copilot_sdk = pytest.mark.skipif(
     not _COPILOT_SDK_AVAILABLE,
@@ -226,3 +227,16 @@ async def run_message(
         room_id=room_id,
     )
     return msg
+
+
+async def run_event(
+    adapter: CopilotSDKAdapter,
+    tools: FakeAgentTools,
+    *,
+    room_id: str = "room-1",
+    content: str = "hello",
+) -> None:
+    """Run one turn through ``on_event``, where the runtime judges it."""
+    await adapter.on_event(
+        turn_input(tools, msg=make_platform_message(room_id=room_id, content=content))
+    )

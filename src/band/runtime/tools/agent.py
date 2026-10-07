@@ -51,6 +51,7 @@ from band.core.task_types import (
     validate_include,
 )
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.turn import Turn
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
@@ -68,6 +69,7 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.turn import records_turn_effects
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -267,6 +269,7 @@ class AttachmentCache(Protocol):
     def cache_parameters(self) -> Any: ...
 
 
+@records_turn_effects
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -325,6 +328,7 @@ class AgentTools(AgentToolsProtocol):
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+        self.turn = Turn()
 
     @property
     def agent_id(self) -> str | None:
@@ -361,6 +365,7 @@ class AgentTools(AgentToolsProtocol):
             agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
+        tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 
     # --- Tool methods ---
@@ -406,6 +411,27 @@ class AgentTools(AgentToolsProtocol):
                 stacklevel=2,
             )
 
+        return await self._post_message(
+            content, mentions, attachment_ids=attachment_ids
+        )
+
+    async def send_notice(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> Any:
+        """Post the adapter's own message (a prompt, a status reply, a notice).
+
+        Unlike ``send_message`` it never counts as the turn's reply: a notice
+        posted mid-turn must not stand in for the model's answer.
+        """
+        return await self._post_message(content, mentions)
+
+    async def _post_message(
+        self,
+        content: str,
+        mentions: list[str] | list[dict[str, str]] | None,
+        *,
+        attachment_ids: list[str] | None = None,
+    ) -> Any:
         resolved_mentions = self._resolve_required_mentions(mentions)
 
         logger.debug("Sending message to room %s", self.room_id)
@@ -485,7 +511,10 @@ class AgentTools(AgentToolsProtocol):
         except Exception as exc:
             logger.exception("send_failure could not post the failure event")
             return {"ok": False, "error": str(exc)}
-        if self._ctx is not None:
+        self.turn.note_reported()
+        # A detached turn reports after its delivery was released, while the
+        # context may already be processing a later message.
+        if self._ctx is not None and not self.turn.detached:
             self._ctx.note_turn_failure_reported()
         return response
 
