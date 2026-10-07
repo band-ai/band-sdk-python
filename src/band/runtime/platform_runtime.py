@@ -274,7 +274,7 @@ class PlatformRuntime:
         logger.info("Platform runtime stopped")
         return graceful
 
-    async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
+    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Run until the link ends (see ``BandLink.run_forever``)."""
         if self._link:
             await self._link.run_forever(

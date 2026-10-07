@@ -872,7 +872,7 @@ requires-dist = [
     { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.0" },
     { name = "parlant", marker = "extra == 'dev-parlant'", specifier = ">=3.3.2" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2" },
-    { name = "phoenix-channels-python-client", specifier = ">=0.2.4" },
+    { name = "phoenix-channels-python-client", specifier = ">=0.2.5,<0.3" },
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -5708,14 +5708,14 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.2.4"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/48/7a/c8545746a7055205a86be4b02aa545e1ed1cfdc57c797226f3cd581f7002/phoenix_channels_python_client-0.2.4.tar.gz", hash = "sha256:7b9c7f27ccbaecdecbf89fd975e9c18ce493df1dfec792d13364d385eed58395", size = 31301, upload-time = "2026-08-30T06:25:46.127Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/9a/cdce1b0d5dff02dd1177a4ec33faa783947d4c5d483c1b2f51aa8b1414fa/phoenix_channels_python_client-0.2.5.tar.gz", hash = "sha256:cf6f693a0168230468af9ffdbfc3e33f2cdc4f97ebc77a8b3639fb96d7ef1b67", size = 40550, upload-time = "2026-10-07T12:05:44.236Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/32/5e1a22892562857d1535a676947df174c32ee39a27c56ae7d8c92908e2a4/phoenix_channels_python_client-0.2.4-py3-none-any.whl", hash = "sha256:9f18a51ce33f3edb25d2896194c415096ef5952b896276931a98096e9ddeb3ce", size = 25372, upload-time = "2026-08-30T06:25:44.58Z" },
+    { url = "https://files.pythonhosted.org/packages/af/0e/14f9da44b7314fe3dd8a31fa145fd84fa48c0a5cfd4f4beabc4e10231e82/phoenix_channels_python_client-0.2.5-py3-none-any.whl", hash = "sha256:2410854935d113c4a384647ee3e5aed7c456b36e905422f35267199c0fd12056", size = 29817, upload-time = "2026-10-07T12:05:43.003Z" },
 ]
 
 [[package]]

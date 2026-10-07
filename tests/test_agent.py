@@ -673,7 +673,7 @@ class TestStartupRaceCondition:
             async def stop(self):
                 pass
 
-            async def run_forever(self):
+            async def run_forever(self, *, install_signal_handlers: bool = True):
                 pass
 
         runtime = ImmediateMessageRuntime()
@@ -899,14 +899,23 @@ class TestRunForever:
     """Tests for Agent.run_forever() method."""
 
     @pytest.mark.asyncio
-    async def test_run_forever_delegates_to_runtime(self, mock_runtime, mock_adapter):
-        """run_forever() should call runtime.run_forever()."""
+    @pytest.mark.parametrize(
+        ("kwargs", "installs"),
+        [({}, True), ({"install_signal_handlers": False}, False)],
+        ids=["script-default", "host-owns-signals"],
+    )
+    async def test_run_forever_delegates_to_runtime(
+        self, mock_runtime, mock_adapter, kwargs, installs
+    ):
+        """run_forever() hands the host's signal choice to the runtime."""
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
         await agent.start()
 
-        await agent.run_forever()
+        await agent.run_forever(**kwargs)
 
-        mock_runtime.run_forever.assert_awaited_once()
+        mock_runtime.run_forever.assert_awaited_once_with(
+            install_signal_handlers=installs
+        )
 
     @pytest.mark.asyncio
     async def test_run_forever_works_with_context_manager(

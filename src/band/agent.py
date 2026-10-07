@@ -330,10 +330,8 @@ class Agent:
         """
         Run until interrupted: the script entry point.
 
-        Installs SIGTERM/SIGINT handlers for the duration and stops on either
-        -- appropriate for a standalone script. Hosts that own their process
-        signals should use ``start()`` + ``run_forever()`` instead, which
-        installs none.
+        Stops on SIGTERM/SIGINT. Hosts that own their process signals use
+        ``start()`` + ``run_forever(install_signal_handlers=False)`` instead.
 
         Args:
             shutdown_timeout: Seconds to wait for graceful shutdown on interrupt.
@@ -343,7 +341,7 @@ class Agent:
         self._shutdown_timeout = shutdown_timeout
         await self.start()
         try:
-            await self._runtime.run_forever(install_signal_handlers=True)
+            await self._runtime.run_forever()
         finally:
             await self.stop(timeout=shutdown_timeout)
 
@@ -382,12 +380,9 @@ class Agent:
             timeout = cast(float | None, self._shutdown_timeout)
         await self.stop(timeout=timeout)
 
-    async def run_forever(self) -> None:
+    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """
         Keep the agent running until it is stopped or disconnected.
-
-        Installs no process-wide signal handlers: the embedding host owns
-        SIGTERM/SIGINT and calls ``stop()`` itself.
 
         Use this inside an async context manager:
             async with agent:
@@ -400,9 +395,12 @@ class Agent:
             finally:
                 await agent.stop()
 
-        Returns normally once ``stop()`` is called.
+        By default SIGTERM/SIGINT stop the agent, and the process's previous
+        handlers are restored on return. A host that owns its process signals
+        passes ``install_signal_handlers=False`` and calls ``stop()`` from its
+        own handler; ``run_forever`` then returns normally.
         """
-        await self._runtime.run_forever()
+        await self._runtime.run_forever(install_signal_handlers=install_signal_handlers)
 
     async def _on_execute(
         self,

@@ -211,6 +211,17 @@ adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-3.8-flash"))
 
 Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
 
+### Process Signals
+
+`agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) opts out and stops the agent from its own handler:
+
+```python notest
+loop = asyncio.get_running_loop()
+async with agent:
+    loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(agent.stop()))
+    await agent.run_forever(install_signal_handlers=False)  # returns once stop() runs
+```
+
 ### Logging
 
 The SDK uses standard Python loggers and does not configure process-wide handlers unless you opt in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables.
@@ -903,6 +914,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | ---- | ---- |
 | **Connect** | `agent = Agent.create(adapter=..., agent_id=..., api_key=...); await agent.run()` |
 | **Connect from config** | `agent = Agent.from_config("agent_name", adapter=...); await agent.run()` |
+| **Embed in a host** | `async with agent: await agent.run_forever(install_signal_handlers=False)` |
 | **Send message** | `band_send_message(content, mentions)` |
 | **Find peers** | `band_lookup_peers()` |
 | **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |

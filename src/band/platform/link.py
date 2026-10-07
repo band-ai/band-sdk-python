@@ -238,13 +238,13 @@ class BandLink:
         self._subscriptions_manager.end_session()
         logger.info("Disconnected from platform")
 
-    async def run_forever(self, *, install_signal_handlers: bool = False) -> None:
+    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends.
 
-        ``install_signal_handlers`` is off by default: a library that embeds
-        the agent keeps its own process-wide signal handlers. ``Agent.run()``
-        turns it on for a standalone script, where SIGTERM/SIGINT should stop
-        the process.
+        By default SIGTERM/SIGINT stop the connection, and the process's
+        previous handlers are restored on return. A host that owns its
+        process signals passes ``install_signal_handlers=False`` and calls
+        ``disconnect()`` from its own handler.
         """
         if not self._ws:
             raise RuntimeError("Not connected")

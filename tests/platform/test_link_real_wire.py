@@ -11,9 +11,10 @@ fake exists to prove.
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 import pytest
 
@@ -157,48 +158,62 @@ async def test_agent_rooms_rejoin_failure_marks_topic_unjoined() -> None:
         assert "agent_rooms:agent-123" not in server.joined_topics
 
 
+@contextmanager
+def host_signal_handler(sig: signal.Signals) -> Iterator[Callable[[int, object], None]]:
+    """Install a host-owned no-op handler for ``sig`` for the duration.
+
+    It also swallows a signal the SDK failed to take, so a regression fails
+    the test instead of killing the test process.
+    """
+
+    def handler(signum: int, frame: object) -> None: ...
+
+    previous = signal.signal(sig, handler)
+    try:
+        yield handler
+    finally:
+        signal.signal(sig, previous)
+
+
 async def _started_run(link: BandLink, **kwargs: bool) -> asyncio.Task[None]:
     task = asyncio.create_task(link.run_forever(**kwargs))
     await asyncio.sleep(0.05)
     return task
 
 
-async def test_run_forever_leaves_host_signal_handlers_alone() -> None:
-    def host_handler(signum: int, frame: object) -> None: ...
-
-    previous = signal.signal(signal.SIGTERM, host_handler)
-    try:
+async def test_embedded_run_leaves_host_signal_handlers_alone() -> None:
+    with host_signal_handler(signal.SIGTERM) as host_handler:
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             await link.connect()
-            running = await _started_run(link)
+            running = await _started_run(link, install_signal_handlers=False)
 
             assert signal.getsignal(signal.SIGTERM) is host_handler
 
             await link.disconnect()
             await asyncio.wait_for(running, timeout=5.0)
-    finally:
-        signal.signal(signal.SIGTERM, previous)
 
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason=(
-        "the Phoenix client installs loop signal handlers only on POSIX; on "
-        "Windows os.kill(SIGINT) terminates the whole test process"
-    ),
+    reason="a raised SIGINT kills the Windows test process",
 )
-async def test_script_mode_still_stops_on_sigint() -> None:
-    async with fake_phoenix_server() as server:
-        link = make_link(server.url)
-        await link.connect()
-        running = await _started_run(link, install_signal_handlers=True)
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+async def test_default_run_stops_on_signal_and_restores_host_handler(
+    sig: signal.Signals,
+) -> None:
+    with host_signal_handler(sig) as host_handler:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            await link.connect()
+            running = await _started_run(link)
 
-        os.kill(os.getpid(), signal.SIGINT)
-        await asyncio.wait_for(running, timeout=5.0)
+            signal.raise_signal(sig)
+            await asyncio.wait_for(running, timeout=5.0)
 
-        assert link.last_disconnect_reason is None
-        await link.disconnect()
+            assert signal.getsignal(sig) is host_handler
+            assert link.last_disconnect_reason is None
+            await link.disconnect()
 
 
 async def test_default_policy_sends_no_conflict_param() -> None:
