@@ -147,7 +147,7 @@ class TestCreateLlmByName:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ANTHROPIC_API_KEY", None)
             with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-                create_llm_by_name("claude-sonnet-4-6")
+                create_llm_by_name("claude-sonnet-5-5")
 
 
 class TestThinkerMultiGuesserPrompt:

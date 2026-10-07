@@ -24,7 +24,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import uuid
 from typing import Any
 
 import pytest
@@ -39,6 +38,7 @@ from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
@@ -115,7 +115,7 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     fires).
     """
 
-    operator_channel = f"channel-{uuid.uuid4().hex[:6]}"
+    operator_channel = unique_marker("channel")
     asked: list[dict[str, Any]] = []
 
     async def fake_operator(
@@ -180,7 +180,7 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
     not model invention.
     """
 
-    secret_channel = f"channel-{uuid.uuid4().hex[:6]}"
+    secret_channel = unique_marker("channel")
     adapter = _copilot_adapter(
         baseline_settings,
         ask_user=ASK_USER_ROOM,
@@ -258,7 +258,7 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     injected history).
     """
 
-    tracking_marker = f"MARKER_{uuid.uuid4().hex[:6]}"
+    tracking_marker = unique_marker("marker")
     agent_fact = "blue"
 
     def make_adapter(phase: str) -> CopilotSDKAdapter:

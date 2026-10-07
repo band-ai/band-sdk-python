@@ -38,7 +38,7 @@ async def main() -> None:
     # Requires GEMINI_API_KEY environment variable or pass provider_key explicitly
     adapter = GeminiAdapter(
         GeminiAdapterConfig(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             custom_section="You are a helpful assistant. Be concise and friendly.",
         )
     )

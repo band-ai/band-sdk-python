@@ -16,11 +16,14 @@ import pytest
 
 from band.adapters.pydantic_ai import PydanticAIAdapter, PydanticAIAdapterConfig
 from band.agent import Agent
+from band.core.defaultmodels import OPENAI_MODEL
 from band.platform.event import (
     ContactEvent,
 )
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
+
+PYDANTIC_AI_MODEL = f"openai:{OPENAI_MODEL}"
 
 # Skip all tests if no API key is set
 pytestmark = pytest.mark.skipif(
@@ -74,9 +77,7 @@ class TestAgentCallbackFlow:
             on_event=capture_event,
         )
 
-        adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
-        )
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model=PYDANTIC_AI_MODEL))
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,
@@ -112,9 +113,7 @@ class TestAgentBroadcastFlow:
             broadcast_changes=True,
         )
 
-        adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
-        )
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model=PYDANTIC_AI_MODEL))
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,
@@ -146,9 +145,7 @@ class TestAgentGracefulShutdown:
             on_event=lambda e, t: None,
         )
 
-        adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
-        )
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model=PYDANTIC_AI_MODEL))
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,

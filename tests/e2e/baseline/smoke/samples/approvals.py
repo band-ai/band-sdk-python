@@ -93,6 +93,7 @@ from tests.e2e.baseline.toolkit.builders import (
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
+from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCalls
 
 if TYPE_CHECKING:
     from band.adapters.cursor_acp import CursorACPAdapter
@@ -650,6 +651,27 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
 
 
 CLAUDE_POLICY_DECISION = template_pattern(APPROVAL_POLICY_DECISION_TEMPLATE)
+CLAUDE_SHELL_TOOLS = ("Bash", "PowerShell")
+NATIVE_SHELL_COMMAND_MISSING = "expected native shell command"
+
+
+def assert_shell_write_attempted(
+    tool_calls: ToolCalls, marker: str, target: Path
+) -> None:
+    expected = marker_command(marker, target)
+    shells = tool_calls.named(*CLAUDE_SHELL_TOOLS)
+    assert any(call.args.get("command") == expected for call in shells), (
+        f"{NATIVE_SHELL_COMMAND_MISSING} {expected!r}; "
+        f"observed: {[(call.name, call.args.get('command')) for call in tool_calls]}"
+    )
+
+
+def assert_file_write_attempted(
+    tool_calls: ToolCalls, marker: str, target: Path
+) -> None:
+    tool_calls.assert_fired(
+        "Write", with_args={"file_path": str(target), "content": marker}
+    )
 
 
 class ClosingRequest(Protocol):
@@ -663,7 +685,7 @@ class UnattendedPolicy:
     """A host's Claude config that settles native tool use with nobody asked.
 
     ``config`` is plain data, as the host's YAML holds it; ``request`` asks for
-    a write through the native ``tool``; ``decision`` is what the adapter's
+    a write checked by ``assert_attempted``; ``decision`` is what the adapter's
     policy notice announces (``None``: the CLI decides silently); ``runs`` is
     whether the write reaches the disk.
     """
@@ -671,7 +693,7 @@ class UnattendedPolicy:
     name: str
     config: dict[str, Any]
     request: ClosingRequest
-    tool: str
+    assert_attempted: Callable[[ToolCalls, str, Path], None]
     decision: str | None
     runs: bool
 
@@ -714,7 +736,7 @@ UNATTENDED_POLICIES = (
         name="auto-accept",
         config={"approvals": {"mode": "auto_accept"}},
         request=command_request,
-        tool="Bash",
+        assert_attempted=assert_shell_write_attempted,
         decision="accept",
         runs=True,
     ),
@@ -722,7 +744,7 @@ UNATTENDED_POLICIES = (
         name="auto-decline",
         config={"approvals": {"mode": "auto_decline"}},
         request=command_request,
-        tool="Bash",
+        assert_attempted=assert_shell_write_attempted,
         decision="decline",
         runs=False,
     ),
@@ -732,7 +754,7 @@ UNATTENDED_POLICIES = (
         name="dont-ask",
         config={"permission_mode": ClaudePermissionMode.DONT_ASK.value},
         request=write_request,
-        tool="Write",
+        assert_attempted=assert_file_write_attempted,
         decision=None,
         runs=False,
     ),

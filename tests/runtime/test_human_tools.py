@@ -28,11 +28,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from band_mcp.shared import StandaloneResolver
 from band_rest import (
     AgentRegisterRequest,
     CreateContactRequestRequestContactRequest,
     CreateMyChatRoomRequestChat,
 )
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from band.client.rest import (
     DEFAULT_REQUEST_OPTIONS,
@@ -40,8 +42,14 @@ from band.client.rest import (
     ParsingError,
     ParticipantRequest,
 )
-from band.runtime.tools import HumanTools
-from tests.runtime.helpers import rest_client_over
+from band.integrations.mcp.engine import (
+    EngineSpec,
+    build_engine,
+    build_tool_registration,
+)
+from band.runtime.tools import TOOL_DEFINITIONS, HumanTools
+from tests.identifiers import INVALID_IDS, UUID_ID
+from tests.runtime.helpers import memory_client, rest_client_over
 
 
 def _make_rest_fake() -> MagicMock:
@@ -697,3 +705,33 @@ def test_humantools_is_stateless_per_credential() -> None:
     tools = HumanTools(rest)
     assert tools.rest is rest
     assert not hasattr(tools, "room_id")
+
+
+@pytest.mark.parametrize("memory_id", [*INVALID_IDS, UUID_ID])
+@pytest.mark.asyncio
+async def test_human_memory_archive_validates_through_registered_mcp(
+    memory_id: str,
+) -> None:
+    async with memory_client() as (rest, requests):
+        definition = TOOL_DEFINITIONS["band_archive_user_memory"]
+        registration = build_tool_registration(
+            definition,
+            definition.input_model,
+            resolver=StandaloneResolver(human_tools=HumanTools(rest)),
+            strip_chat_id=False,
+        )
+        mcp = build_engine(
+            EngineSpec(name="human-memory-validation", tools=(registration,))
+        )
+        async with create_connected_server_and_client_session(mcp) as session:
+            result = await session.call_tool(definition.name, {"memory_id": memory_id})
+            if memory_id == UUID_ID:
+                assert not result.isError
+                assert [(q.method, q.url.path) for q in requests] == [
+                    ("POST", f"/api/v1/me/memories/{UUID_ID}/archive")
+                ]
+                assert "remember this" in result.content[0].text
+            else:
+                assert result.isError
+                assert "memory_id" in result.content[0].text
+                assert requests == []

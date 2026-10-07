@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    anthropic_model: str = "claude-sonnet-4-5-20250929"
+    anthropic_model: str = "claude-sonnet-5-5"
     system_prompt: str = ""
     emit_execution: bool = True
     port: int = 8080

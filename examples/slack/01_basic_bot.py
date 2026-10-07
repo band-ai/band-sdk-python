@@ -116,7 +116,7 @@ async def main() -> None:
     # on by default).
     brain = AnthropicAdapter(
         AnthropicAdapterConfig(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-5-5",
             custom_section=(
                 "You are a helpful Slack assistant. Keep replies concise and "
                 "use Slack-flavored markdown when it improves readability."

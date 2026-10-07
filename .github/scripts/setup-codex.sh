@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install + authenticate the Codex CLI for the `backends` e2e lane.
 #
-# Reads OPENAI_API_KEY (job env) for login and CODEX_MODEL (defaulted here) for
-# the model, and exports CODEX_CWD / E2E_CODEX_CWD_IS_DISPOSABLE / CODEX_MODEL to
-# later steps via $GITHUB_ENV.
+# Reads OPENAI_API_KEY (job env) for login and exports CODEX_CWD /
+# E2E_CODEX_CWD_IS_DISPOSABLE to later steps via $GITHUB_ENV. The model comes
+# from band.core.defaultmodels.OPENAI_MODEL via the baseline settings.
 set -euo pipefail
 
 # Fail with a clear message if the key is missing: `printenv OPENAI_API_KEY` takes
@@ -11,17 +11,10 @@ set -euo pipefail
 # unset key — the login would just fail opaquely with no output.
 : "${OPENAI_API_KEY:?OPENAI_API_KEY is required for codex login}"
 
-# Codex picks a model from its own catalogue (a plain openai default like
-# gpt-4o-mini is not one). Keep this current: the OpenAI API hard-deprecates old
-# codex models, and a deprecated pin makes every turn stream-error with no tokens
-# -- which surfaces as blanket usage/reply assertion failures, not an obvious
-# model error. gpt-5-codex is deprecated; gpt-5.3-codex is the current pin.
-CODEX_MODEL="${CODEX_MODEL:-gpt-5.3-codex}"
-
-# Pinned for the same reason as the model: an unpinned global install lets both
-# CLIs float between runs, so a CLI change lands as an unrelated-looking lane
-# failure. Bump deliberately.
-CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.149.0}"
+# Pinned: an unpinned global install lets both CLIs float between runs, so a
+# CLI change lands as an unrelated-looking lane failure. Bump deliberately; the
+# CLI's bundled catalogue must include band.core.defaultmodels.OPENAI_MODEL.
+CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.160.0}"
 CODEX_ACP_VERSION="${CODEX_ACP_VERSION:-1.6.2}"
 
 npm install -g "@openai/codex@${CODEX_CLI_VERSION}" \
@@ -41,5 +34,4 @@ fi
 {
   echo "CODEX_CWD=${codex_cwd}"
   echo "E2E_CODEX_CWD_IS_DISPOSABLE=true"
-  echo "CODEX_MODEL=${CODEX_MODEL}"
 } >> "$GITHUB_ENV"

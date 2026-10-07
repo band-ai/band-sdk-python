@@ -1,7 +1,9 @@
 """Tests for Parlant tools module."""
 
+from __future__ import annotations
+
 from types import SimpleNamespace
-from typing import get_args
+from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -972,3 +974,66 @@ class TestParlantToolFunctions:
 
         assert "Error sending room file" in result.data
         assert "ASCII" in result.data
+
+    @pytest.mark.parametrize(
+        "name,args,field",
+        [
+            ("band_read_room_file", {"file_id": ""}, "file_id"),
+            ("band_read_room_file", {"file_id": "../files/"}, "file_id"),
+            ("band_get_task", {"id": "#"}, "id"),
+            ("band_get_task", {"id": "1", "include": "invalid"}, "include"),
+            ("band_update_task", {"id": "1"}, "At least one"),
+            ("band_update_task", {"id": "1", "status": "invalid"}, "status"),
+            ("band_update_task", {"id": "1", "state": "invalid"}, "state"),
+            ("band_get_task_history", {"id": "1", "limit": 0}, "limit"),
+            ("band_get_task_history", {"id": "1", "limit": 101}, "limit"),
+            ("band_get_task_history", {"id": "id\n"}, "id"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_path_tools_reject_before_execution(
+        self,
+        parlant_tools: dict[str, Any],
+        mock_tools: MagicMock,
+        mock_context: SimpleNamespace,
+        name: str,
+        args: dict[str, object],
+        field: str,
+    ) -> None:
+        method = name.removeprefix("band_")
+        setattr(mock_tools, method, AsyncMock())
+        set_session_tools(mock_context.session_id, mock_tools)
+        result = await parlant_tools[name](mock_context, **args)
+        assert f"Invalid arguments for {name}" in result.data
+        assert field in result.data
+        getattr(mock_tools, method).assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "name,args",
+        [
+            ("band_get_task", {"id": "#001"}),
+            (
+                "band_get_task",
+                {"id": "#ABCDEF01-2345-6789-ABCD-EF0123456789", "include": "history"},
+            ),
+            ("band_update_task", {"id": "#1", "status": "completed"}),
+            ("band_get_task_history", {"id": "001", "limit": 100}),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_path_tools_preserve_validated_options(
+        self,
+        parlant_tools: dict[str, Any],
+        mock_tools: MagicMock,
+        mock_context: SimpleNamespace,
+        name: str,
+        args: dict[str, object],
+    ) -> None:
+        method = name.removeprefix("band_")
+        target = AsyncMock(return_value={"id": args["id"], "subject": "task"})
+        setattr(mock_tools, method, target)
+        set_session_tools(mock_context.session_id, mock_tools)
+        result = await parlant_tools[name](mock_context, **args)
+        assert "task" in result.data
+        assert target.await_count == 1
+        assert target.call_args.kwargs == args

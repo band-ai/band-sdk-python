@@ -19,6 +19,8 @@ with no removal), so it overlaps only slightly.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from tests.e2e.baseline.agents import per_adapter
@@ -28,9 +30,20 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     remove_participant_instruction,
     unique_marker,
 )
-from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+
+async def _tool_activity(capture: ReplyCapture, agent_id: str) -> str:
+    """The agent's tool calls and failed results, to tell a skipped add
+    (a model claiming it without the call) from a rejected one."""
+    calls, results = await asyncio.gather(
+        capture.tool_calls(sender_id=agent_id),
+        capture.tool_results(sender_id=agent_id),
+    )
+    errors = [(result.name, result.output) for result in results if result.is_error]
+    return f"tool calls: {[call.name for call in calls]}; failed results: {errors}"
 
 
 @per_adapter(runs_tool_loop=True)
@@ -63,7 +76,8 @@ async def test_invites_messages_and_removes_a_peer(
         # State: Echo is a participant after the invite (model-independent).
         after_invite = await user_ops.list_participant_ids(room_id)
         assert echo.id in after_invite, (
-            f"expected {echo.name} added to the room; participants: {after_invite}"
+            f"expected {echo.name} added to the room; participants: {after_invite}; "
+            f"{await _tool_activity(capture, agent.id)}"
         )
         # Coupled: the mention and the marker are in the SAME agent message.
         replies.mentioning(echo.id).assert_contains_any([marker])

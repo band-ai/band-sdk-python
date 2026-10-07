@@ -154,7 +154,7 @@ class TestAdapterSwapSnippets:
             AnthropicAdapterConfig,
         )
 
-        adapter = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-5"))
+        adapter = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-5-5"))
         assert adapter is not None
 
     @skip_no_pydantic_ai
@@ -164,9 +164,7 @@ class TestAdapterSwapSnippets:
             PydanticAIAdapterConfig,
         )
 
-        adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4-mini")
-        )
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-6-luna"))
         assert adapter is not None
 
     def test_gemini_adapter_import_and_init(self) -> None:
@@ -175,7 +173,7 @@ class TestAdapterSwapSnippets:
             GeminiAdapterConfig,
         )
 
-        adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-2.5-flash"))
+        adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-3.8-flash"))
         assert adapter is not None
 
 
@@ -329,7 +327,7 @@ class TestPlatformToolsSnippets:
         )
 
         adapter = AnthropicAdapter(
-            AnthropicAdapterConfig(model="claude-sonnet-4-5"),
+            AnthropicAdapterConfig(model="claude-sonnet-5-5"),
             capabilities={Capability.CONTACTS, Capability.MEMORY},
         )
 
@@ -365,7 +363,7 @@ class TestEmitOptionsSnippets:
         )
 
         adapter = AnthropicAdapter(
-            AnthropicAdapterConfig(model="claude-sonnet-4-5"),
+            AnthropicAdapterConfig(model="claude-sonnet-5-5"),
             emit=Emit.TOOL_CALLS,
         )
 
@@ -449,7 +447,7 @@ class TestCustomInstructionsSnippets:
 
         adapter = AnthropicAdapter(
             AnthropicAdapterConfig(
-                model="claude-sonnet-4-5",
+                model="claude-sonnet-5-5",
                 custom_section=(
                     "You are a concise technical reviewer. "
                     "Focus on risks and next steps."
@@ -483,7 +481,7 @@ class TestCustomToolsSnippets:
             return f"Sunny, 22 C in {args.city}"
 
         adapter = AnthropicAdapter(
-            AnthropicAdapterConfig(model="claude-sonnet-4-5"),
+            AnthropicAdapterConfig(model="claude-sonnet-5-5"),
             additional_tools=[(WeatherInput, get_weather)],
         )
 

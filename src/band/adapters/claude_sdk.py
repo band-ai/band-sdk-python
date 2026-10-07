@@ -81,6 +81,7 @@ from band.converters.claude_sdk import (
     ClaudeSDKSessionState,
 )
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -150,14 +151,6 @@ BAND_TASK_TOOLS: list[str] = mcp_tool_names(TASK_TOOL_NAMES)
 BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
-
-# Default model used when the caller does not specify one. Letting the npm
-# `claude` CLI auto-select its default fails under API-key auth: the CLI sends
-# the legacy `thinking.type.enabled` request shape, which current models reject
-# ("thinking.type.enabled is not supported for this model. Use
-# thinking.type.adaptive"), so the run returns an error result with no output.
-# Pinning a known-good model avoids that path; callers can override via `model=`.
-DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # claude_agent_sdk's stdio transport defaults max_buffer_size to 1 MiB and
 # fatally drops the whole CLI connection (not just the one tool call) if a
@@ -330,7 +323,8 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     Attributes:
         model: Full model ID or family alias (``"sonnet"``, ``"opus"``,
-            ``"haiku"``, ``"inherit"``). ``None`` pins ``DEFAULT_MODEL``.
+            ``"haiku"``, ``"inherit"``). ``None`` pins
+            ``band.core.defaultmodels.ANTHROPIC_MODEL``.
         fallback_model: Model the CLI uses when ``model`` is unavailable.
         custom_section: Extra instructions appended to the system prompt.
         max_thinking_tokens: Extended-thinking budget; ``None`` disables it.
@@ -676,11 +670,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             features=self.features,
         )
 
-        # Build SDK options. When the caller doesn't pin a model, default to a
-        # known-good one rather than the npm `claude` binary's auto-selection,
-        # which fails under API-key auth (see DEFAULT_MODEL). fallback_model
-        # stays None unless explicitly set.
-        resolved_model = self.config.model or DEFAULT_MODEL
+        # Always pin a model: the `claude` CLI's own pick sends the legacy
+        # `thinking.type.enabled` shape under API-key auth, which current
+        # models reject, so the run errors with no output.
+        resolved_model = self.config.model or ANTHROPIC_MODEL
         sdk_options = ClaudeAgentOptions(
             model=resolved_model,
             fallback_model=self.config.fallback_model,

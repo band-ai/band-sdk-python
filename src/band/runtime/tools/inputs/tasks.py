@@ -15,6 +15,7 @@ from band.core.task_types import (
     TaskListState,
 )
 from band.core.validation import at_least_one_of
+from band.runtime.tools.inputs.identifiers import TaskReference
 
 
 class ListTasksInput(BaseModel):
@@ -63,7 +64,7 @@ class GetTaskInput(BaseModel):
     stay readable as audit records.
     """
 
-    id: str = Field(..., description="Task UUID or board number")
+    id: TaskReference = Field(..., description="Task UUID or board number")
     include: TaskIncludeOption | None = Field(
         None, description="Set to 'history' to embed the recent event history"
     )
@@ -81,7 +82,7 @@ class UpdateTaskInput(BaseModel):
     own status and active_form.
     """
 
-    id: str = Field(..., description="Task UUID or board number")
+    id: TaskReference = Field(..., description="Task UUID or board number")
     status: TaskAssignmentStatus | None = Field(
         None,
         description="YOUR work status on this task (first write joins you to it)",
@@ -125,7 +126,7 @@ class GetTaskHistoryInput(BaseModel):
     band_get_task.
     """
 
-    id: str = Field(..., description="Task UUID or board number")
+    id: TaskReference = Field(..., description="Task UUID or board number")
     cursor: str | None = Field(
         None, description="Opaque pagination cursor from a previous response"
     )

@@ -36,7 +36,7 @@ async def main() -> None:
 
     adapter = CrewAIAdapter(
         CrewAIAdapterConfig(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+            model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
             role="Release Readiness Coordinator",
             goal=(
                 "Turn an engineering request into a release-readiness review with "

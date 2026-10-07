@@ -65,7 +65,7 @@ async def main() -> None:
 
     # You own the Agno agent — model and in-character instructions.
     agno_agent = AgnoAgent(
-        model=Claude(id="claude-sonnet-4-6"),
+        model=Claude(id="claude-sonnet-5-5"),
         instructions=generate_jerry_prompt("Jerry"),
     )
 

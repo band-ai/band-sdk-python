@@ -350,9 +350,9 @@ async def test_repairs_a_failing_project_after_a_human_gate(
     assert initial_exit != 0, initial_output
     original = source.read_text()
     original_state = _project_state(root)
-    marker = unique_marker("cursor-repair-event")
-    report = unique_marker("cursor-repair-report")
-    denied_reply = unique_marker("cursor-repair-denied")
+    marker = unique_marker("repairevent")
+    report = unique_marker("repairreport")
+    denied_reply = unique_marker("repairdenied")
     setup = _agent_setup(root, WORKFLOW_BUDGET)
     agent = await cell.provision(label="cursor-repair")
     room_id = await cell.resources.provision_room(
@@ -433,9 +433,7 @@ async def test_sequential_rooms_keep_their_work_after_restart(
     }
     for path in workspaces.values():
         path.mkdir()
-    markers = {
-        room: unique_marker(f"cursor-room-{index}") for index, room in enumerate(rooms)
-    }
+    markers = {room: unique_marker(f"room{index}") for index, room in enumerate(rooms)}
     setup = _agent_setup(tmp_path.resolve(), RECOVERY_BUDGET)
 
     def adapter() -> CursorACPAdapter:

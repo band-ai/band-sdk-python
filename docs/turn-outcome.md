@@ -228,6 +228,18 @@ returns record nothing; self-hosted tools record their own effects.
 file with the reason it carries the model's words, so a new one fails until it
 is justified.
 
+## Failed runs returned as data: `ProviderRunError`
+
+Some frameworks return a failed model run as a value instead of raising: Agno
+sets an error status, Google ADK yields an event with `error_code`, and a Gemini
+response carries a safety `finish_reason` or a blocked prompt. The judge cannot
+see such a failure when the turn already did work or replied, so the adapter
+raises `ProviderRunError(code, detail)` from `band.core.exceptions` inside its
+turn. Its failure path reports `generic_provider_failure(provider, error)` from
+`band.core.protocols`: the generic message plus the coarse `code` (such as
+`SAFETY`). The provider's `detail` can echo the prompt, so it goes only to the
+agent log. Agno, Google ADK and Gemini follow this rule.
+
 ## Detached turns
 
 An adapter whose turn outlives `on_message` (one parked on a human approval)

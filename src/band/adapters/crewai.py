@@ -19,6 +19,7 @@ from typing_extensions import Unpack
 
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
@@ -110,7 +111,7 @@ class CrewAIAdapterConfig(BaseAdapterConfig):
     """Settings for :class:`CrewAIAdapter`.
 
     Attributes:
-        model: CrewAI LLM model name (e.g. ``"gpt-5.4"``); API keys are read
+        model: CrewAI LLM model name (e.g. ``"gpt-6-luna"``); API keys are read
             from the environment by CrewAI's ``LLM`` class.
         role: The agent's role in the crew; ``None`` uses the agent's name.
         goal: The agent's objective; ``None`` uses the agent's description.
@@ -123,7 +124,7 @@ class CrewAIAdapterConfig(BaseAdapterConfig):
         allow_delegation: Whether CrewAI may delegate to other crew agents.
     """
 
-    model: str = "gpt-5.4"
+    model: str = OPENAI_MODEL
     role: str | None = None
     goal: str | None = None
     backstory: str | None = None
@@ -143,7 +144,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     Example:
         adapter = CrewAIAdapter(
             CrewAIAdapterConfig(
-                model="gpt-5.4",
+                model="gpt-6-luna",
                 role="Research Assistant",
                 goal="Help users find and analyze information",
                 backstory="Expert researcher with deep knowledge across domains",

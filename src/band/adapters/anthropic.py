@@ -14,6 +14,7 @@ from typing_extensions import Unpack
 
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -87,7 +88,7 @@ class AnthropicAdapterConfig(BaseAdapterConfig):
         max_tokens: Maximum output tokens per API call.
     """
 
-    model: str = "claude-sonnet-4-5-20250929"
+    model: str = ANTHROPIC_MODEL
     provider_key: str | None = Field(default=None, repr=False)
     system_prompt: str | None = None
     custom_section: str = ""
@@ -105,7 +106,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     Example:
         adapter = AnthropicAdapter(
             AnthropicAdapterConfig(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-5-5",
                 custom_section="You are a helpful assistant.",
             ),
             capabilities=Capability.MEMORY,

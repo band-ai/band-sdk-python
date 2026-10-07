@@ -44,11 +44,14 @@ from band.core.exceptions import BandToolError
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
+    BandTool,
     append_available_mention_handles,
     get_tool_description,
     is_mcp_content_result,
+    platform_args_schema,
     resolve_tool_model,
     serialize_tool_result,
+    validate_tool_arguments,
 )
 
 logger = logging.getLogger(__name__)
@@ -591,7 +594,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             file_id: str,
         ) -> ToolResult:
             tools = require_session_tools(context)
-            result = await tools.read_room_file(file_id)
+            args = validate_tool_arguments(
+                BandTool.READ_ROOM_FILE,
+                platform_args_schema(BandTool.READ_ROOM_FILE),
+                {"file_id": file_id},
+            )
+            result = await tools.read_room_file(args["file_id"])
             match result:
                 case {"text": str() as text}:
                     note = result.get("description")
@@ -692,11 +700,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             include: str | None = None,
         ) -> ToolResult:
             tools = require_session_tools(context)
-            data = serialize_tool_result(
-                await tools.get_task(
-                    id, include=cast(Literal["history"] | None, include)
-                )
+            args = validate_tool_arguments(
+                BandTool.GET_TASK,
+                platform_args_schema(BandTool.GET_TASK),
+                {"id": id, "include": include},
             )
+            data = serialize_tool_result(await tools.get_task(**args))
             return ToolResult(data=json.dumps(data, default=str))
 
         @band_tool("updating task '{id}'")
@@ -711,17 +720,20 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             state: TaskLifecycleState | None = None,
         ) -> ToolResult:
             tools = require_session_tools(context)
-            data = serialize_tool_result(
-                await tools.update_task(
-                    id,
-                    status=status,
-                    active_form=active_form,
-                    comment=comment,
-                    subject=subject,
-                    detail=detail,
-                    state=state,
-                )
+            args = validate_tool_arguments(
+                BandTool.UPDATE_TASK,
+                platform_args_schema(BandTool.UPDATE_TASK),
+                {
+                    "id": id,
+                    "status": status,
+                    "active_form": active_form,
+                    "comment": comment,
+                    "subject": subject,
+                    "detail": detail,
+                    "state": state,
+                },
             )
+            data = serialize_tool_result(await tools.update_task(**args))
             return ToolResult(data=json.dumps(data, default=str))
 
         @band_tool("getting task history for '{id}'")
@@ -732,9 +744,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             limit: int | None = None,
         ) -> ToolResult:
             tools = require_session_tools(context)
-            data = serialize_tool_result(
-                await tools.get_task_history(id, cursor=cursor, limit=limit)
+            args = validate_tool_arguments(
+                BandTool.GET_TASK_HISTORY,
+                platform_args_schema(BandTool.GET_TASK_HISTORY),
+                {"id": id, "cursor": cursor, "limit": limit},
             )
+            data = serialize_tool_result(await tools.get_task_history(**args))
             return ToolResult(data=json.dumps(data, default=str))
 
         @band_tool("getting board")

@@ -102,7 +102,7 @@ class OmpACPAdapterConfig(ACPClientAdapterConfig):
             ``"yolo"`` gives the agent full access to its host.
         command: The ``omp acp`` launch command; approval flags other than
             ``approval_mode`` are rejected.
-        model: OMP's provider-qualified model (e.g. ``openai/gpt-5.4-mini``),
+        model: OMP's provider-qualified model (e.g. ``openai/gpt-6-luna``),
             passed as OMP's ``--model`` launch flag rather than selected from
             the session's catalog.
         api_key: Passed in the env var of ``model``'s provider; needs ``model``.
