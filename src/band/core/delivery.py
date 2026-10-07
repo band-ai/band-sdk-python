@@ -13,6 +13,8 @@ import logging
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from band.core.content import has_visible_content
+from band.core.protocols import send_event_safe
+from band.core.types import Emit, LeftoverText, MessageType
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
@@ -78,3 +80,36 @@ async def relay_reply(
     if text is None or tools.turn.replied or not has_visible_content(text):
         return False
     return await deliver_reply(tools, text, mentions) is not None
+
+
+async def handle_leftover_text(
+    tools: AgentToolsProtocol,
+    text: str | None,
+    mentions: list[str] | list[dict[str, str]] | None,
+    *,
+    mode: LeftoverText,
+    emit: frozenset[Emit],
+) -> bool:
+    """Deliver the model's final text as ``mode`` says; return whether it
+    posted a reply.
+
+    Text a Band tool already answered or declined is never repeated. As a
+    thought, the text settles the turn: the operator chose to read such text
+    as the agent's own narration, not a reply the runtime should report as
+    missing. After a reply attempt that did not land it does not: that text
+    may describe a reply the room never received, so the turn still owes one.
+    """
+    if mode is LeftoverText.REPLY:
+        return await relay_reply(tools, text, mentions)
+    if text is None or tools.turn.replied or not has_visible_content(text):
+        return False
+    if Emit.THOUGHTS in emit:
+        await send_event_safe(
+            tools,
+            content=text,
+            message_type=MessageType.THOUGHT,
+            log_label="leftover text thought",
+        )
+    if not tools.turn.reply_attempted:
+        tools.turn.settle()
+    return False

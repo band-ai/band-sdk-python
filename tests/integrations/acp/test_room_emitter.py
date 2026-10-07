@@ -14,7 +14,7 @@ from typing import ClassVar
 import pytest
 
 from band.converters.acp_client import ACPClientHistoryConverter
-from band.core.types import Emit
+from band.core.types import Emit, LeftoverText
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import (
     ACPToolCall,
@@ -25,7 +25,12 @@ from band.integrations.acp.types import (
     ToolResultRoomEvent,
     ToolStatus,
 )
-from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool, mcp_tool_spelling
+from band.runtime.tools import (
+    BAND_MCP_SERVER_NAME,
+    BandTool,
+    TurnEffect,
+    mcp_tool_spelling,
+)
 from band.runtime.tools.agent import AgentTools
 from band.testing.fake_tools import FakeAgentTools
 
@@ -473,3 +478,185 @@ class TestRoomTurnEmitterReplyRelay:
         )
 
         assert tools.turn.complete
+
+
+async def run_leftover_turn(
+    tools: FakeAgentTools,
+    *chunks: CollectedChunk,
+    emit: frozenset[Emit] | None = None,
+    records_tool_effects: bool = False,
+) -> None:
+    emitter = RoomTurnEmitter(
+        tools,
+        mentions=[{"id": "u1", "name": "User"}],
+        session_id="s1",
+        room_id="room-1",
+        emit=emit,
+        records_tool_effects=records_tool_effects,
+        leftover_text=LeftoverText.THOUGHT,
+    )
+    async with emitter:
+        for chunk in chunks:
+            await emitter.emit(chunk)
+
+
+class TestRoomTurnEmitterLeftoverTextAsThought:
+    """With ``LeftoverText.THOUGHT``, text the model wrote outside a Band tool
+    is the agent's own narration: it never becomes a reply that mentions (and
+    so wakes) the sender, and a turn that produced only such text ends without
+    a missing-reply failure, which would otherwise be retried."""
+
+    @pytest.mark.asyncio
+    async def test_text_only_turn_posts_a_thought_and_no_reply(self) -> None:
+        tools = FakeAgentTools()
+
+        await run_leftover_turn(
+            tools, text("(Waiting on the review."), text("Nothing to change.)")
+        )
+
+        assert tools.messages_sent == []
+        thoughts = [e for e in tools.events_sent if e["message_type"] == "thought"]
+        assert [e["content"] for e in thoughts] == [
+            "(Waiting on the review.\n\nNothing to change.)"
+        ]
+        assert tools.turn.complete
+        # Resume state still closes the turn.
+        assert tools.events_sent[-1]["content"] == "ACP client session"
+
+    @pytest.mark.asyncio
+    async def test_thoughts_outside_the_emit_set_leave_the_room_silent(self) -> None:
+        tools = FakeAgentTools()
+
+        await run_leftover_turn(tools, text("Nothing to change."), emit=frozenset())
+
+        assert tools.messages_sent == []
+        assert [e["content"] for e in tools.events_sent] == ["ACP client session"]
+        assert tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_a_turn_without_text_still_owes_a_reply(self) -> None:
+        tools = FakeAgentTools()
+
+        await run_leftover_turn(tools, text("   "))
+
+        assert tools.messages_sent == []
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_text_after_a_reply_is_not_repeated_as_a_thought(self) -> None:
+        tools = FakeAgentTools()
+        await tools.send_message("Posted by the tool.", mentions=["u1"])
+
+        await run_leftover_turn(
+            tools,
+            tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED),
+            text("I posted it."),
+            emit=frozenset({Emit.THOUGHTS}),
+        )
+
+        assert [m["content"] for m in tools.messages_sent] == ["Posted by the tool."]
+        assert [e["message_type"] for e in tools.events_sent] == ["task"]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_in_process_reply_still_owes_the_reply(self) -> None:
+        """A reply that did not land is not the model choosing silence: the
+        turn must stay unsettled so the runtime reports and retries it."""
+        tools = FakeAgentTools()
+        tools.send_message_error = RuntimeError("messages API unavailable")
+        with pytest.raises(RuntimeError):
+            await tools.send_message("The answer.", mentions=["u1"])
+
+        await run_leftover_turn(tools, text("I posted the answer."))
+
+        assert tools.messages_sent == []
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_a_failed_out_of_process_reply_still_owes_the_reply(self) -> None:
+        tools = FakeAgentTools()
+
+        await run_leftover_turn(
+            tools,
+            tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.FAILED),
+            text("I posted the answer."),
+            records_tool_effects=True,
+        )
+
+        assert tools.messages_sent == []
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_an_injected_reply_the_tool_refused_still_owes_the_reply(
+        self,
+    ) -> None:
+        """An injected tool can refuse a call before running it (its arguments
+        failed validation); the stream's failed status is the only record."""
+        tools = FakeAgentTools()
+
+        await run_leftover_turn(
+            tools,
+            tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.FAILED),
+            text("I posted the answer."),
+            records_tool_effects=False,
+        )
+
+        assert tools.messages_sent == []
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_a_refused_custom_reply_tool_still_owes_the_reply(self) -> None:
+        """A custom tool declared ``REPLY`` can be refused upstream (its
+        arguments failed the MCP schema) before its handler runs."""
+        tools = FakeAgentTools()
+        emitter = RoomTurnEmitter(
+            tools,
+            mentions=[{"id": "u1", "name": "User"}],
+            session_id="s1",
+            room_id="room-1",
+            leftover_text=LeftoverText.THOUGHT,
+            custom_effects={"post_answer": TurnEffect.REPLY},
+        )
+        async with emitter:
+            await emitter.emit(tool_result_chunk("post_answer", ToolStatus.FAILED))
+            await emitter.emit(text("I posted the answer."))
+
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_a_reply_call_that_never_finished_still_owes_the_reply(
+        self,
+    ) -> None:
+        """A reply call seen only as started (its permission was denied, or it
+        never reported a result) did not deliver."""
+        tools = FakeAgentTools()
+
+        await run_leftover_turn(
+            tools,
+            tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.PENDING),
+            text("I posted the answer."),
+        )
+
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_a_denied_reply_permission_still_owes_the_reply(self) -> None:
+        tools = FakeAgentTools()
+        emitter = RoomTurnEmitter(
+            tools,
+            mentions=[{"id": "u1", "name": "User"}],
+            session_id="s1",
+            room_id="room-1",
+            emit=frozenset(),
+            leftover_text=LeftoverText.THOUGHT,
+        )
+        async with emitter:
+            await emitter.open_permission(
+                call=ACPToolCall(
+                    tool_call_id="tc-1", name=BandTool.SEND_MESSAGE, arguments={}
+                ),
+                session_id="s1",
+                outcome="denied",
+            )
+            await emitter.emit(text("I posted the answer."))
+
+        assert not tools.turn.complete

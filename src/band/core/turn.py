@@ -38,6 +38,7 @@ class Turn:
         self.posts_missing_reply = posts_missing_reply
         self.judged = False
         self._detached = False
+        self._reply_attempted = False
 
     def record(self, effect: TurnEffect) -> None:
         core_effect = band_sdk_core.TurnEffect.from_wire_name(effect)
@@ -46,12 +47,17 @@ class Turn:
         self._ledger.record(core_effect)
 
     def settle(self) -> None:
-        """The adapter ended this turn itself (a control reply, a busy notice)."""
+        """The adapter ended this turn itself (a control reply, a busy notice,
+        or closing text reported as a thought under ``LeftoverText.THOUGHT``)."""
         self._ledger.settle()
 
     def note_reported(self) -> None:
         """A failure for this turn already reached the room."""
         self._ledger.note_reported()
+
+    def note_reply_attempt(self) -> None:
+        """A reply tool was called, whether or not its post landed."""
+        self._reply_attempted = True
 
     def detach(self) -> None:
         """Release the turn before it ends; its delivery is already settled."""
@@ -65,6 +71,14 @@ class Turn:
     def replied(self) -> bool:
         """The turn replied or declined, so the model's final text is not relayed."""
         return self._ledger.reply_settled()
+
+    @property
+    def reply_attempted(self) -> bool:
+        """A reply tool was called this turn. Unless the turn also ``replied``,
+        that reply did not land (refused, failed, denied or unfinished), and
+        text the model wrote around it may describe a reply the room never
+        received."""
+        return self._reply_attempted
 
     @property
     def complete(self) -> bool:

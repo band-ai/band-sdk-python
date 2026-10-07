@@ -38,14 +38,18 @@ assert adapter.config.command == ("codex-acp",)
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
-- **Assistant text is held to turn close** and relayed as one reply through `relay_reply`,
-  unless the turn already replied or declined. Injected Band tools record their own effect
+- **Assistant text is held to turn close** and handled as `leftover_text` says, unless
+  the turn already replied or declined: `REPLY` (the default) relays it as one reply
+  through `relay_reply`; `THOUGHT` posts it as a `thought` event and settles the turn
+  without a reply, for agents that answer only through Band tools and would otherwise
+  wake the sender with their own narration. Injected Band tools record their own effect
   on `tools.turn`. With `inject_band_tools=False` an external band-mcp runs out of process,
   so the emitter records each completed call's `turn_effect` from the `tool_call` title
   instead, and only in that mode, so no call is counted twice. Narrated names are
   canonicalized (`canonicalize_mcp_tool_name`) so Copilot's `band-` prefix never reaches
   the room.
-- **`emit=` never gates** that recording, the held text, or the closing `task` event.
+- **`emit=` never gates** that recording, a `REPLY`-mode held text, or the closing `task`
+  event (a `THOUGHT`-mode held text follows `Emit.THOUGHTS`).
   That event is resume state:
   `ACPClientHistoryConverter` reads `acp_client_session_id` / `acp_client_room_id` from it
   to `session/load` after a restart.

@@ -37,7 +37,13 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
-from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    Emit,
+    HistoryProvider,
+    LeftoverText,
+    PlatformMessage,
+)
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import (
     _MAX_ERROR_DETAIL_CHARS,
@@ -345,6 +351,48 @@ class TestCodexAdapter:
         assert len(tools.messages_sent) == 1
         assert tools.messages_sent[0]["content"] == "harness-ok"
         assert tools.messages_sent[0]["mentions"][0]["id"] == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_leftover_text_as_thought_posts_no_reply(self) -> None:
+        """Final text from a turn that called no Band reply tool is narration:
+        it must not mention (and wake) the sender, and the turn is settled so
+        it is not reported and retried as a missing reply."""
+        events = [
+            event_notification(
+                "item/agentMessage/delta",
+                {"itemId": "msg-1", "delta": "(Waiting on the review.)"},
+            ),
+            turn_completed(),
+        ]
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=events),
+            config=CodexAdapterConfig(leftover_text=LeftoverText.THOUGHT),
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert tools.messages_sent == []
+        thoughts = [e for e in tools.events_sent if e["message_type"] == "thought"]
+        assert [e["content"] for e in thoughts] == ["(Waiting on the review.)"]
+        assert tools.turn.complete
+
+    def test_leftover_text_as_thought_needs_the_text_fallback(
+        self, assert_no_leaked_adapter_config_env: None
+    ) -> None:
+        with pytest.raises(ValidationError, match="fallback_send_agent_text"):
+            CodexAdapterConfig(
+                fallback_send_agent_text=False, leftover_text=LeftoverText.THOUGHT
+            )
 
     @pytest.mark.asyncio
     async def test_system_prompt_retry_after_turn_start_failure(self) -> None:

@@ -23,7 +23,7 @@ import pytest
 from acp import RequestError
 from pydantic import BaseModel
 
-from band.core.types import Capability
+from band.core.types import Capability, LeftoverText
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
@@ -122,6 +122,19 @@ async def test_streamed_text_deltas_become_one_message(fake_agent) -> None:
         reply = await session.send("weather?")
 
     assert reply.texts == ["The weather is sunny."]
+
+
+@pytest.mark.asyncio
+async def test_leftover_text_can_be_reported_as_a_thought(fake_agent) -> None:
+    # A closing aside the model wrote outside any Band tool reaches the room as
+    # the agent's thought, not as a reply mentioning (and waking) the sender.
+    fake_agent.will_say("(Waiting on the review; nothing to change.)")
+    config = fake_agent_config(leftover_text=LeftoverText.THOUGHT)
+    async with acp_adapter(fake_agent, config) as session:
+        reply = await session.send("Correction: it is 585, not 584.")
+
+    assert reply.texts == []
+    assert reply.thoughts == ["(Waiting on the review; nothing to change.)"]
 
 
 @pytest.mark.asyncio

@@ -53,6 +53,7 @@ from band.core.types import (
     Capability,
     Emit,
     FeatureKwargs,
+    LeftoverText,
     PlatformMessage,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
@@ -99,6 +100,7 @@ from band.integrations.mcp import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    custom_tool_effects,
     get_custom_tool_name,
 )
 from band.runtime.formatters import messages_before
@@ -297,6 +299,9 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         model: Model selected from each session's advertised catalog; a value
             the catalog does not offer fails the turn.
         reasoning_effort: Reasoning effort selected the same way.
+        leftover_text: What to do with text the agent wrote outside a Band
+            reply tool: post it as the reply (``REPLY``) or as a thought that
+            ends the turn without one (``THOUGHT``).
     """
 
     command: tuple[str, ...]
@@ -310,6 +315,7 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
     model: str | None = None
     reasoning_effort: str | None = None
+    leftover_text: LeftoverText = LeftoverText.REPLY
 
     @model_validator(mode="before")
     @classmethod
@@ -680,6 +686,8 @@ class ACPClientAdapter(
                 emit=self.features.emit,
                 # Injected Band tools record their own effects in process.
                 records_tool_effects=not self.config.inject_band_tools,
+                leftover_text=self.config.leftover_text,
+                custom_effects=custom_tool_effects(self._custom_tools),
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,

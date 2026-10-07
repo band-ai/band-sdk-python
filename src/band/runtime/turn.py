@@ -28,8 +28,12 @@ def record_tool_result(turn: Turn, tool_name: str, result: Any) -> None:
 def _recording(
     tool_name: str, method: Callable[..., Awaitable[Any]]
 ) -> Callable[..., Awaitable[Any]]:
+    replies = turn_effect(tool_name) is TurnEffect.REPLY
+
     @functools.wraps(method)
     async def record_on_success(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if replies:
+            self.turn.note_reply_attempt()
         result = await method(self, *args, **kwargs)
         record_tool_result(self.turn, tool_name, result)
         return result

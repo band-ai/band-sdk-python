@@ -13,10 +13,17 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self
 
 from band_sdk_core import AgentFailure
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -32,7 +39,7 @@ from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_notice,
-    relay_reply,
+    handle_leftover_text,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -51,6 +58,7 @@ from band.core.types import (
     Capability,
     Emit,
     FeatureKwargs,
+    LeftoverText,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -459,6 +467,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
         validation_alias=AliasChoices("CODEX_TURN_TASK_MARKERS"),
     )
     fallback_send_agent_text: bool = True
+    # What the text fallback posts: the reply, or a thought that ends the turn
+    # without one (see LeftoverText).
+    leftover_text: LeftoverText = LeftoverText.REPLY
     approval_mode: ApprovalMode = "manual"
     approval_text_notifications: bool = True
     approval_wait_timeout_s: float = 300.0
@@ -545,6 +556,16 @@ class CodexAdapterConfig(EnvAdapterConfig):
         if relative := [root for root in roots if not is_host_absolute(root)]:
             raise ValueError(f"skill_roots must be absolute paths: {relative}")
         return roots
+
+    @model_validator(mode="after")
+    def _leftover_text_needs_the_fallback(self) -> Self:
+        if self.leftover_text is not LeftoverText.REPLY and (
+            not self.fallback_send_agent_text
+        ):
+            raise ValueError(
+                "leftover_text applies only while fallback_send_agent_text is on"
+            )
+        return self
 
     @classmethod
     def settings_customise_sources(
@@ -2261,7 +2282,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         if turn_status == "completed":
             if self.config.fallback_send_agent_text:
-                await relay_reply(tools, final_text.strip(), mentions=mention)
+                await handle_leftover_text(
+                    tools,
+                    final_text.strip(),
+                    mention,
+                    mode=self.config.leftover_text,
+                    emit=self.features.emit,
+                )
             return
 
         if turn_status == "interrupted":

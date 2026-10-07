@@ -213,6 +213,7 @@ async def execute_custom_tool(
         Exception: Any exception from tool function (for adapter to catch)
     """
     model, func = tool
+    _note_reply_attempt(func, turn)
 
     # Validate arguments, format errors for LLM readability
     try:
@@ -229,6 +230,13 @@ async def execute_custom_tool(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
     return await invoke_validated_custom_tool(tool, validated, turn=turn)
+
+
+def _note_reply_attempt(func: Callable[..., Any], turn: Turn | None) -> None:
+    """A declared reply tool's call is a reply attempt; one that does not
+    deliver leaves the turn's reply owed, whatever the model writes after it."""
+    if turn is not None and declared_effect(func) is TurnEffect.REPLY:
+        turn.note_reply_attempt()
 
 
 async def invoke_validated_custom_tool(
@@ -248,6 +256,7 @@ async def invoke_validated_custom_tool(
     match :func:`execute_custom_tool` exactly, and so does ``turn``.
     """
     model, func = tool
+    _note_reply_attempt(func, turn)
 
     accepts_input = _custom_tool_accepts_input(func)
     if not accepts_input and model.model_fields:

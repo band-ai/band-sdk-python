@@ -7,6 +7,7 @@ uses: registry dispatch, a direct method call, and ``deliver_reply``.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 from unittest.mock import MagicMock
@@ -15,8 +16,9 @@ import band_sdk_core
 import pytest
 from pydantic import BaseModel
 
-from band.core.delivery import deliver_reply, relay_reply
+from band.core.delivery import deliver_reply, handle_leftover_text, relay_reply
 from band.core.turn import Turn, judge_detached_turn, report_unsettled_turn
+from band.core.types import LeftoverText
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import declares_turn_effect, execute_custom_tool
 from band.runtime.tools import AgentTools, BandTool, TurnEffect
@@ -176,6 +178,35 @@ class TestCustomTools:
         await relay_reply(tools, "The operation failed.", ["@alice"])
 
         assert tools.chat == ["The operation failed."]
+
+    @pytest.mark.parametrize(
+        ("handler_output", "arguments"),
+        [
+            pytest.param(RuntimeError("down"), {"topic": "x"}, id="raises"),
+            pytest.param({"ok": False, "error": "refused"}, {"topic": "x"}, id="value"),
+            pytest.param("unused", {}, id="invalid-arguments"),
+        ],
+    )
+    async def test_a_failed_declared_reply_leaves_leftover_text_owing(
+        self, handler_output: Any, arguments: dict[str, Any]
+    ) -> None:
+        """A reply tool that did not deliver is not a silence the model chose;
+        closing text after it must not settle the turn."""
+
+        @declares_turn_effect(TurnEffect.REPLY)
+        async def reply(args: LookupInput) -> Any:
+            if isinstance(handler_output, Exception):
+                raise handler_output
+            return handler_output
+
+        tools = FakeAgentTools()
+        with contextlib.suppress(Exception):
+            await execute_custom_tool((LookupInput, reply), arguments, turn=tools.turn)
+        await handle_leftover_text(
+            tools, "Sent.", [], mode=LeftoverText.THOUGHT, emit=frozenset()
+        )
+
+        assert not tools.turn.complete
 
 
 async def test_the_dedup_wrapper_shares_the_inner_ledger() -> None:

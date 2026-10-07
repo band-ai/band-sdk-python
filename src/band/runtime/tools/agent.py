@@ -58,6 +58,7 @@ from band.platform.posting import post_event, post_message
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.participants import log_roster_call, participant_snapshot
+from band.runtime.tools.effects import turn_effect
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -69,6 +70,7 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.tools.types import TurnEffect
 from band.runtime.turn import records_turn_effects
 
 if TYPE_CHECKING:
@@ -1979,8 +1981,10 @@ class AgentTools(AgentToolsProtocol):
                     arguments,
                 )
         except ValueError as error:
+            self._note_rejected_reply(tool_name)
             return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
         except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
+            self._note_rejected_reply(tool_name)
             msg = f"Error validating {tool_name} arguments: {e}"
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
@@ -2000,3 +2004,9 @@ class AgentTools(AgentToolsProtocol):
         except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
             msg = f"Error executing {tool_name}: {e}"
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)
+
+    def _note_rejected_reply(self, tool_name: str) -> None:
+        """A reply call refused for its arguments never reaches the reply
+        method, which notes the attempt itself."""
+        if turn_effect(tool_name) is TurnEffect.REPLY:
+            self.turn.note_reply_attempt()

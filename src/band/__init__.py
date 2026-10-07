@@ -56,7 +56,14 @@ from .core.exceptions import (
 )
 
 # Core types (v0.3.0)
-from .core.types import AdapterFeatures, Capability, ConflictPolicy, Emit, FeatureKwargs
+from .core.types import (
+    AdapterFeatures,
+    Capability,
+    ConflictPolicy,
+    Emit,
+    FeatureKwargs,
+    LeftoverText,
+)
 from .logging_config import (
     CHATTY_LOGGERS,
     STANDARD_FORMAT,
@@ -144,6 +151,7 @@ __all__ = [
     "FormatStyle",
     # Runtime - Shutdown
     "GracefulShutdown",
+    "LeftoverText",
     "LogLevel",
     "LogSettings",
     "LogStream",
