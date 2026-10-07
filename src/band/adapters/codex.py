@@ -28,6 +28,7 @@ from typing_extensions import Unpack
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.adapterconfig import EnvAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_notice,
@@ -293,12 +294,6 @@ class SetReasoningInput(BaseModel):
         default=None,
         description="Reasoning summary detail: auto, concise, detailed, or none. Omit to keep current.",
     )
-
-
-# Hardcoded default — update when OpenAI rotates model IDs.
-# Override at construction via CodexAdapterConfig(model=...) or the
-# CODEX_MODEL environment variable.
-_DEFAULT_MODEL = "gpt-5.5"
 
 
 class CodexClientProtocol(Protocol):
@@ -1596,6 +1591,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             await self._register_skill_roots(client)
             room.selected_model = await self._select_model()
+            logger.info("Codex model selected: %s", room.selected_model)
             room.initialized = True
         except BaseException:
             await self._retire_client(room)
@@ -1638,12 +1634,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "model/list failed; using default Codex model",
                 exc_info=True,
             )
-            return _DEFAULT_MODEL
+            return OPENAI_MODEL
 
         visible_model_ids = self._visible_model_ids(result)
         if visible_model_ids:
             return visible_model_ids[0]
-        return _DEFAULT_MODEL
+        logger.warning("model/list has no visible models; using default Codex model")
+        return OPENAI_MODEL
 
     async def _ensure_thread(
         self,

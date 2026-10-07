@@ -7,7 +7,7 @@ Use the new composition-based pattern instead:
     from band import Agent
     from band.adapters import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 
-    adapter = ClaudeSDKAdapter()  # pins the adapter's DEFAULT_MODEL
+    adapter = ClaudeSDKAdapter()  # pins band.core.defaultmodels.ANTHROPIC_MODEL
     # Or: ClaudeSDKAdapter(ClaudeSDKAdapterConfig(model="opus"))
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()

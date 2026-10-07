@@ -7,6 +7,7 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from uuid import uuid4
 
+from band.core.defaultmodels import OPENAI_MODEL
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     canonicalize_mcp_tool_name,
@@ -55,7 +56,7 @@ OMP_ELICITATION_CALL_ID_PREFIX = "omp-elicitation:"
 OMP_PINNED_PACKAGE = "@oh-my-pi/pi-coding-agent@18.2.8"
 OMP_MIN_BUN = "1.3.14"
 
-DEFAULT_OMP_MODEL = "openai/gpt-5.4-mini"
+DEFAULT_OMP_MODEL = f"openai/{OPENAI_MODEL}"
 
 # Documented OMP model-provider credential routes (not Vertex / GOOGLE_*).
 _OMP_PROVIDER_API_KEY_ENV: dict[str, str] = {

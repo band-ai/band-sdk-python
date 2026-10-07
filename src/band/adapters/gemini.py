@@ -31,6 +31,7 @@ except ImportError as e:
 
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import GEMINI_MODEL
 from band.core.exceptions import ProviderRunError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
@@ -135,7 +136,7 @@ class GeminiAdapterConfig(BaseAdapterConfig):
             are trimmed.
     """
 
-    model: str = "gemini-2.5-flash"
+    model: str = GEMINI_MODEL
     provider_key: str | None = Field(default=None, repr=False)
     system_prompt: str | None = None
     custom_section: str = ""
@@ -157,7 +158,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
     Example:
         adapter = GeminiAdapter(
             GeminiAdapterConfig(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 custom_section="You are a helpful assistant.",
             ),
             capabilities=Capability.MEMORY,

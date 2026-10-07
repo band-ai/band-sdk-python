@@ -205,7 +205,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
     Example:
         adapter = CopilotSDKAdapter(
-            CopilotSDKAdapterConfig(model="gpt-5"),
+            CopilotSDKAdapterConfig(model="gpt-6-luna"),
             # Narrowing is opt-in; the default is everything supported.
             emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )

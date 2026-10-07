@@ -86,7 +86,7 @@ async def main() -> None:
         When users ask about weather, use get_weather.
         Always send your response using band_send_message."""
         ),
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-6-luna")),
         checkpointer=InMemorySaver(),
         additional_tools=[calculate, get_weather],  # Add your tools here
     )

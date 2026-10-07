@@ -103,7 +103,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     1. Simple (recommended for most users):
         adapter = LangGraphAdapter(
             LangGraphAdapterConfig(custom_section="You are a helpful assistant."),
-            llm=ChatOpenAI(model="gpt-5.4"),
+            llm=ChatOpenAI(model="gpt-6-luna"),
             checkpointer=InMemorySaver(),
         )
 
@@ -132,7 +132,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         from langgraph.checkpoint.memory import InMemorySaver
 
         adapter = LangGraphAdapter(
-            llm=ChatOpenAI(model="gpt-5.4"),
+            llm=ChatOpenAI(model="gpt-6-luna"),
             checkpointer=InMemorySaver(),
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")

@@ -44,7 +44,7 @@ async def main() -> None:
     # Create adapter with Jerry's character prompt
     adapter = LangGraphAdapter(
         LangGraphAdapterConfig(custom_section=generate_jerry_prompt("Jerry")),
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-6-luna")),
         checkpointer=InMemorySaver(),
     )
 

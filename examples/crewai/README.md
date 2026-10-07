@@ -336,7 +336,7 @@ Use this example if:
 This example reads the model from the `CREWAI_MODEL` environment variable, so set it in `.env` before running:
 
 ```bash
-CREWAI_MODEL=gpt-5.4-mini
+CREWAI_MODEL=gpt-6-luna
 ```
 
 Run:
@@ -358,7 +358,7 @@ A typical adapter configuration looks like this:
 ```python notest
 adapter = CrewAIAdapter(
     CrewAIAdapterConfig(
-        model="gpt-5.4-mini",
+        model="gpt-6-luna",
         role="Research Assistant",
         goal="Help users find and analyze information",
         backstory="Expert researcher with deep domain knowledge",
@@ -409,9 +409,8 @@ The adapter uses an OpenAI-compatible model interface.
 
 That includes:
 
-- `gpt-5.4-mini`
-- `gpt-5.4-mini`
-- `gpt-4-turbo`
+- `gpt-6-luna`
+- `gpt-5.5`
 - other OpenAI-compatible models
 
 ## Common problems

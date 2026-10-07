@@ -23,7 +23,7 @@ from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
 adapter = AnthropicAdapter(
     AnthropicAdapterConfig(
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-5-5",
         custom_section="You are a helpful assistant.",
     )
 )
@@ -92,7 +92,7 @@ support_agent:
 ```python
 adapter = AnthropicAdapter(
     AnthropicAdapterConfig(
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-5-5",
         custom_section="You are a technical support agent. Be concise and helpful.",
     )
 )
@@ -105,7 +105,7 @@ the adapter supports). To silence it instead:
 
 ```python
 adapter = AnthropicAdapter(
-    AnthropicAdapterConfig(model="claude-sonnet-4-5-20250929"),
+    AnthropicAdapterConfig(model="claude-sonnet-5-5"),
     emit=(),  # No tool_call/tool_result/usage events posted to the room
 )
 ```

@@ -19,7 +19,7 @@ Optional env overrides:
     AGENT_KEY=darter
     CODEX_WORKSPACE_ROOT=.band-workspaces
     CODEX_ROLE=coding|planner|reviewer
-    CODEX_MODEL=gpt-5.5
+    CODEX_MODEL=gpt-6-luna
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
     CODEX_TURN_TASK_MARKERS=true|false
 """

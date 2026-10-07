@@ -48,7 +48,7 @@ async def main() -> None:
 
     adapter = AnthropicAdapter(
         AnthropicAdapterConfig(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-5-5",
             custom_section=(
                 "You are a helpful assistant with contact management capabilities.\n"
                 "You can list, add, and remove contacts, and manage contact requests.\n"

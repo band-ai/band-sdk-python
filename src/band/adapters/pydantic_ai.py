@@ -205,8 +205,8 @@ class PydanticAIAdapterConfig(BaseAdapterConfig):
     """Settings for a Pydantic AI agent.
 
     Attributes:
-        model: Pydantic AI model string (e.g. ``"openai:gpt-5.4"``,
-            ``"anthropic:claude-sonnet-4-5"``). Since pydantic-ai 2.0 the bare
+        model: Pydantic AI model string (e.g. ``"openai:gpt-6-luna"``,
+            ``"anthropic:claude-sonnet-5-5"``). Since pydantic-ai 2.0 the bare
             ``openai:`` prefix routes to OpenAI's Responses API; use
             ``openai-chat:`` for Chat Completions. Leave it ``None`` only when
             the adapter is given a live ``llm``.
@@ -229,7 +229,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     Example:
         adapter = PydanticAIAdapter(
             PydanticAIAdapterConfig(
-                model="openai:gpt-5.4",
+                model="openai:gpt-6-luna",
                 custom_section="You are a helpful assistant.",
             )
         )

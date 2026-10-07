@@ -405,11 +405,9 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
     builder doesn't expose -- so both stay in sync on cwd/model/command instead
     of a bespoke test hand-copying this logic and silently drifting from it.
 
-    Only overrides what's explicitly configured. ``CODEX_MODEL`` is left unset by
-    default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
-    catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
-    adapter discover/select a valid Codex model. ``CODEX_COMMAND`` likewise: an absent
-    value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
+    The model is ``Backends.codex_model`` (``CODEX_MODEL``). An absent
+    ``CODEX_COMMAND`` spawns the stock `codex` binary. Splits mirror the gates
+    in deps.py.
     """
     config_kwargs: dict[str, Any] = {
         # CodexAdapterConfig reads CODEX_-prefixed env, so the exported CODEX_CWD
@@ -419,9 +417,8 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
         "workspace_for_room": create_room_workspace_resolver(s.backends.codex_cwd),
         "sandbox": CodexSandboxMode.WORKSPACE_WRITE,
         "custom_section": prompt or "",
+        "model": s.backends.codex_model,
     }
-    if s.backends.codex_model.strip():
-        config_kwargs["model"] = s.backends.codex_model
     if s.backends.codex_command.strip():
         config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
     return config_kwargs

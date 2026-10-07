@@ -37,7 +37,7 @@ async def main() -> None:
     # Create adapter with framework-specific settings
     adapter = CrewAIAdapter(
         CrewAIAdapterConfig(
-            model="gpt-5.4-mini",
+            model="gpt-6-luna",
             custom_section="You are a helpful assistant. Be concise and friendly.",
         ),
     )

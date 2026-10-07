@@ -14,9 +14,15 @@ instead of raising a bool/int ValidationError at construction.
 from __future__ import annotations
 
 from dotenv import load_dotenv
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band.core.defaultmodels import (
+    ANTHROPIC_MODEL,
+    GEMINI_MODEL,
+    LETTA_SELF_HOSTED_MODEL,
+    OPENAI_MODEL,
+)
 from band.integrations.omp import DEFAULT_OMP_MODEL
 from tests.paths import ENV_TEST_FILE
 
@@ -129,7 +135,7 @@ class Backends(BaseSettings):
     codex_cwd_is_disposable: bool = Field(
         default=False, validation_alias="E2E_CODEX_CWD_IS_DISPOSABLE"
     )
-    codex_model: str = ""  # CODEX_MODEL (else falls back to the OpenAI model)
+    codex_model: str = OPENAI_MODEL  # CODEX_MODEL
 
     # OpenCode server.
     opencode_base_url: str = ""  # OPENCODE_BASE_URL (a running `opencode serve`)
@@ -153,7 +159,7 @@ class Backends(BaseSettings):
     # MCP_SERVER_URL switches the builder to an external band-mcp instead.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str = Field(default="", repr=False)  # LETTA_API_KEY
-    letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
+    letta_model: str = LETTA_SELF_HOSTED_MODEL  # LETTA_MODEL
     # Letta's docker server requires an embedding model on agent create.
     letta_embedding: str = "openai/text-embedding-3-small"  # LETTA_EMBEDDING
     # Host the (dockerized) Letta server uses to reach the adapter's self-hosted
@@ -182,10 +188,15 @@ class Backends(BaseSettings):
     github_token: str = Field(default="", repr=False)  # GITHUB_TOKEN
     # Those smokes' typed model (see hermetic_copilot_config) rather than
     # Copilot's own pick, which can be an expensive reasoning-tier model
-    # (observed: gpt-5.6-terra). gpt-5.6-luna is the cheapest model in the
-    # GPT-5.6 family while still agentic/tool-calling, so their billed turns
-    # stay cheap and deterministic across runs.
-    copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
+    # (observed: gpt-5.6-terra); OPENAI_MODEL keeps billed turns cheap and
+    # deterministic.
+    copilot_hosted_model: str = OPENAI_MODEL  # COPILOT_HOSTED_MODEL
+
+    @field_validator("codex_model")
+    @classmethod
+    def _blank_codex_model_is_default(cls, value: str) -> str:
+        # env_ignore_empty only catches "", not a whitespace-only CODEX_MODEL.
+        return value.strip() or OPENAI_MODEL
 
 
 class LLMModels(BaseSettings):
@@ -201,14 +212,15 @@ class LLMModels(BaseSettings):
     # LangGraph/OpenAI agent model. Honors the documented E2E_LLM_MODEL (and
     # accepts E2E_OPENAI_MODEL as an alias).
     openai_model: str = Field(
-        default="gpt-5.4-mini",
+        default=OPENAI_MODEL,
         validation_alias=AliasChoices("E2E_LLM_MODEL", "E2E_OPENAI_MODEL"),
     )
-    # Serves the agent under test AND the judge, which needs structured-output
-    # support.
-    anthropic_model: str = "claude-sonnet-5-5"  # E2E_ANTHROPIC_MODEL
+    # Serves the agent under test AND the judge. Sonnet handles ambiguous
+    # multi-agent turns that Haiku does not; the judge also needs
+    # structured-output support.
+    anthropic_model: str = ANTHROPIC_MODEL  # E2E_ANTHROPIC_MODEL
     # Gemini / Google ADK agent model.
-    gemini_model: str = "gemini-2.5-flash"  # E2E_GEMINI_MODEL
+    gemini_model: str = GEMINI_MODEL  # E2E_GEMINI_MODEL
     # Judge model. MUST be a modern Anthropic model id (structured outputs). Left
     # blank, it falls back to ``anthropic_model`` so the judge always uses a model
     # the account has configured (E2E_JUDGE_MODEL overrides).

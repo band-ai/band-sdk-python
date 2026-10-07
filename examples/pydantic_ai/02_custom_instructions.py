@@ -47,7 +47,7 @@ async def main() -> None:
     # Create adapter with custom instructions
     adapter = PydanticAIAdapter(
         PydanticAIAdapterConfig(
-            model="anthropic:claude-sonnet-4-6", custom_section=CUSTOM_PROMPT
+            model="anthropic:claude-sonnet-5-5", custom_section=CUSTOM_PROMPT
         )
     )
 

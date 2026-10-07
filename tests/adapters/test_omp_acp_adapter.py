@@ -75,7 +75,7 @@ class TestOmpACPAdapterModel:
             OmpACPAdapterConfig(api_key="secret")
 
     def test_api_key_stays_out_of_the_config_repr(self) -> None:
-        config = OmpACPAdapterConfig(model="openai/gpt-5.4-mini", api_key="secret")
+        config = OmpACPAdapterConfig(model="openai/gpt-6-luna", api_key="secret")
 
         assert "secret" not in repr(config)
 

@@ -35,7 +35,7 @@ async def main() -> None:
 
     adapter = CrewAIAdapter(
         CrewAIAdapterConfig(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+            model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
             role="Engineering Handoff Writer",
             goal=(
                 "Turn room input into a final engineering note that reflects the "
