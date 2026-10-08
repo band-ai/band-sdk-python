@@ -61,7 +61,6 @@ async def main() -> None:
             personality="none",
             custom_section=generate_jerry_prompt("Jerry"),
             include_base_instructions=True,
-            fallback_send_agent_text=True,
         ),
         emit={Emit.TASK_EVENTS, Emit.THOUGHTS},
     )

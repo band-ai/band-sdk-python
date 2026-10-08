@@ -91,6 +91,10 @@ class Events(ContentAssertions, list[ChatMessage]):
             and not is_usage_event(message.metadata)
         )
 
+    def excluding(self, *event_ids: str) -> Events:
+        """Keep events other than the known, intended room posts."""
+        return Events(event for event in self if event.id not in event_ids)
+
     def present(self) -> bool:
         """True if any event of this type was captured."""
         return len(self) > 0

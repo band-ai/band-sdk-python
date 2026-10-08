@@ -499,7 +499,6 @@ async def run_codex_agent(
             custom_section=custom_section,
             include_base_instructions=True,
             emit_turn_task_markers=codex_turn_task_markers,
-            fallback_send_agent_text=True,
             experimental_api=True,
         ),
         emit=Emit.TASK_EVENTS,

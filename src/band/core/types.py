@@ -158,21 +158,6 @@ class Emit(_FlagEnum):
     USAGE = "usage"
 
 
-class AssistantTextMode(StrEnum):
-    """What an adapter does with model text a turn did not deliver through a
-    Band reply tool (``band_send_message`` or ``band_no_reply``).
-
-    ``REPLY`` posts it as the turn's reply, mentioning the sender. ``THOUGHT``
-    posts it as a ``thought`` event (when thoughts are in the adapter's emit
-    set) and ends the turn without a reply: for agents told to answer only
-    through Band tools, that text is their own narration, and a reply would
-    mention, and so start a turn for, the sender.
-    """
-
-    REPLY = "reply"
-    THOUGHT = "thought"
-
-
 def _as_int(value: object) -> int:
     """Coerce a usage field to an int; anything non-int (None, missing) → 0."""
     return value if isinstance(value, int) else 0

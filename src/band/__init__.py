@@ -56,14 +56,7 @@ from .core.exceptions import (
 )
 
 # Core types (v0.3.0)
-from .core.types import (
-    AdapterFeatures,
-    AssistantTextMode,
-    Capability,
-    ConflictPolicy,
-    Emit,
-    FeatureKwargs,
-)
+from .core.types import AdapterFeatures, Capability, ConflictPolicy, Emit, FeatureKwargs
 from .logging_config import (
     CHATTY_LOGGERS,
     STANDARD_FORMAT,
@@ -133,7 +126,6 @@ __all__ = [
     # Runtime - Core
     "AgentRuntime",
     "AgentTools",
-    "AssistantTextMode",
     "BandConfigError",
     "BandConnectionError",
     "BandError",

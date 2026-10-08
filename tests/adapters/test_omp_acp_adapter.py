@@ -481,10 +481,8 @@ class TestOmpDeterministicMcpReply:
         assert client.get_collected_text("sess") == "hello from omp"
 
     @pytest.mark.asyncio
-    async def test_reading_a_band_tools_docs_leaves_the_text_to_reply(self) -> None:
-        """A read of ``xd://`` documentation is observation: with an external
-        band-mcp it must not be recorded as the reply, or the closing answer
-        would be dropped."""
+    async def test_reading_band_tool_docs_cannot_complete_the_turn(self) -> None:
+        """Reading device documentation is observation, even for a reply tool."""
         client = OmpACPCollectingClient(own_tool_names=frozenset({"band_send_message"}))
         client.set_sink("sess", AsyncMock())
         update = MagicMock()
@@ -498,7 +496,6 @@ class TestOmpDeterministicMcpReply:
 
         emitter = RoomTurnEmitter(
             tools,
-            mentions=[{"id": "u1", "name": "User"}],
             session_id="sess",
             room_id="room-1",
             records_tool_effects=True,
@@ -510,4 +507,5 @@ class TestOmpDeterministicMcpReply:
                 CollectedChunk(chunk_type=ChunkType.TEXT, content="The answer.")
             )
 
-        assert tools.chat == ["The answer."]
+        assert tools.chat == []
+        assert not tools.turn.complete

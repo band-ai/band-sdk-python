@@ -38,21 +38,23 @@ assert adapter.config.command == ("codex-acp",)
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
-- **Assistant text is held to turn close** and handled as `assistant_text_mode` says, unless
-  the turn already replied or declined: `REPLY` (the default) relays it as one reply
-  through `relay_reply`; `THOUGHT` posts it as a `thought` event and settles the turn
-  without a reply, for agents that answer only through Band tools and would otherwise
-  wake the sender with their own narration. Injected Band tools record their own effect
-  on `tools.turn`. With `inject_band_tools=False` an external band-mcp runs out of process,
-  so the emitter records each completed call's `turn_effect` from the `tool_call` title
-  instead, and only in that mode, so no call is counted twice. Narrated names are
-  canonicalized (`canonicalize_mcp_tool_name`) so Copilot's `band-` prefix never reaches
-  the room.
-- **`emit=` never gates** that recording, a `REPLY`-mode held text, or the closing `task`
-  event (a `THOUGHT`-mode held text follows `Emit.THOUGHTS`).
-  That event is resume state:
-  `ACPClientHistoryConverter` reads `acp_client_session_id` / `acp_client_room_id` from it
-  to `session/load` after a restart.
+- **Held agent text is thought telemetry.** At clean prompt close, successful
+  external Band-tool effects are recorded first; held native text is an optional
+  thought without mentions, suppressed after a successful reply or decline.
+  It never settles a turn. Failed tools alone and native-only output reach the
+  shared missing-reply verdict, with thoughts enabled or disabled.
+- **Injected Band tools record their own successful effects.** With
+  `inject_band_tools=False`, completed external tool effects are staged from
+  normalized identities until successful close. Failed calls record nothing.
+  Such peers need external Band tools to reply or decline; native text alone
+  no longer supplies room replies.
+- **`emit=` never gates effects or resume state.** The closing session `task`
+  carries restoration identifiers after held-text handling, regardless of flags.
+  Runtime judging may report an error afterward. Failed/cancelled prompts post
+  neither held text nor resume state.
+- **Migration:** delete retired `assistant_text_mode` config keys; explicit
+  configs reject them. Tool filters narrow SDK-injected registrations; external
+  MCP servers remain outside SDK registration control.
 - **Approved permissions are silent.** Only a denied request posts a synthetic
   `tool_call`/`tool_result` pair, and only when `Emit.TOOL_CALLS` is on.
 - **Replay happens once**, only for a freshly minted session (a failed `session/load`

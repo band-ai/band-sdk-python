@@ -13,8 +13,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from band.core.delivery import handle_assistant_text
-from band.core.types import AssistantTextMode
 from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import (
     AgentTools,
@@ -95,27 +93,3 @@ async def test_no_reply_is_local_only(mock_rest_client: MagicMock) -> None:
 
     assert (outcome.ok, outcome.value) == (True, {"status": "no_reply"})
     assert mock_rest_client.mock_calls == []
-
-
-async def test_a_reply_refused_for_its_arguments_leaves_the_reply_owed(
-    mock_rest_client: MagicMock,
-) -> None:
-    """Validation refuses the call before the reply method runs; text the
-    model writes after it, which may claim the reply was sent, must not
-    settle the turn as a deliberate silence."""
-    tools = AgentTools("room-1", mock_rest_client)
-
-    outcome = await tools.execute_tool_call_structured(
-        BandTool.SEND_MESSAGE, {"content": "The answer."}
-    )
-    await handle_assistant_text(
-        tools,
-        "I sent the answer.",
-        [],
-        mode=AssistantTextMode.THOUGHT,
-        emit=frozenset(),
-    )
-
-    assert not outcome.ok
-    assert mock_rest_client.mock_calls == []
-    assert not tools.turn.complete

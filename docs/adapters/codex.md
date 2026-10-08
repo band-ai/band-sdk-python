@@ -30,10 +30,16 @@ workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
   close errors and close timeouts retain the claim for retry. A timed-out or
   cancelled caller does not abandon subprocess cleanup; retry room cleanup to
   finish releasing ownership. Shutdown attempts every room and reports failures.
-- **Codex's final text is a fallback reply.** With `fallback_send_agent_text`
-  (on by default) it is posted when the turn did not reply through a Band tool.
-  `assistant_text_mode=AssistantTextMode.THOUGHT` posts it as a `thought` event instead and
-  ends the turn without a reply; it requires the fallback to stay on.
+- **Band tools own replies and declines.** Native completed text is optional
+  thought telemetry without mentions; it never settles a turn. A native-only
+  turn fails the shared missing-reply verdict. `Emit.THOUGHTS` controls visibility.
+  Remove retired `fallback_send_agent_text` and `assistant_text_mode` config keys
+  and `CODEX_FALLBACK_SEND_AGENT_TEXT` / `CODEX_ASSISTANT_TEXT_MODE` environment
+  variables. Explicit configs reject retired keys; the environment keys are ignored.
+- **Tool filters apply to fresh threads.** Include/category/exclude filters narrow
+  the dynamic platform tools advertised when starting a thread. Resumed threads
+  retain their saved registrations: start a fresh thread after changing filters.
+  First-prompt context refreshes communication instructions, not saved tool schemas.
 - **`reasoning_effort` is not validated.** The valid values depend on the model
   and the Codex CLI version, and the backend rejects unknown ones.
 - **`skill_roots` need Codex CLI 0.136.0 or newer.** Codex has no config key

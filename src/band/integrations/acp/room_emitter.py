@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from typing import Self
 
-from band.core.delivery import handle_assistant_text
+from band.core.content import has_visible_content
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import AssistantTextMode, Emit
+from band.core.types import Emit, MessageType
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -40,9 +39,9 @@ class RoomTurnEmitter:
     or declined via a Band tool — if so the text would duplicate the reply already
     in the room.
 
-    On a clean close the held text is handled as ``assistant_text_mode`` says (unless
-    the turn already replied), and the session bookkeeping ``task`` event is
-    posted last.
+    On clean close, held text is optional thought telemetry unless a tool
+    replied or declined. The resume-state task follows; runtime judging may
+    subsequently report a missing reply.
 
     Which narration kinds reach the room is controlled by the emit set passed
     at construction (``None``: all kinds — the historical default). The closing
@@ -56,13 +55,10 @@ class RoomTurnEmitter:
         self,
         tools: AgentToolsProtocol,
         *,
-        mentions: list[dict[str, str]],
         session_id: str,
         room_id: str,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
-        assistant_text_mode: AssistantTextMode = AssistantTextMode.REPLY,
-        custom_effects: Mapping[str, TurnEffect] | None = None,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
         each completed call's effect is recorded on the turn from the stream.
@@ -70,24 +66,17 @@ class RoomTurnEmitter:
         Those effects are staged and reach the turn only when the prompt closes
         successfully: a rejected, timed-out or cancelled prompt owns none of
         the work streamed during it, which may belong to another turn.
-
-        ``custom_effects``: the effects the adapter's custom tools declared,
-        so a refused custom reply tool is recognised as a failed reply.
         """
         self._tools = tools
-        self._mentions = mentions
         self._session_id = session_id
         self._room_id = room_id
         self._records_tool_effects = records_tool_effects
-        self._assistant_text_mode = assistant_text_mode
-        self._custom_effects = custom_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
         # reaches the room sink.
         self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._pending_text: list[str] = []
         self._staged_effects: list[TurnEffect] = []
-        self._reply_attempted = False
 
     async def emit(self, chunk: CollectedChunk) -> None:
         self._stage_tool_outcome(chunk)
@@ -126,33 +115,13 @@ class RoomTurnEmitter:
                 )
 
     def _stage_tool_outcome(self, chunk: CollectedChunk) -> None:
-        """Stage what a tool call means for the turn.
-
-        ACP has no structured tool-name field, so the canonicalized title names
-        the tool; a non-Band tool resolves to ``observe``. A completed call's
-        effect is staged only for an external band-mcp, which runs where the
-        SDK never sees it; injected tools record their own. A failed call
-        records no effect, so a failed post never suppresses the text relay.
-        Any call to a reply tool, in either mode and whatever its status, is a
-        reply attempt: an injected tool can be refused (its arguments failed
-        validation, its permission was denied) before it runs, so the stream
-        is the only record that the model tried to answer.
-        """
+        """Stage successful external effects until the prompt closes cleanly."""
+        if not self._records_tool_effects:
+            return
         match chunk.tool:
             case ACPToolCall(name=name) | ACPToolResult(call=ACPToolCall(name=name)):
-                self._note_reply_attempt(name)
-            case _:
-                return
-        if (
-            self._records_tool_effects
-            and chunk.metadata.get("status") == ToolStatus.COMPLETED
-        ):
-            self._staged_effects.append(turn_effect(name))
-
-    def _note_reply_attempt(self, tool_name: str) -> None:
-        effect = turn_effect(tool_name, custom_effects=self._custom_effects)
-        if effect is TurnEffect.REPLY:
-            self._reply_attempted = True
+                if chunk.metadata.get("status") == ToolStatus.COMPLETED:
+                    self._staged_effects.append(turn_effect(name))
 
     def _tool_event_content(self, chunk: CollectedChunk) -> str:
         """Serialize normalized tool activity for room persistence."""
@@ -176,7 +145,6 @@ class RoomTurnEmitter:
         The pair is part of tool-call narration, so it is suppressed when
         ``Emit.TOOL_CALLS`` is not in the emitter's emit set.
         """
-        self._note_reply_attempt(call.name)
         if Emit.TOOL_CALLS not in self._emit:
             return
         metadata: dict[str, object] = {
@@ -212,17 +180,18 @@ class RoomTurnEmitter:
             return False
         for effect in self._staged_effects:
             self._tools.turn.record(effect)
-        if self._reply_attempted:
-            self._tools.turn.note_reply_attempt()
-        # The held runs only ever post together at close, so they are handled
-        # as the turn's one closing text.
-        await handle_assistant_text(
-            self._tools,
-            "\n\n".join(self._pending_text),
-            self._mentions,
-            mode=self._assistant_text_mode,
-            emit=self._emit,
-        )
+        text = "\n\n".join(self._pending_text)
+        if (
+            not self._tools.turn.replied
+            and Emit.THOUGHTS in self._emit
+            and has_visible_content(text)
+        ):
+            await send_event_safe(
+                self._tools,
+                content=text,
+                message_type=MessageType.THOUGHT,
+                log_label="ACP closing thought",
+            )
         # Posted regardless of the emit set: this is resume state read back by
         # ACPClientHistoryConverter, not narration (only PLAN chunks follow
         # Emit.TASK_EVENTS).

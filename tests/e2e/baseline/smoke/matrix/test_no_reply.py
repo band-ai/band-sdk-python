@@ -12,7 +12,7 @@ import pytest
 
 from band.core.types import AdapterFeatures, Emit, MessageType
 from band.runtime.tools import BandTool
-from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -26,6 +26,15 @@ FYI = (
 @per_adapter(runs_tool_loop=True, features=AdapterFeatures(emit={Emit.TOOL_CALLS}))
 @pytest.mark.asyncio(loop_scope="session")
 async def test_an_fyi_ends_the_turn_through_band_no_reply(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    await assert_fyi_decline(agent, resource_manager, user_ops, reply_capture)
+
+
+async def assert_fyi_decline(
     agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
@@ -47,3 +56,20 @@ async def test_an_fyi_ends_the_turn_through_band_no_reply(
     calls.assert_fired(BandTool.NO_REPLY)
     messages.assert_none()
     errors.assert_none()
+
+
+@per_adapter(
+    Adapter.CODEX,
+    Adapter.COPILOT_ACP,
+    Adapter.CURSOR_ACP,
+    Adapter.OMP_ACP,
+    features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
+)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    await assert_fyi_decline(agent, resource_manager, user_ops, reply_capture)

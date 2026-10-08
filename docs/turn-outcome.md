@@ -15,8 +15,7 @@ A turn is **complete** when it:
 - declined on purpose (`band_no_reply`)
 - did real work (any Band tool whose effect is `act`, such as
   `band_add_participant`)
-- was settled by the adapter itself (a control reply, a busy notice, or closing
-  text reported as a thought under `AssistantTextMode.THOUGHT`)
+- was settled by the adapter itself (a control reply or a busy notice)
 - already reported a failure (`send_failure`)
 
 Anything else is a **missing reply**. Fetching state or narrating through
@@ -169,8 +168,6 @@ A declared effect is recorded only on success. A handler that raises or returns
 an explicit failure (`{"ok": False}`, or a string starting with `Error:` or
 `Error executing `, case-insensitively) records nothing: the turn still owes an
 answer, and a failed reply or decline does not suppress the final-text relay.
-A call to a `REPLY` tool is also a reply attempt (see "Closing text as a
-thought" below).
 Other return values, including `None` from a side-effect-only handler, count as
 successful.
 
@@ -218,23 +215,21 @@ toward: the base prompt still says plain text is never delivered, because
 without that line models more often send their closing narration as a second
 `band_send_message` (measured live on gemini-2.5-flash).
 
-### Closing text as a thought
+### ACP and Codex native text
 
-The ACP client adapters (OMP, Copilot, Cursor) and Codex take
-`assistant_text_mode=AssistantTextMode.THOUGHT` for agents told to answer only through
-Band tools. For them, text written outside a tool is the agent's own narration:
-relaying it would mention the sender and start that participant's next turn.
-In this mode the text, when visible, is posted as a `thought` event (if
-`Emit.THOUGHTS` is enabled) and the turn is settled without a reply. This is an
-operator's reading of what the text means, not proof that the model chose to
-decline. Every call to a reply tool sets `tools.turn.reply_attempted`: the
-in-process tools note it on entry and when arguments are refused, and the ACP
-emitter notes any streamed call or denied permission naming one, including
-custom tools declared `REPLY`. A successful reply also sets `tools.turn.replied`,
-so an attempt without it is a reply that did not land (refused, failed, denied
-or unfinished). The closing text then does not settle the turn: it may describe
-a reply the room never received, so the missing reply is reported as usual. The
-other relaying adapters (Copilot SDK, OpenCode, Letta) always relay.
+ACP clients (including OMP, Copilot and Cursor) and Codex use Band tools for
+room replies and deliberate declines. Native assistant text is optional thought
+telemetry without mentions, gated by `Emit.THOUGHTS`. It never settles a turn:
+native-only output and failed tools followed by narration reach the existing
+missing-reply verdict even with thoughts disabled. Successful reply/decline
+suppresses redundant closing text; qualifying successful work still completes.
+Other relaying adapters retain their native-text fallback.
+
+Remove the retired `assistant_text_mode` config key from ACP and Codex and
+`fallback_send_agent_text` from Codex. Explicit configs reject these as unknown
+fields. Remove `CODEX_ASSISTANT_TEXT_MODE` and `CODEX_FALLBACK_SEND_AGENT_TEXT`
+from the environment; they are no longer read. OpenCode's separate fallback
+setting remains supported.
 
 Parlant joins the non-preamble final segments from one event batch before
 relaying, so recording the fallback reply cannot suppress a later segment of
@@ -245,7 +240,7 @@ to its call by `tool_call_id` and records that core tool's turn effect. Failed
 returns record nothing; self-hosted tools record their own effects.
 
 `tests/framework_conformance/test_reply_boundary.py` pins every `send_message`,
-`deliver_reply`, `relay_reply` and `handle_assistant_text` call outside the tool
+`deliver_reply` and `relay_reply` call outside the tool
 implementations, per file with the reason it carries the model's words, so a
 new one fails until it is justified.
 

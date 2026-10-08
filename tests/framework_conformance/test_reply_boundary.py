@@ -1,8 +1,8 @@
 """Reply boundary test.
 
-A ``send_message``, ``deliver_reply``, ``relay_reply`` or ``handle_assistant_text``
-call counts as the turn's reply, so only the model's own words may go through
-one. An adapter's own post (an approval prompt, a busy notice, a status reply) goes through
+A ``send_message``, ``deliver_reply`` or ``relay_reply`` call counts as the
+turn's reply, so only the model's own words may go through one. An adapter's
+own post (an approval prompt, a busy notice, a status reply) goes through
 ``send_notice``, or it would stand in for the model's answer and suppress the
 final-text relay. This scans ``src/band`` via AST and pins every such call
 outside the tool implementations, per file with the reason it carries the
@@ -19,20 +19,14 @@ from tests.paths import SRC_ROOT
 #: The model's tool implementations, where every reply call is the model's.
 TOOLS_DIR = SRC_ROOT / "runtime" / "tools"
 
-REPLY_CALLS = frozenset(
-    {"send_message", "deliver_reply", "relay_reply", "handle_assistant_text"}
-)
+REPLY_CALLS = frozenset({"send_message", "deliver_reply", "relay_reply"})
 
 #: Reply calls per file outside ``TOOLS_DIR``, and why each carries the model's words.
 ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
     "core/delivery.py": (
-        Counter(send_message=1, deliver_reply=1, relay_reply=1),
-        (
-            "deliver_reply posts the reply; relay_reply delegates to it, and "
-            "handle_assistant_text to relay_reply in REPLY mode"
-        ),
+        Counter(send_message=1, deliver_reply=1),
+        "deliver_reply posts the reply; relay_reply delegates to it",
     ),
-    "adapters/codex.py": (Counter(handle_assistant_text=1), "the model's final text"),
     "adapters/copilot_sdk.py": (
         Counter(relay_reply=1, deliver_reply=1),
         "the model's final text, and its ask_user question as the turn's reply",
@@ -40,10 +34,6 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
     "adapters/letta.py": (Counter(relay_reply=1), "the model's final text"),
     "adapters/opencode/adapter.py": (Counter(relay_reply=1), "the model's final text"),
     "adapters/parlant.py": (Counter(relay_reply=1), "the engine's message"),
-    "integrations/acp/room_emitter.py": (
-        Counter(handle_assistant_text=1),
-        "the agent's held text runs",
-    ),
     "integrations/crewai/catalog.py": (Counter(send_message=1), "the crew's tool"),
     "integrations/parlant/tools.py": (Counter(send_message=1), "the engine's tool"),
     "integrations/claude_sdk/dedup_tools.py": (
