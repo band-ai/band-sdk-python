@@ -369,7 +369,7 @@ async def copilot_persisted_selection(
     )
 
     spawner = CopilotACPAdapter(config)
-    workspace = spawner._workspace(room_id)
+    workspace = spawner._workspaces.claim(room_id)
     runtime = spawner._build_runtime(workspace)
     await runtime.start()
     try:
