@@ -420,28 +420,31 @@ async def test_stdio_client_close_kills_descendants_of_a_lingering_server(
     script = tmp_path / "lingering_server.py"
     script.write_text(
         textwrap.dedent(
-            f"""
+            """
             import subprocess
             import sys
             import time
 
-            beat = (
-                "import time\\n"
-                "while True:\\n"
-                "    open({str(heartbeat)!r}, 'a').write('.')\\n"
-                "    time.sleep(0.05)\\n"
-            )
-            subprocess.Popen([sys.executable, "-c", beat])
+            if len(sys.argv) > 2:
+                while True:
+                    with open(sys.argv[1], "a") as beats:
+                        beats.write(".")
+                    time.sleep(0.05)
+
+            subprocess.Popen([sys.executable, __file__, sys.argv[1], "beat"])
             sys.stdin.read()
             time.sleep(3600)
             """
         ),
         encoding="utf-8",
     )
-    client = CodexStdioClient(command=[sys.executable, "-u", str(script)])
+    client = CodexStdioClient(
+        command=[sys.executable, "-u", str(script), str(heartbeat)]
+    )
     await client.connect()
-    while not heartbeat.exists():
-        await asyncio.sleep(0.05)
+    async with asyncio.timeout(10):
+        while not heartbeat.exists():
+            await asyncio.sleep(0.05)
 
     await client.close()
     beats = heartbeat.read_text()
