@@ -33,7 +33,7 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
     ),
     "adapters/letta.py": (Counter(relay_reply=1), "the model's final text"),
     "adapters/opencode/adapter.py": (Counter(relay_reply=1), "the model's final text"),
-    "adapters/parlant.py": (Counter(relay_reply=1), "the engine's message"),
+    "adapters/parlant/responses.py": (Counter(relay_reply=1), "the engine's message"),
     "integrations/crewai/catalog.py": (Counter(send_message=1), "the crew's tool"),
     "integrations/parlant/bandtools/chat.py": (
         Counter(send_message=1),
