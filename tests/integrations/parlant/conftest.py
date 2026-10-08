@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import pytest_asyncio
 
+from band.integrations.parlant.ports import reserve_server_ports
 from band.integrations.parlant.sessiontools import _session_tools
 from band.integrations.parlant.tools import create_parlant_tools
+from tests.integrations.parlant.helpers import ToolServer
+
+LOOPBACK = "127.0.0.1"
 
 
 @pytest.fixture(autouse=True)
@@ -86,3 +93,19 @@ def parlant_tools():
     tools = create_parlant_tools()
     # Build a dict mapping tool name to the tool's function
     return {entry.tool.name: entry.function for entry in tools}
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def plugin_server() -> AsyncIterator[ToolServer]:
+    """A real Parlant ``PluginServer``, the boundary the engine calls tools through."""
+    plugins = pytest.importorskip("parlant.core.services.tools.plugins")
+    port = reserve_server_ports(LOOPBACK).tool_service_port
+    server = plugins.PluginServer(tools=[], port=port, host=LOOPBACK, hosted=True)
+    async with (
+        server,
+        httpx.AsyncClient(base_url=server.url) as client,
+    ):
+        try:
+            yield ToolServer(server=server, client=client)
+        finally:
+            await server.shutdown()

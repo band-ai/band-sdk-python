@@ -68,6 +68,9 @@ def guard_failures(
 
     @functools.wraps(func)
     async def run(context: Any, *args: Any, **kwargs: Any) -> Any:
+        # Parlant's engine sends None for every optional the model omitted;
+        # dropping it lets the parameter's own default apply.
+        kwargs = {name: value for name, value in kwargs.items() if value is not None}
         # bind() gets its own try: a signature/argument-shape mismatch raises
         # TypeError before there is any `call.arguments` to build the usual
         # failure message from.

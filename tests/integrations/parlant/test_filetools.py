@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.exceptions import BandToolError
-from band.integrations.parlant.tools import set_session_tools
+from band.integrations.parlant.tools import create_parlant_tools, set_session_tools
+from band.runtime.tools import DEFAULT_FILE_CAPTION
+from band.testing import FakeAgentTools
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
@@ -181,3 +183,25 @@ class TestFileTools:
         assert f"Invalid arguments for {name}" in result.data
         assert field in result.data
         getattr(mock_tools, method).assert_not_awaited()
+
+
+async def test_send_room_file_without_caption_uses_the_default(plugin_server):
+    """The engine sends None for an omitted caption; the tool's default applies."""
+    tools = FakeAgentTools()
+    set_session_tools("session-1", tools)
+    await plugin_server.enable(create_parlant_tools())
+
+    result = await plugin_server.call(
+        "band_send_room_file",
+        session_id="session-1",
+        arguments={
+            "content": "hello",
+            "filename": "notes.txt",
+            "mentions": "@alice",
+            "caption": None,
+        },
+    )
+
+    assert result.startswith("Uploaded 'notes.txt'")
+    [message] = tools.messages_sent
+    assert message["content"] == DEFAULT_FILE_CAPTION.format(filename="notes.txt")
