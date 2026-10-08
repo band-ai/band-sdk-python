@@ -23,6 +23,7 @@ from phoenix_channels_python_client.client import (
     PhoenixChannelsProtocolVersion,
     PHXChannelsClient,
 )
+from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import Field
@@ -450,6 +451,7 @@ class WebSocketClient:
             self.api_key,
             protocol_version=PhoenixChannelsProtocolVersion.V2,
             auto_reconnect=False,
+            reconnect_policy=ReconnectPolicy(reconnect_on_normal_close=True),
             heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
             on_reconnect=self._handle_reconnect,
             on_disconnect=self._on_disconnect,
