@@ -47,6 +47,7 @@ from tests.platform.conftest import (
     AllTopicsJoined,
     cancelled_mid_await,
 )
+from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
 class TestBandLinkConstruction:
@@ -269,18 +270,25 @@ class TestBandLinkConnection:
 
         assert link.is_connected is False
 
+    @pytest.mark.parametrize(
+        ("kwargs", "installs"),
+        INSTALL_SIGNAL_HANDLER_CASES,
+        ids=INSTALL_SIGNAL_HANDLER_IDS,
+    )
     @patch("band.platform.link.WebSocketClient")
     async def test_run_forever_delegates_to_websocket(
-        self, mock_ws_class, mock_ws_client
+        self, mock_ws_class, mock_ws_client, kwargs, installs
     ):
-        """run_forever() should delegate to WebSocket."""
+        """run_forever() hands the host's signal choice to WebSocket."""
         mock_ws_class.return_value = mock_ws_client
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
-        await link.run_forever()
+        await link.run_forever(**kwargs)
 
-        mock_ws_client.run_forever.assert_called_once()
+        mock_ws_client.run_forever.assert_awaited_once_with(
+            install_signal_handlers=installs
+        )
 
     async def test_run_forever_raises_when_not_connected(self):
         """run_forever() should raise RuntimeError when not connected."""
