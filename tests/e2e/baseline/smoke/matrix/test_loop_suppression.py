@@ -23,8 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.types import AdapterFeatures, Emit, MessageType
-from band.runtime.tools import BandTool
+from band.core.types import AdapterFeatures, Emit
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -34,6 +33,10 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.interactions import (
+    assert_handoff_declined,
+    assert_responsive,
+)
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
@@ -109,52 +112,30 @@ async def test_two_running_agents_decline_an_fyi_without_a_loop(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
+    """A peer declines an FYI without a cascade; both agents can still answer."""
     marker = unique_marker("handoff")
-    async with cell.run_many(2, labels=["peer-a", "peer-b"]) as (a, b):
+    async with cell.run_many(2, labels=["sender", "recipient"]) as (sender, recipient):
         room_id = await resource_manager.provision_room(
             title=f"e2e-fyi-handoff-{cell.adapter_id}",
-            participants=[a.id, b.id],
+            participants=[sender.id, recipient.id],
         )
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()
             mid = await user_ops.send_message(
                 room_id,
-                fyi_handoff_instruction(b.name, marker),
-                mention_id=a.id,
-                mention_name=a.name,
+                fyi_handoff_instruction(recipient.name, marker),
+                mention_id=sender.id,
+                mention_name=sender.name,
             )
-            outgoing = await capture.wait_for_reply(mid, a.id, since=mark)
-            routed = outgoing.mentioning(b.id)
-            routed.assert_contains_exact(marker)
-            handoff = next(message for message in routed if marker in message.content)
-            boundary = capture.turn_boundary(handoff)
-            await capture.wait_for_processed(handoff.id, b.id)
-            calls = await capture.tool_calls(sender_id=b.id, since=boundary)
-            calls.assert_fired(BandTool.NO_REPLY)
-            messages = await capture.events(
-                MessageType.TEXT, sender_id=b.id, since=boundary
+            outgoing = await capture.wait_for_reply(mid, sender.id, since=mark)
+            await assert_handoff_declined(
+                capture,
+                outgoing,
+                marker=marker,
+                sender=sender,
+                recipient=recipient,
             )
-            messages.assert_none()
-            messages_a = await capture.events(
-                MessageType.TEXT, sender_id=a.id, since=boundary
-            )
-            messages_a.excluding(handoff.id).assert_none()
-            for agent in (a, b):
-                errors = await capture.errors(sender_id=agent.id, since=boundary)
-                errors.assert_none()
-            for agent in (a, b):
-                probe = unique_marker("liveness")
-                snapshot = capture.messages.snapshot()
-                probe_mid = await user_ops.send_message(
-                    room_id,
-                    liveness_probe(probe),
-                    mention_id=agent.id,
-                    mention_name=agent.name,
-                )
-                replies = await capture.wait_for_reply(
-                    probe_mid, agent.id, since=snapshot
-                )
-                replies.assert_contains_exact(probe)
-                capture.messages.since(mark).from_sender(agent.id).assert_at_most(
-                    LOOP_CEILING
+            for agent in (sender, recipient):
+                await assert_responsive(
+                    capture, user_ops, agent, since=mark, reply_ceiling=LOOP_CEILING
                 )

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.types import AdapterFeatures, Emit, MessageType
-from band.runtime.tools import BandTool
+from band.core.types import AdapterFeatures, Emit
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.interactions import assert_declined
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -48,14 +48,7 @@ async def assert_fyi_decline(
         mid = await user_ops.send_message(
             room_id, FYI, mention_id=agent.id, mention_name=agent.name
         )
-        await capture.wait_for_processed(mid, agent.id)
-        calls = await capture.tool_calls(sender_id=agent.id)
-        messages = await capture.events(MessageType.TEXT, sender_id=agent.id)
-        errors = await capture.errors(sender_id=agent.id)
-
-    calls.assert_fired(BandTool.NO_REPLY)
-    messages.assert_none()
-    errors.assert_none()
+        await assert_declined(capture, mid, agent)
 
 
 @per_adapter(
