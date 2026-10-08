@@ -40,6 +40,7 @@ class TestACPServerInitialize:
         assert response.agent_capabilities.load_session is True
         assert response.agent_capabilities.session_capabilities.list is not None
         assert response.agent_capabilities.session_capabilities.resume is not None
+        assert response.agent_capabilities.session_capabilities.close is not None
         assert response.agent_capabilities.prompt_capabilities.embedded_context is True
         assert response.agent_capabilities.field_meta["streaming"] is True
         assert response.agent_capabilities.field_meta["tools"] is True
