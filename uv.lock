@@ -111,27 +111,40 @@ wheels = [
 
 [[package]]
 name = "agno"
-version = "2.6.16"
+version = "3.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "agnoctl" },
     { name = "docstring-parser" },
-    { name = "gitpython" },
     { name = "h11" },
     { name = "httpx", extra = ["http2"] },
     { name = "packaging" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "python-dotenv" },
-    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "rich", version = "15.0.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
-    { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/08/99d70ea99b95aaeb0e98c1cffa6c19ee11fd43c919a74bc020ec671c18b7/agno-2.6.16.tar.gz", hash = "sha256:cc938d16e4ab0dcf3bd97c40867908eb8cefe034e6ee2082b3398cf01e1913bd", size = 2148053, upload-time = "2026-06-15T20:56:30.708Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/7c/11b507cc29e415c9299597357a68e59bb26a0c4dc96ad8f5998e90b2aa48/agno-3.1.0.tar.gz", hash = "sha256:ca4da62231c7231db5d6a70713a3a0b51598aa17ae518defc9a28ba99bd69abf", size = 3691589, upload-time = "2026-10-01T09:30:27.527Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/f0/630d3ebaa44b5f61b2a11eb22a81231eea22650b3fd04583d57f0fe1587b/agno-2.6.16-py3-none-any.whl", hash = "sha256:86a0e1090d34aa3248983dbd57a277a9124c1a7f2e065dadc45f15e8dc9eacb0", size = 2536449, upload-time = "2026-06-15T20:56:28.641Z" },
+    { url = "https://files.pythonhosted.org/packages/df/ff/76ce43000e5235e670f1b431648d83aee7c2916aba1e1c61e497b9ca4768/agno-3.1.0-py3-none-any.whl", hash = "sha256:725dedef256937e282c82796fe204959310be0c4286a927dc0a5e029892048c0", size = 4191348, upload-time = "2026-10-01T09:30:24.224Z" },
+]
+
+[[package]]
+name = "agnoctl"
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "questionary" },
+    { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "rich", version = "15.0.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "typer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/f4/40418c3bbdc10079f01a6ac223b117ece9e16640bfa9d4680a3fbca5b81b/agnoctl-0.2.1.tar.gz", hash = "sha256:b53e9b3a4081548ac15233c5f52f70de5702c830a87a304c7797c1e22691530c", size = 101388, upload-time = "2026-09-16T17:41:39.485Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/e6/126f7fa607b422980986d368f691f0f8649179108e23023b3a048d6dd16c/agnoctl-0.2.1-py3-none-any.whl", hash = "sha256:b748ad43deb5d7acbf7f14988a868e22433c76fe059d6b955c34b5044e0e1ea4", size = 76512, upload-time = "2026-09-16T17:41:38.192Z" },
 ]
 
 [[package]]
@@ -2267,18 +2280,6 @@ wheels = [
 ]
 
 [[package]]
-name = "gitdb"
-version = "4.0.12"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "smmap" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/72/94/63b0fc47eb32792c7ba1fe1b694daec9a63620db1e313033d18140c2320a/gitdb-4.0.12.tar.gz", hash = "sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571", size = 394684, upload-time = "2025-01-02T07:20:46.413Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/61/5c78b91c3143ed5c14207f463aecfc8f9dbb5092fb2869baf37c273b2705/gitdb-4.0.12-py3-none-any.whl", hash = "sha256:67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf", size = 62794, upload-time = "2025-01-02T07:20:43.624Z" },
-]
-
-[[package]]
 name = "github-copilot-sdk"
 version = "1.0.14"
 source = { registry = "https://pypi.org/simple" }
@@ -2289,18 +2290,6 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/e2/4d8c622545f55f06773548cf86ffe60f59e6a4cedcc412ff84fcac244b2b/github_copilot_sdk-1.0.14-py3-none-any.whl", hash = "sha256:9f4538cec7295f24507c650d794307396458a51f280a0fbbcd840da177109050", size = 614607, upload-time = "2026-09-16T05:11:14.572Z" },
-]
-
-[[package]]
-name = "gitpython"
-version = "3.1.50"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "gitdb" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/33/f6/354ae6491228b5eb40e10d89c4d13c651fe1cf7556e35ebdded50cff57ce/gitpython-3.1.50.tar.gz", hash = "sha256:80da2d12504d52e1f998772dc5baf6e553f8d2fcfe1fcc226c9d9a2ee3372dcc", size = 219798, upload-time = "2026-05-06T04:01:26.571Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/7a/1c6e3562dfd8950adbb11ffbc65d21e7c89d01a6e4f137fa981056de25c5/gitpython-3.1.50-py3-none-any.whl", hash = "sha256:d352abe2908d07355014abdd21ddf798c2a961469239afec4962e9da884858f9", size = 212507, upload-time = "2026-05-06T04:01:23.799Z" },
 ]
 
 [[package]]
@@ -7496,15 +7485,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6e/4e/371068dd7281139307e60cd18553b96b9c8c391a4c3040617192713a3cc4/slack_sdk-3.44.1.tar.gz", hash = "sha256:ca19505423789fa2a3189ff486f989f02e49289f008d0a5813df7255b3fb93ea", size = 256661, upload-time = "2026-09-03T14:21:13.879Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/fc/67352b742fc6fa520a550581b0284f5757e4e31a32327c2a00276747fd30/slack_sdk-3.44.1-py2.py3-none-any.whl", hash = "sha256:d6f20a0fbe3fecf9cac955c99d686301b48a645b7045472c3a0cdd186d7c42b2", size = 319865, upload-time = "2026-09-03T14:21:12.405Z" },
-]
-
-[[package]]
-name = "smmap"
-version = "5.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1f/ea/49c993d6dfdd7338c9b1000a0f36817ed7ec84577ae2e52f890d1a4ff909/smmap-5.0.3.tar.gz", hash = "sha256:4d9debb8b99007ae47165abc08670bd74cb74b5227dda7f643eccc4e9eb5642c", size = 22506, upload-time = "2026-03-09T03:43:26.1Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/d4/59e74daffcb57a07668852eeeb6035af9f32cbfd7a1d2511f17d2fe6a738/smmap-5.0.3-py3-none-any.whl", hash = "sha256:c106e05d5a61449cf6ba9a1e650227ecfb141590d2a98412103ff35d89fc7b2f", size = 24390, upload-time = "2026-03-09T03:43:24.361Z" },
 ]
 
 [[package]]
