@@ -10,7 +10,13 @@ from band.core.memory_types import enum_values
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.parlant.tools import create_parlant_tools
-from band.runtime.tools import TASK_TOOL_NAMES, TOOL_MODELS, ListContactRequestsInput
+from band.runtime.tools import (
+    TASK_TOOL_NAMES,
+    TOOL_MODELS,
+    ListContactRequestsInput,
+    ToolCategory,
+    get_band_tool_category,
+)
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
@@ -347,3 +353,37 @@ class TestCreateParlantTools:
 
         assert set(status_schema["enum"]) == set(enum_values(TaskAssignmentStatus))
         assert set(state_schema["enum"]) == set(enum_values(TaskLifecycleState))
+
+
+def tool_names(features: AdapterFeatures) -> list[str]:
+    return [entry.tool.name for entry in create_parlant_tools(features)]
+
+
+class TestToolSelection:
+    """include_tools/exclude_tools/include_categories narrow the Band tools."""
+
+    def test_exclude_tools_drops_a_band_tool(self):
+        names = tool_names(AdapterFeatures(exclude_tools=["band_add_participant"]))
+
+        assert "band_add_participant" not in names
+        assert "band_send_message" in names
+
+    def test_include_tools_keeps_only_the_named_band_tools(self):
+        names = tool_names(
+            AdapterFeatures(include_tools=["band_send_message", "band_no_reply"])
+        )
+
+        assert sorted(names) == ["band_no_reply", "band_send_message"]
+
+    def test_include_categories_narrows_by_category(self):
+        names = tool_names(
+            AdapterFeatures(
+                capabilities={Capability.CONTACTS},
+                include_categories=[ToolCategory.CONTACTS],
+            )
+        )
+
+        assert names
+        assert {get_band_tool_category(name) for name in names} == {
+            ToolCategory.CONTACTS
+        }
