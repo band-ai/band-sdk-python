@@ -64,6 +64,34 @@ assert adapter.config.command == ("codex-acp",)
   counts), under a nonce'd boundary marker so a replayed message cannot spoof it. History
   stops strictly before the triggering message (`messages_before`).
 
+## Upgrading from SDK 4.x to 5.x
+
+ACP client adapters and Codex no longer relay native assistant text as room
+messages. Replies must use `band_send_message`; messages needing no response
+must use `band_no_reply`. Native text is optional thought telemetry and cannot
+hide a missing reply. The shared turn judgment and other adapters' text relays
+are unchanged.
+
+- Keep SDK-injected Band tools enabled, or supply a reachable external Band MCP
+  server when using `inject_band_tools=False`. A conversation-only ACP peer
+  without Band tools can no longer reply or deliberately decline. The
+  [Copilot sandbox example](../examples/acp/copilot_sandbox/README.md) requires
+  `BAND_MCP_SSE_URL` for that reason.
+- Update custom prompts to use the two Band tools. Coding runtimes may finish
+  with a native summary after the required action; that summary is not another
+  room message.
+- Remove Codex's `fallback_send_agent_text` config key and
+  `CODEX_FALLBACK_SEND_AGENT_TEXT` environment variable. Also remove
+  `assistant_text_mode` from any configurations using the retired workaround
+  and `CODEX_ASSISTANT_TEXT_MODE` from the environment. Explicit config keys
+  are rejected; retired environment variables are ignored.
+- Keep the required communication tools available when changing tool filters.
+  SDK-injected ACP registrations now honor those filters. Start a fresh Codex
+  thread after changing filters; resumed threads retain their saved tools.
+
+These are breaking changes; integrations relying on native-text relay must
+migrate before upgrading. TypeScript parity is a separate change.
+
 ## Isolation
 
 - The per-room workspace (`./.band-workspaces/<room-id>`) is not an OS sandbox; configure

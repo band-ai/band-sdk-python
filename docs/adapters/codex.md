@@ -3,6 +3,8 @@
 `CodexAdapter` runs one Codex process per Band room over stdio, each in its own
 workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
 
+For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgrading-from-sdk-4x-to-5x).
+
 - **Where settings go.** Runtime settings live in `CodexAdapterConfig`, which
   forbids unknown fields, so a misplaced `emit=` or a typo fails construction.
   `emit=`, `capabilities=` and `additional_tools=` go on `CodexAdapter`.

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=4.0.0"]
+# dependencies = ["band-sdk[acp]>=5.0.0"]
 # ///
 """
 GitHub Copilot in a Docker sandbox (sbx), driven by Band over stdio.
@@ -14,10 +14,9 @@ no socat). Why this over the container examples:
   boundary — the token never enters the sandbox (`sbx secret set -g github`).
 - **Auditable egress:** a default-deny firewall you can inspect with `sbx policy log`.
 
-By default this example is conversation relay only (`inject_band_tools=False`): the
-sandbox's egress firewall blocks the SDK host's loopback, so the in-process Band MCP
-server is unreachable from the sandbox. To give Copilot Band tools, create the
-sandbox with `band-mcp-kit/` and set `BAND_MCP_SSE_URL=http://127.0.0.1:3000/sse`.
+Band tools are required for room replies. The sandbox's egress firewall blocks
+the SDK host's loopback, so create the sandbox with `band-mcp-kit/` and set
+`BAND_MCP_SSE_URL=http://127.0.0.1:3000/sse`, or use a reachable external server.
 
 Prerequisites (one-time, see README): `sbx` installed + `sbx login`, a policy
 (`sbx policy init balanced`), a sandbox (`sbx create --name … copilot <workspace>`),
@@ -34,6 +33,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Self-contained (a deployment artifact): configure logging inline.
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # A cwd that exists INSIDE the sandbox for each ACP session, resolved against
     # the host cwd (with sbx's default direct mount, the same path applies inside).
     sbx_workspace: str = "."
-    band_mcp_sse_url: str = ""
+    band_mcp_sse_url: str = Field(min_length=1)
 
 
 async def main() -> None:
@@ -63,12 +63,14 @@ async def main() -> None:
 
     sandbox = settings.sbx_sandbox
     workspace = os.path.abspath(settings.sbx_workspace)
-    band_mcp_sse_url = settings.band_mcp_sse_url or None
-    mcp_servers = (
-        [{"type": "sse", "name": "band", "url": band_mcp_sse_url, "headers": []}]
-        if band_mcp_sse_url
-        else []
-    )
+    mcp_servers = [
+        {
+            "type": "sse",
+            "name": "band",
+            "url": settings.band_mcp_sse_url,
+            "headers": [],
+        }
+    ]
 
     config = CopilotACPAdapterConfig(
         # Drive Copilot's ACP server inside the sandbox over stdio. `-i` (no `-t`)
@@ -83,8 +85,7 @@ async def main() -> None:
     adapter = CopilotACPAdapter(config)
 
     logger.info("Driving Copilot in sandbox %r over stdio (sbx exec -i)...", sandbox)
-    if band_mcp_sse_url:
-        logger.info("Copilot will call Band tools at %s", band_mcp_sse_url)
+    logger.info("Copilot will call Band tools at %s", settings.band_mcp_sse_url)
     async with Agent.from_config(
         "copilot_acp_agent",
         adapter=adapter,
