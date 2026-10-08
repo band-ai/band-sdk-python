@@ -228,8 +228,12 @@ jobs:
       # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          tests/integrations/parlant/test_catalog.py \
+          tests/integrations/parlant/test_chattools.py \
+          tests/integrations/parlant/test_filetools.py \
+          tests/integrations/parlant/test_guard.py \
           tests/integrations/parlant/test_server.py \
-          tests/integrations/parlant/test_tools.py \
+          tests/integrations/parlant/test_tasktools.py \
           tests/framework_conformance/ -k parlant
 
     - name: Pyrefly check (parlant sources)

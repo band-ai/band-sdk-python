@@ -26,7 +26,7 @@ from band.integrations.parlant.ports import reserve_server_ports
 # (via band.adapters.parlant) in environments that cannot install it, such as
 # the crewai dependency fork. Its absence surfaces on first use, not at import.
 if TYPE_CHECKING:
-    import parlant.sdk as p  # type: ignore[missing-import]
+    import parlant.sdk as p
 else:
     try:
         import parlant.sdk as p

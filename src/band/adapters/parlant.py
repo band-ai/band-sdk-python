@@ -37,9 +37,9 @@ from band.integrations.parlant.tools import (
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
-    import parlant.sdk as p  # type: ignore[missing-import]
-    from parlant.core.application import Application  # type: ignore[missing-import]
-    from parlant.core.sessions import SessionId  # type: ignore[missing-import]
+    import parlant.sdk as p
+    from parlant.core.application import Application
+    from parlant.core.sessions import SessionId
 
 logger = logging.getLogger(__name__)
 
@@ -374,7 +374,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if self._configure is not None:
             await self._configure(server, agent)
 
-        from parlant.core.application import (  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.application import (  # noqa: PLC0415
             Application,
         )
 
@@ -442,10 +442,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         )
 
         try:
-            from parlant.core.app_modules.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+            from parlant.core.app_modules.sessions import (  # noqa: PLC0415
                 Moderation,
             )
-            from parlant.core.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+            from parlant.core.sessions import (  # noqa: PLC0415
                 EventSource,
             )
 
@@ -563,10 +563,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return 0
 
         app = self._app
-        from parlant.core.app_modules.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.app_modules.sessions import (  # noqa: PLC0415
             Moderation,
         )
-        from parlant.core.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.sessions import (  # noqa: PLC0415
             EventKind,
             EventSource,
         )
@@ -671,10 +671,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return
 
         app = self._app
-        from parlant.core.async_utils import (  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.async_utils import (  # noqa: PLC0415
             Timeout,
         )
-        from parlant.core.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.sessions import (  # noqa: PLC0415
             EventKind,
             EventSource,
         )
