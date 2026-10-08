@@ -9,7 +9,6 @@ nightly-only ``backends`` lane.
 from __future__ import annotations
 
 import json
-from typing import ClassVar
 
 import pytest
 
@@ -139,8 +138,6 @@ class TestRoomTurnEmitterEmitGating:
     behave identically whether narration is on or off. The closing session
     bookkeeping event is resume state, not narration, so it is never gated.
     """
-
-    MENTIONS: ClassVar[list[dict[str, str]]] = [{"id": "u1", "name": "User"}]
 
     def _chunks(self) -> list[CollectedChunk]:
         call = ACPToolCall(tool_call_id="tc-1", name=TOOL_NAME, arguments={})
@@ -328,13 +325,15 @@ def tool_result_chunk(name: str, status: ToolStatus) -> CollectedChunk:
 async def closing_messages(
     tools: FakeAgentTools,
     *chunks: CollectedChunk,
-    records_tool_effects: bool,
+    emit: frozenset[Emit] | None = None,
+    records_tool_effects: bool = False,
 ) -> list[str]:
     """Run one turn of ``chunks`` and return the messages it posted."""
     emitter = RoomTurnEmitter(
         tools,
         session_id="s1",
         room_id="room-1",
+        emit=emit,
         records_tool_effects=records_tool_effects,
     )
     async with emitter:
@@ -487,24 +486,6 @@ class TestRoomTurnEmitterClosingThought:
         assert tools.turn.complete
 
 
-async def run_assistant_text_turn(
-    tools: FakeAgentTools,
-    *chunks: CollectedChunk,
-    emit: frozenset[Emit] | None = None,
-    records_tool_effects: bool = False,
-) -> None:
-    emitter = RoomTurnEmitter(
-        tools,
-        session_id="s1",
-        room_id="room-1",
-        emit=emit,
-        records_tool_effects=records_tool_effects,
-    )
-    async with emitter:
-        for chunk in chunks:
-            await emitter.emit(chunk)
-
-
 class TestRoomTurnEmitterAssistantTextAsThought:
     """Closing native text is telemetry and cannot complete an empty turn."""
 
@@ -512,12 +493,12 @@ class TestRoomTurnEmitterAssistantTextAsThought:
     async def test_text_only_turn_posts_a_thought_and_no_reply(self) -> None:
         tools = FakeAgentTools()
 
-        await run_assistant_text_turn(
+        await closing_messages(
             tools, text("(Waiting on the review."), text("Nothing to change.)")
         )
 
         assert tools.messages_sent == []
-        thoughts = [e for e in tools.events_sent if e["message_type"] == "thought"]
+        thoughts = events_of_type(tools, "thought")
         assert [e["content"] for e in thoughts] == [
             "(Waiting on the review.\n\nNothing to change.)"
         ]
@@ -529,9 +510,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
     async def test_thoughts_outside_the_emit_set_leave_the_room_silent(self) -> None:
         tools = FakeAgentTools()
 
-        await run_assistant_text_turn(
-            tools, text("Nothing to change."), emit=frozenset()
-        )
+        await closing_messages(tools, text("Nothing to change."), emit=frozenset())
 
         assert tools.messages_sent == []
         assert [e["content"] for e in tools.events_sent] == ["ACP client session"]
@@ -541,7 +520,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
     async def test_a_turn_without_text_still_owes_a_reply(self) -> None:
         tools = FakeAgentTools()
 
-        await run_assistant_text_turn(tools, text("   "))
+        await closing_messages(tools, text("   "))
 
         assert tools.messages_sent == []
         assert not tools.turn.complete
@@ -551,7 +530,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         tools = FakeAgentTools()
         await tools.send_message("Posted by the tool.", mentions=["u1"])
 
-        await run_assistant_text_turn(
+        await closing_messages(
             tools,
             tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.COMPLETED),
             text("I posted it."),
@@ -570,7 +549,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         with pytest.raises(RuntimeError):
             await tools.send_message("The answer.", mentions=["u1"])
 
-        await run_assistant_text_turn(tools, text("I posted the answer."))
+        await closing_messages(tools, text("I posted the answer."))
 
         assert tools.messages_sent == []
         assert not tools.turn.complete
@@ -579,7 +558,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
     async def test_a_failed_out_of_process_reply_still_owes_the_reply(self) -> None:
         tools = FakeAgentTools()
 
-        await run_assistant_text_turn(
+        await closing_messages(
             tools,
             tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.FAILED),
             text("I posted the answer."),
@@ -597,7 +576,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         failed validation); the stream's failed status is the only record."""
         tools = FakeAgentTools()
 
-        await run_assistant_text_turn(
+        await closing_messages(
             tools,
             tool_result_chunk(BandTool.SEND_MESSAGE, ToolStatus.FAILED),
             text("I posted the answer."),
@@ -631,7 +610,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         never reported a result) did not deliver."""
         tools = FakeAgentTools()
 
-        await run_assistant_text_turn(
+        await closing_messages(
             tools,
             tool_call_chunk(BandTool.SEND_MESSAGE, ToolStatus.PENDING),
             text("I posted the answer."),
@@ -669,6 +648,6 @@ async def test_failed_closing_telemetry_does_not_change_successful_effects(
     if effect is not None:
         tools.turn.record(effect)
     tools.send_event_error = RuntimeError("telemetry unavailable")
-    await run_assistant_text_turn(tools, text("closing narration"))
+    await closing_messages(tools, text("closing narration"))
     assert tools.turn.complete is (effect is not None)
     assert tools.chat == []

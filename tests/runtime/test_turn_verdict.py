@@ -153,14 +153,7 @@ async def test_each_turn_outcome_is_reported_honestly(
 
     await ctx._process_event(make_message_event(room_id=ROOM_ID, sender_id="user-1"))
 
-    if completes:
-        link.mark_processed.assert_awaited_once()
-        link.mark_failed.assert_not_awaited()
-        assert runtime_failures(link) == []
-    else:
-        link.mark_failed.assert_awaited_once()
-        link.mark_processed.assert_not_awaited()
-        assert runtime_failures(link) == [MISSING_REPLY_FAILURE]
+    assert_runtime_outcome(link, completes)
 
 
 @pytest.mark.parametrize("path", ["live", "backlog"])
