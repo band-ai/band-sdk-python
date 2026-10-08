@@ -64,7 +64,7 @@ async def test_room_files_survive_restart_without_cross_leak(
                     assert (Path(resolver(room_id)) / filename).read_text() == marker
 
     # These new values never enter chat history; only reading disk can recover them.
-    markers = [unique_marker("after-alpha"), unique_marker("after-bravo")]
+    markers = [unique_marker("afteralpha"), unique_marker("afterbravo")]
     for room_id, marker in zip(rooms, markers, strict=True):
         (Path(resolver(room_id)) / filename).write_text(marker)
 

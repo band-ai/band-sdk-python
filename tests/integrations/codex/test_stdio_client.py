@@ -408,3 +408,43 @@ async def test_stdio_client_eof_fails_pending_and_enqueues_disconnect(
     event = await client.recv_event(timeout_s=1.0)
     assert event.method == "transport/closed"
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_client_close_kills_descendants_of_a_lingering_server(
+    tmp_path: Path,
+) -> None:
+    """A server that outlives stdin EOF is killed with every process it spawned,
+    so nothing keeps running (or holding the workspace) after close."""
+    heartbeat = tmp_path / "heartbeat"
+    script = tmp_path / "lingering_server.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import subprocess
+            import sys
+            import time
+
+            beat = (
+                "import time\\n"
+                "while True:\\n"
+                "    open({str(heartbeat)!r}, 'a').write('.')\\n"
+                "    time.sleep(0.05)\\n"
+            )
+            subprocess.Popen([sys.executable, "-c", beat])
+            sys.stdin.read()
+            time.sleep(3600)
+            """
+        ),
+        encoding="utf-8",
+    )
+    client = CodexStdioClient(command=[sys.executable, "-u", str(script)])
+    await client.connect()
+    while not heartbeat.exists():
+        await asyncio.sleep(0.05)
+
+    await client.close()
+    beats = heartbeat.read_text()
+    await asyncio.sleep(0.5)
+
+    assert heartbeat.read_text() == beats

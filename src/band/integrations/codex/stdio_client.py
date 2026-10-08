@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import shutil
+import signal
+import subprocess
+import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
@@ -16,6 +20,36 @@ from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPol
 logger = logging.getLogger(__name__)
 
 _PROCESS_EXIT_TIMEOUT_S = 1.0
+
+
+def _process_group_options() -> dict[str, Any]:
+    """Spawn options that make the child lead its own process group.
+
+    The launched binary is often a shim (npm's ``codex.cmd`` on Windows) whose
+    descendants would outlive a kill of the shim alone, holding the workspace.
+    """
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Kill ``process`` and every descendant, then reap it."""
+    if sys.platform == "win32":
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill",
+            "/T",
+            "/F",
+            "/PID",
+            str(process.pid),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await killer.wait()
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    await process.wait()
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -75,6 +109,7 @@ class CodexStdioClient(BaseJsonRpcClient):
                 cwd=self.cwd,
                 env=self.env,
                 limit=16 * 1024 * 1024,  # 16 MB — Codex sends large JSON-RPC lines
+                **_process_group_options(),
             )
         except FileNotFoundError as exc:
             binary = self.command[0] if self.command else "codex"
@@ -121,11 +156,7 @@ class CodexStdioClient(BaseJsonRpcClient):
             try:
                 await asyncio.wait_for(process.wait(), timeout=_PROCESS_EXIT_TIMEOUT_S)
             except TimeoutError:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-                await process.wait()
+                await _kill_process_tree(process)
 
         self._fail_pending("Codex stdio client closed")
 

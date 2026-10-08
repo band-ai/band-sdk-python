@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from band.integrations.codex import CodexStdioClient
+from band.integrations.codex import CodexStdioClient, stdio_client
 from tests.paths import REPO_ROOT
 
 
@@ -66,18 +66,15 @@ async def test_failed_process_kill_can_be_retried(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, process = child
-    kill = process.kill
 
-    def refuse_kill() -> None:
+    async def refuse_kill(_process: asyncio.subprocess.Process) -> None:
         raise RuntimeError("kill failed")
 
-    try:
-        monkeypatch.setattr(process, "kill", refuse_kill)
+    with monkeypatch.context() as patch:
+        patch.setattr(stdio_client, "_kill_process_tree", refuse_kill)
         with pytest.raises(RuntimeError, match="kill failed"):
             await client.close()
         assert process.returncode is None
-    finally:
-        monkeypatch.setattr(process, "kill", kill)
     await client.close()
     assert process.returncode is not None
 
