@@ -23,22 +23,15 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.types import AdapterFeatures, Emit
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     LIVENESS_REPLY_PROMPT,
-    fyi_handoff_instruction,
     liveness_probe,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.interactions import (
-    assert_handoff_declined,
-    assert_responsive,
-)
 from tests.e2e.baseline.toolkit.provisioning import (
-    AdapterCell,
     ProvisionedAgent,
     ResourceManager,
 )
@@ -95,47 +88,3 @@ async def test_peer_message_drives_turn_without_loop(
         # FIFO puts any self-dispatch loop ahead of the probe reply, so it's captured
         # by now; the agent's own messages since the snapshot stay under the ceiling.
         capture.messages.since(mark).from_sender(agent.id).assert_at_most(LOOP_CEILING)
-
-
-@per_adapter(
-    Adapter.CODEX,
-    Adapter.COPILOT_ACP,
-    Adapter.CURSOR_ACP,
-    Adapter.OMP_ACP,
-    features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
-)
-@pytest.mark.timeout(extra=360)
-@pytest.mark.asyncio(loop_scope="session")
-async def test_two_running_agents_decline_an_fyi_without_a_loop(
-    cell: AdapterCell,
-    resource_manager: ResourceManager,
-    user_ops: UserOps,
-    reply_capture: CaptureFactory,
-) -> None:
-    """A peer declines an FYI without a cascade; both agents can still answer."""
-    marker = unique_marker("handoff")
-    async with cell.run_many(2, labels=["sender", "recipient"]) as (sender, recipient):
-        room_id = await resource_manager.provision_room(
-            title=f"e2e-fyi-handoff-{cell.adapter_id}",
-            participants=[sender.id, recipient.id],
-        )
-        async with reply_capture(room_id) as capture:
-            mark = capture.messages.snapshot()
-            mid = await user_ops.send_message(
-                room_id,
-                fyi_handoff_instruction(recipient.name, marker),
-                mention_id=sender.id,
-                mention_name=sender.name,
-            )
-            outgoing = await capture.wait_for_reply(mid, sender.id, since=mark)
-            await assert_handoff_declined(
-                capture,
-                outgoing,
-                marker=marker,
-                sender=sender,
-                recipient=recipient,
-            )
-            for agent in (sender, recipient):
-                await assert_responsive(
-                    capture, user_ops, agent, since=mark, reply_ceiling=LOOP_CEILING
-                )

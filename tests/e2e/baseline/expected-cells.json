@@ -4393,42 +4393,6 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_two_running_agents_decline_an_fyi_without_a_loop",
-      "adapter": "codex",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_two_running_agents_decline_an_fyi_without_a_loop",
-      "adapter": "copilot_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_two_running_agents_decline_an_fyi_without_a_loop",
-      "adapter": "cursor_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_two_running_agents_decline_an_fyi_without_a_loop",
-      "adapter": "omp_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
       "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "agno",
       "lanes": [

@@ -680,12 +680,3 @@ def delegate_to_peer_instruction(peer_name: str) -> str:
         "includes the complete note from my previous message, and asks them to "
         "repeat it back to you."
     )
-
-
-def fyi_handoff_instruction(peer_name: str, marker: str) -> str:
-    """Route a marked FYI through a real Band reply tool."""
-    return (
-        f"Send {peer_name} one {BandTool.SEND_MESSAGE} mentioning them. "
-        f"Its content must include {marker} and say: FYI only, no answer needed; "
-        f"please end your turn using {BandTool.NO_REPLY}. Then stop."
-    )
