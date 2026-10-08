@@ -38,6 +38,19 @@ When the latest message needs no answer from you (it was addressed to someone el
 {MENTION_IDENTIFIERS}"""
 
 
+# CLI coding runtimes need a tool-free completion after their Band actions.
+TURN_COMPLETION_GUIDANCE = (
+    "## Turn completion\n\n"
+    "This runtime may prompt you to continue after you act (for example, "
+    '"continue from where you left off"). Treat that as a check, not a new '
+    "request. Your turn is complete once you have taken every action the current "
+    f"message requires — including sending your reply with {BandTool.SEND_MESSAGE}. "
+    "When nothing remains to do, end the turn with a brief plain-text response "
+    f'(for example, "Done."); do not call {BandTool.SEND_MESSAGE} again just to report '
+    "that you are finished. Plain text is not delivered to the room — which is "
+    "exactly why it cleanly ends a turn."
+)
+
 # Base instructions appended to user's custom prompt
 BASE_INSTRUCTIONS = f"""
 ## Environment

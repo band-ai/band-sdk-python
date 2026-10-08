@@ -38,6 +38,9 @@ assert adapter.config.command == ("codex-acp",)
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
+- **Native summaries finish the provider turn.** After the required Band action,
+  the prompt requests a brief tool-free summary so coding runtimes do not keep
+  continuing. That summary is telemetry, never another room reply.
 - **Held agent text is thought telemetry.** At clean prompt close, successful
   external Band-tool effects are recorded first; held native text is an optional
   thought without mentions, suppressed after a successful reply or decline.

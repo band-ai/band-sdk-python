@@ -37,7 +37,7 @@ from band.integrations.acp.client_adapter import (
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.mcp import BandMCPBackendStoppedError
 from band.runtime.formatters import build_participants_message
-from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
+from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, TURN_COMPLETION_GUIDANCE
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
@@ -1330,3 +1330,4 @@ async def test_acp_mandatory_transport_contract_refreshes_first_prompt(
     ) as session:
         await session.send("new message", history=history)
     assert agent.prompt_texts()[0].count(COMMUNICATION_INSTRUCTIONS) == 1
+    assert agent.prompt_texts()[0].count(TURN_COMPLETION_GUIDANCE) == 1

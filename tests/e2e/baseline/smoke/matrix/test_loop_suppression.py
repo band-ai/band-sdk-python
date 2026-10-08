@@ -127,7 +127,7 @@ async def test_two_running_agents_decline_an_fyi_without_a_loop(
             routed = outgoing.mentioning(b.id)
             routed.assert_contains_exact(marker)
             handoff = next(message for message in routed if marker in message.content)
-            boundary = capture.turn_boundary()
+            boundary = capture.turn_boundary(handoff)
             await capture.wait_for_processed(handoff.id, b.id)
             calls = await capture.tool_calls(sender_id=b.id, since=boundary)
             calls.assert_fired(BandTool.NO_REPLY)

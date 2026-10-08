@@ -6981,13 +6981,18 @@ async def test_failed_native_thought_delivery_does_not_settle_the_turn() -> None
     assert tools.chat == []
 
 
-@pytest.mark.parametrize("phase", [None, "final_answer", "commentary"])
+@pytest.mark.parametrize(
+    "phase, include_phase",
+    [(None, False), (None, True), ("final_answer", True), ("commentary", True)],
+)
 async def test_completed_native_messages_without_reply_effects_remain_thoughts(
     phase: str | None,
+    include_phase: bool,
 ) -> None:
-    turn = await run_codex_turn(
-        events=[agent_message_completed("native", phase=phase), turn_completed()]
-    )
+    completed = agent_message_completed("native", phase=phase)
+    if not include_phase:
+        completed.params["item"].pop("phase")
+    turn = await run_codex_turn(events=[completed, turn_completed()])
     assert [event["content"] for event in events_of_type(turn.tools, "thought")] == [
         "native"
     ]

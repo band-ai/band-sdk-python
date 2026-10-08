@@ -103,7 +103,11 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.formatters import messages_before
-from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
+from band.runtime.prompts import (
+    COMMUNICATION_INSTRUCTIONS,
+    TURN_COMPLETION_GUIDANCE,
+    render_system_prompt,
+)
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
@@ -953,7 +957,8 @@ class ACPClientAdapter(
         room_context = (
             f"\n## Room Context\n"
             f"You are connected to Band using the Band tools.\n"
-            f"{COMMUNICATION_INSTRUCTIONS}\n"
+            f"{COMMUNICATION_INSTRUCTIONS}\n\n"
+            f"{TURN_COMPLETION_GUIDANCE}\n"
             f"\n"
             f"{room_line}"
             f"Current requester name: {requester_name}\n"
