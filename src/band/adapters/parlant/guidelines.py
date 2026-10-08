@@ -55,5 +55,10 @@ class GuidelineLedger:
             # never duplicates this guideline on the same agent.
             self._applied += 1
 
+    @property
+    def keeps_default_tools(self) -> bool:
+        """Whether any declared guideline offers the adapter's default tools."""
+        return any(spec.tools is None for spec in self._specs)
+
     def forget_applied(self) -> None:
         self._applied = 0

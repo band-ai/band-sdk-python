@@ -26,8 +26,10 @@ from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.integrations.parlant.customschema import check_parlant_custom_tools
 from band.integrations.parlant.sessiontools import bound_session_tools
 from band.integrations.parlant.tools import create_parlant_tools
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 
 if TYPE_CHECKING:
     import parlant.sdk as p
@@ -47,7 +49,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     The adapter owns the Parlant server lifecycle: it reserves free ports, boots
     ``p.Server`` when the Band agent starts, and tears it down when the agent
     stops. Guidelines are declared up front with :meth:`add_guideline` and created
-    on the live agent at startup, with the Band platform tools attached by default.
+    on the live agent at startup, with the adapter's tools (Band platform tools
+    plus ``additional_tools``) attached by default. Parlant calls a tool only
+    through a matched guideline or journey.
 
     Example:
         import parlant.sdk as p
@@ -90,6 +94,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         config: ParlantAdapterConfig | None = None,
         *,
         history_converter: ParlantHistoryConverter | None = None,
+        additional_tools: list[CustomToolDef] | None = None,
         nlp_service: Any | None = None,
         server_options: dict[str, Any] | None = None,
         server: p.Server | None = None,
@@ -103,6 +108,12 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         Args:
             config: Adapter settings; defaults to ``ParlantAdapterConfig()``.
             history_converter: Custom history converter (optional)
+            additional_tools: Custom tools as ``(InputModel, handler)`` pairs,
+                offered with the Band platform tools by every guideline that
+                keeps the default tools. Fields must be scalars, enums, dates
+                or lists of those; Parlant has no object parameter type.
+                Names are server-wide, so on a shared ``server=`` they must
+                not clash with another adapter's tools.
             nlp_service: Parlant NLP service for the adapter-owned server (e.g.
                 ``p.NLPServices.openai``). Defaults to Parlant's own default.
             server_options: Extra keyword arguments passed verbatim to
@@ -140,9 +151,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 "parlant_agent="
             )
 
+        self._custom_tools = additional_tools or []
+        check_parlant_custom_tools(self._custom_tools)
         self._configure = configure
         self._guidelines = GuidelineLedger()
-        # Band platform tools as Parlant ToolEntry objects (built at start)
+        # The adapter's tools as Parlant ToolEntry objects (built at start)
         self._tools: list[Any] = []
         self._rooms: RoomSessions | None = None
         self._started = False
@@ -158,10 +171,12 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         """Declare a guideline, created on the live Parlant agent at startup.
 
         Mirrors ``parlant.sdk.Agent.create_guideline``; extra keyword arguments
-        are forwarded to it verbatim. ``tools`` defaults to the Band platform
-        tools; pass an explicit sequence (including ``[]``) to override.
+        are forwarded to it verbatim. ``tools`` defaults to the adapter's
+        tools (Band platform tools plus ``additional_tools``); pass an explicit
+        sequence (including ``[]``) to override.
 
-        For live guideline management (return values, dependencies), use the
+        For live guideline management (return values, dependencies, or a
+        per-guideline tool selection from ``adapter.tools``), use the
         ``configure=`` callback instead.
         """
         if self._started:
@@ -192,7 +207,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     @property
     def tools(self) -> list[Any]:
-        """Band platform tools as Parlant ToolEntry objects (built at startup)."""
+        """The adapter's tools (Band platform tools plus ``additional_tools``)
+        as Parlant ToolEntry objects, built at startup."""
         return list(self._tools)
 
     def _agent_instructions(self, agent_description: str) -> str:
@@ -240,8 +256,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 description=self._agent_instructions(agent_description),
             )
 
-        self._tools = create_parlant_tools(self.features)
+        self._tools = create_parlant_tools(
+            self.features, custom_tools=self._custom_tools
+        )
         await self._guidelines.apply_pending(agent, default_tools=self._tools)
+        self._warn_if_custom_tools_unreachable()
 
         if self._configure is not None:
             await self._configure(server, agent)
@@ -249,6 +268,21 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         from parlant.core.application import Application  # noqa: PLC0415
 
         return agent, server.container[Application]
+
+    def _warn_if_custom_tools_unreachable(self) -> None:
+        """Parlant only calls a tool from a guideline that offers it."""
+        if (
+            not self._custom_tools
+            or self._guidelines.keeps_default_tools
+            or self._configure is not None
+        ):
+            return
+        logger.warning(
+            "Parlant can never call custom tools %s: no guideline keeps the "
+            "default tools. Declare one with add_guideline(), or attach them "
+            "from adapter.tools in configure=.",
+            sorted(get_custom_tool_name(model) for model, _ in self._custom_tools),
+        )
 
     def _forget_guidelines_if_agent_gone(self) -> None:
         """The applied-guideline count belongs to the agent it was applied to."""

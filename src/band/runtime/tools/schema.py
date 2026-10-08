@@ -6,6 +6,7 @@ dispatch-boundary result types (``ToolCallOutcome``, ``serialize_tool_result``).
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -233,3 +234,8 @@ def serialize_tool_result(result: Any) -> Any:
             for item in result
         ]
     return result
+
+
+def tool_result_text(result: Any) -> str:
+    """A tool result as the text a model reads: a string verbatim, else JSON."""
+    return result if isinstance(result, str) else json.dumps(result, default=str)

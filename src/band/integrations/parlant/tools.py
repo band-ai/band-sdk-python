@@ -8,6 +8,7 @@ must stay importable in a venv without the parlant extra.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from band.core.types import AdapterFeatures
@@ -17,6 +18,7 @@ from band.integrations.parlant.sessiontools import (
     set_current_tools,
     set_session_tools,
 )
+from band.runtime.custom_tools import CustomToolDef
 
 __all__ = [
     "create_parlant_tools",
@@ -29,8 +31,13 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
-    """Parlant ``ToolEntry`` objects for the Band tools *features* enables.
+def create_parlant_tools(
+    features: AdapterFeatures | None = None,
+    *,
+    custom_tools: Sequence[CustomToolDef] = (),
+) -> list[Any]:
+    """Parlant ``ToolEntry`` objects: the Band tools *features* enables and
+    selects, then every custom tool.
 
     Each tool resolves the current room's ``AgentToolsProtocol`` from its
     Parlant session at call time (see ``sessiontools``).
@@ -47,5 +54,11 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
     from band.integrations.parlant.bandtools import (  # noqa: PLC0415 -- imports parlant; see module docstring
         band_tool_specs,
     )
+    from band.integrations.parlant.customtools import (  # noqa: PLC0415 -- imports parlant; see module docstring
+        build_custom_tool,
+    )
 
-    return [build_band_tool(spec) for spec in band_tool_specs(features)]
+    return [
+        *(build_band_tool(spec) for spec in band_tool_specs(features)),
+        *(build_custom_tool(tool_def) for tool_def in custom_tools),
+    ]

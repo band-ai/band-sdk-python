@@ -118,6 +118,49 @@ adapter = ParlantAdapter(
 
 ---
 
+## Custom Tools
+
+Pass Band custom tools, `(InputModel, handler)` pairs, as `additional_tools`.
+The tool's name comes from the model's class name (`LookupInput` becomes
+`lookup`), and its description from the model's docstring:
+
+```python notest
+class LookupInput(BaseModel):
+    """Look up a customer's access code."""
+
+    customer: str = Field(description="The customer's name")
+
+
+async def lookup(args: LookupInput) -> str:
+    return ACCESS_CODES[args.customer]
+
+
+adapter = ParlantAdapter(
+    ParlantAdapterConfig(name="Assistant", description="..."),
+    additional_tools=[(LookupInput, lookup)],
+)
+adapter.add_guideline(
+    condition="The customer asks for their access code",
+    action="Look it up with the lookup tool and tell them",
+)
+```
+
+- **Parlant only calls a tool from a matched guideline.** Every guideline that
+  keeps the default tools (no `tools=`) offers the custom tools alongside the
+  Band platform tools. The adapter logs a warning when no guideline can reach
+  them.
+- **Field types.** Fields may be strings, numbers, booleans, string `Literal`s,
+  enums, dates, unions of those, or lists of them. Parlant has no object
+  parameter type, so `dict` and nested-model fields are rejected when the
+  adapter is built.
+- **Picking tools per guideline.** Use `configure=` and choose entries from
+  `adapter.tools`, which holds the Band platform tools plus the custom tools.
+- **Names are server-wide.** A custom tool may not reuse a Band tool's name or
+  another custom tool's name. On a shared `server=`, names must not clash with
+  another adapter's tools either.
+
+---
+
 ## Configuration
 
 ### 1. Copy configuration files from examples
@@ -211,6 +254,7 @@ ParlantAdapter(
         response_timeout=300.0,
         response_poll=30.0,
     ),
+    additional_tools=[(LookupInput, lookup)],  # Band custom tools (see above)
     # Adapter-owned server configuration
     nlp_service=p.NLPServices.openai,  # Parlant's default (Emcie) if omitted
     server_options={...},  # extra p.Server(...) kwargs, verbatim

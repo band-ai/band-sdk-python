@@ -6,7 +6,10 @@ tests/framework_conformance/test_adapter_conformance.py.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
+from pydantic import BaseModel, Field, create_model
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 
@@ -67,3 +70,78 @@ def test_owned_server_options_rejected_with_borrowed_server(
 def test_config_rejects_non_positive_response_budget(field, value):
     with pytest.raises(ValueError, match="greater than 0"):
         ParlantAdapterConfig(**{field: value})
+
+
+async def lookup(args: BaseModel) -> str:
+    return "found"
+
+
+# A custom tool's name is its model's class name, so shadowing a Band tool
+# needs a snake_case class name.
+ShadowingInput = create_model("band_send_messageInput", content=(str, ...))
+
+
+class LookupInput(BaseModel):
+    """Look a code up."""
+
+    code: str
+
+
+class ContextInput(BaseModel):
+    """Collides with Parlant's tool context."""
+
+    context: str
+
+
+class KeywordAliasInput(BaseModel):
+    """Advertises a Python keyword."""
+
+    sender: str = Field(alias="from")
+
+
+class DictInput(BaseModel):
+    """Has an object field."""
+
+    tags: dict[str, str]
+
+
+class Address(BaseModel):
+    street: str
+
+
+class NestedInput(BaseModel):
+    """Has a nested-model field."""
+
+    address: Address
+
+
+class IntLiteralInput(BaseModel):
+    """Has an int-valued Literal."""
+
+    level: Literal[1, 2]
+
+
+@pytest.mark.parametrize(
+    ("additional_tools", "named"),
+    [
+        ([(ShadowingInput, lookup)], "band_send_message"),
+        ([(LookupInput, lookup), (LookupInput, lookup)], "lookup"),
+        ([(ContextInput, lookup)], "context"),
+        ([(KeywordAliasInput, lookup)], "from"),
+        ([(DictInput, lookup)], "tags"),
+        ([(NestedInput, lookup)], "address"),
+        ([(IntLiteralInput, lookup)], "level"),
+    ],
+    ids=[
+        "shadows-band-tool",
+        "duplicate-name",
+        "context-field",
+        "keyword-alias",
+        "dict-field",
+        "nested-model-field",
+        "int-literal",
+    ],
+)
+def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):
+    with pytest.raises(ValueError, match=named):
+        ParlantAdapter(additional_tools=additional_tools)

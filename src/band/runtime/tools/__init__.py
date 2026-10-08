@@ -137,6 +137,7 @@ from band.runtime.tools.schema import (
     platform_tool,
     resolve_tool_model,
     serialize_tool_result,
+    tool_result_text,
     validate_tool_arguments,
 )
 from band.runtime.tools.types import (
@@ -275,6 +276,7 @@ __all__ = [
     "resolve_tool_model",
     "serialize_tool_result",
     "strip_handle_prefix",
+    "tool_result_text",
     "turn_effect",
     "validate_tool_arguments",
 ]

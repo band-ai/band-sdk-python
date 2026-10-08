@@ -95,7 +95,7 @@ def reject_conflicting_tool_names(names: Iterable[str]) -> None:
     platform tool or another custom tool silently replaces it.
     """
     counts = Counter(names)
-    if shadowed := sorted(counts.keys() & ALL_TOOL_NAMES):
+    if shadowed := sorted(name for name in counts if name in ALL_TOOL_NAMES):
         raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
     if duplicated := sorted(name for name, count in counts.items() if count > 1):
         raise ValueError(f"Custom tool names must be unique: {duplicated}")

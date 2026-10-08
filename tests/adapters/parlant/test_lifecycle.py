@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 
@@ -29,6 +31,19 @@ def owned_server(
         "band.adapters.parlant.lifecycle.running_parlant_server", return_value=cm
     ) as factory:
         yield factory, cm, mock_parlant_server
+
+
+class LookupInput(BaseModel):
+    """Look a code up."""
+
+    code: str
+
+
+async def lookup(args: LookupInput) -> str:
+    return args.code
+
+
+LOOKUP = (LookupInput, lookup)
 
 
 @pytest.fixture
@@ -120,7 +135,9 @@ async def test_applies_deferred_guidelines_with_band_tools_default(
 ):
     band_tools = ["band-tool-entry"]
     stub_band_tools.return_value = band_tools
-    adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
+    adapter = ParlantAdapter(
+        ParlantAdapterConfig(name="X", description="Y"), additional_tools=[LOOKUP]
+    )
     adapter.add_guideline(condition="c1", action="a1")
     adapter.add_guideline(condition="c2", action="a2", tools=[])
     adapter.add_guideline(condition="c3", action="a3", metadata={"k": "v"})
@@ -138,6 +155,7 @@ async def test_applies_deferred_guidelines_with_band_tools_default(
             "metadata": {"k": "v"},
         },
     ]
+    assert stub_band_tools.call_args.kwargs == {"custom_tools": [LOOKUP]}
 
 
 async def test_guideline_failure_has_no_live_siblings_and_retries_from_failure(
@@ -273,3 +291,25 @@ async def test_on_started_failure_leaves_cleanup_to_server_context(owned_server)
     cm.__aexit__.assert_not_awaited()
     with pytest.raises(RuntimeError, match="not running yet"):
         _ = adapter.server
+
+
+@pytest.mark.parametrize(
+    ("guideline_tools", "warnings"),
+    [([], 1), (None, 0)],
+    ids=["no-guideline-keeps-default-tools", "guideline-keeps-default-tools"],
+)
+async def test_warns_when_no_guideline_can_reach_custom_tools(
+    mock_parlant_server, mock_parlant_agent, caplog, guideline_tools, warnings
+):
+    adapter = ParlantAdapter(
+        server=mock_parlant_server,
+        parlant_agent=mock_parlant_agent,
+        additional_tools=[LOOKUP],
+    )
+    adapter.add_guideline(condition="c", action="a", tools=guideline_tools)
+
+    with caplog.at_level(logging.WARNING, logger="band.adapters.parlant.adapter"):
+        await adapter.on_started("BandName", "Band description")
+
+    unreachable = [r for r in caplog.records if "can never call" in r.getMessage()]
+    assert [r.levelno for r in unreachable] == [logging.WARNING] * warnings

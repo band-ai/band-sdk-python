@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import get_args
 
 import pytest
+from pydantic import BaseModel
 
 from band.core.memory_types import enum_values
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState
@@ -387,3 +388,22 @@ class TestToolSelection:
         assert {get_band_tool_category(name) for name in names} == {
             ToolCategory.CONTACTS
         }
+
+    def test_custom_tools_survive_include_tools(self):
+        """The filters select Band tools; custom tools are always offered."""
+        tools = create_parlant_tools(
+            AdapterFeatures(include_tools=["band_send_message"]),
+            custom_tools=[(LookupInput, lookup)],
+        )
+
+        assert [entry.tool.name for entry in tools] == ["band_send_message", "lookup"]
+
+
+class LookupInput(BaseModel):
+    """Look a code up."""
+
+    code: str
+
+
+async def lookup(args: LookupInput) -> str:
+    return args.code

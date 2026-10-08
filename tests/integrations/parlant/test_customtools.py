@@ -1,0 +1,159 @@
+"""Band custom tools served by a real Parlant tool server, as the engine calls them."""
+
+from __future__ import annotations
+
+import enum
+from datetime import date
+from typing import Annotated, Literal
+
+import pytest
+import pytest_asyncio
+from pydantic import BaseModel, Field
+
+from band.integrations.parlant.sessiontools import (
+    NO_SESSION_TOOLS_ERROR,
+    set_session_tools,
+)
+from band.integrations.parlant.tools import create_parlant_tools
+from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools import TurnEffect
+from band.testing import FakeAgentTools
+
+pytest.importorskip(
+    "parlant.sdk"
+)  # real p.tool and PluginServer; dev-parlant venv only
+
+
+class Shade(enum.Enum):
+    LIGHT = "light"
+    DARK = "dark"
+
+
+class PaintInput(BaseModel):
+    """Paint a wall."""
+
+    wall: str = Field(description="Which wall to paint")
+    coats: int = 1
+    primer: bool = True
+    finish: Literal["matte", "gloss"] = "matte"
+    shade: Shade = Shade.LIGHT
+    due: date = date(2026, 1, 1)
+    rooms: list[int] = []
+    budget: Annotated[int, Field(description="Spend cap")] | None = 100
+
+
+class AnswerInput(BaseModel):
+    """Answer the room directly."""
+
+    text: str
+
+
+@declares_turn_effect(TurnEffect.REPLY)
+async def answer(args: AnswerInput) -> str:
+    return f"answered {args.text}"
+
+
+@pytest.fixture
+def received() -> list[PaintInput]:
+    """Every validated input the paint handler ran with."""
+    return []
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def custom_server(plugin_server, received):
+    async def paint(args: PaintInput) -> dict[str, object]:
+        received.append(args)
+        return {"painted": args.wall}
+
+    await plugin_server.enable(
+        create_parlant_tools(custom_tools=[(PaintInput, paint), (AnswerInput, answer)])
+    )
+    return plugin_server
+
+
+async def test_advertises_the_input_models_types(custom_server):
+    tool = await custom_server.advertised("paint")
+
+    descriptors = {
+        name: descriptor for name, (descriptor, _) in tool["parameters"].items()
+    }
+    assert tool["description"] == "Paint a wall."
+    assert tool["required"] == ["wall"]
+    assert descriptors == {
+        "wall": {"type": "string", "description": "Which wall to paint"},
+        "coats": {"type": "integer"},
+        "primer": {"type": "boolean"},
+        "finish": {"type": "string", "enum": ["matte", "gloss"]},
+        "shade": {"type": "string", "enum": ["light", "dark"]},
+        "due": {"type": "date"},
+        "rooms": {"type": "array", "item_type": "integer"},
+        "budget": {"type": "integer", "description": "Spend cap"},
+    }
+
+
+async def test_engine_strings_reach_the_handler_typed(custom_server, received):
+    set_session_tools("session-1", FakeAgentTools())
+
+    result = await custom_server.call(
+        "paint",
+        session_id="session-1",
+        arguments={
+            "wall": "north",
+            "coats": "3",
+            "primer": "False",
+            "finish": "gloss",
+            "shade": "dark",
+            "due": "2026-05-04",
+            "rooms": "[1, 2]",
+            "budget": None,
+        },
+    )
+
+    assert result == '{"painted": "north"}'
+    assert received == [
+        PaintInput(
+            wall="north",
+            coats=3,
+            primer=False,
+            finish="gloss",
+            shade=Shade.DARK,
+            due=date(2026, 5, 4),
+            rooms=[1, 2],
+            budget=100,
+        )
+    ]
+
+
+async def test_invalid_value_is_a_model_visible_error(custom_server, received):
+    set_session_tools("session-1", FakeAgentTools())
+
+    result = await custom_server.call(
+        "paint", session_id="session-1", arguments={"wall": "north", "coats": "three"}
+    )
+
+    assert result.startswith("Error running paint: Invalid arguments for paint:")
+    assert received == []
+
+
+async def test_effect_settles_only_the_calling_rooms_turn(custom_server):
+    calling, other = FakeAgentTools(), FakeAgentTools()
+    set_session_tools("session-calling", calling)
+    set_session_tools("session-other", other)
+
+    result = await custom_server.call(
+        "answer", session_id="session-calling", arguments={"text": "yes"}
+    )
+
+    assert result == "answered yes"
+    assert (calling.turn.replied, other.turn.replied) == (True, False)
+
+
+async def test_unbound_session_refuses_without_running_the_handler(
+    custom_server, received
+):
+    result = await custom_server.call(
+        "paint", session_id="session-unbound", arguments={"wall": "north"}
+    )
+
+    assert result == NO_SESSION_TOOLS_ERROR
+    assert received == []
