@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from band.core.turn import Turn
+from band.runtime.tools.registry import ALL_TOOL_NAMES
 from band.runtime.tools.schema import is_failed_tool_output
 from band.runtime.tools.types import TurnEffect
 
@@ -84,6 +86,19 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
     name = input_model.__name__
     name = name.removesuffix("Input")  # Remove "Input" suffix
     return name.lower()
+
+
+def reject_conflicting_tool_names(names: Iterable[str]) -> None:
+    """Refuse custom tool names that would replace another tool.
+
+    For a framework whose tool registry is last-wins, a name shadowing a Band
+    platform tool or another custom tool silently replaces it.
+    """
+    counts = Counter(names)
+    if shadowed := sorted(counts.keys() & ALL_TOOL_NAMES):
+        raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
+    if duplicated := sorted(name for name, count in counts.items() if count > 1):
+        raise ValueError(f"Custom tool names must be unique: {duplicated}")
 
 
 def custom_tool_to_openai_schema(input_model: type[BaseModel]) -> dict[str, Any]:
