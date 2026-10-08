@@ -155,6 +155,31 @@ async def test_a_tool_reply_suppresses_the_closing_text(framework_id: str) -> No
     assert result == TurnResult(TurnVerdict.Complete, messages=[ANSWER], failures=[])
 
 
+@pytest.mark.parametrize("framework_id", ["acp", "cursor_acp", "codex"])
+async def test_native_text_cannot_complete_a_tool_authoritative_turn(
+    framework_id: str,
+) -> None:
+    result = await run_turn(
+        TURN_OUTCOME_PROBES[framework_id], TurnScript(final_text=ANSWER)
+    )
+    assert result == TurnResult(TurnVerdict.MissingReply, [], [MISSING_REPLY_FAILURE])
+
+
+@pytest.mark.parametrize("framework_id", ["acp", "cursor_acp", "codex"])
+@pytest.mark.parametrize("script_name", sorted(COMPLETING_SCRIPTS))
+async def test_native_text_preserves_successful_tool_outcomes(
+    framework_id: str, script_name: str
+) -> None:
+    script = COMPLETING_SCRIPTS[script_name]
+    result = await run_turn(
+        TURN_OUTCOME_PROBES[framework_id],
+        TurnScript(script.tool_calls, final_text=ANSWER),
+    )
+    assert result == TurnResult(
+        TurnVerdict.Complete, [ANSWER] if script_name == "reply" else [], []
+    )
+
+
 #: Registered adapters whose turns are not the model's to answer through Band tools.
 UNJUDGED_FRAMEWORK_IDS = frozenset({"crewai_flow", "parlant"})
 

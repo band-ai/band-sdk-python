@@ -38,22 +38,59 @@ assert adapter.config.command == ("codex-acp",)
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
-- **Assistant text is held to turn close** and relayed as one reply through `relay_reply`,
-  unless the turn already replied or declined. Injected Band tools record their own effect
-  on `tools.turn`. With `inject_band_tools=False` an external band-mcp runs out of process,
-  so the emitter records each completed call's `turn_effect` from the `tool_call` title
-  instead, and only in that mode, so no call is counted twice. Narrated names are
-  canonicalized (`canonicalize_mcp_tool_name`) so Copilot's `band-` prefix never reaches
-  the room.
-- **`emit=` never gates** that recording, the held text, or the closing `task` event.
-  That event is resume state:
-  `ACPClientHistoryConverter` reads `acp_client_session_id` / `acp_client_room_id` from it
-  to `session/load` after a restart.
+- **Native summaries finish the provider turn.** After the required Band action,
+  the prompt requests a brief tool-free summary so coding runtimes do not keep
+  continuing. That summary is telemetry, never another room reply.
+- **Held agent text is thought telemetry.** At clean prompt close, successful
+  external Band-tool effects are recorded first; held native text is an optional
+  thought without mentions, suppressed after a successful reply or decline.
+  It never settles a turn. Failed tools alone and native-only output reach the
+  shared missing-reply verdict, with thoughts enabled or disabled.
+- **Injected Band tools record their own successful effects.** With
+  `inject_band_tools=False`, completed external tool effects are staged from
+  normalized identities until successful close. Failed calls record nothing.
+  Such peers need external Band tools to reply or decline; native text alone
+  no longer supplies room replies.
+- **`emit=` never gates effects or resume state.** The closing session `task`
+  carries restoration identifiers after held-text handling, regardless of flags.
+  Runtime judging may report an error afterward. Failed/cancelled prompts post
+  neither held text nor resume state.
+- **Migration:** delete retired `assistant_text_mode` config keys; explicit
+  configs reject them. Tool filters narrow SDK-injected registrations; external
+  MCP servers remain outside SDK registration control.
 - **Approved permissions are silent.** Only a denied request posts a synthetic
   `tool_call`/`tool_result` pair, and only when `Emit.TOOL_CALLS` is on.
 - **Replay happens once**, only for a freshly minted session (a failed `session/load`
   counts), under a nonce'd boundary marker so a replayed message cannot spoof it. History
   stops strictly before the triggering message (`messages_before`).
+
+## Upgrading from SDK 4.x to 5.x
+
+ACP client adapters and Codex no longer relay native assistant text as room
+messages. Replies must use `band_send_message`; messages needing no response
+must use `band_no_reply`. Native text is optional thought telemetry and cannot
+hide a missing reply. The shared turn judgment and other adapters' text relays
+are unchanged.
+
+- Keep SDK-injected Band tools enabled, or supply a reachable external Band MCP
+  server when using `inject_band_tools=False`. A conversation-only ACP peer
+  without Band tools can no longer reply or deliberately decline. The
+  [Copilot sandbox example](../examples/acp/copilot_sandbox/README.md) requires
+  `BAND_MCP_SSE_URL` for that reason.
+- Update custom prompts to use the two Band tools. Coding runtimes may finish
+  with a native summary after the required action; that summary is not another
+  room message.
+- Remove Codex's `fallback_send_agent_text` config key and
+  `CODEX_FALLBACK_SEND_AGENT_TEXT` environment variable. Also remove
+  `assistant_text_mode` from any configurations using the retired workaround
+  and `CODEX_ASSISTANT_TEXT_MODE` from the environment. Explicit config keys
+  are rejected; retired environment variables are ignored.
+- Keep the required communication tools available when changing tool filters.
+  SDK-injected ACP registrations now honor those filters. Start a fresh Codex
+  thread after changing filters; resumed threads retain their saved tools.
+
+These are breaking changes; integrations relying on native-text relay must
+migrate before upgrading. TypeScript parity is a separate change.
 
 ## Isolation
 

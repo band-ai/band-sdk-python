@@ -922,7 +922,11 @@ class TestCursorACPAdapterDecisions:
         room = await cursor_room(
             FakeACPAgent()
             .will_ask_permission(title="shell", allow_option_id="allow-once")
-            .will_say("ran it")
+            .will_call_mcp_tool(
+                "reply",
+                "band_send_message",
+                arguments={"content": "ran it", "mentions": ["@alice"]},
+            )
         )
 
         turn = await room.send("run it")
@@ -970,7 +974,11 @@ class TestCursorACPAdapterDetachedTurn:
         room = await cursor_room(
             FakeACPAgent()
             .will_ask_permission(title="shell", allow_option_id="allow-once")
-            .will_say("ran it")
+            .will_call_mcp_tool(
+                "reply",
+                "band_send_message",
+                arguments={"content": "ran it", "mentions": ["@alice"]},
+            )
         )
         turn = await room.send("run it")
         [prompt] = said(turn)

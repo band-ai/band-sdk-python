@@ -31,7 +31,10 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
+    ResourceManager,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 # A deliberately high ceiling on the agent's own messages in the post-peer window: a

@@ -34,6 +34,8 @@ from band_rest import (
 
 from band.core.types import PlatformConnection, PlatformMessage
 from band.runtime.presence import RoomPresence
+from tests.conftest import make_participant_mock
+from tests.runtime.helpers import AGENT_ID
 
 
 async def wait_for_condition(
@@ -237,4 +239,23 @@ def make_link_mock(
     link.mark_failed = AsyncMock()
     link.report_activity = AsyncMock(return_value=True)
     link.disconnect = AsyncMock()
+    return link
+
+
+@pytest.fixture
+def link(mock_rest_client: MagicMock) -> MagicMock:
+    link = MagicMock()
+    link.agent_id = AGENT_ID
+    link.rest = mock_rest_client
+    link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        return_value=MagicMock(
+            data=[make_participant_mock("user-1", "User One", "User")]
+        )
+    )
+    link.mark_processing = AsyncMock(return_value=True)
+    link.mark_processed = AsyncMock(return_value=True)
+    link.mark_failed = AsyncMock(return_value=True)
+    link.get_next_message = AsyncMock(return_value=None)
+    link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.report_activity = AsyncMock(return_value=True)
     return link

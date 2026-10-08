@@ -171,8 +171,8 @@ class ReplyCapture:
         """Ordered, de-duplicated delivery transitions seen for the pair."""
         return list(self._history[(message_id, recipient_id)])
 
-    def turn_boundary(self) -> datetime:
-        """Server timestamp of the latest captured reply — a between-turns boundary.
+    def turn_boundary(self, reply: MessageCreatedPayload | None = None) -> datetime:
+        """Server timestamp of a chosen reply, or the latest captured reply.
 
         Use it as ``since`` for a later durable read (``tool_calls`` / ``usage``) so
         that read is scoped to the *next* turn, even across a reused capture or a
@@ -182,12 +182,14 @@ class ReplyCapture:
         raises if no reply has been captured yet (an empty buffer would otherwise
         surface as an opaque ``IndexError``).
         """
-        if not self.messages:
-            raise RuntimeError(
-                "turn_boundary() needs a captured reply; call it after wait_for_processed"
-            )
+        if reply is None:
+            if not self.messages:
+                raise RuntimeError(
+                    "turn_boundary() needs a captured reply; call it after wait_for_processed"
+                )
+            reply = self.messages[-1]
         # Normalize a trailing Z before parsing, matching the src/band convention.
-        raw = self.messages[-1].inserted_at.replace("Z", "+00:00")
+        raw = reply.inserted_at.replace("Z", "+00:00")
         stamp = datetime.fromisoformat(raw)
         return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 

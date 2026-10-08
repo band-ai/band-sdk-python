@@ -42,6 +42,7 @@ from band.integrations.acp.client_types import (
 )
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp import BandMCPTransport
+from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import (
     Launch,
@@ -397,8 +398,7 @@ class TestACPClientAdapterLocalMcpConfig:
         system_context = adapter._build_system_context("room-123", msg)
 
         assert "Band tools" in system_context
-        assert "one-line plain text summary" in system_context
-        assert "do not post again" in system_context
+        assert COMMUNICATION_INSTRUCTIONS in system_context
         assert "reply exactly once" not in system_context
         assert "Never both" not in system_context
         assert "chat_id" not in system_context
@@ -777,7 +777,7 @@ class TestACPClientAdapterOnMessage:
         ]._conn.prompt.call_args_list
         assert [call.kwargs["session_id"] for call in prompt_calls] == ["fresh-session"]
         assert "[System Context]" in prompt_calls[0].kwargs["prompt"][0].text
-        assert tools.messages_sent[0]["content"] == "Recovered reply"
+        assert tools.messages_sent == []
 
     @pytest.mark.asyncio
     async def test_on_message_error_sends_error_event(
@@ -2089,7 +2089,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert len(reported_failures(tools)) == 1
 
     @pytest.mark.asyncio
-    async def test_reply_delivery_failure_leaves_connection_up(self) -> None:
+    async def test_closing_thought_delivery_failure_leaves_connection_up(self) -> None:
         """The agent answered fine; posting its reply to the room is what
         failed. That must not tear down and respawn a healthy connection,
         nor be reported as an ACP provider failure."""
@@ -2120,20 +2120,19 @@ class TestACPClientAdapterDeadConnectionRecovery:
         async def _raise(*args: object, **kwargs: object) -> None:
             raise RuntimeError("platform rejected the message")
 
-        tools.send_message = _raise  # type: ignore[method-assign]
+        tools.send_event = _raise  # type: ignore[method-assign]
 
         msg = make_platform_message("Hello", room_id="room-1")
 
-        with pytest.raises(RuntimeError, match="platform rejected the message"):
-            await adapter.on_message(
-                msg,
-                tools,
-                ACPClientSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        await adapter.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
 
         assert runtime._conn is not None
         assert runtime._ctx is not None
@@ -2308,3 +2307,10 @@ class TestACPClientAdapterEmitSupport:
             ACPClientAdapter(
                 ACPClientAdapterConfig(command=["omp", "acp"]), emit=Emit.USAGE
             )
+
+
+def test_retired_acp_delivery_mode_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        ACPClientAdapterConfig.model_validate(
+            {"command": "codex", "assistant_text_mode": "thought"}
+        )

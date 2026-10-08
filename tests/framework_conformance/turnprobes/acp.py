@@ -87,8 +87,8 @@ async def settle_cursor_acp(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "acp": TurnOutcomeProbe(run=run_acp, relays=True),
+    "acp": TurnOutcomeProbe(run=run_acp, relays=False),
     "cursor_acp": TurnOutcomeProbe(
-        run=run_cursor_acp, settle=settle_cursor_acp, relays=True
+        run=run_cursor_acp, settle=settle_cursor_acp, relays=False
     ),
 }

@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Self
 
-from band.core.delivery import relay_reply
+from band.core.content import has_visible_content
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import Emit
+from band.core.types import Emit, MessageType
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -39,8 +39,9 @@ class RoomTurnEmitter:
     or declined via a Band tool — if so the text would duplicate the reply already
     in the room.
 
-    On a clean close the held text is relayed (unless the turn already replied),
-    and the session bookkeeping ``task`` event is posted last.
+    On clean close, held text is optional thought telemetry unless a tool
+    replied or declined. The resume-state task follows; runtime judging may
+    subsequently report a missing reply.
 
     Which narration kinds reach the room is controlled by the emit set passed
     at construction (``None``: all kinds — the historical default). The closing
@@ -54,7 +55,6 @@ class RoomTurnEmitter:
         self,
         tools: AgentToolsProtocol,
         *,
-        mentions: list[dict[str, str]],
         session_id: str,
         room_id: str,
         emit: frozenset[Emit] | None = None,
@@ -68,7 +68,6 @@ class RoomTurnEmitter:
         the work streamed during it, which may belong to another turn.
         """
         self._tools = tools
-        self._mentions = mentions
         self._session_id = session_id
         self._room_id = room_id
         self._records_tool_effects = records_tool_effects
@@ -80,8 +79,7 @@ class RoomTurnEmitter:
         self._staged_effects: list[TurnEffect] = []
 
     async def emit(self, chunk: CollectedChunk) -> None:
-        if self._records_tool_effects:
-            self._stage_tool_effect(chunk)
+        self._stage_tool_outcome(chunk)
         match chunk.chunk_type:
             case ChunkType.TEXT:
                 if chunk.content:
@@ -116,20 +114,14 @@ class RoomTurnEmitter:
                     chunk.chunk_type,
                 )
 
-    def _stage_tool_effect(self, chunk: CollectedChunk) -> None:
-        """Stage a completed tool call's effect for the turn.
-
-        An external band-mcp runs where the SDK never sees it, so the stream is
-        the only record of what it did. ACP has no structured tool-name field,
-        so the canonicalized title names the tool; a non-Band tool resolves to
-        ``observe``. A failed call records nothing, so a failed post never
-        suppresses the text relay.
-        """
-        if chunk.metadata.get("status") != ToolStatus.COMPLETED:
+    def _stage_tool_outcome(self, chunk: CollectedChunk) -> None:
+        """Stage successful external effects until the prompt closes cleanly."""
+        if not self._records_tool_effects:
             return
         match chunk.tool:
             case ACPToolCall(name=name) | ACPToolResult(call=ACPToolCall(name=name)):
-                self._staged_effects.append(turn_effect(name))
+                if chunk.metadata.get("status") == ToolStatus.COMPLETED:
+                    self._staged_effects.append(turn_effect(name))
 
     def _tool_event_content(self, chunk: CollectedChunk) -> str:
         """Serialize normalized tool activity for room persistence."""
@@ -188,11 +180,18 @@ class RoomTurnEmitter:
             return False
         for effect in self._staged_effects:
             self._tools.turn.record(effect)
-        # The held runs only ever post together at close, so they relay as the
-        # turn's one reply.
-        await relay_reply(
-            self._tools, "\n\n".join(self._pending_text), mentions=self._mentions
-        )
+        text = "\n\n".join(self._pending_text)
+        if (
+            not self._tools.turn.replied
+            and Emit.THOUGHTS in self._emit
+            and has_visible_content(text)
+        ):
+            await send_event_safe(
+                self._tools,
+                content=text,
+                message_type=MessageType.THOUGHT,
+                log_label="ACP closing thought",
+            )
         # Posted regardless of the emit set: this is resume state read back by
         # ACPClientHistoryConverter, not narration (only PLAN chunks follow
         # Emit.TASK_EVENTS).

@@ -194,28 +194,29 @@ def test_shell_redirect_readback_handles_host_encodings(
     assert written_lines(target) == [marker]
 
 
-def test_approval_commands_write_and_append_with_host_shell(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "shell",
+    [None, "pwsh", "powershell"] if sys.platform == "win32" else [None],
+    ids=lambda shell: shell or "host",
+)
+def test_approval_commands_write_and_append_with_host_shell(
+    tmp_path: Path, shell: str | None
+) -> None:
     target = tmp_path / "approval with spaces.txt"
     marker = "approval-marker"
     target.write_text("old", encoding="utf-8")
 
-    subprocess.run(marker_command(marker, target), shell=True, check=True, cwd=tmp_path)
-    subprocess.run(
-        appending_command(marker, target), shell=True, check=True, cwd=tmp_path
-    )
-
+    for command in (marker_command, appending_command):
+        text = command(marker, target)
+        args = text if shell is None else [shell, "-NoProfile", "-Command", text]
+        subprocess.run(
+            args,
+            shell=shell is None,
+            check=True,
+            cwd=tmp_path,
+            timeout=10,
+        )
     assert written_lines(target) == [marker, marker]
-
-    if sys.platform == "win32":
-        # pwsh writes UTF-8; Windows PowerShell 5.1 writes UTF-16 with a BOM.
-        for shell in ("pwsh", "powershell"):
-            for command in (marker_command, appending_command):
-                subprocess.run(
-                    [shell, "-NoProfile", "-Command", command(marker, target)],
-                    check=True,
-                    cwd=tmp_path,
-                )
-            assert written_lines(target) == [marker, marker], shell
 
 
 GATED_COMMAND = "cat approval.txt"

@@ -23,10 +23,10 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.claude_sdk import transport
 from band.integrations.codex import CodexStdioClient
-from band.testing import FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.process import WorkspacePeer
 from tests.adapters.roompeer import PeerCommand, write_instruction
+from tests.framework_conformance.turnprobes import DispatchingFakeTools
 from tests.paths import REPO_ROOT
 
 
@@ -72,7 +72,7 @@ class WorkspaceHost:
         return str(self.root / ("shared" if self.shared else room_id))
 
     async def send(self, room_id: str, content: str) -> list[str]:
-        tools = FakeAgentTools(room_id=room_id)
+        tools = DispatchingFakeTools(room_id=room_id)
         await self.adapter.on_event(
             AgentInput(
                 msg=PlatformMessage(
