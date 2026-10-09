@@ -13,13 +13,14 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 
 from band.core.exceptions import InvalidToolArgumentsError
 from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
 
-_JSON_VALUE = TypeAdapter(Any)
+# Bytes become base64: pydantic's default UTF-8 fails on binary content.
+_JSON_VALUE = TypeAdapter(Any, config=ConfigDict(ser_json_bytes="base64"))
 
 
 def resolve_tool_model(name: str) -> type[BaseModel] | None:

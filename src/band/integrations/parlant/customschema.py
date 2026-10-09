@@ -230,13 +230,16 @@ def _schema_key(name: str, info: FieldInfo) -> str:
             return name
 
 
-def _carries_choices(choices: Iterable[str], *, annotation: Any) -> bool:
+def _carries_choices(choices: list[str], *, annotation: Any) -> bool:
     """Whether each advertised choice, as delivered text, is a value of one of
     the field's choice types.
 
     Only those bare types are checked: the field's constraints and the
     model's validators may need the rest of a call's input.
     """
+    if not choices:
+        # Nothing to check, and walking a recursive alias would never end.
+        return True
     adapters = [TypeAdapter(choice_type) for choice_type in _choice_types(annotation)]
     return all(
         any(_validates(adapter, choice) for adapter in adapters) for choice in choices

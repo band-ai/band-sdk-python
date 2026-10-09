@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import get_type_hints
 
 import pytest
@@ -15,6 +15,7 @@ from band.runtime.tools import (
     get_tool_docstring_with_args,
     platform_tool,
     serialize_tool_result,
+    tool_result_text,
     validate_tool_arguments,
 )
 
@@ -57,6 +58,20 @@ class TestSerializeToolResult:
     def test_a_plain_value_passes_through_unchanged(self) -> None:
         assert serialize_tool_result("already a string") == "already a string"
         assert serialize_tool_result({"id": "r1"}) == {"id": "r1"}
+
+
+@pytest.mark.parametrize(
+    ("result", "text"),
+    [
+        ("already text", "already text"),
+        ({date(2026, 5, 4): 2}, '{"2026-05-04": 2}'),
+        ({"png": b"\x89PNG"}, '{"png": "iVBORw=="}'),
+    ],
+    ids=["text", "non-text-keys", "binary-bytes"],
+)
+def test_tool_result_text_renders_any_result_a_tool_returned(result, text) -> None:
+    """The handler already ran, so rendering its result must never fail."""
+    assert tool_result_text(result) == text
 
 
 class TestPlatformTool:

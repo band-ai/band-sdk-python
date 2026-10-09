@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -17,6 +18,7 @@ from pydantic import (
     AliasPath,
     BaseModel,
     Field,
+    Json,
     conlist,
     create_model,
 )
@@ -209,3 +211,14 @@ def test_checks_an_aliased_fields_choices(field, key):
     """The choices are checked under whatever key pydantic advertises the field."""
     with pytest.raises(ValueError, match=f"field '{key}'.*choices as strings"):
         descriptor_of(Literal[1, 2], field)
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="PEP 695 aliases need Python 3.12"
+)
+def test_carries_a_recursive_alias_that_offers_no_choices():
+    """Only a ``type`` statement's alias is evaluated eagerly enough to recurse."""
+    namespace: dict[str, Any] = {}
+    exec("type Tree = str | list[Tree]", namespace)  # noqa: S102 -- 3.11 cannot parse it
+
+    assert descriptor_of(Json[namespace["Tree"]]) == {"type": "string"}
