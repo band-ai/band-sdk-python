@@ -118,8 +118,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             history_converter: Custom history converter (optional)
             additional_tools: Custom tools as ``(InputModel, handler)`` pairs,
                 offered with the Band platform tools by every guideline that
-                keeps the default tools. Fields must be scalars, enums, dates
-                or lists of those; Parlant has no object parameter type.
+                keeps the default tools. The field shapes Parlant can carry
+                are listed in ``band.integrations.parlant.customschema``.
                 Names are server-wide, so on a shared ``server=`` they must
                 not clash with another adapter's tools.
             nlp_service: Parlant NLP service for the adapter-owned server (e.g.

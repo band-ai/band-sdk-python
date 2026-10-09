@@ -48,7 +48,7 @@ class PaintInput(BaseModel):
     cost: Decimal = Decimal(0)
     start: datetime = datetime(2026, 1, 1, tzinfo=UTC)
     colors: list[Literal["red", "blue"]] = []
-    size: int | str = 1
+    size: Literal["auto"] | int = "auto"
     layers: StrictInt = 1
     sheen: Literal["satin", "gloss", None] = None  # noqa: PYI061 -- the form under test
     trim: Annotated[str, Field(description="Trim style")] | None = Field(
@@ -152,7 +152,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             "cost": "3.50",
             "start": "2026-05-04T10:00:00Z",
             "colors": "['red', 'blue']",
-            "size": "large",
+            "size": "3",
             "layers": "3",
             "sheen": "satin",
             "trim": None,
@@ -175,7 +175,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             cost=Decimal("3.50"),
             start=datetime(2026, 5, 4, 10, tzinfo=UTC),
             colors=["red", "blue"],
-            size="large",
+            size=3,
             layers=3,
             sheen="satin",
         )

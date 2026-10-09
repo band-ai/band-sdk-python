@@ -29,6 +29,17 @@ class Color(enum.Enum):
     BLUE = 2
 
 
+class Mixed(enum.Enum):
+    A = "a"
+    B = 1
+
+
+class Finish(enum.Enum):
+    """The paint finish."""
+
+    MATTE = "matte"
+
+
 class Address(BaseModel):
     street: str
 
@@ -64,13 +75,18 @@ ACCEPTED = [
     ),
     ("aliased-literal", Priority, {"type": "string", "enum": ["low", "high"]}),
     ("str-enum", Shade, {"type": "string", "enum": ["light", "dark"]}),
-    ("scalar-union", int | str, {"type": "string"}),
-    ("optional-scalar-union", int | str | None, {"type": "string"}),
+    ("union-with-a-literal", Literal["auto"] | int, {"type": "string"}),
+    ("optional-union", Literal["auto"] | int | None, {"type": "string"}),
     ("union-with-a-choice", Shade | int, {"type": "string"}),
     (
         "union-of-choices",
         Shade | Literal["clear"],
         {"type": "string", "enum": ["light", "dark", "clear"]},
+    ),
+    (
+        "overlapping-union-of-choices",
+        Shade | Literal["light"],
+        {"type": "string", "enum": ["light", "dark"]},
     ),
     ("decimal", Decimal, {"type": "string"}),
     ("list", list[int], {"type": "array", "item_type": "integer"}),
@@ -78,7 +94,11 @@ ACCEPTED = [
     ("variadic-tuple", tuple[int, ...], {"type": "array", "item_type": "integer"}),
     ("optional-list", list[int] | None, {"type": "array", "item_type": "integer"}),
     ("aliased-optional-list", MaybeTrays, {"type": "array", "item_type": "integer"}),
-    ("list-of-union", list[int | str], {"type": "array", "item_type": "string"}),
+    (
+        "list-of-union",
+        list[Literal["auto"] | int],
+        {"type": "array", "item_type": "string"},
+    ),
     (
         "list-of-choices",
         list[Literal["a", "b"]],
@@ -88,6 +108,24 @@ ACCEPTED = [
         "list-of-enum",
         list[Shade],
         {"type": "array", "item_type": "string", "enum": ["light", "dark"]},
+    ),
+    (
+        "described-enum",
+        Finish,
+        {"type": "string", "enum": ["matte"], "description": "The paint finish."},
+    ),
+    (
+        "optional-described-type",
+        Annotated[int, Field(description="Spend cap")] | None,
+        {"type": "integer", "description": "Spend cap"},
+    ),
+    (
+        "field-description-over-the-types",
+        Annotated[
+            Annotated[str, Field(description="Trim style")] | None,
+            Field(description="Trim to paint"),
+        ],
+        {"type": "string", "description": "Trim to paint"},
     ),
     (
         "list-item-description",
@@ -105,7 +143,13 @@ REJECTED = [
     ("nested-list", list[list[int]]),
     ("list-of-dicts", list[dict[str, str]]),
     ("union-with-a-list", list[int] | list[str]),
+    ("union-with-str", int | str),
+    ("bool-or-str", bool | str),
+    ("optional-union-with-str", int | str | None),
+    ("list-of-union-with-str", list[int | str]),
     ("int-literal", Literal[1, 2]),
+    ("mixed-literal", Literal["a", 1]),
+    ("mixed-enum", Mixed),
     ("bool-literal", Literal[True]),
     ("aliased-int-literal", IntPriority),
     ("int-enum", Grade),

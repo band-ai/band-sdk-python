@@ -15,8 +15,10 @@ unwrapped; any other shape is rejected when the adapter is built:
 - string choices (a str ``Literal`` or a str-valued ``Enum``), advertised as
   ``string`` with an ``enum``: a string is what Parlant sends, so only a
   string value is sure to validate from it;
-- a union of the shapes above (``int | str``, ``Decimal``), advertised as
-  ``string``, with every member's choices when all members are choices;
+- a union of the shapes above (``Literal["auto"] | int``, ``Decimal``),
+  advertised as ``string``, with every member's choices when all members are
+  choices; not with a plain ``str`` member, which takes every text first and
+  leaves the other members unreachable;
 - a list, set or ``tuple[X, ...]`` of one of those, advertised as ``array``
   with its item type and parsed from list text.
 
@@ -85,10 +87,13 @@ SCALAR_TYPES = {
     JsonType.NUMBER: ParlantType.NUMBER,
     JsonType.BOOLEAN: ParlantType.BOOLEAN,
 }
+# Keywords that limit which text a JSON Schema string accepts.
+STRING_NARROWING = frozenset({"format", "pattern", "enum", "const"})
 # JSON Schema string formats Parlant has a parameter type for.
 FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
 UNSUPPORTED_SHAPE = (
     "Parlant has no parameter type for this field; choices must be strings "
+    "and a union may not include a plain str "
     "(supported shapes: band.integrations.parlant.customschema)"
 )
 
@@ -252,16 +257,22 @@ def _union(
 ) -> Descriptor | None:
     """Text the input model validates against each member in turn; a union of
     choices offers every member's choices."""
+    schemas = [_resolve(branch, defs=defs) for branch in branches]
+    if any(_is_free_text(schema) for schema in schemas):
+        return None
     members: list[Descriptor] = []
-    for branch in branches:
-        if (
-            member := _scalar_descriptor(_resolve(branch, defs=defs), defs=defs)
-        ) is None:
+    for schema in schemas:
+        if (member := _scalar_descriptor(schema, defs=defs)) is None:
             return None
         members.append(member)
     if all("enum" in member for member in members):
         return _choices(choice for member in members for choice in member["enum"])
     return Descriptor(type=ParlantType.STRING)
+
+
+def _is_free_text(schema: Mapping[str, Any]) -> bool:
+    """A string member no other keyword narrows, so it validates any text."""
+    return schema.get("type") == JsonType.STRING and STRING_NARROWING.isdisjoint(schema)
 
 
 def _choices(values: Iterable[Any]) -> Descriptor | None:
