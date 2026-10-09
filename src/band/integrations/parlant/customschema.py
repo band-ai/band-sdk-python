@@ -7,6 +7,18 @@ the model only as a bare "Tool call error"). So each field is advertised with
 its model-derived type while its signature stays ``str``, leaving every
 conversion to the tool itself, where a failure is a readable tool result.
 
+The field shapes Parlant can carry, after ``$ref`` and ``Optional`` are
+unwrapped; any other shape is rejected when the adapter is built:
+
+- a scalar (``str`` in any format, ``int``, ``float``, ``bool``), advertised
+  as its own type, or as ``date`` / ``datetime`` for those formats;
+- choices (``Literal``, ``Enum``) whose values validate from their text,
+  advertised as ``string`` with an ``enum``;
+- a union of the shapes above (``int | str``, ``Decimal``), advertised as
+  ``string``;
+- a list, set or ``tuple[X, ...]`` of one of those, advertised as ``array``
+  with its item type and parsed from list text.
+
 No Parlant import, so an adapter can check its custom tools in any venv.
 """
 
@@ -232,56 +244,61 @@ def _resolve(prop: Mapping[str, Any], *, defs: Mapping[str, Any]) -> Mapping[str
 
 
 def _descriptor(
-    resolved: Mapping[str, Any], *, defs: Mapping[str, Any], where: str
+    schema: Mapping[str, Any], *, defs: Mapping[str, Any], where: str
 ) -> Descriptor:
-    """The Parlant parameter descriptor for one resolved property schema."""
-    match resolved:
+    """The Parlant descriptor for a field shape in the module's table."""
+    match schema:
+        case {"type": JsonType.ARRAY, "items": Mapping() as items}:
+            item = _scalar_descriptor(_resolve(items, defs=defs), defs=defs)
+            if item is None:
+                raise _unsupported(where)
+            return _list_of(item)
+        case _:
+            if (scalar := _scalar_descriptor(schema, defs=defs)) is None:
+                raise _unsupported(where)
+            return scalar
+
+
+def _scalar_descriptor(
+    schema: Mapping[str, Any], *, defs: Mapping[str, Any]
+) -> Descriptor | None:
+    """A single-value shape's descriptor, or ``None`` for any other shape."""
+    match schema:
         case {"const": value}:
-            # A single-value Literal; offered like any other set of choices.
-            return _descriptor({"enum": [value]}, defs=defs, where=where)
+            return _choices([value])
         case {"enum": values}:
-            # A None choice is how Parlant omits the argument, not a string.
-            return Descriptor(
-                type=ParlantType.STRING,
-                enum=[str(value) for value in values if value is not None],
-            )
+            return _choices(values)
         case {"type": JsonType.STRING, "format": str(fmt)} if fmt in FORMAT_TYPES:
             return Descriptor(type=FORMAT_TYPES[fmt])
         case {"type": str(json_type)} if json_type in SCALAR_TYPES:
             return Descriptor(type=SCALAR_TYPES[JsonType(json_type)])
-        case {"type": JsonType.ARRAY, "items": items}:
-            return _array_descriptor(_resolve(items, defs=defs), defs=defs, where=where)
-        case {"type": JsonType.ARRAY}:
-            raise ValueError(f"{where}: Parlant lists need one item type (no tuples)")
-        case {"anyOf": branches}:
-            return _union_descriptor(branches, defs=defs, where=where)
+        case {"anyOf": branches} if all(
+            _scalar_descriptor(_resolve(branch, defs=defs), defs=defs) is not None
+            for branch in branches
+            if branch != NULL_SCHEMA
+        ):
+            # Text the input model validates against each member in turn.
+            return Descriptor(type=ParlantType.STRING)
         case _:
-            raise ValueError(
-                f"{where}: Parlant has no object parameter type (dicts, nested models)"
-            )
+            return None
 
 
-def _union_descriptor(
-    branches: list[Mapping[str, Any]], *, defs: Mapping[str, Any], where: str
-) -> Descriptor:
-    """A multi-type union (or Decimal) arrives as text the model validates,
-    which only works when every member is a scalar."""
-    for branch in branches:
-        if branch == NULL_SCHEMA:
-            continue
-        member = _descriptor(_resolve(branch, defs=defs), defs=defs, where=where)
-        if member["type"] == ParlantType.ARRAY:
-            raise ValueError(f"{where}: Parlant has no type for a union with a list")
-    return Descriptor(type=ParlantType.STRING)
+def _choices(values: Iterable[Any]) -> Descriptor | None:
+    # A None choice is how Parlant omits the argument, not a value it sends.
+    choices = [str(value) for value in values if value is not None]
+    return Descriptor(type=ParlantType.STRING, enum=choices) if choices else None
 
 
-def _array_descriptor(
-    item: Mapping[str, Any], *, defs: Mapping[str, Any], where: str
-) -> Descriptor:
-    item_descriptor = _descriptor(item, defs=defs, where=f"{where} item")
-    if item_descriptor["type"] == ParlantType.ARRAY:
-        raise ValueError(f"{where}: Parlant has no nested list parameter type")
-    descriptor = Descriptor(type=ParlantType.ARRAY, item_type=item_descriptor["type"])
-    if "enum" in item_descriptor:
-        descriptor["enum"] = item_descriptor["enum"]
+def _list_of(item: Descriptor) -> Descriptor:
+    descriptor = Descriptor(type=ParlantType.ARRAY, item_type=item["type"])
+    if "enum" in item:
+        descriptor["enum"] = item["enum"]
     return descriptor
+
+
+def _unsupported(where: str) -> ValueError:
+    return ValueError(
+        f"{where}: Parlant can carry only a str, number, bool, date, datetime, "
+        "choice or a union of those, or a list of one of them "
+        "(not a dict, nested model, tuple or nested list)"
+    )

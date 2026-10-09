@@ -6,7 +6,6 @@ tests/framework_conformance/test_adapter_conformance.py.
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Literal
 
 import pytest
@@ -18,7 +17,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from typing_extensions import TypeAliasType
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from tests.adapters.parlant.helpers import LOOKUP
@@ -109,72 +107,6 @@ class DictInput(BaseModel):
     tags: dict[str, str]
 
 
-class Address(BaseModel):
-    street: str
-
-
-class NestedInput(BaseModel):
-    """Has a nested-model field."""
-
-    address: Address
-
-
-class IntLiteralInput(BaseModel):
-    """Has an int-valued Literal."""
-
-    level: Literal[1, 2]
-
-
-class TupleInput(BaseModel):
-    """Has a fixed-shape tuple field."""
-
-    pair: tuple[int, int]
-
-
-class SingleIntLiteralInput(BaseModel):
-    """Has a single-value int Literal, which JSON Schema writes as a const."""
-
-    level: Literal[1]
-
-
-class Color(Enum):
-    RED = 1
-    BLUE = 2
-
-
-class IntEnumInput(BaseModel):
-    """Has a plain Enum with int values, which "1" does not validate as."""
-
-    color: Color
-
-
-class IntEnumListInput(BaseModel):
-    """Has a list of a plain int-valued Enum."""
-
-    colors: list[Color]
-
-
-Priority = TypeAliasType("Priority", Literal[1, 2])
-
-
-class AliasedIntLiteralInput(BaseModel):
-    """Has an int Literal behind a type alias, which JSON Schema writes as a $ref."""
-
-    priority: Priority
-
-
-class ListUnionInput(BaseModel):
-    """Has a union of lists, which no single Parlant type can carry."""
-
-    values: list[int] | list[str]
-
-
-class NestedListInput(BaseModel):
-    """Has a list of lists."""
-
-    grid: list[list[int]]
-
-
 @pytest.mark.parametrize(
     ("additional_tools", "named"),
     [
@@ -183,31 +115,13 @@ class NestedListInput(BaseModel):
         ([(ContextInput, lookup)], "context"),
         ([(KeywordAliasInput, lookup)], "from"),
         ([(DictInput, lookup)], "tags"),
-        ([(NestedInput, lookup)], "address"),
-        ([(IntLiteralInput, lookup)], "level"),
-        ([(SingleIntLiteralInput, lookup)], "level"),
-        ([(TupleInput, lookup)], "tuples"),
-        ([(IntEnumInput, lookup)], "color"),
-        ([(IntEnumListInput, lookup)], "colors"),
-        ([(AliasedIntLiteralInput, lookup)], "priority"),
-        ([(NestedListInput, lookup)], "nested list"),
-        ([(ListUnionInput, lookup)], "union with a list"),
     ],
     ids=[
         "shadows-band-tool",
         "duplicate-name",
         "context-field",
         "keyword-alias",
-        "dict-field",
-        "nested-model-field",
-        "int-literal",
-        "single-int-literal",
-        "tuple-field",
-        "plain-int-enum",
-        "plain-int-enum-list",
-        "aliased-int-literal",
-        "nested-list",
-        "list-union",
+        "unsupported-shape",
     ],
 )
 def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):

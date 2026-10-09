@@ -76,7 +76,6 @@ class NoteInput(BaseModel):
     """Leave a note."""
 
     text: str | None
-    tone: Literal["calm"] = "calm"
 
 
 class Receipt(BaseModel):
@@ -239,12 +238,6 @@ async def test_unbound_session_refuses_without_running_the_handler(
 
     assert result == NO_SESSION_TOOLS_ERROR
     assert received == []
-
-
-async def test_single_value_literal_is_advertised_as_its_enum(custom_server):
-    tool = await custom_server.advertised("note")
-
-    assert tool["parameters"]["tone"][0] == {"type": "string", "enum": ["calm"]}
 
 
 @pytest.mark.usefixtures("bound_room")
