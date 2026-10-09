@@ -23,9 +23,10 @@ Run with:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel
 
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
@@ -51,6 +52,7 @@ pytest.importorskip("parlant.sdk")
 import parlant.sdk as p
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from band.runtime.custom_tools import get_custom_tool_name
 
 _SHORT = "You are a friendly assistant in a chat room. Reply in one short sentence."
 
@@ -59,6 +61,29 @@ _LOOKUP_CONDITION = "The user asks for the access code of a key"
 LOOKUP_KEY = "alpha"
 _LOOKUP_ACTION = (
     f"Call the {LOOKUP} tool with that key, then tell the user the code it returns"
+)
+
+
+class BatchCodeInput(BaseModel):
+    """Compute the secret batch code for several projects (cannot be guessed)."""
+
+    projects: list[Literal["alpha", "beta", "gamma"]]
+    batch: int
+
+
+def batch_code(args: BatchCodeInput) -> str:
+    """Only a typed list of projects and an int batch yield the right code."""
+    return (
+        f"BT{sum(int(ACCESS_CODES[name][2:]) for name in args.projects) * args.batch}"
+    )
+
+
+BATCH_CODE = get_custom_tool_name(BatchCodeInput)
+BATCH_REQUEST = BatchCodeInput(projects=["alpha", "beta"], batch=3)
+_BATCH_CONDITION = "The user asks for the batch code of some projects"
+_BATCH_ACTION = (
+    f"Call the {BATCH_CODE} tool with those projects and that batch number, "
+    "then tell the user the code it returns"
 )
 
 LiveTest = Callable[..., Awaitable[None]]
@@ -175,3 +200,50 @@ async def test_parlant_executes_custom_tool(
             )
 
     replies.assert_contains_any([ACCESS_CODES[LOOKUP_KEY]])
+
+
+@parlant_live_turn
+async def test_parlant_delivers_typed_custom_tool_arguments(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """A real model's list, choice and int arguments reach the handler typed.
+
+    Parlant advertises the typed descriptors and delivers every value as text;
+    only a parsed list of known projects and an int batch produce the code the
+    reply must carry. The guideline offers the custom tool alone, picked from
+    ``adapter.tools`` in ``configure=``: with ``band_send_message`` on offer the
+    model may post an interim note, which settles the turn before the code.
+    """
+
+    async def offer_batch_code_alone(_: p.Server, parlant_agent: p.Agent) -> None:
+        [entry] = [tool for tool in adapter.tools if tool.tool.name == BATCH_CODE]
+        await parlant_agent.create_guideline(
+            condition=_BATCH_CONDITION, action=_BATCH_ACTION, tools=[entry]
+        )
+
+    adapter = showcase_adapter(
+        additional_tools=[(BatchCodeInput, batch_code)],
+        configure=offer_batch_code_alone,
+    )
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="parlant-typed-tool"
+    ) as agent:
+        room_id = await resource_manager.provision_room(
+            title="e2e-parlant-typed-tool", participants=[agent.id]
+        )
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                f"What is the batch code for projects "
+                f"{' and '.join(BATCH_REQUEST.projects)}, batch {BATCH_REQUEST.batch}?",
+                mention_id=agent.id,
+                mention_name=agent.name,
+            )
+            replies = await capture.wait_for_reply(
+                mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 3
+            )
+
+    replies.assert_contains_any([batch_code(BATCH_REQUEST)])
