@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from band.core.exceptions import BandToolError
+from band.integrations.parlant import guard
 from band.integrations.parlant.tools import set_session_tools
+from tests.integrations.parlant.helpers import SESSION_ID
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
+
+
+def lines_at(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
+    """The captured log messages logged at exactly *level*."""
+    return [record.getMessage() for record in caplog.records if record.levelno == level]
 
 
 class TestGuardFailures:
@@ -102,21 +111,38 @@ class TestGuardFailures:
         assert result.data.startswith("Error calling band_send_message:")
 
     @pytest.mark.asyncio
-    async def test_tool_logs_result_on_success(
+    async def test_logs_the_outcome_at_info_and_room_content_at_debug(
         self, parlant_tools, mock_tools, mock_context, caplog
     ):
-        """guard_failures must log a per-call outcome, not just the initial
-        'called' line -- operators grep these logs for tool-level
-        confirmation (e.g. that a specific branch was hit)."""
+        """Operators grep the INFO lines for a per-call outcome; the call's
+        arguments and result are room content, so they appear only at DEBUG."""
         set_session_tools(mock_context.session_id, mock_tools)
         send_message = parlant_tools["band_send_message"]
 
-        with caplog.at_level("INFO"):
+        with caplog.at_level(logging.DEBUG, logger=guard.__name__):
             await send_message(mock_context, "Hello", "Alice")
 
-        result_logs = [
-            r
-            for r in caplog.records
-            if r.getMessage().startswith("[Parlant Tool] band_send_message ->")
+        assert lines_at(caplog, logging.INFO) == [
+            f"[Parlant Tool] band_send_message called: session={SESSION_ID}",
+            "[Parlant Tool] band_send_message completed",
         ]
-        assert len(result_logs) == 1
+        debug = "\n".join(lines_at(caplog, logging.DEBUG))
+        assert "content=Hello" in debug
+        assert "Message sent to Alice" in debug
+
+    @pytest.mark.asyncio
+    async def test_invalid_arguments_log_one_warning_without_a_traceback(
+        self, parlant_tools, mock_tools, mock_context, caplog
+    ):
+        """A bad argument is the model's to fix from the returned error, not
+        an operator alert."""
+        set_session_tools(mock_context.session_id, mock_tools)
+        get_task = parlant_tools["band_get_task"]
+
+        with caplog.at_level(logging.WARNING, logger=guard.__name__):
+            result = await get_task(mock_context, "task-1", include="bogus")
+
+        assert result.data.startswith("Error getting task 'task-1': Invalid arguments")
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert not record.exc_info

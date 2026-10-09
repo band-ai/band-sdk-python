@@ -10,6 +10,7 @@ import httpx
 # Fixed ids for the tool context; tools find their room by session alone.
 AGENT_ID = "agent-1"
 CUSTOMER_ID = "customer-1"
+SESSION_ID = "session-1"
 
 
 @dataclass(frozen=True)

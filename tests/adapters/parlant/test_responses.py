@@ -43,6 +43,7 @@ def relay(mock_app, mock_tools):
             relay_agent_response(
                 app=mock_app,
                 session_id=SESSION_ID,
+                room_id=mock_tools.room_id,
                 min_offset=0,
                 tools=mock_tools,
                 sender_name=SENDER_NAME,

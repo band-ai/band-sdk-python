@@ -337,6 +337,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 await self._converse(
                     app=rooms.app,
                     session_id=session_id,
+                    room_id=room_id,
                     user_message=user_message,
                     tools=tools,
                     sender_name=sender_name,
@@ -379,6 +380,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         *,
         app: Application,
         session_id: SessionId,
+        room_id: str,
         user_message: str,
         tools: AgentToolsProtocol,
         sender_name: str,
@@ -390,6 +392,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         await relay_agent_response(
             app=app,
             session_id=session_id,
+            room_id=room_id,
             min_offset=offset,
             tools=tools,
             sender_name=sender_name,

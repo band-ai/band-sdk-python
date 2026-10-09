@@ -66,8 +66,6 @@ def agent_messages(events: Sequence[Any], *, offset: int) -> AgentMessages:
         final_seen = True
         if text:
             final_texts.append(text)
-        else:
-            logger.warning("Empty message content in agent event")
     return AgentMessages(offset=offset, final_texts=final_texts, final_seen=final_seen)
 
 
@@ -75,6 +73,7 @@ async def next_agent_events(
     *,
     app: Application,
     session_id: SessionId,
+    room_id: str,
     offset: int,
     window: float,
 ) -> Sequence[Any] | PollMiss:
@@ -100,12 +99,11 @@ async def next_agent_events(
             trace_id=None,  # Required by Parlant SDK v3.x
         )
     except Exception:
-        logger.exception("Session %s: error waiting for agent events", session_id)
+        logger.exception("Room %s: error waiting for agent events", room_id)
         return PollMiss.FAILED
     if not events:
         logger.warning(
-            "Session %s: no events found despite update signal; still waiting",
-            session_id,
+            "Room %s: no events found despite update signal; still waiting", room_id
         )
         return PollMiss.NOT_VISIBLE
     return events
@@ -115,6 +113,7 @@ async def relay_agent_response(
     *,
     app: Application,
     session_id: SessionId,
+    room_id: str,
     min_offset: int,
     tools: AgentToolsProtocol,
     sender_name: str,
@@ -133,7 +132,11 @@ async def relay_agent_response(
     deadline = time.perf_counter() + timeout
     while (remaining := deadline - time.perf_counter()) > 0:
         polled = await next_agent_events(
-            app=app, session_id=session_id, offset=offset, window=min(poll, remaining)
+            app=app,
+            session_id=session_id,
+            room_id=room_id,
+            offset=offset,
+            window=min(poll, remaining),
         )
         match polled:
             case PollMiss.FAILED:
@@ -145,6 +148,8 @@ async def relay_agent_response(
                 continue
         batch = agent_messages(polled, offset=offset)
         offset = batch.offset
+        if batch.final_seen and not batch.final_texts:
+            logger.warning("Room %s: the agent's final message was empty", room_id)
         if batch.final_texts:
             await relay_reply(
                 tools,
@@ -153,13 +158,11 @@ async def relay_agent_response(
             )
         if batch.final_seen or tools.turn.replied:
             return
-        logger.debug("Session %s: only a preamble so far; still waiting", session_id)
+        logger.debug("Room %s: only a preamble so far; still waiting", room_id)
 
     if not tools.turn.replied:
         logger.warning(
-            "Session %s: timed out after %ss waiting for agent response",
-            session_id,
-            timeout,
+            "Room %s: timed out after %ss waiting for agent response", room_id, timeout
         )
 
 

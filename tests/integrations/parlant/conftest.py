@@ -13,7 +13,7 @@ import pytest_asyncio
 from band.integrations.parlant.ports import reserve_server_ports
 from band.integrations.parlant.sessiontools import _session_tools
 from band.integrations.parlant.tools import create_parlant_tools
-from tests.integrations.parlant.helpers import ToolServer
+from tests.integrations.parlant.helpers import SESSION_ID, ToolServer
 
 LOOPBACK = "127.0.0.1"
 
@@ -84,7 +84,7 @@ def mock_context():
     ``MagicMock(spec=ToolContext)`` is not used because ``ToolContext``
     lives in ``parlant.core.tools`` which may not be installed.
     """
-    return SimpleNamespace(session_id="test-session-123")
+    return SimpleNamespace(session_id=SESSION_ID)
 
 
 @pytest.fixture

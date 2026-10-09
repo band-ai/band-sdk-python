@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import Any
 
 from parlant.core.tools import ToolResult
+from pydantic import ValidationError
 
 from band.core.exceptions import BandToolError
 from band.integrations.parlant.mentions import with_mention_handles
@@ -30,19 +31,31 @@ logger = logging.getLogger(__name__)
 # activity greps out of a mixed log in one pass.
 LOG_PREFIX = "[Parlant Tool]"
 
-# Longest argument value echoed into the per-call log line; a full message body
-# or file payload would otherwise dominate the log.
+# Longest argument value echoed into the per-call debug line; a full message
+# body or file payload would otherwise dominate the log.
 LOGGED_VALUE_CHARS = 50
 
 
 def _logged_arguments(call: inspect.BoundArguments) -> str:
     """The call's own arguments, truncated, for one per-tool log line."""
-    rendered = ", ".join(
+    return ", ".join(
         f"{name}={str(value)[:LOGGED_VALUE_CHARS]}"
         for name, value in call.arguments.items()
         if name != CONTEXT_PARAMETER
     )
-    return f", {rendered}" if rendered else ""
+
+
+def _log_failure(exc: Exception, *, context_phrase: str) -> None:
+    """An argument the model got wrong is a warning; anything else is an error."""
+    invalid_arguments = isinstance(exc.__cause__, ValidationError)
+    logger.log(
+        logging.WARNING if invalid_arguments else logging.ERROR,
+        "%s Error %s: %s",
+        LOG_PREFIX,
+        context_phrase,
+        exc,
+        exc_info=not invalid_arguments,
+    )
 
 
 def _failure_message(exc: Exception, *, context: Any, mention_hints: bool) -> str:
@@ -96,12 +109,12 @@ def guard_failures(
             )
             return ToolResult(data=f"Error calling {func.__name__}: {exc}")
 
+        # Argument values and results are room content, so they stay at DEBUG.
         logger.info(
-            "%s %s called: session=%s%s",
-            LOG_PREFIX,
-            func.__name__,
-            context.session_id,
-            _logged_arguments(call),
+            "%s %s called: session=%s", LOG_PREFIX, func.__name__, context.session_id
+        )
+        logger.debug(
+            "%s %s arguments: %s", LOG_PREFIX, func.__name__, _logged_arguments(call)
         )
         try:
             result = await func(context, *args, **kwargs)
@@ -113,14 +126,15 @@ def guard_failures(
                 context.session_id,
             )
             return ToolResult(data=NO_SESSION_TOOLS_ERROR)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any tool failure must reach the model as a ToolResult, not crash the call
             context_phrase = failure.format(**call.arguments)
-            logger.exception("%s Error %s", LOG_PREFIX, context_phrase)
+            _log_failure(exc, context_phrase=context_phrase)
             message = _failure_message(
                 exc, context=context, mention_hints=mention_hints
             )
             return ToolResult(data=f"Error {context_phrase}: {message}")
-        logger.info("%s %s -> %s", LOG_PREFIX, func.__name__, result)
+        logger.info("%s %s completed", LOG_PREFIX, func.__name__)
+        logger.debug("%s %s -> %s", LOG_PREFIX, func.__name__, result)
         return result
 
     return run
