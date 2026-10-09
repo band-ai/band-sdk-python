@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from band.runtime.tools import append_available_mention_handles
+from band.runtime.tools import MISSING_MENTIONS_ERROR, append_available_mention_handles
 
 # Parlant tools take mentions as a comma-separated string, not the master
 # model's list[str], so the master description needs this appended — it is
@@ -32,7 +32,7 @@ def split_mentions(mentions: str) -> list[str]:
 
 def missing_mentions_error(tools: Any) -> str:
     """The refusal of a send with no mentions, listing the handles to retry with."""
-    return "Error: " + with_mention_handles("At least one mention is required", tools)
+    return "Error: " + with_mention_handles(MISSING_MENTIONS_ERROR, tools)
 
 
 def with_mention_handles(message: str, tools: Any) -> str:

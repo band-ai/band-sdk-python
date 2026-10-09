@@ -70,6 +70,7 @@ from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
+    MISSING_MENTIONS_ERROR,
     ParticipantAddResult,
     ParticipantAddStatus,
     ParticipantRemoveResult,
@@ -404,7 +405,7 @@ class FakeAgentTools:
         if not (mentions or []):
             raise BandToolError(
                 append_mention_handles_hint(
-                    "At least one mention is required",
+                    MISSING_MENTIONS_ERROR,
                     available_mention_handles(self._participants, self.agent_id),
                 )
             )

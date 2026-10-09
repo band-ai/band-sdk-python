@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.integrations.parlant.tools import set_session_tools
+from band.runtime.tools import MISSING_MENTIONS_ERROR
 from band.testing import FakeAgentTools
 from tests.testing.support import seeded_participant
 
@@ -76,23 +77,24 @@ class TestChatTools:
         assert tools.turn.replied
 
     @pytest.mark.asyncio
-    async def test_send_message_requires_mentions(
-        self, parlant_tools, mock_tools, mock_context
-    ):
-        """Should return error when no mentions provided."""
-        mock_tools.agent_id = "self"
-        mock_tools.participants = [
-            {"id": "user-1", "handle": "@alice"},
-            {"id": "self", "handle": "@self"},
-        ]
-        set_session_tools(mock_context.session_id, mock_tools)
+    async def test_send_message_requires_mentions(self, parlant_tools, mock_context):
+        """Refused before sending, listing the handles to retry with once."""
+        tools = FakeAgentTools(
+            agent_id="self",
+            participants=[
+                seeded_participant("user-1", handle="alice"),
+                seeded_participant("self", handle="self"),
+            ],
+        )
+        set_session_tools(mock_context.session_id, tools)
 
         send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "")
 
-        assert "At least one mention is required" in result.data
-        assert "@alice" in result.data
-        assert "@self" not in result.data
+        assert result.data.startswith(f"Error: {MISSING_MENTIONS_ERROR}")
+        assert result.data.count("'alice'") == 1
+        assert "'self'" not in result.data
+        assert tools.messages_sent == []
 
     @pytest.mark.asyncio
     async def test_send_event_calls_tools_send_event(

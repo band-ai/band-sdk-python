@@ -10,9 +10,10 @@ import pytest
 
 from band.core.exceptions import BandToolError
 from band.integrations.parlant.tools import create_parlant_tools, set_session_tools
-from band.runtime.tools import DEFAULT_FILE_CAPTION
+from band.runtime.tools import DEFAULT_FILE_CAPTION, MISSING_MENTIONS_ERROR
 from band.testing import FakeAgentTools
 from tests.integrations.parlant.helpers import SESSION_ID
+from tests.testing.support import seeded_participant
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
@@ -126,23 +127,24 @@ class TestFileTools:
         assert "file-2" in result.data
 
     @pytest.mark.asyncio
-    async def test_send_room_file_requires_mentions(
-        self, parlant_tools, mock_tools, mock_context
-    ):
-        """Should return error when no mentions provided."""
-        mock_tools.agent_id = "self"
-        mock_tools.participants = [
-            {"id": "user-1", "handle": "@alice"},
-            {"id": "self", "handle": "@self"},
-        ]
-        set_session_tools(mock_context.session_id, mock_tools)
+    async def test_send_room_file_requires_mentions(self, parlant_tools, mock_context):
+        """Refused before uploading, listing the handles to retry with once."""
+        tools = FakeAgentTools(
+            agent_id="self",
+            participants=[
+                seeded_participant("user-1", handle="alice"),
+                seeded_participant("self", handle="self"),
+            ],
+        )
+        set_session_tools(mock_context.session_id, tools)
 
+        files_before = list(tools.files)
         send_room_file = parlant_tools["band_send_room_file"]
         result = await send_room_file(mock_context, "body", "notes.txt", "", "")
 
-        assert "At least one mention is required" in result.data
-        assert "@alice" in result.data
-        mock_tools.send_room_file.assert_not_called()
+        assert result.data.startswith(f"Error: {MISSING_MENTIONS_ERROR}")
+        assert result.data.count("'alice'") == 1
+        assert (tools.files, tools.messages_sent) == (files_before, [])
 
     @pytest.mark.asyncio
     async def test_send_room_file_translates_band_tool_error(

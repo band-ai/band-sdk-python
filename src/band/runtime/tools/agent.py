@@ -162,6 +162,9 @@ def available_mention_handles(
     ]
 
 
+# How every send refuses an empty mention list (the platform requires one).
+MISSING_MENTIONS_ERROR = "At least one mention is required"
+
 # Single marker for the available-handles hint. Used both to render the hint and
 # to detect it, so the producer and the idempotency guard can never drift apart.
 _AVAILABLE_HANDLES_MARKER = "Available handles:"
@@ -1801,7 +1804,7 @@ class AgentTools(AgentToolsProtocol):
             # to avoid listing the handles twice.
             raise BandToolError(
                 append_mention_handles_hint(
-                    "At least one mention is required",
+                    MISSING_MENTIONS_ERROR,
                     self.available_mention_handles(),
                 )
             )
