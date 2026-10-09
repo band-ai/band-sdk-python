@@ -4,15 +4,17 @@ Parlant advertises each tool parameter with its own descriptor but casts the
 engine's string arguments by the function signature, with a cast that is
 unsafe for typed values (``"False"`` becomes ``True``, and a failure reaches
 the model only as a bare "Tool call error"). So each field is advertised with
-its model-derived type while its signature stays ``str`` / ``list[str]``,
-leaving every conversion to the input model's own validation.
+its model-derived type while its signature stays ``str``, leaving every
+conversion to the tool itself, where a failure is a readable tool result.
 
 No Parlant import, so an adapter can check its custom tools in any venv.
 """
 
 from __future__ import annotations
 
+import ast
 import inspect
+import json
 from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import Any, NamedTuple, TypedDict
@@ -139,7 +141,6 @@ def _field(
     descriptor = _descriptor(resolved, defs=defs, where=where)
     if description := prop.get("description") or resolved.get("description"):
         descriptor["description"] = description
-    delivered = list[str] if descriptor["type"] == ParlantType.ARRAY else str
     if annotation is not None and any(
         _rejects(annotation, value=choice) for choice in _delivered_choices(descriptor)
     ):
@@ -151,12 +152,38 @@ def _field(
         parameter = inspect.Parameter(
             key,
             inspect.Parameter.KEYWORD_ONLY,
-            annotation=delivered,
+            annotation=str,
             default=inspect.Parameter.empty if required else None,
         )
     except ValueError as exc:
         raise ValueError(f"{where}: not a valid Python parameter name") from exc
     return CustomToolField(parameter=parameter, descriptor=descriptor)
+
+
+def parse_delivered(
+    arguments: Mapping[str, Any], fields: Iterable[CustomToolField]
+) -> dict[str, Any]:
+    """*arguments* as delivered, with each list field's text parsed into a list."""
+    lists = {
+        field.parameter.name
+        for field in fields
+        if field.descriptor["type"] == ParlantType.ARRAY
+    }
+    return {
+        name: _parsed_list(value) if name in lists and isinstance(value, str) else value
+        for name, value in arguments.items()
+    }
+
+
+def _parsed_list(text: str) -> Any:
+    """JSON, or the Python repr the engine's ``str()`` writes; anything else
+    stays text, for the input model to reject readably."""
+    for parse in (json.loads, ast.literal_eval):
+        try:
+            return parse(text)
+        except (ValueError, SyntaxError, TypeError):
+            continue
+    return text
 
 
 def _field_annotations(input_model: type[BaseModel]) -> dict[str, Any]:

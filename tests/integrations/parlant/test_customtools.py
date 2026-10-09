@@ -52,6 +52,7 @@ class PaintInput(BaseModel):
     shade: Shade = Shade.LIGHT
     due: date = date(2026, 1, 1)
     rooms: list[int] = []
+    dried: list[bool] = []
     budget: Annotated[int, Field(description="Spend cap")] | None = 100
     grade: Grade = Grade.ECONOMY
     cost: Decimal = Decimal(0)
@@ -130,6 +131,7 @@ async def test_advertises_the_input_models_types(custom_server):
         "shade": {"type": "string", "enum": ["light", "dark"]},
         "due": {"type": "date"},
         "rooms": {"type": "array", "item_type": "integer"},
+        "dried": {"type": "array", "item_type": "boolean"},
         "budget": {"type": "integer", "description": "Spend cap"},
         "grade": {"type": "string", "enum": ["1", "2"]},
         "cost": {"type": "string"},
@@ -155,6 +157,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             "shade": "dark",
             "due": "2026-05-04",
             "rooms": "[1, 2]",
+            "dried": "[true, false]",
             "budget": None,
             "grade": "2",
             "cost": "3.50",
@@ -177,6 +180,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             shade=Shade.DARK,
             due=date(2026, 5, 4),
             rooms=[1, 2],
+            dried=[True, False],
             budget=100,
             grade=Grade.PREMIUM,
             cost=Decimal("3.50"),
@@ -190,9 +194,14 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
 
 
 @pytest.mark.usefixtures("bound_room")
-async def test_invalid_value_is_a_model_visible_error(custom_server, received):
+@pytest.mark.parametrize(
+    "invalid",
+    [{"coats": "three"}, {"rooms": "[1, 2"}],
+    ids=["bad-scalar", "malformed-list"],
+)
+async def test_invalid_value_is_a_model_visible_error(custom_server, received, invalid):
     result = await custom_server.call(
-        "paint", session_id=SESSION_ID, arguments={"wall": "north", "coats": "three"}
+        "paint", session_id=SESSION_ID, arguments={"wall": "north", **invalid}
     )
 
     assert result.startswith("Error running paint: Invalid arguments for paint:")
