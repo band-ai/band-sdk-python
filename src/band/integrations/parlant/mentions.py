@@ -30,6 +30,11 @@ def split_mentions(mentions: str) -> list[str]:
     return [mention.strip() for mention in mentions.split(",") if mention.strip()]
 
 
+def missing_mentions_error(tools: Any) -> str:
+    """The refusal of a send with no mentions, listing the handles to retry with."""
+    return "Error: " + with_mention_handles("At least one mention is required", tools)
+
+
 def with_mention_handles(message: str, tools: Any) -> str:
     """``message`` plus the handles this room offers, so a bad mention can retry."""
     return append_available_mention_handles(

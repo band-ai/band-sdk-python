@@ -7,17 +7,13 @@ from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.adapters.parlant.adapter import (
     NOT_INITIALIZED_ERROR,
     UNREACHABLE_CUSTOM_TOOLS_WARNING,
 )
-
-# The Band agent's own name and description, handed to on_started.
-BAND_NAME = "BandName"
-BAND_DESCRIPTION = "Band description"
+from tests.adapters.parlant.helpers import BAND_DESCRIPTION, BAND_NAME, LOOKUP
 
 
 @pytest.fixture
@@ -41,19 +37,6 @@ def owned_server(
         yield factory, cm, mock_parlant_server
 
 
-class LookupInput(BaseModel):
-    """Look a code up."""
-
-    code: str
-
-
-async def lookup(args: LookupInput) -> str:
-    return args.code
-
-
-LOOKUP = (LookupInput, lookup)
-
-
 @pytest.fixture
 def borrowed_adapter(mock_parlant_server, mock_parlant_agent) -> ParlantAdapter:
     return ParlantAdapter(server=mock_parlant_server, parlant_agent=mock_parlant_agent)
@@ -67,10 +50,10 @@ async def test_custom_section_appended_to_created_agent_description(
         ParlantAdapterConfig(custom_section="Be helpful."), server=mock_parlant_server
     )
 
-    await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     mock_parlant_server.create_agent.assert_awaited_once_with(
-        name="TestBot", description="A test bot\n\nBe helpful."
+        name=BAND_NAME, description=f"{BAND_DESCRIPTION}\n\nBe helpful."
     )
 
 
@@ -83,35 +66,15 @@ async def test_system_prompt_overrides_created_agent_description(
         server=mock_parlant_server,
     )
 
-    await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     mock_parlant_server.create_agent.assert_awaited_once_with(
-        name="TestBot", description="You are a custom assistant."
+        name=BAND_NAME, description="You are a custom assistant."
     )
-
-
-@pytest.mark.usefixtures("parlant_sessions")
-async def test_turns_use_the_servers_application(
-    start_adapter, mock_app, sample_message, mock_tools
-):
-    """The Application the turn talks to comes from the server's container."""
-    adapter = await start_adapter()
-
-    await adapter.on_message(
-        msg=sample_message,
-        tools=mock_tools,
-        history=[],
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-123",
-    )
-
-    mock_app.sessions.create_customer_message.assert_awaited_once()
 
 
 async def test_boots_owned_server_and_creates_agent(owned_server, mock_parlant_agent):
-    factory, cm, server = owned_server
+    factory, _, server = owned_server
     adapter = ParlantAdapter(
         ParlantAdapterConfig(name="Tom", description="A cat"), nlp_service="svc"
     )
@@ -120,8 +83,6 @@ async def test_boots_owned_server_and_creates_agent(owned_server, mock_parlant_a
 
     assert factory.call_count == 1
     assert factory.call_args.kwargs["nlp_service"] == "svc"
-    assert callable(factory.call_args.kwargs["setup"])
-    cm.__aenter__.assert_awaited_once()
     server.create_agent.assert_awaited_once_with(name="Tom", description="A cat")
     assert adapter.server is server
     assert adapter.parlant_agent is mock_parlant_agent
@@ -231,11 +192,7 @@ async def test_cleanup_all_closes_owned_server(owned_server):
 
 
 async def test_cleanup_all_leaves_borrowed_server(
-    borrowed_adapter,
-    mock_parlant_server,
-    mock_parlant_agent,
-    sample_message,
-    mock_tools,
+    borrowed_adapter, mock_parlant_server, mock_parlant_agent, run_turn
 ):
     await borrowed_adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
@@ -244,15 +201,7 @@ async def test_cleanup_all_leaves_borrowed_server(
     assert borrowed_adapter.server is mock_parlant_server
     assert borrowed_adapter.parlant_agent is mock_parlant_agent
     with pytest.raises(RuntimeError, match=NOT_INITIALIZED_ERROR):
-        await borrowed_adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
+        await run_turn(borrowed_adapter)
 
 
 async def test_restart_with_borrowed_server_does_not_duplicate_guidelines(

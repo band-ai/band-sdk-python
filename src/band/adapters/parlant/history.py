@@ -28,7 +28,7 @@ def complete_exchanges(history: ParlantMessages) -> ParlantMessages:
         content = message.get("content", "")
         if not content:
             continue
-        match message.get("role", ParlantRole.USER):
+        match _role(message):
             case ParlantRole.USER if _answered(history, index):
                 kept.append(message)
             case ParlantRole.USER:
@@ -65,6 +65,11 @@ async def inject_history(
     return count
 
 
+def _role(message: ParlantMessage) -> str:
+    """A message with no role is the customer's."""
+    return message.get("role", ParlantRole.USER)
+
+
 def _answered(history: ParlantMessages, index: int) -> bool:
     following = history[index + 1 : index + 2]
     return bool(following) and following[0].get("role") == ParlantRole.ASSISTANT
@@ -81,7 +86,7 @@ async def _inject_message(
     from parlant.core.sessions import EventKind, EventSource  # noqa: PLC0415
 
     content = message.get("content", "")
-    if message.get("role", ParlantRole.USER) == ParlantRole.USER:
+    if _role(message) == ParlantRole.USER:
         await app.sessions.create_customer_message(
             session_id=session_id,
             moderation=Moderation.NONE,

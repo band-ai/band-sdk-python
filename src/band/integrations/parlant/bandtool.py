@@ -17,6 +17,7 @@ import parlant.sdk as p
 from parlant.core.tools import ToolParameterOptions, ToolResult
 
 from band.integrations.parlant.guard import guard_failures
+from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.tools import get_tool_description, resolve_tool_model
 
 
@@ -105,7 +106,11 @@ def _described_parameter(
 ) -> inspect.Parameter:
     """*param* annotated with its master field's description, if it has one."""
     master_field = model.model_fields.get(param.name)
-    if param.name == "context" or master_field is None or not master_field.description:
+    if (
+        param.name == CONTEXT_PARAMETER
+        or master_field is None
+        or not master_field.description
+    ):
         return param
     description = master_field.description
     if choices := _literal_choices(master_field.annotation):

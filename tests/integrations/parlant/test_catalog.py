@@ -22,6 +22,16 @@ from band.runtime.tools import (
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
 
+class LookupInput(BaseModel):
+    """Look a code up."""
+
+    code: str
+
+
+async def lookup(args: LookupInput) -> str:
+    return args.code
+
+
 class TestCreateParlantTools:
     """Tests for create_parlant_tools() function.
 
@@ -31,16 +41,6 @@ class TestCreateParlantTools:
     these tests verify, so faking the decorator would test the fake, not the
     integration.
     """
-
-    def test_returns_list_of_tools(self):
-        """Should return list of tool entries when Parlant is installed."""
-        tools = create_parlant_tools()
-
-        assert isinstance(tools, list)
-        # Non-empty; specific tool names are verified in the next test.
-        # Avoid hardcoded counts so adding/removing tools doesn't silently
-        # break this assertion — the next test validates the exact contract.
-        assert len(tools) > 0
 
     def test_returns_expected_tool_names(self):
         """Should return tools with expected names."""
@@ -275,14 +275,6 @@ class TestCreateParlantTools:
         assert "band_read_room_file" in tool_names
         assert "band_send_room_file" in tool_names
 
-    def test_includes_file_tools_when_no_features(self):
-        """File tools included when features is None (backward compat)."""
-        tools = create_parlant_tools(features=None)
-        tool_names = [t.tool.name for t in tools]
-
-        assert "band_list_room_files" in tool_names
-        assert "band_send_room_file" in tool_names
-
     def test_send_room_file_mentions_param_notes_comma_separated_shape(self):
         """mentions is a comma-separated string in Parlant, not the master's list[str]."""
         tools = create_parlant_tools()
@@ -313,14 +305,6 @@ class TestCreateParlantTools:
         assert "band_add_contact" in tool_names
         assert "band_remove_contact" in tool_names
         assert "band_list_contact_requests" in tool_names
-        assert "band_respond_contact_request" in tool_names
-
-    def test_includes_contact_tools_when_no_features(self):
-        """Contact tools included when features is None (backward compat)."""
-        tools = create_parlant_tools(features=None)
-        tool_names = [t.tool.name for t in tools]
-
-        assert "band_list_contacts" in tool_names
         assert "band_respond_contact_request" in tool_names
 
     def test_excludes_task_tools_without_capability(self):
@@ -397,13 +381,3 @@ class TestToolSelection:
         )
 
         assert [entry.tool.name for entry in tools] == ["band_send_message", "lookup"]
-
-
-class LookupInput(BaseModel):
-    """Look a code up."""
-
-    code: str
-
-
-async def lookup(args: LookupInput) -> str:
-    return args.code

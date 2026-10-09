@@ -16,6 +16,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Parlant passes each tool its ToolContext under this parameter name.
+CONTEXT_PARAMETER = "context"
+
 # What a tool answers the model with when its Parlant session has no Band room
 # bound — a session that outlived its room, or a tool called before one was set.
 NO_SESSION_TOOLS_ERROR = "Error: No tools available in current context"

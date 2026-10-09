@@ -19,15 +19,13 @@ from typing import Any, NamedTuple, TypedDict
 
 from pydantic import BaseModel
 
+from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_openai_schema,
     get_custom_tool_name,
     reject_conflicting_tool_names,
 )
-
-# Parlant passes its ToolContext under this name, so no field may use it.
-CONTEXT_PARAMETER = "context"
 
 
 class ParlantType(StrEnum):
@@ -92,30 +90,41 @@ class Resolved(NamedTuple):
     from_enum_class: bool
 
 
+class ParlantCustomTool(NamedTuple):
+    """A custom tool as Parlant offers it: its name, description and fields."""
+
+    name: str
+    description: str
+    fields: list[CustomToolField]
+
+
 def check_parlant_custom_tools(tools: Iterable[CustomToolDef]) -> None:
     """Raise ``ValueError`` for a custom tool Parlant cannot offer."""
     models = [input_model for input_model, _ in tools]
     reject_conflicting_tool_names(get_custom_tool_name(model) for model in models)
     for model in models:
-        custom_tool_fields(model)
+        describe_custom_tool(model)
 
 
-def custom_tool_fields(input_model: type[BaseModel]) -> list[CustomToolField]:
-    """The Parlant parameters for *input_model*'s fields, in schema order."""
-    tool_name = get_custom_tool_name(input_model)
-    schema = custom_tool_to_openai_schema(input_model)["function"]["parameters"]
+def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
+    """*input_model* as the same function schema every other adapter offers."""
+    function = custom_tool_to_openai_schema(input_model)["function"]
+    schema = function["parameters"]
     defs = schema.get("$defs", {})
     required = set(schema.get("required", []))
-    return [
+    fields = [
         _field(
             key,
             prop,
             defs=defs,
             required=key in required,
-            where=f"Custom tool '{tool_name}' field '{key}'",
+            where=f"Custom tool '{function['name']}' field '{key}'",
         )
         for key, prop in schema.get("properties", {}).items()
     ]
+    return ParlantCustomTool(
+        name=function["name"], description=function["description"], fields=fields
+    )
 
 
 def _field(

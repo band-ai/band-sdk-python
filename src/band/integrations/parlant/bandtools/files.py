@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from parlant.core.tools import ToolContext, ToolResult
 
 from band.integrations.parlant.bandtool import band_tool, or_none
 from band.integrations.parlant.mentions import (
     SEND_MESSAGE_MENTIONS_NOTE,
     SEND_MESSAGE_MENTIONS_PARAM_NOTE,
+    missing_mentions_error,
     split_mentions,
-    with_mention_handles,
 )
 from band.integrations.parlant.sessiontools import require_session_tools
 from band.runtime.tools import (
@@ -33,12 +36,7 @@ async def band_list_room_files(
         return ToolResult(data="No files found in this room")
 
     lines = ["Files in this room:"]
-    lines.extend(
-        f"- {file.get('name', 'Unknown')} "
-        f"({file.get('content_type', 'unknown')}, {file.get('bytes', 0)} bytes) "
-        f"id={file.get('id', '')}"
-        for file in files
-    )
+    lines.extend(f"- {_file_summary(file)} id={file.get('id', '')}" for file in files)
     if next_cursor := data.get("next_cursor"):
         lines.append(
             f"More files available; call again with cursor='{next_cursor}' "
@@ -74,11 +72,7 @@ async def band_read_room_file(
                 )
             )
 
-    summary = (
-        f"{result.get('name', 'Unknown')} "
-        f"({result.get('content_type', 'unknown')}, "
-        f"{result.get('bytes', 0)} bytes)"
-    )
+    summary = _file_summary(result)
     description = result.get("description", "")
     return ToolResult(data=f"{summary}. {description}" if description else summary)
 
@@ -99,10 +93,7 @@ async def band_send_room_file(
     tools = require_session_tools(context)
     recipients = split_mentions(mentions)
     if not recipients:
-        return ToolResult(
-            data="Error: "
-            + with_mention_handles("At least one mention is required", tools)
-        )
+        return ToolResult(data=missing_mentions_error(tools))
 
     result = await tools.send_room_file(content, filename, caption, recipients)
     attachment = result.get("attachment") or {}
@@ -110,6 +101,14 @@ async def band_send_room_file(
         data=f"Uploaded '{attachment.get('name', filename)}' "
         f"(id={attachment.get('id', '')}) and shared with "
         f"{', '.join(recipients)}"
+    )
+
+
+def _file_summary(file: Mapping[str, Any]) -> str:
+    """A room file's name, type and size, as both file tools render it."""
+    return (
+        f"{file.get('name', 'Unknown')} "
+        f"({file.get('content_type', 'unknown')}, {file.get('bytes', 0)} bytes)"
     )
 
 

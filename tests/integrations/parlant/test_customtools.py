@@ -23,6 +23,14 @@ pytest.importorskip(
     "parlant.sdk"
 )  # real p.tool and PluginServer; dev-parlant venv only
 
+SESSION = "session-1"
+
+
+@pytest.fixture
+def bound_room() -> None:
+    """Bind ``SESSION`` to a room, so calls on it resolve their tools."""
+    set_session_tools(SESSION, FakeAgentTools())
+
 
 class Shade(enum.Enum):
     LIGHT = "light"
@@ -111,12 +119,11 @@ async def test_advertises_the_input_models_types(custom_server):
     }
 
 
+@pytest.mark.usefixtures("bound_room")
 async def test_engine_strings_reach_the_handler_typed(custom_server, received):
-    set_session_tools("session-1", FakeAgentTools())
-
     result = await custom_server.call(
         "paint",
-        session_id="session-1",
+        session_id=SESSION,
         arguments={
             "wall": "north",
             "coats": "3",
@@ -144,11 +151,10 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
     ]
 
 
+@pytest.mark.usefixtures("bound_room")
 async def test_invalid_value_is_a_model_visible_error(custom_server, received):
-    set_session_tools("session-1", FakeAgentTools())
-
     result = await custom_server.call(
-        "paint", session_id="session-1", arguments={"wall": "north", "coats": "three"}
+        "paint", session_id=SESSION, arguments={"wall": "north", "coats": "three"}
     )
 
     assert result.startswith("Error running paint: Invalid arguments for paint:")
@@ -185,11 +191,10 @@ async def test_single_value_literal_is_advertised_as_its_enum(custom_server):
     assert tool["parameters"]["tone"][0] == {"type": "string", "enum": ["calm"]}
 
 
+@pytest.mark.usefixtures("bound_room")
 async def test_required_nullable_field_takes_an_explicit_null(custom_server):
-    set_session_tools("session-1", FakeAgentTools())
-
     result = await custom_server.call(
-        "note", session_id="session-1", arguments={"text": None}
+        "note", session_id=SESSION, arguments={"text": None}
     )
 
     assert result == '{"note": null}'

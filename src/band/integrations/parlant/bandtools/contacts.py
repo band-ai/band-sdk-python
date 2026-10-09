@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-
 from parlant.core.tools import ToolContext, ToolResult
 
 from band.core.types import ContactRequestAction, ContactRequestStatus
 from band.integrations.parlant.bandtool import band_tool, invalid_choice, or_none
 from band.integrations.parlant.sessiontools import require_session_tools
-from band.runtime.tools import serialize_tool_result
+from band.runtime.tools import serialize_tool_result, tool_result_text
 
 CONTACT_ACTIONS: tuple[str, ...] = tuple(ContactRequestAction)
 
@@ -21,8 +19,7 @@ async def band_list_contacts(
     page_size: int = 50,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(await tools.list_contacts(page, page_size))
-    return ToolResult(data=json.dumps(data, default=str))
+    return ToolResult(data=tool_result_text(await tools.list_contacts(page, page_size)))
 
 
 @band_tool("adding contact")
@@ -60,10 +57,11 @@ async def band_list_contact_requests(
     sent_status: str = ContactRequestStatus.PENDING,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(
-        await tools.list_contact_requests(page, page_size, sent_status)
+    return ToolResult(
+        data=tool_result_text(
+            await tools.list_contact_requests(page, page_size, sent_status)
+        )
     )
-    return ToolResult(data=json.dumps(data, default=str))
 
 
 @band_tool("responding to contact request")
@@ -84,7 +82,8 @@ async def band_respond_contact_request(
             action, or_none(handle), or_none(request_id)
         )
     )
-    status = data.get("status", action) if isinstance(data, dict) else action
+    reply = data if isinstance(data, dict) else {}
+    status = reply.get("status", action)
     return ToolResult(data=f"Contact request {action}d: {status}")
 
 

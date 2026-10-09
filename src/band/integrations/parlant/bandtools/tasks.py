@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Literal, cast
 
 from parlant.core.tools import ToolContext, ToolResult
@@ -13,7 +12,7 @@ from band.integrations.parlant.sessiontools import require_session_tools
 from band.runtime.tools import (
     BandTool,
     platform_args_schema,
-    serialize_tool_result,
+    tool_result_text,
     validate_tool_arguments,
 )
 
@@ -26,10 +25,11 @@ async def band_list_tasks(
     limit: int | None = None,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(
-        await tools.list_tasks(state=state, cursor=cursor, limit=limit)
+    return ToolResult(
+        data=tool_result_text(
+            await tools.list_tasks(state=state, cursor=cursor, limit=limit)
+        )
     )
-    return ToolResult(data=json.dumps(data, default=str))
 
 
 @band_tool("creating task '{subject}'")
@@ -40,10 +40,11 @@ async def band_create_task(
     supersedes_id: str | None = None,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(
-        await tools.create_task(subject, detail=detail, supersedes_id=supersedes_id)
+    return ToolResult(
+        data=tool_result_text(
+            await tools.create_task(subject, detail=detail, supersedes_id=supersedes_id)
+        )
     )
-    return ToolResult(data=json.dumps(data, default=str))
 
 
 @band_tool("getting task '{id}'")
@@ -60,8 +61,7 @@ async def band_get_task(
         platform_args_schema(BandTool.GET_TASK),
         {"id": id, "include": include},
     )
-    data = serialize_tool_result(await tools.get_task(**args))
-    return ToolResult(data=json.dumps(data, default=str))
+    return ToolResult(data=tool_result_text(await tools.get_task(**args)))
 
 
 @band_tool("updating task '{id}'")
@@ -89,8 +89,7 @@ async def band_update_task(
             "state": state,
         },
     )
-    data = serialize_tool_result(await tools.update_task(**args))
-    return ToolResult(data=json.dumps(data, default=str))
+    return ToolResult(data=tool_result_text(await tools.update_task(**args)))
 
 
 @band_tool("getting task history for '{id}'")
@@ -106,8 +105,7 @@ async def band_get_task_history(
         platform_args_schema(BandTool.GET_TASK_HISTORY),
         {"id": id, "cursor": cursor, "limit": limit},
     )
-    data = serialize_tool_result(await tools.get_task_history(**args))
-    return ToolResult(data=json.dumps(data, default=str))
+    return ToolResult(data=tool_result_text(await tools.get_task_history(**args)))
 
 
 @band_tool("getting board")
@@ -117,10 +115,11 @@ async def band_get_board(
     include: str | None = None,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(
-        await tools.get_board(include=cast(Literal["history"] | None, include))
+    return ToolResult(
+        data=tool_result_text(
+            await tools.get_board(include=cast(Literal["history"] | None, include))
+        )
     )
-    return ToolResult(data=json.dumps(data, default=str))
 
 
 @band_tool("setting board")
@@ -130,10 +129,11 @@ async def band_set_board(
     goal_summary: str | None = None,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(
-        await tools.set_board(goal_title=goal_title, goal_summary=goal_summary)
+    return ToolResult(
+        data=tool_result_text(
+            await tools.set_board(goal_title=goal_title, goal_summary=goal_summary)
+        )
     )
-    return ToolResult(data=json.dumps(data, default=str))
 
 
 TOOLS = (

@@ -18,6 +18,7 @@ from parlant.core.tools import ToolResult
 from band.core.exceptions import BandToolError
 from band.integrations.parlant.mentions import with_mention_handles
 from band.integrations.parlant.sessiontools import (
+    CONTEXT_PARAMETER,
     NO_SESSION_TOOLS_ERROR,
     NoSessionTools,
     get_session_tools,
@@ -39,7 +40,7 @@ def _logged_arguments(call: inspect.BoundArguments) -> str:
     rendered = ", ".join(
         f"{name}={str(value)[:LOGGED_VALUE_CHARS]}"
         for name, value in call.arguments.items()
-        if name != "context"
+        if name != CONTEXT_PARAMETER
     )
     return f", {rendered}" if rendered else ""
 

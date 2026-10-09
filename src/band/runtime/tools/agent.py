@@ -207,7 +207,7 @@ class ParticipantAddResult(TypedDict):
     id: str
     name: str
     role: str
-    status: Literal[ParticipantAddStatus.ALREADY_IN_ROOM, ParticipantAddStatus.ADDED]
+    status: ParticipantAddStatus
 
 
 class ParticipantRemoveResult(TypedDict):

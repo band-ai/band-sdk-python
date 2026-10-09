@@ -163,7 +163,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         check_parlant_custom_tools(self._custom_tools)
         self._configure = configure
         self._guidelines = GuidelineLedger()
-        # The adapter's tools as Parlant ToolEntry objects (built at start)
         self._tools: list[Any] = []
         self._rooms: RoomSessions | None = None
         self._started = False
@@ -193,7 +192,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 "configure= callback or adapter.parlant_agent.create_guideline() "
                 "for a running agent"
             )
-        self._guidelines.declare(GuidelineSpec(condition, action, tools, kwargs))
+        self._guidelines.declare(
+            GuidelineSpec(
+                condition=condition, action=action, tools=tools, kwargs=kwargs
+            )
+        )
 
     @property
     def server(self) -> p.Server:

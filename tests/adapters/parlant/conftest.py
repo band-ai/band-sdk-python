@@ -15,15 +15,19 @@ import pytest
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.core.types import PlatformMessage
+from band.integrations.parlant.sessiontools import _session_tools
 from band.testing import FakeAgentTools
 from tests.adapters.parlant.helpers import (
     AI_AGENT_SOURCE,
+    BAND_DESCRIPTION,
+    BAND_NAME,
     MESSAGE_KIND,
     SENDER_NAME,
     SESSION_ID,
 )
 
 StartAdapter = Callable[..., Awaitable[ParlantAdapter]]
+RunTurn = Callable[..., Awaitable[None]]
 
 
 @pytest.fixture
@@ -107,7 +111,6 @@ def mock_parlant_server(mock_app: MagicMock, application_class: MagicMock) -> Ma
 def mock_parlant_agent() -> MagicMock:
     agent = MagicMock()
     agent.id = "parlant-agent-123"
-    agent.name = "TestBot"
     agent.create_guideline = AsyncMock()
     return agent
 
@@ -124,10 +127,38 @@ def start_adapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
         )
-        await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+        await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
         return adapter
 
     return start
+
+
+@pytest.fixture
+def run_turn(sample_message: PlatformMessage, mock_tools: FakeAgentTools) -> RunTurn:
+    """Run one turn of ``sample_message`` on *adapter*, in its room by default."""
+
+    async def run(
+        adapter: ParlantAdapter, *, room_id: str = sample_message.room_id
+    ) -> None:
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=room_id,
+        )
+
+    return run
+
+
+@pytest.fixture(autouse=True)
+def clear_session_tools() -> Iterator[None]:
+    """Each test starts and ends with no Parlant session bound to a room."""
+    _session_tools.clear()
+    yield
+    _session_tools.clear()
 
 
 @pytest.fixture(autouse=True)

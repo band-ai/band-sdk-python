@@ -1,14 +1,32 @@
-"""Fake Parlant agent events for the ParlantAdapter tests."""
+"""Shared fakes and sample values for the ParlantAdapter tests."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+
+from pydantic import BaseModel
 
 MESSAGE_KIND = "message"
 AI_AGENT_SOURCE = "ai_agent"
 # The session the mock Application creates, and who sends the sample message.
 SESSION_ID = "session-123"
 SENDER_NAME = "Alice"
+# The Band agent's own name and description, handed to on_started.
+BAND_NAME = "BandName"
+BAND_DESCRIPTION = "Band description"
+
+
+class LookupInput(BaseModel):
+    """Look a code up."""
+
+    code: str
+
+
+async def lookup(args: LookupInput) -> str:
+    return args.code
+
+
+LOOKUP = (LookupInput, lookup)
 
 
 def agent_event(

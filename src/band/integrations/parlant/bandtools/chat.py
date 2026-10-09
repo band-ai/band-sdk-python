@@ -11,8 +11,8 @@ from band.integrations.parlant.bandtool import band_tool, invalid_choice, or_non
 from band.integrations.parlant.mentions import (
     SEND_MESSAGE_MENTIONS_NOTE,
     SEND_MESSAGE_MENTIONS_PARAM_NOTE,
+    missing_mentions_error,
     split_mentions,
-    with_mention_handles,
 )
 from band.integrations.parlant.sessiontools import require_session_tools
 from band.runtime.tools import ParticipantAddStatus, serialize_tool_result
@@ -43,10 +43,7 @@ async def band_send_message(
     tools = require_session_tools(context)
     recipients = split_mentions(mentions)
     if not recipients:
-        return ToolResult(
-            data="Error: "
-            + with_mention_handles("At least one mention is required", tools)
-        )
+        return ToolResult(data=missing_mentions_error(tools))
 
     await tools.send_message(content, recipients)
     return ToolResult(data=f"Message sent to {', '.join(recipients)}")

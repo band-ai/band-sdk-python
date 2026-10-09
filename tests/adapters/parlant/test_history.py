@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.parlant.history import complete_exchanges, inject_history
-from tests.adapters.parlant.helpers import SESSION_ID
+from tests.adapters.parlant.helpers import BAND_NAME, SENDER_NAME, SESSION_ID
 
 HISTORY = [
-    {"role": "user", "content": "Hello", "sender": "Alice"},
-    {"role": "assistant", "content": "Hi there!", "sender": "TestBot"},
+    {"role": "user", "content": "Hello", "sender": SENDER_NAME},
+    {"role": "assistant", "content": "Hi there!", "sender": BAND_NAME},
     {"role": "user", "content": "Pending question"},
 ]
 
@@ -21,7 +21,7 @@ def test_complete_exchanges_drop_the_unanswered_question():
 @pytest.mark.usefixtures("parlant_sessions")
 async def test_injects_complete_exchanges_only(mock_app):
     count = await inject_history(
-        app=mock_app, session_id=SESSION_ID, history=HISTORY, agent_name="TestBot"
+        app=mock_app, session_id=SESSION_ID, history=HISTORY, agent_name=BAND_NAME
     )
 
     assert count == 2
@@ -37,7 +37,7 @@ async def test_injects_complete_exchanges_only(mock_app):
 
 async def test_handles_empty_history(mock_app):
     count = await inject_history(
-        app=mock_app, session_id=SESSION_ID, history=[], agent_name="TestBot"
+        app=mock_app, session_id=SESSION_ID, history=[], agent_name=BAND_NAME
     )
 
     assert count == 0

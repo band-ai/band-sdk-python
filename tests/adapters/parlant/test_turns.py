@@ -2,35 +2,50 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from collections.abc import Callable
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.adapters.parlant.adapter import NOT_INITIALIZED_ERROR, PROVIDER
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.integrations.parlant.sessiontools import get_session_tools
 from band.testing import reported_failures
-from tests.adapters.parlant.helpers import SESSION_ID, agent_event
+from tests.adapters.parlant.helpers import (
+    BAND_DESCRIPTION,
+    BAND_NAME,
+    SESSION_ID,
+    agent_event,
+)
 
 pytestmark = pytest.mark.usefixtures("parlant_sessions")
 
 
+POST_ERROR = "API error"
+RecordBinding = Callable[..., list[object]]
+
+
 @pytest.fixture
-def run_turn(sample_message, mock_tools):
-    """Run one turn in *room_id* on *adapter*."""
+def record_binding_on_post(mock_app) -> RecordBinding:
+    """Record which room's tools are bound while the turn's message is posted.
 
-    async def run(adapter: ParlantAdapter, *, room_id: str = "room-123") -> None:
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=room_id,
-        )
+    Returns the record; with *error*, posting then fails with it.
+    """
 
-    return run
+    def install(*, error: Exception | None = None) -> list[object]:
+        bound: list[object] = []
+
+        async def post(**_: object) -> MagicMock:
+            bound.append(get_session_tools(SESSION_ID))
+            if error is not None:
+                raise error
+            return MagicMock(offset=1)
+
+        mock_app.sessions.create_customer_message = AsyncMock(side_effect=post)
+        return bound
+
+    return install
 
 
 async def test_creates_session_for_room(
@@ -58,12 +73,12 @@ async def test_reuses_existing_session(
 
 
 async def test_on_cleanup_forgets_the_rooms_session(
-    start_adapter, run_turn, mock_parlant_server, mock_app
+    start_adapter, run_turn, sample_message, mock_parlant_server, mock_app
 ):
     adapter = await start_adapter()
     await run_turn(adapter)
 
-    await adapter.on_cleanup("room-123")
+    await adapter.on_cleanup(sample_message.room_id)
     await run_turn(adapter)
 
     assert mock_parlant_server.create_customer.await_count == 2
@@ -78,55 +93,36 @@ async def test_cleanup_all_forgets_every_rooms_session(
     await run_turn(adapter, room_id="room-2")
 
     await adapter.cleanup_all()
-    await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
     await run_turn(adapter, room_id="room-1")
 
     assert mock_app.sessions.create.await_count == 3
 
 
 async def test_binds_session_tools_for_the_turn_only(
-    start_adapter, run_turn, mock_tools
+    start_adapter, run_turn, record_binding_on_post, mock_tools
 ):
     """Parlant runs tools on its own tasks, so they find the room by session."""
+    bound = record_binding_on_post()
     adapter = await start_adapter()
 
-    with patch(
-        "band.integrations.parlant.sessiontools.set_session_tools"
-    ) as set_session_tools:
-        await run_turn(adapter)
+    await run_turn(adapter)
 
-    assert [c.args for c in set_session_tools.call_args_list] == [
-        (SESSION_ID, mock_tools),
-        (SESSION_ID, None),
-    ]
+    assert bound == [mock_tools]
+    assert get_session_tools(SESSION_ID) is None
 
 
-async def test_unbinds_session_tools_on_error(start_adapter, run_turn, mock_app):
-    mock_app.sessions.create_customer_message = AsyncMock(
-        side_effect=Exception("API error")
-    )
+async def test_failed_post_reports_failure_and_unbinds_room(
+    start_adapter, run_turn, record_binding_on_post, mock_tools
+):
+    bound = record_binding_on_post(error=RuntimeError(POST_ERROR))
     adapter = await start_adapter()
 
-    with (
-        patch(
-            "band.integrations.parlant.sessiontools.set_session_tools"
-        ) as set_session_tools,
-        pytest.raises(Exception, match="API error"),
-    ):
+    with pytest.raises(RuntimeError, match=POST_ERROR):
         await run_turn(adapter)
 
-    set_session_tools.assert_called_with(SESSION_ID, None)
-
-
-async def test_reports_error_on_failure(start_adapter, run_turn, mock_app, mock_tools):
-    mock_app.sessions.create_customer_message = AsyncMock(
-        side_effect=Exception("API error")
-    )
-    adapter = await start_adapter()
-
-    with pytest.raises(Exception, match="API error"):
-        await run_turn(adapter)
-
+    assert bound == [mock_tools]
+    assert get_session_tools(SESSION_ID) is None
     [failure] = reported_failures(mock_tools)
     assert failure["provider"] == PROVIDER
     assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE

@@ -12,6 +12,7 @@ import pytest
 from pydantic import BaseModel, Field, create_model
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from tests.adapters.parlant.helpers import LOOKUP
 
 
 def test_borrowed_server_and_agent_are_exposed(mock_parlant_server, mock_parlant_agent):
@@ -81,12 +82,6 @@ async def lookup(args: BaseModel) -> str:
 ShadowingInput = create_model("band_send_messageInput", content=(str, ...))
 
 
-class LookupInput(BaseModel):
-    """Look a code up."""
-
-    code: str
-
-
 class ContextInput(BaseModel):
     """Collides with Parlant's tool context."""
 
@@ -137,7 +132,7 @@ class SingleIntLiteralInput(BaseModel):
     ("additional_tools", "named"),
     [
         ([(ShadowingInput, lookup)], "band_send_message"),
-        ([(LookupInput, lookup), (LookupInput, lookup)], "lookup"),
+        ([LOOKUP, LOOKUP], "lookup"),
         ([(ContextInput, lookup)], "context"),
         ([(KeywordAliasInput, lookup)], "from"),
         ([(DictInput, lookup)], "tags"),
