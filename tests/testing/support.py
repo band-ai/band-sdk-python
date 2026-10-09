@@ -54,3 +54,15 @@ def seeded_contact(
         "inserted_at": SEED_INSERTED_AT,
         "online": True,
     }
+
+
+def seeded_received_request(
+    id: str, *, from_handle: str, status: str = "pending"
+) -> dict[str, Any]:
+    """A minimal valid ``ReceivedContactRequest`` seed."""
+    return {
+        "id": id,
+        "from_handle": from_handle,
+        "status": status,
+        "inserted_at": SEED_INSERTED_AT,
+    }

@@ -10,6 +10,7 @@ E2E can only trigger it on a genuinely slow runner.
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -167,4 +168,20 @@ async def test_empty_find_events_then_final_still_forwards(relay, mock_app, mock
 
     mock_tools.assert_message_sent(
         content="The answer.", mentions=[SENDER_NAME], count=1
+    )
+
+
+async def test_empty_final_ends_the_wait_with_a_warning_naming_the_room(
+    relay, mock_app, mock_tools, caplog
+):
+    """An empty final still ends the turn, and an operator can find the room."""
+    answer_after(mock_app, waits=[True], events=[agent_event("", offset=2)])
+
+    with caplog.at_level(logging.WARNING, logger=relay_agent_response.__module__):
+        await relay(timeout=LONG_BUDGET_SECONDS)
+
+    mock_tools.assert_no_messages_sent()
+    [record] = caplog.records
+    assert record.getMessage() == (
+        f"Room {mock_tools.room_id}: the agent's final message was empty"
     )

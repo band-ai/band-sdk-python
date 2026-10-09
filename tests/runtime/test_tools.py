@@ -1638,7 +1638,8 @@ class TestAgentToolsAddParticipant:
 
         assert result["id"] == "agent-2"
         assert result["name"] == "Agent Two"
-        assert result["status"] == "added"
+        # Plain text, not the enum member: adapters render the result with str().
+        assert "'status': 'added'" in str(result)
 
     async def test_add_participant_already_in_room_by_handle(self, mock_rest_client):
         """add_participant() should detect already-in-room by handle."""
@@ -1647,7 +1648,7 @@ class TestAgentToolsAddParticipant:
         result = await tools.add_participant("user-one", role="member")
 
         assert result["id"] == "user-1"
-        assert result["status"] == "already_in_room"
+        assert "'status': 'already_in_room'" in str(result)
         mock_rest_client.agent_api_participants.add_agent_chat_participant.assert_not_called()
 
     async def test_add_participant_ambiguous_name_resolved_by_handle(

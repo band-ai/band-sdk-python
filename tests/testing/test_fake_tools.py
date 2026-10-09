@@ -19,6 +19,7 @@ from tests.testing.support import (
     seeded_contact,
     seeded_participant,
     seeded_peer,
+    seeded_received_request,
 )
 
 
@@ -32,18 +33,6 @@ async def store_fact(tools: FakeAgentTools, content: str) -> None:
         thought="noted",
         scope="organization",
     )
-
-
-def seeded_received_request(
-    id: str, *, from_handle: str, status: str = "pending"
-) -> dict[str, Any]:
-    """A minimal valid ``ReceivedContactRequest`` seed."""
-    return {
-        "id": id,
-        "from_handle": from_handle,
-        "status": status,
-        "inserted_at": SEED_INSERTED_AT,
-    }
 
 
 def seeded_sent_request(
@@ -446,6 +435,7 @@ class TestParticipantOperations:
             "role": "admin",
             "status": "already_in_room",
         }
+        assert "'status': 'already_in_room'" in str(result)
         assert len(tools.participants) == 1, "Re-adding must not duplicate the roster"
 
     async def test_add_participant_raises_for_an_unknown_identifier(self):
