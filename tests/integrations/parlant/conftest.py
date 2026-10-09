@@ -11,19 +11,13 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.parlant.ports import reserve_server_ports
-from band.integrations.parlant.sessiontools import _session_tools
 from band.integrations.parlant.tools import create_parlant_tools
 from tests.integrations.parlant.helpers import SESSION_ID, ToolServer
+from tests.integrations.parlant.sessions import (
+    clear_session_tools,  # noqa: F401 -- autouse fixture
+)
 
 LOOPBACK = "127.0.0.1"
-
-
-@pytest.fixture(autouse=True)
-def clear_session_tools():
-    """Each test starts and ends with no session bound to a room."""
-    _session_tools.clear()
-    yield
-    _session_tools.clear()
 
 
 @pytest.fixture

@@ -72,7 +72,7 @@ def _role(message: ParlantMessage) -> str:
 
 def _answered(history: ParlantMessages, index: int) -> bool:
     following = history[index + 1 : index + 2]
-    return bool(following) and following[0].get("role") == ParlantRole.ASSISTANT
+    return bool(following) and _role(following[0]) == ParlantRole.ASSISTANT
 
 
 async def _inject_message(

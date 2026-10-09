@@ -30,15 +30,19 @@ logger = logging.getLogger(__name__)
 # activity greps out of a mixed log in one pass.
 LOG_PREFIX = "[Parlant Tool]"
 
-# Longest argument value echoed into the per-call debug line; a full message
+# Longest argument or result value echoed into a debug line; a full message
 # body or file payload would otherwise dominate the log.
 LOGGED_VALUE_CHARS = 50
+
+
+def _clipped(value: Any) -> str:
+    return str(value)[:LOGGED_VALUE_CHARS]
 
 
 def _logged_arguments(call: inspect.BoundArguments) -> str:
     """The call's own arguments, truncated, for one per-tool log line."""
     return ", ".join(
-        f"{name}={str(value)[:LOGGED_VALUE_CHARS]}"
+        f"{name}={_clipped(value)}"
         for name, value in call.arguments.items()
         if name != CONTEXT_PARAMETER
     )
@@ -134,7 +138,7 @@ def guard_failures(
                 data=f"Error {failure.format(**call.arguments)}: {message}"
             )
         logger.info("%s %s completed", LOG_PREFIX, func.__name__)
-        logger.debug("%s %s -> %s", LOG_PREFIX, func.__name__, result)
+        logger.debug("%s %s -> %s", LOG_PREFIX, func.__name__, _clipped(result.data))
         return result
 
     return run

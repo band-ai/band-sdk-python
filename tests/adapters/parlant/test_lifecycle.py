@@ -287,7 +287,7 @@ async def test_warns_when_no_guideline_can_reach_custom_tools(
     )
     adapter.add_guideline(condition="c", action="a", tools=guideline_tools)
 
-    with caplog.at_level(logging.WARNING, logger="band.adapters.parlant.adapter"):
+    with caplog.at_level(logging.WARNING, logger=ParlantAdapter.__module__):
         await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     unreachable = [

@@ -15,7 +15,6 @@ import pytest
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.core.types import PlatformMessage
-from band.integrations.parlant.sessiontools import _session_tools
 from band.testing import FakeAgentTools
 from tests.adapters.parlant.helpers import (
     AI_AGENT_SOURCE,
@@ -24,6 +23,9 @@ from tests.adapters.parlant.helpers import (
     MESSAGE_KIND,
     SENDER_NAME,
     SESSION_ID,
+)
+from tests.integrations.parlant.sessions import (
+    clear_session_tools,  # noqa: F401 -- autouse fixture
 )
 
 StartAdapter = Callable[..., Awaitable[ParlantAdapter]]
@@ -151,14 +153,6 @@ def run_turn(sample_message: PlatformMessage, mock_tools: FakeAgentTools) -> Run
         )
 
     return run
-
-
-@pytest.fixture(autouse=True)
-def clear_session_tools() -> Iterator[None]:
-    """Each test starts and ends with no Parlant session bound to a room."""
-    _session_tools.clear()
-    yield
-    _session_tools.clear()
 
 
 @pytest.fixture(autouse=True)

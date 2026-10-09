@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from parlant.core.tools import ToolContext, ToolResult
 
 from band.core.types import ContactRequestAction, ContactRequestStatus
@@ -29,9 +31,10 @@ async def band_add_contact(
     message: str = "",
 ) -> ToolResult:
     tools = require_session_tools(context)
-    data = serialize_tool_result(await tools.add_contact(handle, or_none(message)))
-    reply = data if isinstance(data, dict) else {}
-    status = reply.get("status", ContactRequestStatus.PENDING)
+    status = _reported_status(
+        await tools.add_contact(handle, or_none(message)),
+        default=ContactRequestStatus.PENDING,
+    )
     return ToolResult(data=f"Contact request to {handle}: {status}")
 
 
@@ -77,14 +80,22 @@ async def band_respond_contact_request(
     if action not in CONTACT_ACTIONS:
         return invalid_choice("action", action, CONTACT_ACTIONS)
 
-    data = serialize_tool_result(
+    status = _reported_status(
         await tools.respond_contact_request(
             action, or_none(handle), or_none(request_id)
-        )
+        ),
+        default=action,
     )
-    reply = data if isinstance(data, dict) else {}
-    status = reply.get("status", action)
     return ToolResult(data=f"Contact request {action}d: {status}")
+
+
+def _reported_status(result: Any, *, default: str) -> str:
+    """The status a contact reply reports, or *default* when it has none."""
+    match serialize_tool_result(result):
+        case {"status": str(status)}:
+            return status
+        case _:
+            return default
 
 
 TOOLS = (
