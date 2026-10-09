@@ -77,6 +77,12 @@ ACCEPTED = [
     ("str-enum", Shade, {"type": "string", "enum": ["light", "dark"]}),
     ("union-with-a-literal", Literal["auto"] | int, {"type": "string"}),
     ("optional-union", Literal["auto"] | int | None, {"type": "string"}),
+    ("known-values-or-any-text", Literal["auto", "manual"] | str, {"type": "string"}),
+    (
+        "optional-known-values-or-any-text",
+        Literal["auto"] | str | None,
+        {"type": "string"},
+    ),
     ("union-with-a-choice", Shade | int, {"type": "string"}),
     (
         "union-of-choices",
@@ -145,6 +151,7 @@ REJECTED = [
     ("union-with-a-list", list[int] | list[str]),
     ("union-with-str", int | str),
     ("bool-or-str", bool | str),
+    ("enum-or-str", Shade | str),
     ("optional-union-with-str", int | str | None),
     ("list-of-union-with-str", list[int | str]),
     ("int-literal", Literal[1, 2]),

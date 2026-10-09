@@ -153,8 +153,8 @@ adapter.add_guideline(
   choices (string `Literal`s or string-valued enums), unions of those, or a
   list, set or `tuple[X, ...]` of one of them. Parlant delivers every argument
   as a string, so choices must be strings (use a string enum in place of an
-  `IntEnum`), a union may not include a plain `str` (it would take every value
-  as text), and strict fields are validated laxly. Any other field (a `dict`,
+  `IntEnum`), a plain `str` may share a union only with string `Literal`s (it
+  would take every value as text), and strict fields are validated laxly. Any other field (a `dict`,
   nested model, fixed-length tuple, nested list, non-string choice, a union
   with `str` or a union with a list) is rejected when the adapter is built.
 - **Picking tools per guideline.** Use `configure=` and choose entries from

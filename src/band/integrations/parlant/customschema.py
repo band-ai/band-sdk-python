@@ -17,8 +17,8 @@ unwrapped; any other shape is rejected when the adapter is built:
   string value is sure to validate from it;
 - a union of the shapes above (``Literal["auto"] | int``, ``Decimal``),
   advertised as ``string``, with every member's choices when all members are
-  choices; not with a plain ``str`` member, which takes every text first and
-  leaves the other members unreachable;
+  choices; a plain ``str`` member may sit only beside str ``Literal`` choices,
+  since it takes every text first and leaves any other member unreachable;
 - a list, set or ``tuple[X, ...]`` of one of those, advertised as ``array``
   with its item type and parsed from list text.
 
@@ -93,7 +93,7 @@ STRING_NARROWING = frozenset({"format", "pattern", "enum", "const"})
 FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
 UNSUPPORTED_SHAPE = (
     "Parlant has no parameter type for this field; choices must be strings "
-    "and a union may not include a plain str "
+    "and a plain str may share a union only with str Literals "
     "(supported shapes: band.integrations.parlant.customschema)"
 )
 
@@ -258,7 +258,9 @@ def _union(
     """Text the input model validates against each member in turn; a union of
     choices offers every member's choices."""
     schemas = [_resolve(branch, defs=defs) for branch in branches]
-    if any(_is_free_text(schema) for schema in schemas):
+    if any(_is_free_text(schema) for schema in schemas) and not all(
+        _keeps_text(branch, schema) for branch, schema in zip(branches, schemas)
+    ):
         return None
     members: list[Descriptor] = []
     for schema in schemas:
@@ -273,6 +275,14 @@ def _union(
 def _is_free_text(schema: Mapping[str, Any]) -> bool:
     """A string member no other keyword narrows, so it validates any text."""
     return schema.get("type") == JsonType.STRING and STRING_NARROWING.isdisjoint(schema)
+
+
+def _keeps_text(branch: Mapping[str, Any], schema: Mapping[str, Any]) -> bool:
+    """A member that validates text to that same text: free text, or an inline
+    str ``Literal`` (an ``Enum`` is a ``$ref`` and validates to a member)."""
+    return _is_free_text(schema) or (
+        "$ref" not in branch and not {"const", "enum"}.isdisjoint(schema)
+    )
 
 
 def _choices(values: Iterable[Any]) -> Descriptor | None:
