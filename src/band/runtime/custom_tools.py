@@ -210,6 +210,7 @@ async def execute_custom_tool(
     arguments: dict[str, Any],
     *,
     turn: Turn | None,
+    strict: bool | None = None,
 ) -> Any:
     """
     Execute custom tool with Pydantic validation.
@@ -219,6 +220,7 @@ async def execute_custom_tool(
         arguments: Raw arguments dict from LLM
         turn: The turn to record the tool's declared effect on, or ``None``
             when the tool is not bound to a room, so it cannot settle a turn.
+        strict: Overrides the input model's own strictness; ``None`` keeps it.
 
     Returns:
         Tool execution result
@@ -231,7 +233,7 @@ async def execute_custom_tool(
 
     # Validate arguments, format errors for LLM readability
     try:
-        validated = model.model_validate(arguments)
+        validated = model.model_validate(arguments, strict=strict)
     except ValidationError as e:
         tool_name = get_custom_tool_name(model)
         raise ValueError(

@@ -9,7 +9,10 @@ from typing import Any, cast
 import parlant.sdk as p
 from parlant.core.tools import ToolContext, ToolParameterDescriptor, ToolResult
 
-from band.integrations.parlant.customschema import describe_custom_tool
+from band.integrations.parlant.customschema import (
+    STRICT_VALIDATION,
+    describe_custom_tool,
+)
 from band.integrations.parlant.guard import guard_failures
 from band.integrations.parlant.sessiontools import (
     CONTEXT_PARAMETER,
@@ -26,7 +29,9 @@ def build_custom_tool(tool_def: CustomToolDef) -> Any:
 
     async def run(context: ToolContext, **arguments: Any) -> ToolResult:
         tools = require_session_tools(context)
-        result = await execute_custom_tool(tool_def, arguments, turn=tools.turn)
+        result = await execute_custom_tool(
+            tool_def, arguments, turn=tools.turn, strict=STRICT_VALIDATION
+        )
         return ToolResult(data=tool_result_text(result))
 
     run.__name__ = described.name

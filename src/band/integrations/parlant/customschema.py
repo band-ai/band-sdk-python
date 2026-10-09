@@ -17,7 +17,7 @@ from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import Any, NamedTuple, TypedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.custom_tools import (
@@ -72,6 +72,9 @@ SCALAR_TYPES = {
 }
 # JSON Schema string formats Parlant has a parameter type for.
 FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
+# Parlant delivers every argument as a string, which only lax validation
+# converts, so even a strict field is validated laxly.
+STRICT_VALIDATION = False
 
 
 class CustomToolField(NamedTuple):
@@ -79,15 +82,6 @@ class CustomToolField(NamedTuple):
 
     parameter: inspect.Parameter
     descriptor: Descriptor
-
-
-class Resolved(NamedTuple):
-    """A property schema with ``$ref`` and ``Optional`` unwrapped."""
-
-    schema: Mapping[str, Any]
-    # An enum reached through $defs is a real Enum class, whose member values
-    # (even int ones) the model validates from their string form.
-    from_enum_class: bool
 
 
 class ParlantCustomTool(NamedTuple):
@@ -114,6 +108,7 @@ def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
     required = set(schema.get("required", []))
     fields = [
         _field(
+            input_model,
             key,
             prop,
             defs=defs,
@@ -128,6 +123,7 @@ def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
 
 
 def _field(
+    input_model: type[BaseModel],
     key: str,
     prop: Mapping[str, Any],
     *,
@@ -139,9 +135,17 @@ def _field(
         raise ValueError(f"{where}: '{key}' is reserved for Parlant's tool context")
     resolved = _resolve(prop, defs=defs)
     descriptor = _descriptor(resolved, defs=defs, where=where)
-    if description := prop.get("description") or resolved.schema.get("description"):
+    if description := prop.get("description") or resolved.get("description"):
         descriptor["description"] = description
     delivered = list[str] if descriptor["type"] == ParlantType.ARRAY else str
+    if any(
+        _rejects(input_model, key=key, value=choice)
+        for choice in _delivered_choices(descriptor)
+    ):
+        raise ValueError(
+            f"{where}: Parlant delivers its choices as strings, which the field "
+            "rejects (use a str Literal, a str Enum or an IntEnum)"
+        )
     try:
         parameter = inspect.Parameter(
             key,
@@ -154,34 +158,46 @@ def _field(
     return CustomToolField(parameter=parameter, descriptor=descriptor)
 
 
-def _resolve(prop: Mapping[str, Any], *, defs: Mapping[str, Any]) -> Resolved:
+def _delivered_choices(descriptor: Descriptor) -> list[Any]:
+    """Each value Parlant can deliver from the advertised choices."""
+    choices = descriptor.get("enum", [])
+    if descriptor["type"] == ParlantType.ARRAY:
+        return [choices] if choices else []
+    return list(choices)
+
+
+def _rejects(input_model: type[BaseModel], *, key: str, value: Any) -> bool:
+    """Whether *input_model* fails *value* for the field at *key*."""
+    try:
+        input_model.model_validate({key: value}, strict=STRICT_VALIDATION)
+    except ValidationError as exc:
+        return any(error["loc"][:1] == (key,) for error in exc.errors())
+    return False
+
+
+def _resolve(prop: Mapping[str, Any], *, defs: Mapping[str, Any]) -> Mapping[str, Any]:
+    """*prop* with ``$ref`` and ``Optional`` unwrapped."""
     if ref := prop.get("$ref"):
-        return Resolved(schema=defs[ref.rsplit("/", 1)[-1]], from_enum_class=True)
+        return defs[ref.rsplit("/", 1)[-1]]
     branches = [branch for branch in prop.get("anyOf", ()) if branch != NULL_SCHEMA]
     if len(branches) == 1:
         return _resolve(branches[0], defs=defs)
-    return Resolved(schema=prop, from_enum_class=False)
+    return prop
 
 
 def _descriptor(
-    resolved: Resolved, *, defs: Mapping[str, Any], where: str
+    resolved: Mapping[str, Any], *, defs: Mapping[str, Any], where: str
 ) -> Descriptor:
     """The Parlant parameter descriptor for one resolved property schema."""
-    match resolved.schema:
+    match resolved:
         case {"const": value}:
-            # A single-value Literal; checked like any other enum.
-            return _descriptor(
-                resolved._replace(schema={"enum": [value]}), defs=defs, where=where
-            )
-        case {"enum": values} if resolved.from_enum_class or all(
-            isinstance(value, str) for value in values
-        ):
+            # A single-value Literal; offered like any other set of choices.
+            return _descriptor({"enum": [value]}, defs=defs, where=where)
+        case {"enum": values}:
+            # A None choice is how Parlant omits the argument, not a string.
             return Descriptor(
-                type=ParlantType.STRING, enum=[str(value) for value in values]
-            )
-        case {"enum": _}:
-            raise ValueError(
-                f"{where}: Parlant enums must be strings (use a str Literal or an Enum)"
+                type=ParlantType.STRING,
+                enum=[str(value) for value in values if value is not None],
             )
         case {"type": JsonType.STRING, "format": str(fmt)} if fmt in FORMAT_TYPES:
             return Descriptor(type=FORMAT_TYPES[fmt])
@@ -201,7 +217,7 @@ def _descriptor(
 
 
 def _array_descriptor(
-    item: Resolved, *, defs: Mapping[str, Any], where: str
+    item: Mapping[str, Any], *, defs: Mapping[str, Any], where: str
 ) -> Descriptor:
     item_descriptor = _descriptor(item, defs=defs, where=f"{where} item")
     if item_descriptor["type"] == ParlantType.ARRAY:

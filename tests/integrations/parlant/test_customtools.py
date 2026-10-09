@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import enum
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Annotated, Literal
 
 import pytest
 import pytest_asyncio
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from band.integrations.parlant.sessiontools import (
     NO_SESSION_TOOLS_ERROR,
@@ -37,6 +38,11 @@ class Shade(enum.Enum):
     DARK = "dark"
 
 
+class Grade(enum.IntEnum):
+    ECONOMY = 1
+    PREMIUM = 2
+
+
 class PaintInput(BaseModel):
     """Paint a wall."""
 
@@ -48,6 +54,16 @@ class PaintInput(BaseModel):
     due: date = date(2026, 1, 1)
     rooms: list[int] = []
     budget: Annotated[int, Field(description="Spend cap")] | None = 100
+    grade: Grade = Grade.ECONOMY
+    cost: Decimal = Decimal(0)
+    start: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+    colors: list[Literal["red", "blue"]] = []
+    size: int | str = 1
+    layers: StrictInt = 1
+    sheen: Literal["satin", "gloss", None] = None  # noqa: PYI061 -- the form under test
+    trim: Annotated[str, Field(description="Trim style")] | None = Field(
+        None, description="Trim to paint"
+    )
 
 
 class NoteInput(BaseModel):
@@ -116,6 +132,14 @@ async def test_advertises_the_input_models_types(custom_server):
         "due": {"type": "date"},
         "rooms": {"type": "array", "item_type": "integer"},
         "budget": {"type": "integer", "description": "Spend cap"},
+        "grade": {"type": "string", "enum": ["1", "2"]},
+        "cost": {"type": "string"},
+        "start": {"type": "datetime"},
+        "colors": {"type": "array", "item_type": "string", "enum": ["red", "blue"]},
+        "size": {"type": "string"},
+        "layers": {"type": "integer"},
+        "sheen": {"type": "string", "enum": ["satin", "gloss"]},
+        "trim": {"type": "string", "description": "Trim to paint"},
     }
 
 
@@ -133,6 +157,14 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             "due": "2026-05-04",
             "rooms": "[1, 2]",
             "budget": None,
+            "grade": "2",
+            "cost": "3.50",
+            "start": "2026-05-04T10:00:00Z",
+            "colors": "['red', 'blue']",
+            "size": "large",
+            "layers": "3",
+            "sheen": "satin",
+            "trim": None,
         },
     )
 
@@ -147,6 +179,13 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             due=date(2026, 5, 4),
             rooms=[1, 2],
             budget=100,
+            grade=Grade.PREMIUM,
+            cost=Decimal("3.50"),
+            start=datetime(2026, 5, 4, 10, tzinfo=UTC),
+            colors=["red", "blue"],
+            size="large",
+            layers=3,
+            sheen="satin",
         )
     ]
 

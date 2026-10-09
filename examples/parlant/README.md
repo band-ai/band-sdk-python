@@ -150,9 +150,11 @@ adapter.add_guideline(
   Band platform tools. The adapter logs a warning when no guideline can reach
   them.
 - **Field types.** Fields may be strings, numbers, booleans, string `Literal`s,
-  enums, dates, unions of those, or lists of them. Parlant has no object
-  parameter type, so `dict` and nested-model fields are rejected when the
-  adapter is built.
+  string enums or `IntEnum`s, dates, unions of those, or lists of them.
+  Parlant delivers every argument as a string, so a choice must validate from
+  its string form (an int `Literal` or a plain int-valued `Enum` does not), and
+  strict fields are validated laxly. Parlant has no object parameter type, so
+  `dict` and nested-model fields are rejected when the adapter is built.
 - **Picking tools per guideline.** Use `configure=` and choose entries from
   `adapter.tools`, which holds the Band platform tools plus the custom tools.
 - **Names are server-wide.** A custom tool may not reuse a Band tool's name or

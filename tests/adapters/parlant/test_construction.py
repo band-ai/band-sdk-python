@@ -6,10 +6,12 @@ tests/framework_conformance/test_adapter_conformance.py.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Literal
 
 import pytest
 from pydantic import BaseModel, Field, create_model
+from typing_extensions import TypeAliasType
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from tests.adapters.parlant.helpers import LOOKUP
@@ -128,6 +130,38 @@ class SingleIntLiteralInput(BaseModel):
     level: Literal[1]
 
 
+class Color(Enum):
+    RED = 1
+    BLUE = 2
+
+
+class IntEnumInput(BaseModel):
+    """Has a plain Enum with int values, which "1" does not validate as."""
+
+    color: Color
+
+
+class IntEnumListInput(BaseModel):
+    """Has a list of a plain int-valued Enum."""
+
+    colors: list[Color]
+
+
+Priority = TypeAliasType("Priority", Literal[1, 2])
+
+
+class AliasedIntLiteralInput(BaseModel):
+    """Has an int Literal behind a type alias, which JSON Schema writes as a $ref."""
+
+    priority: Priority
+
+
+class NestedListInput(BaseModel):
+    """Has a list of lists."""
+
+    grid: list[list[int]]
+
+
 @pytest.mark.parametrize(
     ("additional_tools", "named"),
     [
@@ -140,6 +174,10 @@ class SingleIntLiteralInput(BaseModel):
         ([(IntLiteralInput, lookup)], "level"),
         ([(SingleIntLiteralInput, lookup)], "level"),
         ([(TupleInput, lookup)], "tuples"),
+        ([(IntEnumInput, lookup)], "color"),
+        ([(IntEnumListInput, lookup)], "colors"),
+        ([(AliasedIntLiteralInput, lookup)], "priority"),
+        ([(NestedListInput, lookup)], "nested list"),
     ],
     ids=[
         "shadows-band-tool",
@@ -151,6 +189,10 @@ class SingleIntLiteralInput(BaseModel):
         "int-literal",
         "single-int-literal",
         "tuple-field",
+        "plain-int-enum",
+        "plain-int-enum-list",
+        "aliased-int-literal",
+        "nested-list",
     ],
 )
 def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):
