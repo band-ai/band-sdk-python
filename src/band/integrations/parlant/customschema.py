@@ -17,7 +17,8 @@ from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import Any, NamedTuple, TypedDict
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic.fields import FieldInfo
 
 from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.custom_tools import (
@@ -106,11 +107,12 @@ def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
     schema = function["parameters"]
     defs = schema.get("$defs", {})
     required = set(schema.get("required", []))
+    annotations = _field_annotations(input_model)
     fields = [
         _field(
-            input_model,
             key,
             prop,
+            annotation=annotations.get(key),
             defs=defs,
             required=key in required,
             where=f"Custom tool '{function['name']}' field '{key}'",
@@ -123,10 +125,10 @@ def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
 
 
 def _field(
-    input_model: type[BaseModel],
     key: str,
     prop: Mapping[str, Any],
     *,
+    annotation: Any,
     defs: Mapping[str, Any],
     required: bool,
     where: str,
@@ -138,9 +140,8 @@ def _field(
     if description := prop.get("description") or resolved.get("description"):
         descriptor["description"] = description
     delivered = list[str] if descriptor["type"] == ParlantType.ARRAY else str
-    if any(
-        _rejects(input_model, key=key, value=choice)
-        for choice in _delivered_choices(descriptor)
+    if annotation is not None and any(
+        _rejects(annotation, value=choice) for choice in _delivered_choices(descriptor)
     ):
         raise ValueError(
             f"{where}: Parlant delivers its choices as strings, which the field "
@@ -158,20 +159,38 @@ def _field(
     return CustomToolField(parameter=parameter, descriptor=descriptor)
 
 
+def _field_annotations(input_model: type[BaseModel]) -> dict[str, Any]:
+    """Each field's type, keyed as its JSON schema property."""
+    return {
+        _schema_key(name, info): info.annotation
+        for name, info in input_model.model_fields.items()
+    }
+
+
+def _schema_key(name: str, info: FieldInfo) -> str:
+    if isinstance(info.validation_alias, str):
+        return info.validation_alias
+    return info.alias or name
+
+
 def _delivered_choices(descriptor: Descriptor) -> list[Any]:
     """Each value Parlant can deliver from the advertised choices."""
     choices = descriptor.get("enum", [])
     if descriptor["type"] == ParlantType.ARRAY:
-        return [choices] if choices else []
+        return [[choice] for choice in choices]
     return list(choices)
 
 
-def _rejects(input_model: type[BaseModel], *, key: str, value: Any) -> bool:
-    """Whether *input_model* fails *value* for the field at *key*."""
+def _rejects(annotation: Any, *, value: Any) -> bool:
+    """Whether the field's bare type fails *value*.
+
+    Only the type is checked: the field's constraints and the model's
+    validators may need the rest of a call's input.
+    """
     try:
-        input_model.model_validate({key: value}, strict=STRICT_VALIDATION)
-    except ValidationError as exc:
-        return any(error["loc"][:1] == (key,) for error in exc.errors())
+        TypeAdapter(annotation).validate_python(value, strict=STRICT_VALIDATION)
+    except ValidationError:
+        return True
     return False
 
 

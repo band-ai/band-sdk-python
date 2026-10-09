@@ -10,7 +10,14 @@ from enum import Enum
 from typing import Literal
 
 import pytest
-from pydantic import BaseModel, Field, create_model
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationInfo,
+    create_model,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import TypeAliasType
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
@@ -198,3 +205,46 @@ class NestedListInput(BaseModel):
 def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):
     with pytest.raises(ValueError, match=named):
         ParlantAdapter(additional_tools=additional_tools)
+
+
+class PickOneInput(BaseModel):
+    """Has a length limit below its number of choices."""
+
+    colors: list[Literal["red", "green", "blue"]] = Field(max_length=1)
+
+
+class ScheduleInput(BaseModel):
+    """Has a choice whose validator reads an earlier field."""
+
+    start: int
+    unit: Literal["day", "week"]
+
+    @field_validator("unit")
+    @classmethod
+    def needs_start(cls, unit: str, info: ValidationInfo) -> str:
+        assert info.data["start"] >= 0
+        return unit
+
+
+class ChargeInput(BaseModel):
+    """Has a model validator that reads every field."""
+
+    kind: Literal["a", "b"]
+    amount: int
+
+    @model_validator(mode="before")
+    @classmethod
+    def needs_amount(cls, data: dict[str, object]) -> dict[str, object]:
+        assert data["amount"] is not None
+        return data
+
+
+@pytest.mark.parametrize(
+    "input_model",
+    [PickOneInput, ScheduleInput, ChargeInput],
+    ids=["list-length-limit", "field-validator", "model-validator"],
+)
+def test_accepts_choices_whose_checks_need_the_whole_call(input_model):
+    """A choice is checked against its field's type alone; length limits and
+    validators see a real call's full input, never a probe's partial one."""
+    ParlantAdapter(additional_tools=[(input_model, lookup)])
