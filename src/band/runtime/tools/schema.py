@@ -15,6 +15,7 @@ from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
 
+from band.core.exceptions import InvalidToolArgumentsError
 from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
 
@@ -183,7 +184,9 @@ def validate_tool_arguments(
     try:
         validated = input_model.model_validate(arguments)
     except ValidationError as error:
-        raise ValueError(format_tool_validation_error(tool_name, error)) from error
+        raise InvalidToolArgumentsError(
+            format_tool_validation_error(tool_name, error)
+        ) from error
 
     return validated.model_dump(exclude_none=True)
 

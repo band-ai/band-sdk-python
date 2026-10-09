@@ -14,9 +14,8 @@ from collections.abc import Callable
 from typing import Any
 
 from parlant.core.tools import ToolResult
-from pydantic import ValidationError
 
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, InvalidToolArgumentsError
 from band.integrations.parlant.mentions import with_mention_handles
 from band.integrations.parlant.sessiontools import (
     CONTEXT_PARAMETER,
@@ -45,14 +44,14 @@ def _logged_arguments(call: inspect.BoundArguments) -> str:
     )
 
 
-def _log_failure(exc: Exception, *, context_phrase: str) -> None:
+def _log_failure(exc: Exception, *, tool_name: str) -> None:
     """An argument the model got wrong is a warning; anything else is an error."""
-    invalid_arguments = isinstance(exc.__cause__, ValidationError)
+    invalid_arguments = isinstance(exc, InvalidToolArgumentsError)
     logger.log(
         logging.WARNING if invalid_arguments else logging.ERROR,
-        "%s Error %s: %s",
+        "%s %s failed: %s",
         LOG_PREFIX,
-        context_phrase,
+        tool_name,
         exc,
         exc_info=not invalid_arguments,
     )
@@ -127,12 +126,13 @@ def guard_failures(
             )
             return ToolResult(data=NO_SESSION_TOOLS_ERROR)
         except Exception as exc:  # noqa: BLE001 -- any tool failure must reach the model as a ToolResult, not crash the call
-            context_phrase = failure.format(**call.arguments)
-            _log_failure(exc, context_phrase=context_phrase)
+            _log_failure(exc, tool_name=func.__name__)
             message = _failure_message(
                 exc, context=context, mention_hints=mention_hints
             )
-            return ToolResult(data=f"Error {context_phrase}: {message}")
+            return ToolResult(
+                data=f"Error {failure.format(**call.arguments)}: {message}"
+            )
         logger.info("%s %s completed", LOG_PREFIX, func.__name__)
         logger.debug("%s %s -> %s", LOG_PREFIX, func.__name__, result)
         return result

@@ -3,17 +3,41 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from band.core.exceptions import BandToolError
-from band.integrations.parlant.tools import set_session_tools
+from band.integrations.parlant.tools import create_parlant_tools, set_session_tools
 from tests.integrations.parlant.helpers import SESSION_ID
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
 # The guard module imports parlant, so its logger is named rather than imported.
 GUARD_LOGGER = "band.integrations.parlant.guard"
+
+
+class RecordInput(BaseModel):
+    """Store a record."""
+
+    count: int
+
+
+async def store_upstream_record(args: RecordInput) -> str:
+    """Fails validating an upstream payload: a handler bug, not a bad argument."""
+    try:
+        RecordInput.model_validate({"count": "many"})
+    except ValidationError as exc:
+        raise RuntimeError("upstream returned a malformed record") from exc
+    return "stored"
+
+
+@pytest.fixture
+def guarded_tools() -> dict[str, Any]:
+    """The Band tools plus one custom tool, each by name as its guarded function."""
+    entries = create_parlant_tools(custom_tools=[(RecordInput, store_upstream_record)])
+    return {entry.tool.name: entry.function for entry in entries}
 
 
 def lines_at(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
@@ -133,18 +157,42 @@ class TestGuardFailures:
         assert "Message sent to Alice" in debug
 
     @pytest.mark.asyncio
-    async def test_invalid_arguments_log_one_warning_without_a_traceback(
-        self, parlant_tools, mock_tools, mock_context, caplog
+    @pytest.mark.parametrize(
+        ("tool", "arguments", "level", "traceback"),
+        [
+            (
+                "band_get_task",
+                {"id": "task-1", "include": "bogus"},
+                logging.WARNING,
+                False,
+            ),
+            ("record", {"count": "many"}, logging.WARNING, False),
+            ("record", {"count": "1"}, logging.ERROR, True),
+        ],
+        ids=[
+            "band-tool-invalid-argument",
+            "custom-tool-invalid-argument",
+            "handler-failure-chaining-a-validation-error",
+        ],
+    )
+    async def test_only_invalid_arguments_log_a_warning_without_a_traceback(
+        self,
+        guarded_tools,
+        mock_tools,
+        mock_context,
+        caplog,
+        tool,
+        arguments,
+        level,
+        traceback,
     ):
-        """A bad argument is the model's to fix from the returned error, not
-        an operator alert."""
+        """A bad argument is the model's to fix from the returned error, not an
+        operator alert; any other failure is an error with its traceback."""
         set_session_tools(mock_context.session_id, mock_tools)
-        get_task = parlant_tools["band_get_task"]
 
         with caplog.at_level(logging.WARNING, logger=GUARD_LOGGER):
-            result = await get_task(mock_context, "task-1", include="bogus")
+            result = await guarded_tools[tool](mock_context, **arguments)
 
-        assert result.data.startswith("Error getting task 'task-1': Invalid arguments")
+        assert result.data.startswith("Error ")
         [record] = caplog.records
-        assert record.levelno == logging.WARNING
-        assert not record.exc_info
+        assert (record.levelno, bool(record.exc_info)) == (level, traceback)

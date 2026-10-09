@@ -15,6 +15,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from band.core.exceptions import InvalidToolArgumentsError
 from band.core.turn import Turn
 from band.runtime.tools.registry import ALL_TOOL_NAMES
 from band.runtime.tools.schema import is_failed_tool_output
@@ -226,7 +227,8 @@ async def execute_custom_tool(
         Tool execution result
 
     Raises:
-        ValueError: If arguments don't match InputModel schema (formatted for LLM)
+        InvalidToolArgumentsError: If arguments don't match InputModel schema
+            (formatted for LLM)
         Exception: Any exception from tool function (for adapter to catch)
     """
     model, func = tool
@@ -236,7 +238,7 @@ async def execute_custom_tool(
         validated = model.model_validate(arguments, strict=strict)
     except ValidationError as e:
         tool_name = get_custom_tool_name(model)
-        raise ValueError(
+        raise InvalidToolArgumentsError(
             f"Invalid arguments for {tool_name}: {format_validation_error(e)}"
         ) from e
 
