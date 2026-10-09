@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import get_args
 
 import pytest
-from pydantic import BaseModel
 
 from band.core.memory_types import enum_values
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState
@@ -18,18 +17,9 @@ from band.runtime.tools import (
     ToolCategory,
     get_band_tool_category,
 )
+from tests.adapters.parlant.helpers import LOOKUP
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
-
-
-class LookupInput(BaseModel):
-    """Look a code up."""
-
-    code: str
-
-
-async def lookup(args: LookupInput) -> str:
-    return args.code
 
 
 class TestCreateParlantTools:
@@ -377,7 +367,7 @@ class TestToolSelection:
         """The filters select Band tools; custom tools are always offered."""
         tools = create_parlant_tools(
             AdapterFeatures(include_tools=["band_send_message"]),
-            custom_tools=[(LookupInput, lookup)],
+            custom_tools=[LOOKUP],
         )
 
         assert [entry.tool.name for entry in tools] == ["band_send_message", "lookup"]

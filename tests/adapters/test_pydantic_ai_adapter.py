@@ -108,6 +108,7 @@ from tests.framework_conformance.turnprobes import (
     ROOM_ID,
     turn_input,
 )
+from tests.testing.support import seeded_peer
 
 
 def make_stream_events(
@@ -780,18 +781,6 @@ def _tool_returns(result: Any) -> list[Any]:
     return [part.content for part in _parts(result, ToolReturnPart)]
 
 
-# A registry peer the room's tools can add as a participant.
-BOB_PEER = {
-    "id": "bob-id",
-    "handle": "bob",
-    "name": "Bob",
-    "type": "User",
-    "is_contact": False,
-    "source": "registry",
-    "online": True,
-}
-
-
 def _streamed_tool_calls(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
     """A streaming model (what ``on_message`` drives) making ``calls``, one per
     request, then ending with nothing left to say."""
@@ -1119,7 +1108,9 @@ class TestBuiltinToolResults:
         adapter._agent.model = _streamed_tool_calls(
             (BandTool.ADD_PARTICIPANT, {"identifier": "bob"})
         )
-        tools = FakeAgentTools(room_id=ROOM_ID, peers=[BOB_PEER])
+        tools = FakeAgentTools(
+            room_id=ROOM_ID, peers=[seeded_peer("bob-id", handle="bob", name="Bob")]
+        )
 
         await adapter.on_event(turn_input(tools))
 

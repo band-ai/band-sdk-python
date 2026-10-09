@@ -230,6 +230,7 @@ jobs:
         uv run --all-packages pytest \
           tests/integrations/parlant/test_catalog.py \
           tests/integrations/parlant/test_chattools.py \
+          tests/integrations/parlant/test_contacttools.py \
           tests/integrations/parlant/test_customtools.py \
           tests/integrations/parlant/test_filetools.py \
           tests/integrations/parlant/test_guard.py \

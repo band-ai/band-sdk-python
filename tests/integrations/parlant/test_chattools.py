@@ -6,6 +6,7 @@ import pytest
 
 from band.integrations.parlant.tools import set_session_tools
 from band.testing import FakeAgentTools
+from tests.testing.support import seeded_participant
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
@@ -130,6 +131,20 @@ class TestChatTools:
 
         mock_tools.add_participant.assert_called_once_with("Research Agent")
         assert "Successfully added 'Research Agent'" in result.data
+
+    @pytest.mark.asyncio
+    async def test_add_participant_reports_one_already_in_the_room(
+        self, parlant_tools, mock_context
+    ):
+        tools = FakeAgentTools(
+            participants=[seeded_participant("bob-id", handle="bob")]
+        )
+        set_session_tools(mock_context.session_id, tools)
+
+        add_participant = parlant_tools["band_add_participant"]
+        result = await add_participant(mock_context, "bob")
+
+        assert result.data == "'bob' is already in the room - no action needed"
 
     @pytest.mark.asyncio
     async def test_remove_participant_calls_tools(

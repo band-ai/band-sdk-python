@@ -98,9 +98,14 @@ def parlant_tools():
 @pytest_asyncio.fixture(loop_scope="function")
 async def plugin_server() -> AsyncIterator[ToolServer]:
     """A real Parlant ``PluginServer``, the boundary the engine calls tools through."""
-    plugins = pytest.importorskip("parlant.core.services.tools.plugins")
+    # Deferred so this conftest imports without parlant; a plain import (not
+    # importorskip) fails loudly in a venv the parlant CI job doesn't cover.
+    from parlant.core.services.tools.plugins import (  # noqa: PLC0415
+        PluginServer,
+    )
+
     port = reserve_server_ports(LOOPBACK).tool_service_port
-    server = plugins.PluginServer(tools=[], port=port, host=LOOPBACK, hosted=True)
+    server = PluginServer(tools=[], port=port, host=LOOPBACK, hosted=True)
     async with (
         server,
         httpx.AsyncClient(base_url=server.url) as client,

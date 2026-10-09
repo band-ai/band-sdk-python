@@ -62,6 +62,7 @@ def test_detection_finds_the_tests_that_only_the_parlant_venv_can_run() -> None:
     assert needed == {
         Path("tests/integrations/parlant/test_catalog.py"),
         Path("tests/integrations/parlant/test_chattools.py"),
+        Path("tests/integrations/parlant/test_contacttools.py"),
         Path("tests/integrations/parlant/test_customtools.py"),
         Path("tests/integrations/parlant/test_filetools.py"),
         Path("tests/integrations/parlant/test_guard.py"),

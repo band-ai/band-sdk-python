@@ -7,11 +7,13 @@ import logging
 import pytest
 
 from band.core.exceptions import BandToolError
-from band.integrations.parlant import guard
 from band.integrations.parlant.tools import set_session_tools
 from tests.integrations.parlant.helpers import SESSION_ID
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
+
+# The guard module imports parlant, so its logger is named rather than imported.
+GUARD_LOGGER = "band.integrations.parlant.guard"
 
 
 def lines_at(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
@@ -119,7 +121,7 @@ class TestGuardFailures:
         set_session_tools(mock_context.session_id, mock_tools)
         send_message = parlant_tools["band_send_message"]
 
-        with caplog.at_level(logging.DEBUG, logger=guard.__name__):
+        with caplog.at_level(logging.DEBUG, logger=GUARD_LOGGER):
             await send_message(mock_context, "Hello", "Alice")
 
         assert lines_at(caplog, logging.INFO) == [
@@ -139,7 +141,7 @@ class TestGuardFailures:
         set_session_tools(mock_context.session_id, mock_tools)
         get_task = parlant_tools["band_get_task"]
 
-        with caplog.at_level(logging.WARNING, logger=guard.__name__):
+        with caplog.at_level(logging.WARNING, logger=GUARD_LOGGER):
             result = await get_task(mock_context, "task-1", include="bogus")
 
         assert result.data.startswith("Error getting task 'task-1': Invalid arguments")

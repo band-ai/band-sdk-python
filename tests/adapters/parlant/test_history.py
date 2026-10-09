@@ -5,12 +5,13 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.parlant.history import complete_exchanges, inject_history
+from band.converters.parlant import ParlantMessages, ParlantRole
 from tests.adapters.parlant.helpers import BAND_NAME, SENDER_NAME, SESSION_ID
 
-HISTORY = [
-    {"role": "user", "content": "Hello", "sender": SENDER_NAME},
-    {"role": "assistant", "content": "Hi there!", "sender": BAND_NAME},
-    {"role": "user", "content": "Pending question"},
+HISTORY: ParlantMessages = [
+    {"role": ParlantRole.USER, "content": "Hello", "sender": SENDER_NAME},
+    {"role": ParlantRole.ASSISTANT, "content": "Hi there!", "sender": BAND_NAME},
+    {"role": ParlantRole.USER, "content": "Pending question"},
 ]
 
 

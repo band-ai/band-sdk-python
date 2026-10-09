@@ -56,6 +56,7 @@ _SHORT = "You are a friendly assistant in a chat room. Reply in one short senten
 
 # The custom tool is reached only through a guideline that offers it.
 _LOOKUP_CONDITION = "The user asks for the access code of a key"
+LOOKUP_KEY = "alpha"
 _LOOKUP_ACTION = (
     f"Call the {LOOKUP} tool with that key, then tell the user the code it returns"
 )
@@ -153,8 +154,6 @@ async def test_parlant_executes_custom_tool(
 
     The reply carries an access code the model cannot guess, so it proves the
     whole live path: guideline match, tool call, room resolution, and reply.
-    ``LookupInput.note`` is optional and the engine sends ``None`` for it, so
-    the omitted-optional handling runs live too.
     """
     adapter = showcase_adapter(additional_tools=[LOOKUP_TOOL.as_custom_tool_def()])
     adapter.add_guideline(condition=_LOOKUP_CONDITION, action=_LOOKUP_ACTION)
@@ -167,7 +166,7 @@ async def test_parlant_executes_custom_tool(
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
-                lookup_code_instruction("alpha"),
+                lookup_code_instruction(LOOKUP_KEY),
                 mention_id=agent.id,
                 mention_name=agent.name,
             )
@@ -175,4 +174,4 @@ async def test_parlant_executes_custom_tool(
                 mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 3
             )
 
-    replies.assert_contains_any([ACCESS_CODES["alpha"]])
+    replies.assert_contains_any([ACCESS_CODES[LOOKUP_KEY]])

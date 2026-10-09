@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -124,7 +124,7 @@ async def test_applies_deferred_guidelines_with_band_tools_default(
             "metadata": {"k": "v"},
         },
     ]
-    assert stub_band_tools.call_args.kwargs == {"custom_tools": [LOOKUP]}
+    assert stub_band_tools.call_args == call(adapter.features, custom_tools=[LOOKUP])
 
 
 async def test_guideline_failure_has_no_live_siblings_and_retries_from_failure(
@@ -162,21 +162,26 @@ async def test_add_guideline_after_start_raises(owned_server):
         adapter.add_guideline(condition="late", action="too late")
 
 
-async def test_configure_callback_receives_live_objects(
-    owned_server, mock_parlant_agent
+async def test_configure_callback_receives_live_objects_and_the_tools(
+    owned_server, mock_parlant_agent, stub_band_tools
 ):
+    """configure= is where per-guideline tool picks read ``adapter.tools``."""
     _, _, server = owned_server
+    built_tools = ["band-tool-entry", "lookup-entry"]
+    stub_band_tools.return_value = built_tools
     seen: list[tuple] = []
 
     async def configure(srv, agent):
-        seen.append((srv, agent))
+        seen.append((srv, agent, adapter.tools))
 
     adapter = ParlantAdapter(
-        ParlantAdapterConfig(name="X", description="Y"), configure=configure
+        ParlantAdapterConfig(name="X", description="Y"),
+        additional_tools=[LOOKUP],
+        configure=configure,
     )
     await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
-    assert seen == [(server, mock_parlant_agent)]
+    assert seen == [(server, mock_parlant_agent, built_tools)]
 
 
 async def test_cleanup_all_closes_owned_server(owned_server):
@@ -250,18 +255,35 @@ async def test_on_started_failure_leaves_cleanup_to_server_context(owned_server)
         _ = adapter.server
 
 
+async def configure_nothing(server: object, agent: object) -> None:
+    """A configure= callback, the route for wiring tools per guideline."""
+
+
 @pytest.mark.parametrize(
-    ("guideline_tools", "warnings"),
-    [([], 1), (None, 0)],
-    ids=["no-guideline-keeps-default-tools", "guideline-keeps-default-tools"],
+    ("adapter_kwargs", "guideline_tools", "warnings"),
+    [
+        ({"additional_tools": [LOOKUP]}, [], 1),
+        ({"additional_tools": [LOOKUP]}, None, 0),
+        ({"additional_tools": [LOOKUP], "configure": configure_nothing}, [], 0),
+        ({}, [], 0),
+    ],
+    ids=[
+        "no-guideline-keeps-default-tools",
+        "guideline-keeps-default-tools",
+        "configure-wires-tools",
+        "no-custom-tools",
+    ],
 )
 async def test_warns_when_no_guideline_can_reach_custom_tools(
-    mock_parlant_server, mock_parlant_agent, caplog, guideline_tools, warnings
+    mock_parlant_server,
+    mock_parlant_agent,
+    caplog,
+    adapter_kwargs,
+    guideline_tools,
+    warnings,
 ):
     adapter = ParlantAdapter(
-        server=mock_parlant_server,
-        parlant_agent=mock_parlant_agent,
-        additional_tools=[LOOKUP],
+        server=mock_parlant_server, parlant_agent=mock_parlant_agent, **adapter_kwargs
     )
     adapter.add_guideline(condition="c", action="a", tools=guideline_tools)
 
