@@ -26,7 +26,6 @@ module's FastMCP-translation internals, not every caller.
 from __future__ import annotations
 
 import inspect
-import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -60,7 +59,7 @@ from band.runtime.tools import (
     append_available_mention_handles,
     is_mcp_content_result,
     iter_tool_definitions,
-    serialize_tool_result,
+    tool_result_text,
     validate_tool_arguments,
 )
 from band.runtime.tools.inputs.chat import require_visible_content
@@ -550,7 +549,7 @@ def build_tool_registration(
         result = await resolver.invoke(definition, chat_id, validated)
         if is_read_room_file and is_mcp_content_result(result):
             return _mcp_content_blocks(result)
-        return _serialize(result)
+        return tool_result_text(result)
 
     return MCPToolRegistration(
         name=definition.name,
@@ -603,7 +602,7 @@ def build_custom_tool_registration(
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
         turn = room_turn(get_tools, chat_id)
         result = await execute_custom_tool(tool_def, kwargs, turn=turn)
-        return _serialize(result)
+        return tool_result_text(result)
 
     return MCPToolRegistration(
         name=tool_name,
@@ -721,24 +720,6 @@ def _mcp_content_blocks(result: dict[str, Any]) -> list[ImageContent]:
     the equivalent plain dict falls through to JSON-text encoding instead.
     """
     return [ImageContent(**block) for block in result["content"]]
-
-
-def _serialize(result: Any) -> str:
-    """Serialize a tool method's return value to a JSON string for the wire.
-
-    The published band-mcp CLI shape (divergence-matrix row 15) -- now
-    universal for both doors: raw-string passthrough, ``serialize_tool_result``
-    (the single source of truth for model_dump-ing a Pydantic tool result --
-    see its docstring) otherwise. Embedded callers' LLMs see this shape too
-    now (previously a ``{"result": x}`` dict-wrap); flagged as an intentional
-    change in the PR, verified by the e2e backends lane. No ``indent``: this
-    payload has no human reader, only pretty-printing token cost.
-    """
-    if result is None:
-        return json.dumps(None)
-    if isinstance(result, str):
-        return result
-    return json.dumps(serialize_tool_result(result), default=str)
 
 
 def validate_unique_tool_names(registrations: Sequence[MCPToolRegistration]) -> None:

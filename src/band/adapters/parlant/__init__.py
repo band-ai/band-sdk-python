@@ -1,7 +1,7 @@
 """Parlant adapter package.
 
-Public import path is unchanged: ``from band.adapters.parlant import
-ParlantAdapter, ParlantAdapterConfig``.
+Public API: ``from band.adapters.parlant import ParlantAdapter,
+ParlantAdapterConfig``.
 """
 
 from __future__ import annotations

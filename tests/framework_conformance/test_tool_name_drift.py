@@ -263,7 +263,7 @@ class TestParlantToolDrift:
         missing = CHAT_TOOL_NAMES - found
         assert not missing, (
             f"Parlant integration is missing tool functions for: {sorted(missing)}. "
-            f"Add tool implementations in integrations/parlant/bandtools/chat.py."
+            f"Add tool implementations in {self._FILE.relative_to(SRC_ROOT)}."
         )
 
 
