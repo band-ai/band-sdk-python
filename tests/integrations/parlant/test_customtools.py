@@ -67,6 +67,14 @@ class Receipt(BaseModel):
     note: str | None
 
 
+class TallyInput(BaseModel):
+    """Count the coats applied per day."""
+
+
+async def tally(args: TallyInput) -> dict[date, int]:
+    return {date(2026, 5, 4): 2}
+
+
 class AnswerInput(BaseModel):
     """Answer the room directly."""
 
@@ -99,6 +107,7 @@ async def custom_server(plugin_server, received):
                 (PaintInput, paint),
                 (AnswerInput, answer),
                 (NoteInput, note),
+                (TallyInput, tally),
             ]
         )
     )
@@ -222,3 +231,12 @@ async def test_required_nullable_field_takes_an_explicit_null(custom_server):
     )
 
     assert result == '{"note": null}'
+
+
+@pytest.mark.usefixtures("bound_room")
+async def test_result_with_non_text_keys_reads_as_json(custom_server):
+    """A handler that already did its work must not read as failed because
+    its result's keys are not strings."""
+    result = await custom_server.call("tally", session_id=SESSION_ID, arguments={})
+
+    assert result == '{"2026-05-04": 2}'

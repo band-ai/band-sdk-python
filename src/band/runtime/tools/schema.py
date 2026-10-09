@@ -243,4 +243,10 @@ def tool_result_text(result: Any) -> str:
     """A tool result as the text a model reads: a string verbatim, else JSON."""
     if isinstance(result, str):
         return result
-    return json.dumps(serialize_tool_result(result), default=str)
+    # JSON mode also turns non-str dict keys (dates, ints) into text, which
+    # json.dumps alone refuses after the tool has already done its work.
+    return json.dumps(
+        _JSON_VALUE.dump_python(
+            serialize_tool_result(result), mode="json", fallback=str
+        )
+    )
