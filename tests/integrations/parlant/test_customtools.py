@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import enum
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -10,7 +9,6 @@ from typing import Annotated, Literal
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel, Field, StrictInt
-from typing_extensions import TypeAliasType
 
 from band.integrations.parlant.sessiontools import (
     NO_SESSION_TOOLS_ERROR,
@@ -21,6 +19,7 @@ from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools
 from tests.integrations.parlant.helpers import SESSION_ID
+from tests.integrations.parlant.samples import Grade, MaybeTrays, Shade
 
 pytest.importorskip(
     "parlant.sdk"
@@ -31,20 +30,6 @@ pytest.importorskip(
 def bound_room() -> None:
     """Bind ``SESSION_ID`` to a room, so calls on it resolve their tools."""
     set_session_tools(SESSION_ID, FakeAgentTools())
-
-
-class Shade(enum.Enum):
-    LIGHT = "light"
-    DARK = "dark"
-
-
-# An optional list behind an alias, which pydantic writes into $defs.
-MaybeTrays = TypeAliasType("MaybeTrays", list[int] | None)
-
-
-class Grade(enum.IntEnum):
-    ECONOMY = 1
-    PREMIUM = 2
 
 
 class PaintInput(BaseModel):
@@ -128,25 +113,15 @@ async def test_advertises_the_input_models_types(custom_server):
     }
     assert tool["description"] == "Paint a wall."
     assert tool["required"] == ["wall"]
-    assert descriptors == {
+    # The shape table's rows are pinned in test_customschema; this pins that
+    # the descriptors reach the engine in place of p.tool's own.
+    assert {
+        name: descriptors[name] for name in ("wall", "coats", "shade", "colors")
+    } == {
         "wall": {"type": "string", "description": "Which wall to paint"},
         "coats": {"type": "integer"},
-        "primer": {"type": "boolean"},
-        "finish": {"type": "string", "enum": ["matte", "gloss"]},
         "shade": {"type": "string", "enum": ["light", "dark"]},
-        "due": {"type": "date"},
-        "rooms": {"type": "array", "item_type": "integer"},
-        "dried": {"type": "array", "item_type": "boolean"},
-        "trays": {"type": "array", "item_type": "integer"},
-        "budget": {"type": "integer", "description": "Spend cap"},
-        "grade": {"type": "string", "enum": ["1", "2"]},
-        "cost": {"type": "string"},
-        "start": {"type": "datetime"},
         "colors": {"type": "array", "item_type": "string", "enum": ["red", "blue"]},
-        "size": {"type": "string"},
-        "layers": {"type": "integer"},
-        "sheen": {"type": "string", "enum": ["satin", "gloss"]},
-        "trim": {"type": "string", "description": "Trim to paint"},
     }
 
 
@@ -156,7 +131,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
         "paint",
         session_id=SESSION_ID,
         arguments={
-            "wall": "north",
+            "wall": "12",
             "coats": "3",
             "primer": "False",
             "finish": "gloss",
@@ -177,10 +152,10 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
         },
     )
 
-    assert result == '{"painted": "north"}'
+    assert result == '{"painted": "12"}'
     assert received == [
         PaintInput(
-            wall="north",
+            wall="12",
             coats=3,
             primer=False,
             finish="gloss",
@@ -204,8 +179,8 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
 @pytest.mark.usefixtures("bound_room")
 @pytest.mark.parametrize(
     "invalid",
-    [{"coats": "three"}, {"rooms": "[1, 2"}],
-    ids=["bad-scalar", "malformed-list"],
+    [{"coats": "three"}, {"rooms": "[1, 2"}, {"rooms": "{[1]: 2}"}],
+    ids=["bad-scalar", "malformed-list", "unhashable-list-text"],
 )
 async def test_invalid_value_is_a_model_visible_error(custom_server, received, invalid):
     result = await custom_server.call(

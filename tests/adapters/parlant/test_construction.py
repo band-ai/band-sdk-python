@@ -19,7 +19,7 @@ from pydantic import (
 )
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
-from tests.adapters.parlant.helpers import LOOKUP
+from tests.adapters.parlant.helpers import LOOKUP, lookup
 
 
 def test_borrowed_server_and_agent_are_exposed(mock_parlant_server, mock_parlant_agent):
@@ -80,10 +80,6 @@ def test_config_rejects_non_positive_response_budget(field, value):
         ParlantAdapterConfig(**{field: value})
 
 
-async def lookup(args: BaseModel) -> str:
-    return "found"
-
-
 # A custom tool's name is its model's class name, so shadowing a Band tool
 # needs a snake_case class name.
 ShadowingInput = create_model("band_send_messageInput", content=(str, ...))
@@ -129,12 +125,6 @@ def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):
         ParlantAdapter(additional_tools=additional_tools)
 
 
-class PickOneInput(BaseModel):
-    """Has a length limit below its number of choices."""
-
-    colors: list[Literal["red", "green", "blue"]] = Field(max_length=1)
-
-
 class ScheduleInput(BaseModel):
     """Has a choice whose validator reads an earlier field."""
 
@@ -163,8 +153,8 @@ class ChargeInput(BaseModel):
 
 @pytest.mark.parametrize(
     "input_model",
-    [PickOneInput, ScheduleInput, ChargeInput],
-    ids=["list-length-limit", "field-validator", "model-validator"],
+    [ScheduleInput, ChargeInput],
+    ids=["field-validator", "model-validator"],
 )
 def test_accepts_choices_whose_checks_need_the_whole_call(input_model):
     """A choice is checked against its field's type alone; length limits and
