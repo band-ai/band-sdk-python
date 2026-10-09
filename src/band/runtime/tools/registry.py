@@ -726,6 +726,17 @@ CAPABILITY_TOOL_NAMES: dict[Capability, frozenset[str]] = {
 }
 
 
+def withheld_tool_names(capabilities: frozenset[Capability]) -> frozenset[str]:
+    """The tool names left out when only *capabilities* are negotiated."""
+    return frozenset().union(
+        *(
+            names
+            for capability, names in CAPABILITY_TOOL_NAMES.items()
+            if capability not in capabilities
+        )
+    )
+
+
 # The capability set assumed when a caller passes capabilities=None to
 # iter_tool_definitions()/AgentTools' schema methods. Pre-existing, unrelated
 # legacy default of iter_tool_definitions itself (contact tools were never
@@ -794,11 +805,7 @@ def iter_tool_definitions(
         capabilities: Optional tool categories to include. ``None`` (default)
             means contacts only, for backward compatibility.
     """
-    resolved = resolve_capabilities(capabilities)
-    excluded: set[str] = set()
-    for capability, names in CAPABILITY_TOOL_NAMES.items():
-        if capability not in resolved:
-            excluded |= names
+    excluded = withheld_tool_names(resolve_capabilities(capabilities))
 
     results: list[ToolDefinition] = []
     for definition in TOOL_DEFINITIONS.values():

@@ -127,6 +127,7 @@ from band.runtime.tools.registry import (
     mcp_tool_spelling,
     redact_tool_call_args,
     resolve_capabilities,
+    withheld_tool_names,
 )
 from band.runtime.tools.schema import (
     ToolCallOutcome,
@@ -283,4 +284,5 @@ __all__ = [
     "tool_result_text",
     "turn_effect",
     "validate_tool_arguments",
+    "withheld_tool_names",
 ]
