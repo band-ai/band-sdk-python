@@ -19,7 +19,7 @@ from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools
 from tests.integrations.parlant.helpers import SESSION_ID
-from tests.integrations.parlant.samples import Grade, MaybeTrays, Shade
+from tests.integrations.parlant.samples import MaybeTrays, Shade
 
 pytest.importorskip(
     "parlant.sdk"
@@ -45,7 +45,6 @@ class PaintInput(BaseModel):
     dried: list[bool] = []
     trays: MaybeTrays = None
     budget: Annotated[int, Field(description="Spend cap")] | None = 100
-    grade: Grade = Grade.ECONOMY
     cost: Decimal = Decimal(0)
     start: datetime = datetime(2026, 1, 1, tzinfo=UTC)
     colors: list[Literal["red", "blue"]] = []
@@ -150,7 +149,6 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             "dried": "[true, false]",
             "trays": "[3, 4]",
             "budget": None,
-            "grade": "2",
             "cost": "3.50",
             "start": "2026-05-04T10:00:00Z",
             "colors": "['red', 'blue']",
@@ -174,7 +172,6 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             dried=[True, False],
             trays=[3, 4],
             budget=100,
-            grade=Grade.PREMIUM,
             cost=Decimal("3.50"),
             start=datetime(2026, 5, 4, 10, tzinfo=UTC),
             colors=["red", "blue"],

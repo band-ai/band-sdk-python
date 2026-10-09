@@ -12,8 +12,9 @@ unwrapped; any other shape is rejected when the adapter is built:
 
 - a scalar (``str`` in any format, ``int``, ``float``, ``bool``), advertised
   as its own type, or as ``date`` / ``datetime`` for those formats;
-- choices (``Literal``, ``Enum``) whose values validate from their text,
-  advertised as ``string`` with an ``enum``;
+- string choices (a str ``Literal`` or a str-valued ``Enum``), advertised as
+  ``string`` with an ``enum``: a string is what Parlant sends, so only a
+  string value is sure to validate from it;
 - a union of the shapes above (``int | str``, ``Decimal``), advertised as
   ``string``, with every member's choices when all members are choices;
 - a list, set or ``tuple[X, ...]`` of one of those, advertised as ``array``
@@ -27,13 +28,11 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-from collections.abc import Iterable, Iterator, Mapping
-from enum import Enum, StrEnum
-from typing import Any, NamedTuple, TypedDict, get_args, get_origin
+from collections.abc import Iterable, Mapping
+from enum import StrEnum
+from typing import Any, NamedTuple, TypedDict
 
-from pydantic import AliasChoices, BaseModel, TypeAdapter, ValidationError
-from pydantic.fields import FieldInfo
-from typing_inspection.typing_objects import is_annotated, is_literal, is_typealiastype
+from pydantic import BaseModel
 
 from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.custom_tools import (
@@ -92,7 +91,7 @@ FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
 # converts, so even a strict field is validated laxly.
 STRICT_VALIDATION = False
 UNSUPPORTED_SHAPE = (
-    "Parlant has no parameter type for this field "
+    "Parlant has no parameter type for this field; choices must be strings "
     "(supported shapes: band.integrations.parlant.customschema)"
 )
 
@@ -126,12 +125,10 @@ def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
     schema = function["parameters"]
     defs = schema.get("$defs", {})
     required = set(schema.get("required", []))
-    annotations = _field_annotations(input_model)
     fields = [
         _field(
             key,
             prop,
-            annotation=annotations[key],
             defs=defs,
             required=key in required,
             where=f"Custom tool '{function['name']}' field '{key}'",
@@ -147,7 +144,6 @@ def _field(
     key: str,
     prop: Mapping[str, Any],
     *,
-    annotation: Any,
     defs: Mapping[str, Any],
     required: bool,
     where: str,
@@ -159,11 +155,6 @@ def _field(
         raise ValueError(f"{where}: {UNSUPPORTED_SHAPE}")
     if description := _description(prop, resolved, defs=defs):
         descriptor["description"] = description
-    if not _carries_choices(descriptor.get("enum", []), annotation=annotation):
-        raise ValueError(
-            f"{where}: Parlant delivers its choices as strings, which the field "
-            "rejects (use a str Literal, a str Enum or an IntEnum)"
-        )
     try:
         parameter = inspect.Parameter(
             key,
@@ -200,75 +191,6 @@ def _parsed_list(text: str) -> Any:
         except (ValueError, SyntaxError, TypeError):
             continue
     return text
-
-
-def _field_annotations(input_model: type[BaseModel]) -> dict[str, Any]:
-    """Each field's type, keyed as its JSON schema property."""
-    return {
-        _schema_key(name, info): info.annotation
-        for name, info in input_model.model_fields.items()
-    }
-
-
-def _schema_key(name: str, info: FieldInfo) -> str:
-    """The property name pydantic's validation-mode JSON schema gives a field:
-    a string alias, an alias choice's first single-key path, else the name
-    (a lone ``AliasPath`` included)."""
-    match info.validation_alias:
-        case str(alias):
-            return alias
-        case AliasChoices() as choices:
-            return next(
-                (
-                    path[0]
-                    for path in choices.convert_to_aliases()
-                    if len(path) == 1 and isinstance(path[0], str)
-                ),
-                name,
-            )
-        case _:
-            return name
-
-
-def _carries_choices(choices: list[str], *, annotation: Any) -> bool:
-    """Whether each advertised choice, as delivered text, is a value of one of
-    the field's choice types.
-
-    Only those bare types are checked: the field's constraints and the
-    model's validators may need the rest of a call's input.
-    """
-    if not choices:
-        # Nothing to check, and walking a recursive alias would never end.
-        return True
-    adapters = [TypeAdapter(choice_type) for choice_type in _choice_types(annotation)]
-    return all(
-        any(_validates(adapter, choice) for adapter in adapters) for choice in choices
-    )
-
-
-def _choice_types(annotation: Any) -> Iterator[Any]:
-    """The ``Literal`` and ``Enum`` types beneath *annotation*'s aliases,
-    ``Annotated`` metadata, unions and collections."""
-    origin = get_origin(annotation)
-    if is_literal(origin) or (
-        origin is None and isinstance(annotation, type) and issubclass(annotation, Enum)
-    ):
-        yield annotation
-    elif is_typealiastype(annotation):
-        yield from _choice_types(annotation.__value__)
-    elif is_annotated(origin):
-        yield from _choice_types(get_args(annotation)[0])
-    else:
-        for arg in get_args(annotation):
-            yield from _choice_types(arg)
-
-
-def _validates(adapter: TypeAdapter[Any], value: str) -> bool:
-    try:
-        adapter.validate_python(value, strict=STRICT_VALIDATION)
-    except ValidationError:
-        return False
-    return True
 
 
 def _non_null(branches: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -346,9 +268,12 @@ def _union(
 
 
 def _choices(values: Iterable[Any]) -> Descriptor | None:
+    """String choices; ``None`` when any choice is not a string."""
     # A None choice is how Parlant omits the argument, not a value it sends.
-    choices = list(dict.fromkeys(str(value) for value in values if value is not None))
-    return Descriptor(type=ParlantType.STRING, enum=choices) if choices else None
+    sent = [value for value in values if value is not None]
+    if not sent or not all(isinstance(value, str) for value in sent):
+        return None
+    return Descriptor(type=ParlantType.STRING, enum=list(dict.fromkeys(sent)))
 
 
 def _list_of(item: Descriptor) -> Descriptor:

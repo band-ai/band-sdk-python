@@ -6,16 +6,11 @@ tests/framework_conformance/test_adapter_conformance.py.
 
 from __future__ import annotations
 
-from typing import Literal
-
 import pytest
 from pydantic import (
     BaseModel,
     Field,
-    ValidationInfo,
     create_model,
-    field_validator,
-    model_validator,
 )
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
@@ -123,40 +118,3 @@ class DictInput(BaseModel):
 def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):
     with pytest.raises(ValueError, match=named):
         ParlantAdapter(additional_tools=additional_tools)
-
-
-class ScheduleInput(BaseModel):
-    """Has a choice whose validator reads an earlier field."""
-
-    start: int
-    unit: Literal["day", "week"]
-
-    @field_validator("unit")
-    @classmethod
-    def needs_start(cls, unit: str, info: ValidationInfo) -> str:
-        assert info.data["start"] >= 0
-        return unit
-
-
-class ChargeInput(BaseModel):
-    """Has a model validator that reads every field."""
-
-    kind: Literal["a", "b"]
-    amount: int
-
-    @model_validator(mode="before")
-    @classmethod
-    def needs_amount(cls, data: dict[str, object]) -> dict[str, object]:
-        assert data["amount"] is not None
-        return data
-
-
-@pytest.mark.parametrize(
-    "input_model",
-    [ScheduleInput, ChargeInput],
-    ids=["field-validator", "model-validator"],
-)
-def test_accepts_choices_whose_checks_need_the_whole_call(input_model):
-    """A choice is checked against its field's type alone; length limits and
-    validators see a real call's full input, never a probe's partial one."""
-    ParlantAdapter(additional_tools=[(input_model, lookup)])

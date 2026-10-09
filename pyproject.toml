@@ -29,7 +29,6 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
     "pydantic-settings>=2.0.0",
-    "typing-inspection>=0.4.0",  # typing forms (Literal, TypeAliasType) on every Python version
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
     "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
