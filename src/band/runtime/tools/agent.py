@@ -207,7 +207,8 @@ class ParticipantAddResult(TypedDict):
     id: str
     name: str
     role: str
-    status: ParticipantAddStatus
+    # A ParticipantAddStatus value; plain, since adapters render the result as text.
+    status: str
 
 
 class ParticipantRemoveResult(TypedDict):
@@ -623,7 +624,7 @@ class AgentTools(AgentToolsProtocol):
                     "id": cached_id,
                     "name": cached.get("name", identifier),
                     "role": role,
-                    "status": ParticipantAddStatus.ALREADY_IN_ROOM,
+                    "status": ParticipantAddStatus.ALREADY_IN_ROOM.value,
                 }
 
         # Look up participant by identifier (paginates through all peers)
@@ -672,7 +673,7 @@ class AgentTools(AgentToolsProtocol):
             "id": participant_id,
             "name": participant_name,
             "role": role,
-            "status": ParticipantAddStatus.ADDED,
+            "status": ParticipantAddStatus.ADDED.value,
         }
 
     async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:

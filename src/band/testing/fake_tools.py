@@ -502,7 +502,7 @@ class FakeAgentTools:
                     id=cached["id"],
                     name=cached.get("name", identifier),
                     role=role,
-                    status=ParticipantAddStatus.ALREADY_IN_ROOM,
+                    status=ParticipantAddStatus.ALREADY_IN_ROOM.value,
                 )
                 self.participants_added.append(result)
                 return deepcopy(result)
@@ -529,7 +529,7 @@ class FakeAgentTools:
             id=participant["id"],
             name=participant_name,
             role=role,
-            status=ParticipantAddStatus.ADDED,
+            status=ParticipantAddStatus.ADDED.value,
         )
         self.participants_added.append(result)
         return deepcopy(result)
