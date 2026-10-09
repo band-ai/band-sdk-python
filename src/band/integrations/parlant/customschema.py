@@ -87,9 +87,6 @@ SCALAR_TYPES = {
 }
 # JSON Schema string formats Parlant has a parameter type for.
 FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
-# Parlant delivers every argument as a string, which only lax validation
-# converts, so even a strict field is validated laxly.
-STRICT_VALIDATION = False
 UNSUPPORTED_SHAPE = (
     "Parlant has no parameter type for this field; choices must be strings "
     "(supported shapes: band.integrations.parlant.customschema)"

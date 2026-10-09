@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import enum
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -15,7 +16,17 @@ from pydantic import BaseModel, Field, create_model
 from typing_extensions import TypeAliasType
 
 from band.integrations.parlant.customschema import Descriptor, describe_custom_tool
-from tests.integrations.parlant.samples import Color, Grade, MaybeTrays, Shade
+from tests.integrations.parlant.samples import MaybeTrays, Shade
+
+
+class Grade(enum.IntEnum):
+    ECONOMY = 1
+    PREMIUM = 2
+
+
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
 
 
 class Address(BaseModel):

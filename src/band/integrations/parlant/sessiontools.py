@@ -89,4 +89,4 @@ def get_current_tools() -> Any | None:
         DeprecationWarning,
         stacklevel=2,
     )
-    return None  # Always returns None, tools now accessed via session_id
+    return None  # Tools are bound per Parlant session, never globally.

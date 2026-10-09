@@ -9,11 +9,7 @@ from typing import Any, cast
 import parlant.sdk as p
 from parlant.core.tools import ToolContext, ToolParameterDescriptor, ToolResult
 
-from band.integrations.parlant.customschema import (
-    STRICT_VALIDATION,
-    describe_custom_tool,
-    parse_delivered,
-)
+from band.integrations.parlant.customschema import describe_custom_tool, parse_delivered
 from band.integrations.parlant.guard import guard_failures
 from band.integrations.parlant.sessiontools import (
     CONTEXT_PARAMETER,
@@ -21,6 +17,10 @@ from band.integrations.parlant.sessiontools import (
 )
 from band.runtime.custom_tools import CustomToolDef, execute_custom_tool
 from band.runtime.tools import tool_result_text
+
+# Parlant delivers every argument as a string, which only lax validation
+# converts, so even a strict field is validated laxly.
+STRICT_VALIDATION = False
 
 
 def build_custom_tool(tool_def: CustomToolDef) -> Any:

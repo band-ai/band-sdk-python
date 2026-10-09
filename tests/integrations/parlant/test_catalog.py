@@ -228,8 +228,6 @@ class TestCreateParlantTools:
         )
         param_names = list(lookup_peers_entry.tool.parameters.keys())
 
-        # Pagination was intentionally removed to simplify the API
-        # The function uses hardcoded defaults (page=1, page_size=50)
         assert param_names == []
 
     def test_excludes_contact_tools_without_capability(self):
