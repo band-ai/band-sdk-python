@@ -944,6 +944,22 @@ async def test_replay_injected_when_session_load_errors() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_room_recovers_after_its_agent_process_refuses_a_session() -> None:
+    """An agent process can refuse every session/new once it is broken. The turn
+    that hit it fails, and the room's next message must reach a fresh process
+    instead of the broken one."""
+    agent = FakeACPAgent().will_say("Recovered.")
+    agent.wedges_its_process()
+
+    async with acp_adapter(agent) as session:
+        with pytest.raises(RequestError):
+            await session.send("first", room="room-1")
+        reply = await session.send("second", room="room-1")
+
+    assert reply.thoughts == ["Recovered."]
+
+
+@pytest.mark.asyncio
 async def test_no_replay_when_remote_session_loads() -> None:
     """A restored session already holds the conversation remotely; replaying the
     transcript on top would double the history the agent sees."""

@@ -1078,6 +1078,18 @@ class ACPClientAdapter(
 
         try:
             return await asyncio.shield(initializer.task)
+        except ACPConfigError:
+            raise
+        except Exception:
+            # The agent refused to open a session (e.g. an internal error from
+            # session/new). A process in that state can keep refusing every
+            # later session, so retire this room's runtime and the next turn
+            # spawns a fresh process. Only while this setup is still the
+            # room's own: one another turn started meanwhile owns the runtime.
+            await self._retire_room(
+                room_id, expected_runtime=runtime, failed_setup=initializer
+            )
+            raise
         finally:
             await self._release_session_initializer(room_id, initializer)
 
@@ -1484,12 +1496,36 @@ class ACPClientAdapter(
     async def on_cleanup(
         self, room_id: str, *, expected_runtime: ACPRuntime | None = None
     ) -> None:
+        await self._retire_room(room_id, expected_runtime=expected_runtime)
+
+    def _on_room_retiring(self, room_id: str) -> None:
+        """Called under the session lock just before a room's resources go;
+        subclasses release per-room state that depends on them."""
+
+    async def _retire_room(
+        self,
+        room_id: str,
+        *,
+        expected_runtime: ACPRuntime | None = None,
+        failed_setup: SessionInitializer | None = None,
+    ) -> None:
+        """Release a room's session, setup and runtime. With ``expected_runtime``,
+        only while it is still the room's; with ``failed_setup``, only while no
+        other setup or published session has replaced it. Both checks and the
+        release happen under one lock, so no turn can slip in between."""
         async with self._session_lock:
             if (
                 expected_runtime is not None
                 and self._runtimes.get(room_id) is not expected_runtime
             ):
                 return
+            if failed_setup is not None:
+                current = self._session_initializers.get(room_id)
+                if (
+                    current is not None and current is not failed_setup
+                ) or room_id in self._room_to_session:
+                    return
+            self._on_room_retiring(room_id)
             session = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
