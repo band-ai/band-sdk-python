@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
+from pydantic.json_schema import GenerateJsonSchema
 
 from band.core.exceptions import InvalidToolArgumentsError
 from band.core.turn import Turn
@@ -102,17 +103,25 @@ def reject_conflicting_tool_names(names: Iterable[str]) -> None:
         raise ValueError(f"Custom tool names must be unique: {duplicated}")
 
 
-def custom_tool_to_openai_schema(input_model: type[BaseModel]) -> dict[str, Any]:
+def custom_tool_to_openai_schema(
+    input_model: type[BaseModel],
+    *,
+    schema_generator: type[GenerateJsonSchema] | None = None,
+) -> dict[str, Any]:
     """
     Convert Pydantic model to OpenAI function schema.
 
     Args:
         input_model: Pydantic model class defining tool input
+        schema_generator: Optional model-schema generator for a framework's metadata.
 
     Returns:
         OpenAI-compatible tool schema with type="function"
     """
-    schema = input_model.model_json_schema()
+    schema_options: dict[str, Any] = (
+        {} if schema_generator is None else {"schema_generator": schema_generator}
+    )
+    schema = input_model.model_json_schema(**schema_options)
     schema.pop("title", None)  # Remove title, not needed in schema
 
     return {

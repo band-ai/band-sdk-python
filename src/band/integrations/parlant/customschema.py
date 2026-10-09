@@ -35,6 +35,8 @@ from enum import StrEnum
 from typing import Any, NamedTuple, TypedDict
 
 from pydantic import BaseModel
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import core_schema
 
 from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.custom_tools import (
@@ -89,6 +91,8 @@ SCALAR_TYPES = {
 }
 # Keywords that limit which text a JSON Schema string accepts.
 STRING_NARROWING = frozenset({"format", "pattern", "enum", "const"})
+# JSON references also represent Literal aliases, so preserve the actual Enum type.
+ENUM_TYPE_MARKER = "x-band-enum"
 # JSON Schema string formats Parlant has a parameter type for.
 FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
 UNSUPPORTED_SHAPE = (
@@ -113,6 +117,13 @@ class ParlantCustomTool(NamedTuple):
     fields: list[CustomToolField]
 
 
+class ParlantSchema(GenerateJsonSchema):
+    """Model-derived schema with Enum choices distinguished from Literal choices."""
+
+    def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
+        return {**super().enum_schema(schema), ENUM_TYPE_MARKER: True}
+
+
 def check_parlant_custom_tools(tools: Iterable[CustomToolDef]) -> None:
     """Raise ``ValueError`` for a custom tool Parlant cannot offer."""
     models = [input_model for input_model, _ in tools]
@@ -123,7 +134,9 @@ def check_parlant_custom_tools(tools: Iterable[CustomToolDef]) -> None:
 
 def describe_custom_tool(input_model: type[BaseModel]) -> ParlantCustomTool:
     """*input_model* as the same function schema every other adapter offers."""
-    function = custom_tool_to_openai_schema(input_model)["function"]
+    function = custom_tool_to_openai_schema(
+        input_model, schema_generator=ParlantSchema
+    )["function"]
     schema = function["parameters"]
     defs = schema.get("$defs", {})
     required = set(schema.get("required", []))
@@ -259,7 +272,7 @@ def _union(
     choices offers every member's choices."""
     schemas = [_resolve(branch, defs=defs) for branch in branches]
     if any(_is_free_text(schema) for schema in schemas) and not all(
-        _keeps_text(branch, schema) for branch, schema in zip(branches, schemas)
+        _keeps_text(schema) for schema in schemas
     ):
         return None
     members: list[Descriptor] = []
@@ -277,11 +290,10 @@ def _is_free_text(schema: Mapping[str, Any]) -> bool:
     return schema.get("type") == JsonType.STRING and STRING_NARROWING.isdisjoint(schema)
 
 
-def _keeps_text(branch: Mapping[str, Any], schema: Mapping[str, Any]) -> bool:
-    """A member that validates text to that same text: free text, or an inline
-    str ``Literal`` (an ``Enum`` is a ``$ref`` and validates to a member)."""
+def _keeps_text(schema: Mapping[str, Any]) -> bool:
+    """Free text or a str Literal validates text to itself; an Enum returns a member."""
     return _is_free_text(schema) or (
-        "$ref" not in branch and not {"const", "enum"}.isdisjoint(schema)
+        not schema.get(ENUM_TYPE_MARKER) and not {"const", "enum"}.isdisjoint(schema)
     )
 
 

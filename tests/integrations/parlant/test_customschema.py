@@ -47,6 +47,7 @@ class Address(BaseModel):
 MaybeCount = TypeAliasType("MaybeCount", int | None)
 Priority = TypeAliasType("Priority", Literal["low", "high"])
 IntPriority = TypeAliasType("IntPriority", Literal[1, 2])
+AliasedShade = TypeAliasType("AliasedShade", Shade)
 
 
 def descriptor_of(annotation: Any) -> Descriptor:
@@ -78,6 +79,13 @@ ACCEPTED = [
     ("union-with-a-literal", Literal["auto"] | int, {"type": "string"}),
     ("optional-union", Literal["auto"] | int | None, {"type": "string"}),
     ("known-values-or-any-text", Literal["auto", "manual"] | str, {"type": "string"}),
+    ("aliased-values-or-any-text", Priority | str, {"type": "string"}),
+    ("optional-aliased-values-or-any-text", Priority | str | None, {"type": "string"}),
+    (
+        "list-of-aliased-values-or-any-text",
+        list[Priority | str],
+        {"type": "array", "item_type": "string"},
+    ),
     (
         "optional-known-values-or-any-text",
         Literal["auto"] | str | None,
@@ -152,6 +160,7 @@ REJECTED = [
     ("union-with-str", int | str),
     ("bool-or-str", bool | str),
     ("enum-or-str", Shade | str),
+    ("aliased-enum-or-str", AliasedShade | str),
     ("optional-union-with-str", int | str | None),
     ("list-of-union-with-str", list[int | str]),
     ("int-literal", Literal[1, 2]),
