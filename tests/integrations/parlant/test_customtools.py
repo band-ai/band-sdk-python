@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel, Field, StrictInt
+from typing_extensions import TypeAliasType
 
 from band.integrations.parlant.sessiontools import (
     NO_SESSION_TOOLS_ERROR,
@@ -37,6 +38,10 @@ class Shade(enum.Enum):
     DARK = "dark"
 
 
+# An optional list behind an alias, which pydantic writes into $defs.
+MaybeTrays = TypeAliasType("MaybeTrays", list[int] | None)
+
+
 class Grade(enum.IntEnum):
     ECONOMY = 1
     PREMIUM = 2
@@ -53,6 +58,7 @@ class PaintInput(BaseModel):
     due: date = date(2026, 1, 1)
     rooms: list[int] = []
     dried: list[bool] = []
+    trays: MaybeTrays = None
     budget: Annotated[int, Field(description="Spend cap")] | None = 100
     grade: Grade = Grade.ECONOMY
     cost: Decimal = Decimal(0)
@@ -132,6 +138,7 @@ async def test_advertises_the_input_models_types(custom_server):
         "due": {"type": "date"},
         "rooms": {"type": "array", "item_type": "integer"},
         "dried": {"type": "array", "item_type": "boolean"},
+        "trays": {"type": "array", "item_type": "integer"},
         "budget": {"type": "integer", "description": "Spend cap"},
         "grade": {"type": "string", "enum": ["1", "2"]},
         "cost": {"type": "string"},
@@ -158,6 +165,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             "due": "2026-05-04",
             "rooms": "[1, 2]",
             "dried": "[true, false]",
+            "trays": "[3, 4]",
             "budget": None,
             "grade": "2",
             "cost": "3.50",
@@ -181,6 +189,7 @@ async def test_engine_strings_reach_the_handler_typed(custom_server, received):
             due=date(2026, 5, 4),
             rooms=[1, 2],
             dried=[True, False],
+            trays=[3, 4],
             budget=100,
             grade=Grade.PREMIUM,
             cost=Decimal("3.50"),

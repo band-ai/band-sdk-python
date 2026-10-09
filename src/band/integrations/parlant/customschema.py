@@ -224,7 +224,7 @@ def _rejects(annotation: Any, *, value: Any) -> bool:
 def _resolve(prop: Mapping[str, Any], *, defs: Mapping[str, Any]) -> Mapping[str, Any]:
     """*prop* with ``$ref`` and ``Optional`` unwrapped."""
     if ref := prop.get("$ref"):
-        return defs[ref.rsplit("/", 1)[-1]]
+        return _resolve(defs[ref.rsplit("/", 1)[-1]], defs=defs)
     branches = [branch for branch in prop.get("anyOf", ()) if branch != NULL_SCHEMA]
     if len(branches) == 1:
         return _resolve(branches[0], defs=defs)
@@ -253,13 +253,26 @@ def _descriptor(
             return _array_descriptor(_resolve(items, defs=defs), defs=defs, where=where)
         case {"type": JsonType.ARRAY}:
             raise ValueError(f"{where}: Parlant lists need one item type (no tuples)")
-        case {"anyOf": _}:
-            # A multi-type union (or Decimal) arrives as text the model validates.
-            return Descriptor(type=ParlantType.STRING)
+        case {"anyOf": branches}:
+            return _union_descriptor(branches, defs=defs, where=where)
         case _:
             raise ValueError(
                 f"{where}: Parlant has no object parameter type (dicts, nested models)"
             )
+
+
+def _union_descriptor(
+    branches: list[Mapping[str, Any]], *, defs: Mapping[str, Any], where: str
+) -> Descriptor:
+    """A multi-type union (or Decimal) arrives as text the model validates,
+    which only works when every member is a scalar."""
+    for branch in branches:
+        if branch == NULL_SCHEMA:
+            continue
+        member = _descriptor(_resolve(branch, defs=defs), defs=defs, where=where)
+        if member["type"] == ParlantType.ARRAY:
+            raise ValueError(f"{where}: Parlant has no type for a union with a list")
+    return Descriptor(type=ParlantType.STRING)
 
 
 def _array_descriptor(

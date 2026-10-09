@@ -163,6 +163,12 @@ class AliasedIntLiteralInput(BaseModel):
     priority: Priority
 
 
+class ListUnionInput(BaseModel):
+    """Has a union of lists, which no single Parlant type can carry."""
+
+    values: list[int] | list[str]
+
+
 class NestedListInput(BaseModel):
     """Has a list of lists."""
 
@@ -185,6 +191,7 @@ class NestedListInput(BaseModel):
         ([(IntEnumListInput, lookup)], "colors"),
         ([(AliasedIntLiteralInput, lookup)], "priority"),
         ([(NestedListInput, lookup)], "nested list"),
+        ([(ListUnionInput, lookup)], "union with a list"),
     ],
     ids=[
         "shadows-band-tool",
@@ -200,6 +207,7 @@ class NestedListInput(BaseModel):
         "plain-int-enum-list",
         "aliased-int-literal",
         "nested-list",
+        "list-union",
     ],
 )
 def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):
