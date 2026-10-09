@@ -238,4 +238,6 @@ def serialize_tool_result(result: Any) -> Any:
 
 def tool_result_text(result: Any) -> str:
     """A tool result as the text a model reads: a string verbatim, else JSON."""
-    return result if isinstance(result, str) else json.dumps(result, default=str)
+    if isinstance(result, str):
+        return result
+    return json.dumps(serialize_tool_result(result), default=str)

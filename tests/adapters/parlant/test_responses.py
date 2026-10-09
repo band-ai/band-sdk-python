@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.adapters.parlant.responses import PARLANT_PREAMBLE_TAG, relay_agent_response
-from tests.adapters.parlant.helpers import agent_event
+from tests.adapters.parlant.helpers import SENDER_NAME, agent_event
 
 pytestmark = pytest.mark.usefixtures("parlant_sessions")
 
@@ -39,7 +39,7 @@ def relay(mock_app, mock_tools):
                 session_id="session-1",
                 min_offset=0,
                 tools=mock_tools,
-                sender_name="Alice",
+                sender_name=SENDER_NAME,
                 timeout=timeout,
                 poll=poll,
             ),
@@ -67,7 +67,9 @@ async def test_retries_past_empty_windows_then_forwards_late_reply(
 
     await relay(timeout=LONG_BUDGET_SECONDS)
 
-    mock_tools.assert_message_sent(content="Hello there!", mentions=["Alice"], count=1)
+    mock_tools.assert_message_sent(
+        content="Hello there!", mentions=[SENDER_NAME], count=1
+    )
 
 
 async def test_relays_all_final_parts_in_one_batch_without_preamble(
@@ -86,7 +88,7 @@ async def test_relays_all_final_parts_in_one_batch_without_preamble(
     await relay(timeout=LONG_BUDGET_SECONDS)
 
     mock_tools.assert_message_sent(
-        content=f"{BOOKED}\n\n{PEANUTS}", mentions=["Alice"], count=1
+        content=f"{BOOKED}\n\n{PEANUTS}", mentions=[SENDER_NAME], count=1
     )
 
 
@@ -97,7 +99,7 @@ async def test_tool_reply_or_decline_suppresses_entire_final_batch(
     if declined:
         await mock_tools.no_reply("No response needed.")
     else:
-        await mock_tools.send_message("Already answered.", mentions=["Alice"])
+        await mock_tools.send_message("Already answered.", mentions=[SENDER_NAME])
     answer_after(
         mock_app,
         waits=[True],
@@ -114,7 +116,7 @@ async def test_tool_reply_or_decline_suppresses_entire_final_batch(
         mock_tools.assert_no_messages_sent()
     else:
         mock_tools.assert_message_sent(
-            content="Already answered.", mentions=["Alice"], count=1
+            content="Already answered.", mentions=[SENDER_NAME], count=1
         )
 
 
@@ -123,7 +125,7 @@ async def test_empty_window_after_a_tool_reply_ends_the_wait(
 ):
     """Once a Band tool replied, an empty window means the engine is done:
     the wait returns at once instead of polling out the whole budget."""
-    await mock_tools.send_message("Already answered.", mentions=["Alice"])
+    await mock_tools.send_message("Already answered.", mentions=[SENDER_NAME])
 
     await relay(timeout=LONG_BUDGET_SECONDS)
 
@@ -164,4 +166,6 @@ async def test_empty_find_events_then_final_still_forwards(relay, mock_app, mock
 
     await relay(timeout=LONG_BUDGET_SECONDS)
 
-    mock_tools.assert_message_sent(content="The answer.", mentions=["Alice"], count=1)
+    mock_tools.assert_message_sent(
+        content="The answer.", mentions=[SENDER_NAME], count=1
+    )

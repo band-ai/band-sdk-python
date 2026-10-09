@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
 from parlant.core.tools import ToolContext, ToolResult
 
-from band.integrations.parlant.bandtool import band_tool, or_none
+from band.core.types import EventMessageType
+from band.integrations.parlant.bandtool import band_tool, invalid_choice, or_none
 from band.integrations.parlant.mentions import (
     SEND_MESSAGE_MENTIONS_NOTE,
     SEND_MESSAGE_MENTIONS_PARAM_NOTE,
@@ -12,7 +15,9 @@ from band.integrations.parlant.mentions import (
     with_mention_handles,
 )
 from band.integrations.parlant.sessiontools import require_session_tools
-from band.runtime.tools import serialize_tool_result
+from band.runtime.tools import ParticipantAddStatus, serialize_tool_result
+
+EVENT_MESSAGE_TYPES: tuple[str, ...] = get_args(EventMessageType)
 
 # The master model describes lookup_peers' raw return shape (a 'data'/'metadata'
 # dict) for adapters that pass it through unchanged. This Parlant tool formats
@@ -54,10 +59,8 @@ async def band_send_event(
     message_type: str,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    if message_type not in ("thought", "error", "task"):
-        return ToolResult(
-            data=f"Error: Invalid message_type '{message_type}'. Use 'thought', 'error', or 'task'"
-        )
+    if message_type not in EVENT_MESSAGE_TYPES:
+        return invalid_choice("message_type", message_type, EVENT_MESSAGE_TYPES)
 
     await tools.send_event(content, message_type, None)
     return ToolResult(data=f"Event ({message_type}) sent successfully")
@@ -79,8 +82,8 @@ async def band_add_participant(
     identifier: str,
 ) -> ToolResult:
     tools = require_session_tools(context)
-    result = await tools.add_participant(identifier, "member")
-    if result.get("status", "added") == "already_in_room":
+    result = await tools.add_participant(identifier)
+    if result.get("status") == ParticipantAddStatus.ALREADY_IN_ROOM:
         return ToolResult(
             data=f"'{identifier}' is already in the room - no action needed"
         )

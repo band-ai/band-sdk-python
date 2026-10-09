@@ -67,4 +67,5 @@ def test_detection_finds_the_tests_that_only_the_parlant_venv_can_run() -> None:
         Path("tests/integrations/parlant/test_guard.py"),
         Path("tests/integrations/parlant/test_server.py"),
         Path("tests/integrations/parlant/test_tasktools.py"),
+        Path("tests/integrations/parlant/test_vocabulary.py"),
     }

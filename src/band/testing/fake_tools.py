@@ -71,6 +71,7 @@ from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
     ParticipantAddResult,
+    ParticipantAddStatus,
     ParticipantRemoveResult,
     ToolCallOutcome,
     append_mention_handles_hint,
@@ -501,7 +502,7 @@ class FakeAgentTools:
                     id=cached["id"],
                     name=cached.get("name", identifier),
                     role=role,
-                    status="already_in_room",
+                    status=ParticipantAddStatus.ALREADY_IN_ROOM,
                 )
                 self.participants_added.append(result)
                 return deepcopy(result)
@@ -525,7 +526,10 @@ class FakeAgentTools:
         self._participants.append(participant)
 
         result = ParticipantAddResult(
-            id=participant["id"], name=participant_name, role=role, status="added"
+            id=participant["id"],
+            name=participant_name,
+            role=role,
+            status=ParticipantAddStatus.ADDED,
         )
         self.participants_added.append(result)
         return deepcopy(result)

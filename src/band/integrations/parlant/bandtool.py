@@ -9,12 +9,12 @@ function itself is never mutated.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args, get_origin
 
 import parlant.sdk as p
-from parlant.core.tools import ToolParameterOptions
+from parlant.core.tools import ToolParameterOptions, ToolResult
 
 from band.integrations.parlant.guard import guard_failures
 from band.runtime.tools import get_tool_description, resolve_tool_model
@@ -73,6 +73,12 @@ def build_band_tool(spec: BandToolSpec) -> Any:
 def or_none(value: str) -> str | None:
     """``""`` is how a Parlant model omits a string; the platform wants ``None``."""
     return value or None
+
+
+def invalid_choice(name: str, value: str, choices: Iterable[str]) -> ToolResult:
+    """The model-visible error for a *value* outside a closed vocabulary."""
+    quoted = ", ".join(f"'{choice}'" for choice in choices)
+    return ToolResult(data=f"Error: Invalid {name} '{value}'. Use one of {quoted}")
 
 
 def _described_signature(spec: BandToolSpec) -> inspect.Signature:

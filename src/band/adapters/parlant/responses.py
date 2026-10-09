@@ -14,17 +14,19 @@ import logging
 import time
 from collections.abc import Sequence
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from band.core.delivery import relay_reply
 from band.core.protocols import AgentToolsProtocol
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
-    from parlant.core.sessions import SessionId
+    from parlant.core.sessions import MessageEventData, SessionId
 
 logger = logging.getLogger(__name__)
 
+# Parlant's own Tag.preamble().name (pinned by a parity test); copied so
+# reading a batch needs no Parlant import.
 PARLANT_PREAMBLE_TAG = "__preamble__"
 EMPTY_READ_BACKOFF_SECONDS = 0.05
 FINAL_SEGMENT_SEPARATOR = "\n\n"
@@ -165,9 +167,9 @@ def _message_parts(data: Any) -> tuple[str, list[str]]:
     """An agent message event's text and tags."""
     match data:
         case dict():
-            raw_tags = data.get("tags", [])
-            tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
-            return str(data.get("message", "")), tags
+            event = cast("MessageEventData", data)
+            tags = [str(tag) for tag in event.get("tags", ())]
+            return str(event.get("message", "")), tags
         case str():
             return data, []
         case _:

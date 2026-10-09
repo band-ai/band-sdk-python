@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 PROVIDER = "parlant"
 NOT_INITIALIZED_ERROR = "Parlant Application not initialized"
+# Display names used when the platform supplies none.
+FALLBACK_SENDER_NAME = "User"
+FALLBACK_AGENT_NAME = "Assistant"
+UNREACHABLE_CUSTOM_TOOLS_WARNING = (
+    "Parlant can never call custom tools %s: no guideline keeps the default "
+    "tools. Declare one with add_guideline(), or attach them from adapter.tools "
+    "in configure=."
+)
 
 
 class ParlantAdapter(SimpleAdapter[ParlantMessages]):
@@ -278,9 +286,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         ):
             return
         logger.warning(
-            "Parlant can never call custom tools %s: no guideline keeps the "
-            "default tools. Declare one with add_guideline(), or attach them "
-            "from adapter.tools in configure=.",
+            UNREACHABLE_CUSTOM_TOOLS_WARNING,
             sorted(get_custom_tool_name(model) for model, _ in self._custom_tools),
         )
 
@@ -306,7 +312,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if rooms is None:
             await self._fail_uninitialized(tools)
 
-        sender_name = msg.sender_name or msg.sender_id or "User"
+        sender_name = msg.sender_name or msg.sender_id or FALLBACK_SENDER_NAME
         session_id = await self._session_for(
             rooms, room_id=room_id, sender_name=sender_name, tools=tools
         )
@@ -316,7 +322,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     app=rooms.app,
                     session_id=session_id,
                     history=history,
-                    agent_name=self.agent_name or "Assistant",
+                    agent_name=self.agent_name or FALLBACK_AGENT_NAME,
                 )
                 logger.info(
                     "Room %s: Injected %s messages from history", room_id, injected

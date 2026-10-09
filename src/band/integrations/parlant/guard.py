@@ -66,16 +66,28 @@ def guard_failures(
     introspects ``__wrapped__``, so the registered signature is *func*'s own.
     """
 
+    signature = inspect.signature(func)
+    defaulted = {
+        name
+        for name, param in signature.parameters.items()
+        if param.default is not inspect.Parameter.empty
+    }
+
     @functools.wraps(func)
     async def run(context: Any, *args: Any, **kwargs: Any) -> Any:
         # Parlant's engine sends None for every optional the model omitted;
-        # dropping it lets the parameter's own default apply.
-        kwargs = {name: value for name, value in kwargs.items() if value is not None}
+        # dropping it lets the parameter's own default apply. A required
+        # parameter has no default to fall back on, so its None is kept.
+        kwargs = {
+            name: value
+            for name, value in kwargs.items()
+            if value is not None or name not in defaulted
+        }
         # bind() gets its own try: a signature/argument-shape mismatch raises
         # TypeError before there is any `call.arguments` to build the usual
         # failure message from.
         try:
-            call = inspect.signature(func).bind(context, *args, **kwargs)
+            call = signature.bind(context, *args, **kwargs)
             call.apply_defaults()
         except TypeError as exc:
             logger.exception(

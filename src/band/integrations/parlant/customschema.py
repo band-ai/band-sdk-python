@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Iterable, Mapping
-from typing import Any, NamedTuple
+from enum import StrEnum
+from typing import Any, NamedTuple, TypedDict
 
 from pydantic import BaseModel
 
@@ -27,17 +28,59 @@ from band.runtime.custom_tools import (
 
 # Parlant passes its ToolContext under this name, so no field may use it.
 CONTEXT_PARAMETER = "context"
-NULL_SCHEMA = {"type": "null"}
-SCALAR_TYPES = frozenset({"string", "integer", "number", "boolean"})
+
+
+class ParlantType(StrEnum):
+    """The Parlant parameter types a custom tool field is advertised as.
+
+    A subset of Parlant's ``ToolParameterType`` (pinned by a parity test).
+    """
+
+    STRING = "string"
+    INTEGER = "integer"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    ARRAY = "array"
+    DATE = "date"
+    DATETIME = "datetime"
+
+
+class JsonType(StrEnum):
+    """The JSON Schema ``type`` values pydantic writes for a field."""
+
+    STRING = "string"
+    INTEGER = "integer"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    ARRAY = "array"
+    NULL = "null"
+
+
+class Descriptor(TypedDict, total=False):
+    """Parlant's ``ToolParameterDescriptor`` shape (pinned by a parity test)."""
+
+    type: ParlantType
+    item_type: ParlantType
+    enum: list[str]
+    description: str
+
+
+NULL_SCHEMA = {"type": JsonType.NULL}
+SCALAR_TYPES = {
+    JsonType.STRING: ParlantType.STRING,
+    JsonType.INTEGER: ParlantType.INTEGER,
+    JsonType.NUMBER: ParlantType.NUMBER,
+    JsonType.BOOLEAN: ParlantType.BOOLEAN,
+}
 # JSON Schema string formats Parlant has a parameter type for.
-FORMAT_TYPES = {"date": "date", "date-time": "datetime"}
+FORMAT_TYPES = {"date": ParlantType.DATE, "date-time": ParlantType.DATETIME}
 
 
 class CustomToolField(NamedTuple):
     """One input-model field: the parameter Parlant casts by, and what it advertises."""
 
     parameter: inspect.Parameter
-    descriptor: dict[str, Any]
+    descriptor: Descriptor
 
 
 class Resolved(NamedTuple):
@@ -89,7 +132,7 @@ def _field(
     descriptor = _descriptor(resolved, defs=defs, where=where)
     if description := prop.get("description") or resolved.schema.get("description"):
         descriptor["description"] = description
-    delivered = list[str] if descriptor["type"] == "array" else str
+    delivered = list[str] if descriptor["type"] == ParlantType.ARRAY else str
     try:
         parameter = inspect.Parameter(
             key,
@@ -113,26 +156,35 @@ def _resolve(prop: Mapping[str, Any], *, defs: Mapping[str, Any]) -> Resolved:
 
 def _descriptor(
     resolved: Resolved, *, defs: Mapping[str, Any], where: str
-) -> dict[str, Any]:
+) -> Descriptor:
     """The Parlant parameter descriptor for one resolved property schema."""
     match resolved.schema:
+        case {"const": value}:
+            # A single-value Literal; checked like any other enum.
+            return _descriptor(
+                resolved._replace(schema={"enum": [value]}), defs=defs, where=where
+            )
         case {"enum": values} if resolved.from_enum_class or all(
             isinstance(value, str) for value in values
         ):
-            return {"type": "string", "enum": [str(value) for value in values]}
+            return Descriptor(
+                type=ParlantType.STRING, enum=[str(value) for value in values]
+            )
         case {"enum": _}:
             raise ValueError(
                 f"{where}: Parlant enums must be strings (use a str Literal or an Enum)"
             )
-        case {"type": "string", "format": str(fmt)} if fmt in FORMAT_TYPES:
-            return {"type": FORMAT_TYPES[fmt]}
-        case {"type": str(scalar)} if scalar in SCALAR_TYPES:
-            return {"type": scalar}
-        case {"type": "array", "items": items}:
+        case {"type": JsonType.STRING, "format": str(fmt)} if fmt in FORMAT_TYPES:
+            return Descriptor(type=FORMAT_TYPES[fmt])
+        case {"type": str(json_type)} if json_type in SCALAR_TYPES:
+            return Descriptor(type=SCALAR_TYPES[JsonType(json_type)])
+        case {"type": JsonType.ARRAY, "items": items}:
             return _array_descriptor(_resolve(items, defs=defs), defs=defs, where=where)
+        case {"type": JsonType.ARRAY}:
+            raise ValueError(f"{where}: Parlant lists need one item type (no tuples)")
         case {"anyOf": _}:
             # A multi-type union (or Decimal) arrives as text the model validates.
-            return {"type": "string"}
+            return Descriptor(type=ParlantType.STRING)
         case _:
             raise ValueError(
                 f"{where}: Parlant has no object parameter type (dicts, nested models)"
@@ -141,12 +193,11 @@ def _descriptor(
 
 def _array_descriptor(
     item: Resolved, *, defs: Mapping[str, Any], where: str
-) -> dict[str, Any]:
+) -> Descriptor:
     item_descriptor = _descriptor(item, defs=defs, where=f"{where} item")
-    if item_descriptor["type"] == "array":
+    if item_descriptor["type"] == ParlantType.ARRAY:
         raise ValueError(f"{where}: Parlant has no nested list parameter type")
-    return {
-        "type": "array",
-        "item_type": item_descriptor["type"],
-        **({"enum": item_descriptor["enum"]} if "enum" in item_descriptor else {}),
-    }
+    descriptor = Descriptor(type=ParlantType.ARRAY, item_type=item_descriptor["type"])
+    if "enum" in item_descriptor:
+        descriptor["enum"] = item_descriptor["enum"]
+    return descriptor

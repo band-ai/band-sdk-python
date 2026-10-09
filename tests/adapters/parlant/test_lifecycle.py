@@ -10,6 +10,14 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from band.adapters.parlant.adapter import (
+    NOT_INITIALIZED_ERROR,
+    UNREACHABLE_CUSTOM_TOOLS_WARNING,
+)
+
+# The Band agent's own name and description, handed to on_started.
+BAND_NAME = "BandName"
+BAND_DESCRIPTION = "Band description"
 
 
 @pytest.fixture
@@ -108,7 +116,7 @@ async def test_boots_owned_server_and_creates_agent(owned_server, mock_parlant_a
         ParlantAdapterConfig(name="Tom", description="A cat"), nlp_service="svc"
     )
 
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     assert factory.call_count == 1
     assert factory.call_args.kwargs["nlp_service"] == "svc"
@@ -123,10 +131,10 @@ async def test_name_description_default_to_band_metadata(owned_server):
     _, _, server = owned_server
     adapter = ParlantAdapter()
 
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     server.create_agent.assert_awaited_once_with(
-        name="BandName", description="Band description"
+        name=BAND_NAME, description=BAND_DESCRIPTION
     )
 
 
@@ -142,7 +150,7 @@ async def test_applies_deferred_guidelines_with_band_tools_default(
     adapter.add_guideline(condition="c2", action="a2", tools=[])
     adapter.add_guideline(condition="c3", action="a3", metadata={"k": "v"})
 
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     calls = mock_parlant_agent.create_guideline.await_args_list
     assert [c.kwargs for c in calls] == [
@@ -170,14 +178,14 @@ async def test_guideline_failure_has_no_live_siblings_and_retries_from_failure(
     borrowed_adapter.add_guideline(condition="third", action="later")
 
     with pytest.raises(RuntimeError, match="bad guideline"):
-        await borrowed_adapter.on_started("BandName", "Band description")
+        await borrowed_adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     assert [
         call.kwargs["condition"]
         for call in mock_parlant_agent.create_guideline.await_args_list
     ] == ["first", "second"]
 
-    await borrowed_adapter.on_started("BandName", "Band description")
+    await borrowed_adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     assert [
         call.kwargs["condition"]
@@ -187,7 +195,7 @@ async def test_guideline_failure_has_no_live_siblings_and_retries_from_failure(
 
 async def test_add_guideline_after_start_raises(owned_server):
     adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     with pytest.raises(RuntimeError, match="before the agent starts"):
         adapter.add_guideline(condition="late", action="too late")
@@ -205,7 +213,7 @@ async def test_configure_callback_receives_live_objects(
     adapter = ParlantAdapter(
         ParlantAdapterConfig(name="X", description="Y"), configure=configure
     )
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     assert seen == [(server, mock_parlant_agent)]
 
@@ -213,7 +221,7 @@ async def test_configure_callback_receives_live_objects(
 async def test_cleanup_all_closes_owned_server(owned_server):
     _, cm, _ = owned_server
     adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     await adapter.cleanup_all()
 
@@ -229,13 +237,13 @@ async def test_cleanup_all_leaves_borrowed_server(
     sample_message,
     mock_tools,
 ):
-    await borrowed_adapter.on_started("BandName", "Band description")
+    await borrowed_adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     await borrowed_adapter.cleanup_all()
 
     assert borrowed_adapter.server is mock_parlant_server
     assert borrowed_adapter.parlant_agent is mock_parlant_agent
-    with pytest.raises(RuntimeError, match="not initialized"):
+    with pytest.raises(RuntimeError, match=NOT_INITIALIZED_ERROR):
         await borrowed_adapter.on_message(
             msg=sample_message,
             tools=mock_tools,
@@ -253,9 +261,9 @@ async def test_restart_with_borrowed_server_does_not_duplicate_guidelines(
     """A borrowed agent survives cleanup; its guidelines must not re-create."""
     borrowed_adapter.add_guideline(condition="c", action="a")
 
-    await borrowed_adapter.on_started("BandName", "Band description")
+    await borrowed_adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
     await borrowed_adapter.cleanup_all()
-    await borrowed_adapter.on_started("BandName", "Band description")
+    await borrowed_adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     assert mock_parlant_agent.create_guideline.await_count == 1
 
@@ -266,9 +274,9 @@ async def test_restart_with_owned_server_applies_guidelines_to_fresh_agent(
     adapter = ParlantAdapter(ParlantAdapterConfig(name="X", description="Y"))
     adapter.add_guideline(condition="c", action="a")
 
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
     await adapter.cleanup_all()
-    await adapter.on_started("BandName", "Band description")
+    await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     assert mock_parlant_agent.create_guideline.await_count == 2
 
@@ -284,7 +292,7 @@ async def test_on_started_failure_leaves_cleanup_to_server_context(owned_server)
     )
 
     with pytest.raises(RuntimeError, match="configure blew up"):
-        await adapter.on_started("BandName", "Band description")
+        await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
     # A context manager whose __aenter__ raises owns its partial-enter cleanup;
     # calling __aexit__ again from the adapter would double-close it.
@@ -309,7 +317,9 @@ async def test_warns_when_no_guideline_can_reach_custom_tools(
     adapter.add_guideline(condition="c", action="a", tools=guideline_tools)
 
     with caplog.at_level(logging.WARNING, logger="band.adapters.parlant.adapter"):
-        await adapter.on_started("BandName", "Band description")
+        await adapter.on_started(BAND_NAME, BAND_DESCRIPTION)
 
-    unreachable = [r for r in caplog.records if "can never call" in r.getMessage()]
+    unreachable = [
+        r for r in caplog.records if r.msg == UNREACHABLE_CUSTOM_TOOLS_WARNING
+    ]
     assert [r.levelno for r in unreachable] == [logging.WARNING] * warnings

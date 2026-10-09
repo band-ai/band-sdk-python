@@ -42,6 +42,17 @@ class PaintInput(BaseModel):
     budget: Annotated[int, Field(description="Spend cap")] | None = 100
 
 
+class NoteInput(BaseModel):
+    """Leave a note."""
+
+    text: str | None
+    tone: Literal["calm"] = "calm"
+
+
+class Receipt(BaseModel):
+    note: str | None
+
+
 class AnswerInput(BaseModel):
     """Answer the room directly."""
 
@@ -65,8 +76,17 @@ async def custom_server(plugin_server, received):
         received.append(args)
         return {"painted": args.wall}
 
+    async def note(args: NoteInput) -> Receipt:
+        return Receipt(note=args.text)
+
     await plugin_server.enable(
-        create_parlant_tools(custom_tools=[(PaintInput, paint), (AnswerInput, answer)])
+        create_parlant_tools(
+            custom_tools=[
+                (PaintInput, paint),
+                (AnswerInput, answer),
+                (NoteInput, note),
+            ]
+        )
     )
     return plugin_server
 
@@ -157,3 +177,19 @@ async def test_unbound_session_refuses_without_running_the_handler(
 
     assert result == NO_SESSION_TOOLS_ERROR
     assert received == []
+
+
+async def test_single_value_literal_is_advertised_as_its_enum(custom_server):
+    tool = await custom_server.advertised("note")
+
+    assert tool["parameters"]["tone"][0] == {"type": "string", "enum": ["calm"]}
+
+
+async def test_required_nullable_field_takes_an_explicit_null(custom_server):
+    set_session_tools("session-1", FakeAgentTools())
+
+    result = await custom_server.call(
+        "note", session_id="session-1", arguments={"text": None}
+    )
+
+    assert result == '{"note": null}'

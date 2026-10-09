@@ -14,6 +14,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import band_sdk_core
@@ -192,6 +193,13 @@ def append_available_mention_handles(
     )
 
 
+class ParticipantAddStatus(StrEnum):
+    """What ``band_add_participant`` did: added them, or found them present."""
+
+    ADDED = "added"
+    ALREADY_IN_ROOM = "already_in_room"
+
+
 class ParticipantAddResult(TypedDict):
     """``band_add_participant``'s result shape -- one definition shared by
     ``AgentTools`` and ``FakeAgentTools`` so the two can't drift apart."""
@@ -199,7 +207,7 @@ class ParticipantAddResult(TypedDict):
     id: str
     name: str
     role: str
-    status: Literal["already_in_room", "added"]
+    status: Literal[ParticipantAddStatus.ALREADY_IN_ROOM, ParticipantAddStatus.ADDED]
 
 
 class ParticipantRemoveResult(TypedDict):
@@ -615,7 +623,7 @@ class AgentTools(AgentToolsProtocol):
                     "id": cached_id,
                     "name": cached.get("name", identifier),
                     "role": role,
-                    "status": "already_in_room",
+                    "status": ParticipantAddStatus.ALREADY_IN_ROOM,
                 }
 
         # Look up participant by identifier (paginates through all peers)
@@ -664,7 +672,7 @@ class AgentTools(AgentToolsProtocol):
             "id": participant_id,
             "name": participant_name,
             "role": role,
-            "status": "added",
+            "status": ParticipantAddStatus.ADDED,
         }
 
     async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:

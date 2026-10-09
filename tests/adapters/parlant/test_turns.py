@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from band.adapters.parlant.adapter import NOT_INITIALIZED_ERROR, PROVIDER
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.testing import reported_failures
-from tests.adapters.parlant.helpers import agent_event
+from tests.adapters.parlant.helpers import SESSION_ID, agent_event
 
 pytestmark = pytest.mark.usefixtures("parlant_sessions")
 
@@ -95,8 +96,8 @@ async def test_binds_session_tools_for_the_turn_only(
         await run_turn(adapter)
 
     assert [c.args for c in set_session_tools.call_args_list] == [
-        ("session-123", mock_tools),
-        ("session-123", None),
+        (SESSION_ID, mock_tools),
+        (SESSION_ID, None),
     ]
 
 
@@ -114,7 +115,7 @@ async def test_unbinds_session_tools_on_error(start_adapter, run_turn, mock_app)
     ):
         await run_turn(adapter)
 
-    set_session_tools.assert_called_with("session-123", None)
+    set_session_tools.assert_called_with(SESSION_ID, None)
 
 
 async def test_reports_error_on_failure(start_adapter, run_turn, mock_app, mock_tools):
@@ -127,7 +128,7 @@ async def test_reports_error_on_failure(start_adapter, run_turn, mock_app, mock_
         await run_turn(adapter)
 
     [failure] = reported_failures(mock_tools)
-    assert failure["provider"] == "parlant"
+    assert failure["provider"] == PROVIDER
     assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
@@ -142,7 +143,7 @@ async def test_reports_error_on_session_init_failure(
         await run_turn(adapter)
 
     [failure] = reported_failures(mock_tools)
-    assert failure["provider"] == "parlant"
+    assert failure["provider"] == PROVIDER
     assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
@@ -180,10 +181,10 @@ async def test_handles_uninitialized_app(
         server=mock_parlant_server, parlant_agent=mock_parlant_agent
     )
 
-    with pytest.raises(RuntimeError, match="not initialized"):
+    with pytest.raises(RuntimeError, match=NOT_INITIALIZED_ERROR):
         await run_turn(adapter)
 
     mock_tools.assert_no_messages_sent()
     [failure] = reported_failures(mock_tools)
-    assert failure["provider"] == "parlant"
-    assert "not initialized" in failure["message"]
+    assert failure["provider"] == PROVIDER
+    assert failure["message"] == NOT_INITIALIZED_ERROR

@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 
 MESSAGE_KIND = "message"
 AI_AGENT_SOURCE = "ai_agent"
+# The session the mock Application creates, and who sends the sample message.
+SESSION_ID = "session-123"
+SENDER_NAME = "Alice"
 
 
 def agent_event(

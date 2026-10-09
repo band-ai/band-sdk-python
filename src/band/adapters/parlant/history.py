@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from band.converters.parlant import ParlantMessages
+from band.converters.parlant import ParlantMessage, ParlantMessages, ParlantRole
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
-    from parlant.core.sessions import SessionId
+    from parlant.core.sessions import MessageEventData, SessionId
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,12 @@ def complete_exchanges(history: ParlantMessages) -> ParlantMessages:
         content = message.get("content", "")
         if not content:
             continue
-        match message.get("role", "user"):
-            case "user" if _answered(history, index):
+        match message.get("role", ParlantRole.USER):
+            case ParlantRole.USER if _answered(history, index):
                 kept.append(message)
-            case "user":
+            case ParlantRole.USER:
                 logger.debug("Skipping unanswered user message: %s...", content[:50])
-            case "assistant":
+            case ParlantRole.ASSISTANT:
                 kept.append(message)
     return kept
 
@@ -67,21 +67,21 @@ async def inject_history(
 
 def _answered(history: ParlantMessages, index: int) -> bool:
     following = history[index + 1 : index + 2]
-    return bool(following) and following[0].get("role") == "assistant"
+    return bool(following) and following[0].get("role") == ParlantRole.ASSISTANT
 
 
 async def _inject_message(
     *,
     app: Application,
     session_id: SessionId,
-    message: dict[str, Any],
+    message: ParlantMessage,
     agent_name: str,
 ) -> None:
     from parlant.core.app_modules.sessions import Moderation  # noqa: PLC0415
     from parlant.core.sessions import EventKind, EventSource  # noqa: PLC0415
 
-    content = message["content"]
-    if message.get("role", "user") == "user":
+    content = message.get("content", "")
+    if message.get("role", ParlantRole.USER) == ParlantRole.USER:
         await app.sessions.create_customer_message(
             session_id=session_id,
             moderation=Moderation.NONE,
@@ -92,14 +92,15 @@ async def _inject_message(
         )
         return
     # Parlant requires participant info for AI_AGENT messages.
+    data: MessageEventData = {
+        "message": content,
+        "participant": {"display_name": message.get("sender", agent_name)},
+    }
     await app.sessions.create_event(
         session_id=session_id,
         kind=EventKind.MESSAGE,
         source=EventSource.AI_AGENT,
-        data={
-            "message": content,
-            "participant": {"display_name": message.get("sender", agent_name)},
-        },
+        data=data,
         metadata=dict(HISTORICAL_METADATA),
         trigger_processing=False,
     )

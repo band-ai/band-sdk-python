@@ -128,7 +128,7 @@ class TestChatTools:
         add_participant = parlant_tools["band_add_participant"]
         result = await add_participant(mock_context, "Research Agent")
 
-        mock_tools.add_participant.assert_called_once_with("Research Agent", "member")
+        mock_tools.add_participant.assert_called_once_with("Research Agent")
         assert "Successfully added 'Research Agent'" in result.data
 
     @pytest.mark.asyncio

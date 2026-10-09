@@ -6,9 +6,12 @@ import json
 
 from parlant.core.tools import ToolContext, ToolResult
 
-from band.integrations.parlant.bandtool import band_tool, or_none
+from band.core.types import ContactRequestAction, ContactRequestStatus
+from band.integrations.parlant.bandtool import band_tool, invalid_choice, or_none
 from band.integrations.parlant.sessiontools import require_session_tools
 from band.runtime.tools import serialize_tool_result
+
+CONTACT_ACTIONS: tuple[str, ...] = tuple(ContactRequestAction)
 
 
 @band_tool("listing contacts")
@@ -30,7 +33,8 @@ async def band_add_contact(
 ) -> ToolResult:
     tools = require_session_tools(context)
     data = serialize_tool_result(await tools.add_contact(handle, or_none(message)))
-    status = data.get("status", "pending") if isinstance(data, dict) else "pending"
+    reply = data if isinstance(data, dict) else {}
+    status = reply.get("status", ContactRequestStatus.PENDING)
     return ToolResult(data=f"Contact request to {handle}: {status}")
 
 
@@ -53,7 +57,7 @@ async def band_list_contact_requests(
     context: ToolContext,
     page: int = 1,
     page_size: int = 50,
-    sent_status: str = "pending",
+    sent_status: str = ContactRequestStatus.PENDING,
 ) -> ToolResult:
     tools = require_session_tools(context)
     data = serialize_tool_result(
@@ -72,10 +76,8 @@ async def band_respond_contact_request(
     tools = require_session_tools(context)
     if not handle and not request_id:
         return ToolResult(data="Error: Either handle or request_id must be provided")
-    if action not in ("approve", "reject", "cancel"):
-        return ToolResult(
-            data=f"Error: Invalid action '{action}'. Use 'approve', 'reject', or 'cancel'"
-        )
+    if action not in CONTACT_ACTIONS:
+        return invalid_choice("action", action, CONTACT_ACTIONS)
 
     data = serialize_tool_result(
         await tools.respond_contact_request(

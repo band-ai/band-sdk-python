@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 SESSION_TITLE_ROOM_CHARS = 8
 
 
+def customer_id_for(room_id: str) -> str:
+    """The room's stable Parlant customer id.
+
+    The full room id, not a prefix: two rooms sharing a prefix must not
+    collide onto one customer.
+    """
+    return f"band-{room_id}"
+
+
 class RoomSessions:
     """Per-room Parlant customers and sessions on one running server.
 
@@ -54,11 +63,8 @@ class RoomSessions:
 
     async def _customer_for(self, room_id: str, *, name: str) -> CustomerId:
         if room_id not in self._customers:
-            # The full room id, not a prefix: it is the customer's stable
-            # identity on the server, and two rooms sharing a prefix must not
-            # collide onto one customer.
             customer = await self._server.create_customer(
-                name=name, id=f"band-{room_id}"
+                name=name, id=customer_id_for(room_id)
             )
             self._customers[room_id] = customer.id
         return self._customers[room_id]

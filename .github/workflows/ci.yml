@@ -235,6 +235,7 @@ jobs:
           tests/integrations/parlant/test_guard.py \
           tests/integrations/parlant/test_server.py \
           tests/integrations/parlant/test_tasktools.py \
+          tests/integrations/parlant/test_vocabulary.py \
           tests/framework_conformance/ -k parlant
 
     - name: Pyrefly check (parlant sources)

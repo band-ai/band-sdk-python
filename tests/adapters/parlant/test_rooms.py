@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.adapters.parlant.rooms import RoomSessions
+from band.adapters.parlant.rooms import RoomSessions, customer_id_for
+from tests.adapters.parlant.helpers import SESSION_ID
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ async def test_customer_id_does_not_collide_across_rooms_sharing_a_prefix(
         call.kwargs["id"]
         for call in mock_parlant_server.create_customer.await_args_list
     ]
-    assert customer_ids == [f"band-{room_a}", f"band-{room_b}"]
+    assert customer_ids == [customer_id_for(room_a), customer_id_for(room_b)]
 
 
 async def test_session_is_reused_until_the_room_is_forgotten(rooms, mock_app):
@@ -38,7 +39,7 @@ async def test_session_is_reused_until_the_room_is_forgotten(rooms, mock_app):
     rooms.forget("room-1")
     fresh = await rooms.session_for("room-1", customer_name="Alice")
 
-    assert (first, again, fresh) == ("session-123", "session-123", "session-new")
+    assert (first, again, fresh) == (SESSION_ID, SESSION_ID, "session-new")
 
 
 async def test_customer_survives_a_failed_session_create(

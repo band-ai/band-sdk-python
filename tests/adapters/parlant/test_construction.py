@@ -121,6 +121,18 @@ class IntLiteralInput(BaseModel):
     level: Literal[1, 2]
 
 
+class TupleInput(BaseModel):
+    """Has a fixed-shape tuple field."""
+
+    pair: tuple[int, int]
+
+
+class SingleIntLiteralInput(BaseModel):
+    """Has a single-value int Literal, which JSON Schema writes as a const."""
+
+    level: Literal[1]
+
+
 @pytest.mark.parametrize(
     ("additional_tools", "named"),
     [
@@ -131,6 +143,8 @@ class IntLiteralInput(BaseModel):
         ([(DictInput, lookup)], "tags"),
         ([(NestedInput, lookup)], "address"),
         ([(IntLiteralInput, lookup)], "level"),
+        ([(SingleIntLiteralInput, lookup)], "level"),
+        ([(TupleInput, lookup)], "tuples"),
     ],
     ids=[
         "shadows-band-tool",
@@ -140,6 +154,8 @@ class IntLiteralInput(BaseModel):
         "dict-field",
         "nested-model-field",
         "int-literal",
+        "single-int-literal",
+        "tuple-field",
     ],
 )
 def test_rejects_custom_tools_parlant_cannot_offer(additional_tools, named):

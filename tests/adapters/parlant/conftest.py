@@ -16,7 +16,12 @@ import pytest
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
-from tests.adapters.parlant.helpers import AI_AGENT_SOURCE, MESSAGE_KIND
+from tests.adapters.parlant.helpers import (
+    AI_AGENT_SOURCE,
+    MESSAGE_KIND,
+    SENDER_NAME,
+    SESSION_ID,
+)
 
 StartAdapter = Callable[..., Awaitable[ParlantAdapter]]
 
@@ -29,7 +34,7 @@ def sample_message() -> PlatformMessage:
         content="Hello, agent!",
         sender_id="user-456",
         sender_type="User",
-        sender_name="Alice",
+        sender_name=SENDER_NAME,
         message_type="text",
         metadata={},
         created_at=datetime.now(UTC),
@@ -47,7 +52,7 @@ def mock_app() -> MagicMock:
     """The server's Parlant Application; no agent response by default."""
     app = MagicMock()
     app.sessions = AsyncMock()
-    app.sessions.create = AsyncMock(return_value=MagicMock(id="session-123"))
+    app.sessions.create = AsyncMock(return_value=MagicMock(id=SESSION_ID))
     app.sessions.create_customer_message = AsyncMock(return_value=MagicMock(offset=1))
     app.sessions.create_event = AsyncMock()
     app.sessions.wait_for_more_events = AsyncMock(return_value=False)
