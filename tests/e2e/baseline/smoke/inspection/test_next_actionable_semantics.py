@@ -25,7 +25,7 @@ from band.client.rest import (
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
 )
-from band.client.streaming import ControlMode
+from band.client.streaming import ControlMode, DeliveryStatus
 from band.core.exceptions import RoomExecutionStoppedError
 from band.platform.link import BandLink
 from band.platform.posting import post_event, post_message
@@ -33,7 +33,10 @@ from band.runtime.types import PlatformMessage
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.control import running_control_runtime
+from tests.e2e.baseline.toolkit.control import (
+    AuxiliaryClaimRuntime,
+    running_control_runtime,
+)
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -169,3 +172,62 @@ async def test_stopped_restart_recovers_without_play_push(
     finally:
         await user_ops.play_agent(room_id)
         await link.disconnect()
+
+
+@lane(Lane.CORE)
+async def test_refused_auxiliary_claim_aborts_and_replays(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    baseline_settings: BaselineSettings,
+    reply_capture: CaptureFactory,
+) -> None:
+    agent = await resource_manager.provision_agent("auxiliaryclaim")
+    room_id = await resource_manager.provision_room(participants=[agent.id])
+    control = AuxiliaryClaimRuntime()
+    async with (
+        reply_capture(room_id) as capture,
+        running_control_runtime(
+            agent,
+            room_id,
+            baseline_settings,
+            user_ops,
+            control=control,
+            forwarded_control_modes=frozenset(
+                {ControlMode.PLAY, ControlMode.INTERRUPT}
+            ),
+        ),
+    ):
+        trigger = await user_ops.send_message(
+            room_id,
+            "merge waiting messages",
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await control.wait_for_start(deadline_s=baseline_settings.e2e_timeout)
+        first = await user_ops.send_message(
+            room_id, "first auxiliary", mention_id=agent.id, mention_name=agent.name
+        )
+        control.auxiliaries.put_nowait(first)
+        await capture.wait_for_delivery(
+            first, agent.id, until={DeliveryStatus.PROCESSING}
+        )
+        second = await user_ops.send_message(
+            room_id, "second auxiliary", mention_id=agent.id, mention_name=agent.name
+        )
+        control.auxiliaries.put_nowait(second)
+        await user_ops.stop_agent(room_id)
+        control.release_claim.set()
+        await control.wait_for_cancellation(deadline_s=baseline_settings.e2e_timeout)
+        assert not control.downstream_started.is_set()
+        assert not control.owned_ids
+        statuses = await capture.durable_delivery_statuses(
+            (trigger, first, second), agent.id
+        )
+        assert statuses[trigger] is DeliveryStatus.PROCESSING
+        assert statuses[first] is DeliveryStatus.PROCESSING
+        assert statuses[second] in {None, DeliveryStatus.DELIVERED}
+
+        await user_ops.play_agent(room_id)
+        for mid in (trigger, first, second):
+            await capture.wait_for_processed(mid, agent.id)
+        assert control.downstream_started.is_set()
