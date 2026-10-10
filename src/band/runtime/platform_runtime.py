@@ -169,6 +169,7 @@ class PlatformRuntime:
         on_execute: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
         on_cleanup: Callable[[str], Awaitable[None]] | None = None,
         on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
+        on_idle_release: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -206,6 +207,7 @@ class PlatformRuntime:
                 on_control=on_control,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
+                on_idle_release=on_idle_release,
             )
 
             # Route preemptive control signals (interrupt/stop/play) to the

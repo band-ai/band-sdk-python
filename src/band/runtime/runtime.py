@@ -103,6 +103,7 @@ class AgentRuntime:
         on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
+        on_idle_release: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -120,6 +121,8 @@ class AgentRuntime:
                 to the execution's own ``interrupt()``/``stop_room()`` -- for
                 adapter work that keeps running after those return early
             on_participant_added: Optional callback for participant_added events
+            on_idle_release: Optional callback (receives room_id) run when a
+                room has been idle for ``SessionConfig.release_idle_room_after_s``
             on_participant_removed: Optional callback for participant_removed events
         """
         self.link = link
@@ -130,6 +133,7 @@ class AgentRuntime:
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
         self._on_participant_added = on_participant_added
+        self._on_idle_release = on_idle_release
         self._on_participant_removed = on_participant_removed
 
         # Hub room (set by PlatformRuntime when ContactEventStrategy.HUB_ROOM
@@ -420,6 +424,7 @@ class AgentRuntime:
                 hub_room_id=self._hub_room_id,
                 claim_registry=self._claim_registry,
                 on_platform_stop=self._on_platform_stop,
+                on_idle_release=self._on_idle_release,
             )
 
         self.executions[room_id] = execution
@@ -445,11 +450,14 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        if room_id not in self.executions:
+        execution = self.executions.get(room_id)
+        if execution is None:
             return True
 
-        execution = self.executions.pop(room_id)
+        # Pop only after stop() finishes; a cancelled stop() must leave the
+        # execution registered so a later stop() can finish release/cleanup.
         graceful = await execution.stop(timeout=timeout)
+        self.executions.pop(room_id, None)
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
