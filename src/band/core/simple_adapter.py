@@ -13,6 +13,7 @@ from typing_extensions import Unpack
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
 from band.core.exceptions import BandConfigError
+from band.core.harness import PreflightResult
 from band.core.model_catalog import (
     ModelCatalog,
     ModelSelection,
@@ -358,6 +359,17 @@ class SimpleAdapter(ABC, Generic[H]):
         selection = self.model_selection
         if not selection.is_empty:
             check_model_selection(selection, await self.list_models())
+
+    async def preflight(self) -> PreflightResult:
+        """Check that this adapter's harness can start, without the platform.
+
+        Hosts call it before ``Agent.start()`` to fail fast or to back a
+        "test" action. Adapters that drive an external harness override it
+        to launch a throwaway harness process, complete its handshake, and
+        close it; no model turn runs and no room state is touched. The
+        default has nothing to check.
+        """
+        return PreflightResult.passed()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""
