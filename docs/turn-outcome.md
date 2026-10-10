@@ -302,6 +302,17 @@ room: later `/next` reconciliation can recover after PLAY without its push signa
 Scope identity and control revision prevent delayed responses from cancelling
 newer work or invoking an outdated adapter interrupt hook.
 
+Hosts that merge additional messages into a turn use
+`await ctx.claim_message(message_id)` from directly awaited preprocessing in the
+active handler. It returns `True` for acceptance and `False` for an ordinary
+failed claim. A stopped refusal raises native `asyncio.CancelledError`, aborting
+the unfinished turn through its existing scope. Calls from standalone,
+background or detached tasks raise `RuntimeError` before making a request.
+The host remains responsible for auxiliary local ownership and acknowledgements;
+its `finally` cleanup must release uncommitted claims. SDK delivery admission
+remains separate because it runs before the handler and owns the trigger's retry
+accounting.
+
 Once the handler completes, its delivery is `ACK_PENDING` until the platform
 accepts completion. A stopped refusal retains that marker and retries only the
 acknowledgement, without replaying handler effects or charging the acknowledgement

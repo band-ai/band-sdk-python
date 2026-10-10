@@ -1889,6 +1889,38 @@ class ExecutionContext:
         finally:
             self._active_cycle_task = None
 
+    async def claim_message(self, message_id: str) -> bool:
+        """Claim an auxiliary message from directly awaited active preprocessing.
+
+        The host owns local claims and acknowledgements. Ordinary refusal returns
+        False; stopped execution cancels this turn and leaves it replayable.
+        Calls outside the active handler raise RuntimeError before making a request.
+        """
+        scope = self.current_scope
+        task = asyncio.current_task()
+        if scope is None or task is None or task is not self._active_cycle_task:
+            raise RuntimeError("claim_message requires the active handler task")
+        if scope.stop_observed or task.cancelling() or self._interrupt_kind is not None:
+            raise asyncio.CancelledError
+
+        try:
+            accepted = await self.link.mark_processing(self.room_id, message_id)
+        except RoomExecutionStoppedError as error:
+            if self.current_scope is scope and self._active_cycle_task is task:
+                self.observe_platform_stop(scope)
+            raise asyncio.CancelledError from error
+
+        # A transport can suppress cancellation and return into an obsolete turn.
+        if (
+            self.current_scope is not scope
+            or self._active_cycle_task is not task
+            or scope.stop_observed
+            or task.cancelling()
+            or self._interrupt_kind is not None
+        ):
+            raise asyncio.CancelledError
+        return accepted
+
     async def _claim(self, msg_id: str) -> bool:
         """Mark ``msg_id`` processing on the platform; a refused claim never
         ran the handler, so it gives back the attempt already charged."""

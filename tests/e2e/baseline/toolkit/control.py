@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 import band.runtime
 from band.client.streaming import AgentControlPayload, ControlMode
+from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
@@ -38,7 +39,7 @@ class ControlRuntime:
         self.received_control_modes: list[ControlMode] = []
         self.completed_message_ids: list[str] = []
 
-    async def on_execute(self, _ctx: object, event: object) -> None:
+    async def on_execute(self, _ctx: ExecutionContext, event: PlatformEvent) -> None:
         self._invocations += 1
         message_id = getattr(getattr(event, "payload", None), "id", None)
         if message_id is not None:
@@ -80,6 +81,52 @@ class ControlRuntime:
             raise TimeoutError("message never entered the active cycle") from None
 
 
+class AuxiliaryClaimRuntime(ControlRuntime):
+    """Select two auxiliary messages, holding the second claim for a real STOP."""
+
+    def __init__(self) -> None:
+        super().__init__(block_cycles=0)
+        self.auxiliaries: asyncio.Queue[str] = asyncio.Queue()
+        self.auxiliary_ids: list[str] = []
+        self.release_claim = asyncio.Event()
+        self.downstream_started = asyncio.Event()
+        self.owned_ids: set[str] = set()
+
+    async def on_execute(self, ctx: ExecutionContext, event: PlatformEvent) -> None:
+        assert isinstance(event, MessageEvent)
+        self.invoked_message_ids.append(event.payload.id)
+        self.started.set()
+        first = not self.auxiliary_ids
+        cancelled = False
+        try:
+            for index in range(2):
+                if first:
+                    mid = await self.auxiliaries.get()
+                    self.auxiliary_ids.append(mid)
+                else:
+                    mid = self.auxiliary_ids[index]
+                assert ctx.claims.try_claim(ctx.room_id, mid), "auxiliary already owned"
+                self.owned_ids.add(mid)
+                if first and index == 1:
+                    await self.release_claim.wait()
+                assert await ctx.claim_message(mid), "auxiliary claim failed"
+            self.downstream_started.set()
+            for mid in self.auxiliary_ids:
+                ctx.claims.remember_ack_pending(ctx.room_id, mid)
+                assert await ctx.link.mark_processed(ctx.room_id, mid)
+                ctx.claims.remember_completed(ctx.room_id, mid)
+            self.completed_message_ids.append(event.payload.id)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            for mid in self.owned_ids:
+                ctx.claims.release(ctx.room_id, mid)
+            self.owned_ids.clear()
+            if cancelled:
+                self.cancelled.set()
+
+
 class ObservedExecution(ExecutionContext):
     """Expose completion of the real startup synchronization to live tests."""
 
@@ -100,6 +147,7 @@ async def running_control_runtime(
     user_ops: UserOps,
     *,
     block_cycles: int = 1,
+    control: ControlRuntime | None = None,
     forwarded_control_modes: frozenset[ControlMode] = frozenset(ControlMode),
 ) -> AsyncGenerator[ControlRuntime, None]:
     """Run one controlled agent and leave its room playable on teardown."""
@@ -111,7 +159,8 @@ async def running_control_runtime(
     )
     # The SDK control path's DEBUG lines explain a failing control test.
     with sdk_logs_at(band.runtime, logging.DEBUG):
-        control = ControlRuntime(block_cycles=block_cycles)
+        if control is None:
+            control = ControlRuntime(block_cycles=block_cycles)
 
         def execution_factory(
             room: str, link: BandLink, *, hub_room_id: str | None = None
