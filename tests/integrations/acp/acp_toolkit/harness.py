@@ -63,6 +63,15 @@ class TranscriptTools(FakeAgentTools):
         super().__init__()
         self.transcript: list[RoomActivity] = []
 
+    @property
+    def reply(self) -> Reply:
+        return Reply(
+            messages=self.messages_sent,
+            events=self.events_sent,
+            transcript=self.transcript,
+            memories=self.memories,
+        )
+
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> dict[str, Any]:
@@ -305,12 +314,7 @@ class AcpSession:
         value — it reads this instead.
         """
         assert self._last_tools is not None, "send() has not been called yet"
-        return Reply(
-            messages=self._last_tools.messages_sent,
-            events=self._last_tools.events_sent,
-            transcript=self._last_tools.transcript,
-            memories=self._last_tools.memories,
-        )
+        return self._last_tools.reply
 
     async def send(
         self,
@@ -345,12 +349,7 @@ class AcpSession:
             is_session_bootstrap=bootstrap,
             room_id=room,
         )
-        return Reply(
-            messages=tools.messages_sent,
-            events=tools.events_sent,
-            transcript=tools.transcript,
-            memories=tools.memories,
-        )
+        return tools.reply
 
     def session_id(self, room: str) -> str:
         return self.adapter._room_to_session[room].session_id
