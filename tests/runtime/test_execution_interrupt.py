@@ -1300,7 +1300,9 @@ async def test_local_queue_waits_for_stop_observer_cleanup_without_replay(
             release_local_result.set()
             await later_acked.wait()
             assert executed == [local_id, "after-local"]
-            mock_link.mark_processed.assert_awaited_once_with(ctx.room_id, "after-local")
+            mock_link.mark_processed.assert_awaited_once_with(
+                ctx.room_id, "after-local"
+            )
             mock_link.mark_failed.assert_not_awaited()
     finally:
         release_observer.set()
