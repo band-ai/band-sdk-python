@@ -1005,17 +1005,22 @@ class TestBandLinkEventHandlers:
         assert event.payload.id == "room-123"
 
 
+@pytest.fixture
+def accepted_lifecycle_response() -> MagicMock:
+    return MagicMock(status_code=200, data=MagicMock(data=object()))
+
+
 class TestMessageLifecycleMarks:
     """Tests for message lifecycle status return values."""
 
     @pytest.mark.asyncio
-    async def test_mark_processing_returns_true_on_success(self):
+    async def test_mark_processing_returns_true_on_success(
+        self, accepted_lifecycle_response: MagicMock
+    ):
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.with_raw_response.mark_agent_message_processing = (
-            AsyncMock(
-                return_value=MagicMock(status_code=200, data=MagicMock(data=object()))
-            )
+            AsyncMock(return_value=accepted_lifecycle_response)
         )
 
         result = await link.mark_processing("room-1", "msg-1")
@@ -1036,13 +1041,13 @@ class TestMessageLifecycleMarks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_mark_processed_returns_true_on_success(self):
+    async def test_mark_processed_returns_true_on_success(
+        self, accepted_lifecycle_response: MagicMock
+    ):
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.with_raw_response.mark_agent_message_processed = (
-            AsyncMock(
-                return_value=MagicMock(status_code=200, data=MagicMock(data=object()))
-            )
+            AsyncMock(return_value=accepted_lifecycle_response)
         )
 
         result = await link.mark_processed("room-1", "msg-1")
@@ -1063,13 +1068,13 @@ class TestMessageLifecycleMarks:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_mark_failed_returns_true_on_success(self):
+    async def test_mark_failed_returns_true_on_success(
+        self, accepted_lifecycle_response: MagicMock
+    ):
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.with_raw_response.mark_agent_message_failed = (
-            AsyncMock(
-                return_value=MagicMock(status_code=200, data=MagicMock(data=object()))
-            )
+            AsyncMock(return_value=accepted_lifecycle_response)
         )
 
         result = await link.mark_failed("room-1", "msg-1", "boom")
@@ -1094,14 +1099,14 @@ class TestMarkFailed:
     """Tests for mark_failed error normalization."""
 
     @pytest.mark.asyncio
-    async def test_replaces_empty_error_with_unknown(self):
+    async def test_replaces_empty_error_with_unknown(
+        self, accepted_lifecycle_response: MagicMock
+    ):
         """mark_failed should replace empty error string with 'Unknown error'."""
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.with_raw_response.mark_agent_message_failed = (
-            AsyncMock(
-                return_value=MagicMock(status_code=200, data=MagicMock(data=object()))
-            )
+            AsyncMock(return_value=accepted_lifecycle_response)
         )
 
         await link.mark_failed("room-1", "msg-1", "")
@@ -1111,14 +1116,14 @@ class TestMarkFailed:
         assert call_kwargs.kwargs["error"] == "Unknown error"
 
     @pytest.mark.asyncio
-    async def test_replaces_whitespace_error_with_unknown(self):
+    async def test_replaces_whitespace_error_with_unknown(
+        self, accepted_lifecycle_response: MagicMock
+    ):
         """mark_failed should replace whitespace-only error with 'Unknown error'."""
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.with_raw_response.mark_agent_message_failed = (
-            AsyncMock(
-                return_value=MagicMock(status_code=200, data=MagicMock(data=object()))
-            )
+            AsyncMock(return_value=accepted_lifecycle_response)
         )
 
         await link.mark_failed("room-1", "msg-1", "   ")
@@ -1127,14 +1132,14 @@ class TestMarkFailed:
         assert call_kwargs.kwargs["error"] == "Unknown error"
 
     @pytest.mark.asyncio
-    async def test_passes_through_non_empty_error(self):
+    async def test_passes_through_non_empty_error(
+        self, accepted_lifecycle_response: MagicMock
+    ):
         """mark_failed should pass through a valid error string as-is."""
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.with_raw_response.mark_agent_message_failed = (
-            AsyncMock(
-                return_value=MagicMock(status_code=200, data=MagicMock(data=object()))
-            )
+            AsyncMock(return_value=accepted_lifecycle_response)
         )
 
         await link.mark_failed("room-1", "msg-1", "connection reset")

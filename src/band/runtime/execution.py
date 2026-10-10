@@ -756,7 +756,8 @@ class ExecutionContext:
         scope.stop_observed = True
         if self.current_scope is not scope:
             return
-        self._cancel_cycle(ControlMode.STOP)
+        kind = self._interrupt_kind or self._pending_interrupt or ControlMode.STOP
+        self._cancel_cycle(kind)
         if (
             not self._closing
             and self.owns_scope(scope)
@@ -1661,12 +1662,14 @@ class ExecutionContext:
         finally:
             await self._working_reporter.stop()
 
-    def _take_interrupt_kind(self) -> ControlMode | None:
+    def _take_interrupt_kind(self, scope: TurnScope | None) -> ControlMode | None:
         """Read-and-clear ``_interrupt_kind`` atomically (no ``await`` between
         the read and the clear), so a consumed signal never leaks into a
         later, unrelated cycle."""
         kind = self._interrupt_kind
         self._interrupt_kind = None
+        if kind is None and scope is not None and scope.stop_observed:
+            return ControlMode.STOP
         return kind
 
     def _retain_detached_cycle_task(self, task: asyncio.Task[None]) -> None:
@@ -1815,9 +1818,7 @@ class ExecutionContext:
                         # its documented contract (mirrors that branch) rather
                         # than reporting the user's own stop/interrupt as a
                         # timeout failure.
-                        kind = self._take_interrupt_kind()
-                        if scope is not None and scope.stop_observed:
-                            kind = ControlMode.STOP
+                        kind = self._take_interrupt_kind(scope)
                         if kind is not None:
                             return await self._abort_cycle(kind, msg_id)
                         # Replace whatever bare TimeoutError arrived
@@ -1833,12 +1834,12 @@ class ExecutionContext:
             # A handler may suppress CancelledError and return normally. In
             # that case the control signal was consumed by this cycle and must
             # not misclassify a later shutdown cancellation as an interrupt.
-            self._interrupt_kind = None
+            kind = self._take_interrupt_kind(scope)
             parent = asyncio.current_task()
             if parent is not None and parent.cancelling():
                 raise asyncio.CancelledError
-            if scope is not None and scope.stop_observed:
-                return await self._abort_cycle(ControlMode.STOP, msg_id)
+            if kind is not None and scope is not None and scope.stop_observed:
+                return await self._abort_cycle(kind, msg_id)
             return True
         except asyncio.CancelledError:
             # If two control signals raced before this ran, last-writer-wins on
@@ -1847,12 +1848,10 @@ class ExecutionContext:
             cycle_task = self._active_cycle_task
             if cycle_task is not None and not cycle_task.done():
                 cycle_task.cancel()
-            kind = self._take_interrupt_kind()
+            kind = self._take_interrupt_kind(scope)
             parent = asyncio.current_task()
             if parent is not None and parent.cancelling():
                 kind = None
-            elif scope is not None and scope.stop_observed:
-                kind = ControlMode.STOP
             if kind is None:
                 # Shutdown cancel of the loop task must propagate so the loop
                 # exits. The child was cancelled above; retain it if cleanup
