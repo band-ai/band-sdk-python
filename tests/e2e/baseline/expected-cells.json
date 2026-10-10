@@ -861,6 +861,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_parlant.py::test_parlant_delivers_typed_custom_tool_arguments",
+      "adapter": "suite",
+      "lanes": [
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_parlant.py::test_parlant_executes_custom_tool",
+      "adapter": "suite",
+      "lanes": [
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_parlant.py::test_parlant_replies",
       "adapter": "suite",
       "lanes": [

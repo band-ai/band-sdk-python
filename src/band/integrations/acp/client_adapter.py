@@ -183,10 +183,11 @@ SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
 #
 # Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
 # (12+ adapters each hardcode their own copy); it has already drifted once
-# (parlant.py uses "[System Update]: " for the identical concept). Extracting
-# one real cross-adapter constant is out of scope here — it would touch every
-# other adapter's own file for no ACP-specific reason — but is worth a
-# follow-up so the convention has one source instead of N private copies.
+# (the Parlant adapter uses "[System Update]: " for the identical concept).
+# Extracting one real cross-adapter constant is out of scope here — it would
+# touch every other adapter's own file for no ACP-specific reason — but is
+# worth a follow-up so the convention has one source instead of N private
+# copies.
 SYSTEM_UPDATE_PREFIX = "[System]: "
 
 # Marks where the replayed transcript ends and the live message begins, so

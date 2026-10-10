@@ -6,18 +6,21 @@ dispatch-boundary result types (``ToolCallOutcome``, ``serialize_tool_result``).
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 
+from band.core.exceptions import InvalidToolArgumentsError
 from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
 
-_JSON_VALUE = TypeAdapter(Any)
+# Bytes become base64: pydantic's default UTF-8 fails on binary content.
+_JSON_VALUE = TypeAdapter(Any, config=ConfigDict(ser_json_bytes="base64"))
 
 
 def resolve_tool_model(name: str) -> type[BaseModel] | None:
@@ -182,7 +185,9 @@ def validate_tool_arguments(
     try:
         validated = input_model.model_validate(arguments)
     except ValidationError as error:
-        raise ValueError(format_tool_validation_error(tool_name, error)) from error
+        raise InvalidToolArgumentsError(
+            format_tool_validation_error(tool_name, error)
+        ) from error
 
     return validated.model_dump(exclude_none=True)
 
@@ -233,3 +238,13 @@ def serialize_tool_result(result: Any) -> Any:
             for item in result
         ]
     return result
+
+
+def tool_result_text(result: Any) -> str:
+    """A tool result as the text a model reads: a string verbatim, else JSON."""
+    if isinstance(result, str):
+        return result
+    # The python pass turns nested models into plain data, so the JSON pass
+    # applies this adapter's rules to all of it: text keys, base64 bytes.
+    plain = _JSON_VALUE.dump_python(serialize_tool_result(result))
+    return json.dumps(_JSON_VALUE.dump_python(plain, mode="json", fallback=str))

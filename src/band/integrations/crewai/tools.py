@@ -54,12 +54,12 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.tools import (
-    CAPABILITY_TOOL_NAMES,
     EVENT_TOOL_NAMES,
     BandTool,
     append_available_mention_handles,
     get_band_tool_category,
     get_tool_description,
+    withheld_tool_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -234,13 +234,7 @@ def _custom_tool(
 
 def _enabled_specs(capabilities: frozenset[Capability]) -> list[ToolSpec]:
     """The platform tools a crew with these capabilities is allowed to see."""
-    withheld: frozenset[str] = frozenset().union(
-        *(
-            names
-            for capability, names in CAPABILITY_TOOL_NAMES.items()
-            if capability not in capabilities
-        )
-    )
+    withheld = withheld_tool_names(capabilities)
     return [spec for spec in PLATFORM_TOOLS if spec.name not in withheld]
 
 

@@ -43,6 +43,9 @@ SHELL_POLICIES = tuple(
 
 WriteCalls = Callable[[str, Path], ToolCalls]
 
+# This bounds the whole shell lifetime, including initialization on a fresh runner.
+SHELL_PROCESS_TIMEOUT_SECONDS = 30
+
 
 @pytest.fixture(params=SHELL_POLICIES, ids=lambda policy: policy.name)
 def shell_policy(request: pytest.FixtureRequest) -> UnattendedPolicy:
@@ -194,6 +197,7 @@ def test_shell_redirect_readback_handles_host_encodings(
     assert written_lines(target) == [marker]
 
 
+@pytest.mark.timeout(3 * SHELL_PROCESS_TIMEOUT_SECONDS)
 @pytest.mark.parametrize(
     "shell",
     [None, "pwsh", "powershell"] if sys.platform == "win32" else [None],
@@ -206,17 +210,34 @@ def test_approval_commands_write_and_append_with_host_shell(
     marker = "approval-marker"
     target.write_text("old", encoding="utf-8")
 
-    for command in (marker_command, appending_command):
+    for command, expected in (
+        (marker_command, [marker]),
+        (appending_command, [marker, marker]),
+    ):
         text = command(marker, target)
-        args = text if shell is None else [shell, "-NoProfile", "-Command", text]
-        subprocess.run(
-            args,
-            shell=shell is None,
-            check=True,
-            cwd=tmp_path,
-            timeout=10,
+        args = (
+            text
+            if shell is None
+            else [shell, "-NoProfile", "-NonInteractive", "-Command", text]
         )
-    assert written_lines(target) == [marker, marker]
+        try:
+            subprocess.run(
+                args,
+                shell=shell is None,
+                check=True,
+                cwd=tmp_path,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=SHELL_PROCESS_TIMEOUT_SECONDS,
+            )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+            contents = target.read_bytes() if target.exists() else None
+            pytest.fail(
+                f"{exc}\nstdout={exc.stdout!r}\nstderr={exc.stderr!r}"
+                f"\ntarget bytes={contents!r}",
+                pytrace=False,
+            )
+        assert written_lines(target) == expected
 
 
 GATED_COMMAND = "cat approval.txt"

@@ -14,9 +14,13 @@ from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools, reported_failures
 from tests.content import BLANK_CONTENT_CASES
-from tests.testing.support import seeded_participant
-
-_SEED_INSERTED_AT = "2025-01-01T00:00:00Z"
+from tests.testing.support import (
+    SEED_INSERTED_AT,
+    seeded_contact,
+    seeded_participant,
+    seeded_peer,
+    seeded_received_request,
+)
 
 
 async def store_fact(tools: FakeAgentTools, content: str) -> None:
@@ -31,47 +35,6 @@ async def store_fact(tools: FakeAgentTools, content: str) -> None:
     )
 
 
-def seeded_peer(
-    id: str, *, handle: str, name: str, type: str = "User"
-) -> dict[str, Any]:
-    """A minimal valid ``Peer`` seed for ``FakeAgentTools(peers=...)``."""
-    return {
-        "id": id,
-        "handle": handle,
-        "name": name,
-        "type": type,
-        "is_contact": False,
-        "source": "registry",
-        "online": True,
-    }
-
-
-def seeded_contact(
-    id: str, *, handle: str, name: str, type: str = "User"
-) -> dict[str, Any]:
-    """A minimal valid ``AgentContact`` seed for ``FakeAgentTools(contacts=...)``."""
-    return {
-        "id": id,
-        "handle": handle,
-        "name": name,
-        "type": type,
-        "inserted_at": _SEED_INSERTED_AT,
-        "online": True,
-    }
-
-
-def seeded_received_request(
-    id: str, *, from_handle: str, status: str = "pending"
-) -> dict[str, Any]:
-    """A minimal valid ``ReceivedContactRequest`` seed."""
-    return {
-        "id": id,
-        "from_handle": from_handle,
-        "status": status,
-        "inserted_at": _SEED_INSERTED_AT,
-    }
-
-
 def seeded_sent_request(
     id: str, *, to_handle: str, status: str = "pending"
 ) -> dict[str, Any]:
@@ -80,7 +43,7 @@ def seeded_sent_request(
         "id": id,
         "to_handle": to_handle,
         "status": status,
-        "inserted_at": _SEED_INSERTED_AT,
+        "inserted_at": SEED_INSERTED_AT,
     }
 
 
@@ -472,6 +435,7 @@ class TestParticipantOperations:
             "role": "admin",
             "status": "already_in_room",
         }
+        assert "'status': 'already_in_room'" in str(result)
         assert len(tools.participants) == 1, "Re-adding must not duplicate the roster"
 
     async def test_add_participant_raises_for_an_unknown_identifier(self):
@@ -808,7 +772,7 @@ class TestContacts:
                     "from_name": "Alice",
                     "type": "Agent",
                     "status": "pending",
-                    "inserted_at": _SEED_INSERTED_AT,
+                    "inserted_at": SEED_INSERTED_AT,
                 }
             ]
         )
@@ -979,7 +943,7 @@ class TestContacts:
                 {
                     "id": "req-1",
                     "status": "pending",
-                    "inserted_at": _SEED_INSERTED_AT,
+                    "inserted_at": SEED_INSERTED_AT,
                 }
             ]
         )

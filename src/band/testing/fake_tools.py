@@ -70,7 +70,9 @@ from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
+    MISSING_MENTIONS_ERROR,
     ParticipantAddResult,
+    ParticipantAddStatus,
     ParticipantRemoveResult,
     ToolCallOutcome,
     append_mention_handles_hint,
@@ -403,7 +405,7 @@ class FakeAgentTools:
         if not (mentions or []):
             raise BandToolError(
                 append_mention_handles_hint(
-                    "At least one mention is required",
+                    MISSING_MENTIONS_ERROR,
                     available_mention_handles(self._participants, self.agent_id),
                 )
             )
@@ -501,7 +503,7 @@ class FakeAgentTools:
                     id=cached["id"],
                     name=cached.get("name", identifier),
                     role=role,
-                    status="already_in_room",
+                    status=ParticipantAddStatus.ALREADY_IN_ROOM.value,
                 )
                 self.participants_added.append(result)
                 return deepcopy(result)
@@ -525,7 +527,10 @@ class FakeAgentTools:
         self._participants.append(participant)
 
         result = ParticipantAddResult(
-            id=participant["id"], name=participant_name, role=role, status="added"
+            id=participant["id"],
+            name=participant_name,
+            role=role,
+            status=ParticipantAddStatus.ADDED.value,
         )
         self.participants_added.append(result)
         return deepcopy(result)

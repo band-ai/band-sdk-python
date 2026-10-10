@@ -15,6 +15,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import band_sdk_core
@@ -163,6 +164,9 @@ def available_mention_handles(
     ]
 
 
+# How every send refuses an empty mention list (the platform requires one).
+MISSING_MENTIONS_ERROR = "At least one mention is required"
+
 # Single marker for the available-handles hint. Used both to render the hint and
 # to detect it, so the producer and the idempotency guard can never drift apart.
 _AVAILABLE_HANDLES_MARKER = "Available handles:"
@@ -194,6 +198,13 @@ def append_available_mention_handles(
     )
 
 
+class ParticipantAddStatus(StrEnum):
+    """What ``band_add_participant`` did: added them, or found them present."""
+
+    ADDED = "added"
+    ALREADY_IN_ROOM = "already_in_room"
+
+
 class ParticipantAddResult(TypedDict):
     """``band_add_participant``'s result shape -- one definition shared by
     ``AgentTools`` and ``FakeAgentTools`` so the two can't drift apart."""
@@ -201,7 +212,8 @@ class ParticipantAddResult(TypedDict):
     id: str
     name: str
     role: str
-    status: Literal["already_in_room", "added"]
+    # A ParticipantAddStatus value; plain, since adapters render the result as text.
+    status: str
 
 
 class ParticipantRemoveResult(TypedDict):
@@ -643,7 +655,7 @@ class AgentTools(AgentToolsProtocol):
                     "id": cached_id,
                     "name": cached.get("name", identifier),
                     "role": role,
-                    "status": "already_in_room",
+                    "status": ParticipantAddStatus.ALREADY_IN_ROOM.value,
                 }
 
         # Look up participant by identifier (paginates through all peers)
@@ -692,7 +704,7 @@ class AgentTools(AgentToolsProtocol):
             "id": participant_id,
             "name": participant_name,
             "role": role,
-            "status": "added",
+            "status": ParticipantAddStatus.ADDED.value,
         }
 
     async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
@@ -1820,7 +1832,7 @@ class AgentTools(AgentToolsProtocol):
             # to avoid listing the handles twice.
             raise BandToolError(
                 append_mention_handles_hint(
-                    "At least one mention is required",
+                    MISSING_MENTIONS_ERROR,
                     self.available_mention_handles(),
                 )
             )
