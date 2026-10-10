@@ -23,7 +23,7 @@ from band.client.streaming import ControlMode, DeliveryStatus
 from band.core.exceptions import RoomExecutionStoppedError
 from band.platform.link import BandLink
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import BacklogProcessResult, ExecutionContext
+from band.runtime.execution import BacklogProcessResult, ExecutionContext, ResyncOutcome
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
@@ -306,7 +306,7 @@ class TestStopRoomResumeRoom:
         ctx._stopped = False
         ok = await ctx._resync_pending_messages()
 
-        assert ok is True
+        assert ok is ResyncOutcome.WORK
         assert handler.completed == ["replayed-1"]
 
     async def test_stop_does_not_poison_retry_budget(self, mock_link):
@@ -414,7 +414,7 @@ class TestBacklogInterrupt:
         ctx.stop_room()
         result = await asyncio.wait_for(resync_task, timeout=5)
 
-        assert result is True
+        assert result is ResyncOutcome.STOPPED
         # The adapter must not run a second time on the very next /next poll.
         assert handler.invoked == ["loop1"]
         mock_link.mark_processed.assert_not_awaited()

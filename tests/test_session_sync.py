@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.platform.event import ReconnectedEvent
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.types import PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
@@ -321,24 +321,21 @@ class TestReconnectSync:
     @pytest.mark.asyncio
     async def test_reconnected_event_is_enqueued_for_serialized_sync(self, ctx):
         """Reconnect events should be serialized through the room queue."""
-        ctx._synchronize_with_next = AsyncMock()
-
         await ctx.on_event(ReconnectedEvent())
 
-        assert ctx._reconnect_sync_requested is True
         queued = ctx.queue.get_nowait()
-        assert isinstance(queued, ReconnectedEvent)
+        assert isinstance(queued, ResyncRequest)
+        ctx._handler_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_reconnected_event_runs_sync_when_processed(self, ctx):
+    async def test_reconnected_event_runs_sync_when_processed(self, ctx, mock_link):
         """Queued reconnect events should run sync inside the execution loop."""
-        ctx._synchronize_with_next = AsyncMock()
-        ctx._reconnect_sync_requested = True
+        mock_link.get_next_message.side_effect = [make_message("reconnected"), None]
 
         await ctx._process_event(ReconnectedEvent())
 
-        ctx._synchronize_with_next.assert_awaited_once_with()
-        assert ctx._reconnect_sync_requested is False
+        assert ctx.claims.completed_ids(ctx.room_id) == ["reconnected"]
+        ctx._handler_mock.assert_awaited_once()
 
 
 class TestCrashRecovery:

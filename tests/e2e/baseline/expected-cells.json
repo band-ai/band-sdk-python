@@ -1267,6 +1267,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_resync.py::test_missed_message_push_recovers_through_rest",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_events.py::test_event_emitted[error]",
       "adapter": "suite",
       "lanes": [
@@ -1422,6 +1431,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_memory.py::test_memory_subject_scope_inferred",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_known_stop_recovers_without_play_push",
       "adapter": "suite",
       "lanes": [
         "core"
