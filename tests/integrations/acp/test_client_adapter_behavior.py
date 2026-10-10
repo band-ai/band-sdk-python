@@ -1352,7 +1352,8 @@ async def test_released_room_reloads_its_session_without_replay() -> None:
         "the released session must be reloaded, not replaced"
     )
     assert REPLAY_HEADER_LINE not in agent.prompt_texts()[-1]
-    assert reply.texts == ["Blue."]
+    assert reply.texts == []
+    assert reply.thoughts == ["Blue."]
 
 
 @pytest.mark.asyncio
