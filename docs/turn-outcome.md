@@ -291,3 +291,23 @@ answer through Band tools: `A2AAdapter`, `A2AGatewayAdapter`,
 `CrewAIFlowAdapter`, `BandACPServerAdapter`, `ParlantAdapter` (its engine owns
 its replies) and a LangGraph adapter built from a static `graph=` (it never
 gets Band tools). Synthetic contact-hub turns are never judged.
+
+## Platform execution refusals
+
+Recovery selects work through `/next`, including unfinished processing messages.
+A refused processing mark never invokes the adapter. Stopped message/event writes
+abort their originating execution scope, prevent further posts from that scope,
+and leave unfinished work actionable. The refusal does not permanently pause the
+room: later `/next` reconciliation can recover after PLAY without its push signal.
+Scope identity and control revision prevent delayed responses from cancelling
+newer work or invoking an outdated adapter interrupt hook.
+
+Once the handler completes, its delivery is `ACK_PENDING` until the platform
+accepts completion. A stopped refusal retains that marker and retries only the
+acknowledgement, without replaying handler effects or charging the acknowledgement
+retry budget. This protects the running process; it does not provide exactly-once
+side effects across process restarts. Ordinary acknowledgement failures retain
+the existing retry policy.
+
+One-shot invocations also require accepted claims and completion. They raise on
+refusal instead of returning `DONE`; a drain records only accepted messages.

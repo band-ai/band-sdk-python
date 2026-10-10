@@ -74,6 +74,17 @@ class ProviderRunError(BandError):
         self.code = code
 
 
+class RoomExecutionStoppedError(BandError):
+    """The platform refused a claim, acknowledgement, or post while stopped.
+
+    The refusal describes that request, not the room's current execution state.
+    """
+
+    def __init__(self, room_id: str) -> None:
+        super().__init__(f"Room {room_id}: platform execution was stopped")
+        self.room_id = room_id
+
+
 def _levenshtein(a: str, b: str) -> int:
     """Iterative Levenshtein distance. Pure Python, no dependencies."""
     if a == b:

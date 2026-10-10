@@ -20,10 +20,20 @@ import asyncio
 
 import pytest
 
+from band.client.rest import (
+    ChatEventRequest,
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
+)
+from band.client.streaming import ControlMode
+from band.core.exceptions import RoomExecutionStoppedError
 from band.platform.link import BandLink
+from band.platform.posting import post_event, post_message
 from band.runtime.types import PlatformMessage
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.control import running_control_runtime
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -86,3 +96,76 @@ async def test_next_includes_processing_messages(
         "would silently DROP the stopped message. The cross-system invariant in "
         "ExecutionContext._abort_cycle is broken."
     )
+
+
+@lane(Lane.CORE)
+async def test_stopped_restart_recovers_without_play_push(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    baseline_settings: BaselineSettings,
+    reply_capture: CaptureFactory,
+) -> None:
+    agent = await resource_manager.provision_agent("stoppedrestart")
+    room_id = await resource_manager.provision_room(participants=[agent.id])
+    timeout = baseline_settings.e2e_timeout
+    async with running_control_runtime(
+        agent, room_id, baseline_settings, user_ops
+    ) as first:
+        mid = await user_ops.send_message(
+            room_id, "recover this", mention_id=agent.id, mention_name=agent.name
+        )
+        await first.wait_for_start(deadline_s=timeout)
+        assert first.invoked_message_ids == [mid]
+
+    # The first helper's teardown resumes the room; STOP must follow it.
+    await user_ops.stop_agent(room_id)
+    link = BandLink(
+        agent_id=agent.id,
+        api_key=agent.api_key,
+        rest_url=baseline_settings.endpoints.rest_url,
+    )
+    try:
+        for mark in (link.mark_processing, link.mark_processed):
+            with pytest.raises(RoomExecutionStoppedError):
+                await mark(room_id, mid)
+        with pytest.raises(RoomExecutionStoppedError):
+            await link.mark_failed(room_id, mid, "probe")
+        assert await link.get_next_message(room_id) is None
+        with pytest.raises(RoomExecutionStoppedError):
+            await post_message(
+                rest=link.rest,
+                room_id=room_id,
+                request=ChatMessageRequest(
+                    content="blocked",
+                    mentions=[
+                        ChatMessageRequestMentionsItem(id=await user_ops.whoami())
+                    ],
+                ),
+            )
+        with pytest.raises(RoomExecutionStoppedError):
+            await post_event(
+                rest=link.rest,
+                room_id=room_id,
+                request=ChatEventRequest(content="blocked", message_type="thought"),
+            )
+        async with (
+            reply_capture(room_id) as capture,
+            running_control_runtime(
+                agent,
+                room_id,
+                baseline_settings,
+                user_ops,
+                block_cycles=0,
+                forwarded_control_modes=frozenset(
+                    {ControlMode.STOP, ControlMode.INTERRUPT}
+                ),
+            ) as restarted,
+        ):
+            await restarted.wait_for_startup_sync(deadline_s=timeout)
+            assert restarted.invoked_message_ids == []
+            await user_ops.play_agent(room_id)
+            await capture.wait_for_processed(mid, agent.id)
+            assert restarted.completed_message_ids == [mid]
+    finally:
+        await user_ops.play_agent(room_id)
+        await link.disconnect()
