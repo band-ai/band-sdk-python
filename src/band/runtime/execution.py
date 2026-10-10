@@ -2071,7 +2071,13 @@ class ExecutionContext:
         """Leave an unaccepted turn retryable without spending its failure budget."""
         self._retry_tracker.discard_attempt(msg_id)
         logger.info("Deferring message %s in room %s: %s", msg_id, self.room_id, error)
-        if not await self.link.mark_failed(self.room_id, msg_id, _error_label(error)):
+        try:
+            deferred = await self.link.mark_failed(
+                self.room_id, msg_id, _error_label(error)
+            )
+        except RoomExecutionStoppedError:
+            return
+        if not deferred:
             logger.warning(
                 "ExecutionContext %s: Failed to defer message %s",
                 self.room_id,
@@ -2153,6 +2159,8 @@ class ExecutionContext:
             return True
 
         if not await self._begin_scope():
+            if not msg_id:
+                raise TurnDeferred("previous turn cleanup is still running")
             return False
 
         self._set_state(ExecutionState.PROCESSING)

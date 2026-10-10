@@ -24,7 +24,11 @@ from band.runtime.cycle import TurnScope
 from band.runtime.execution import BacklogProcessResult, ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import PlatformMessage, SessionConfig
-from tests.conftest import BlockingHandler, make_message_event
+from tests.conftest import (
+    BlockingHandler,
+    make_message_event,
+    make_participant_added_event,
+)
 from tests.runtime.helpers import LifecyclePlatform, rest_client_over
 
 
@@ -1112,6 +1116,184 @@ async def test_detached_stop_hook_does_not_await_its_posting_task(mock_link) -> 
         await provider
     await cleanup.wait()
     assert await ctx._process_event(make_message_event(msg_id="after"))
+
+
+async def test_stopped_busy_deferral_keeps_room_loop_and_delivery_retryable(
+    mock_link: Any,
+) -> None:
+    sync_started = asyncio.Event()
+    failure_entered = asyncio.Event()
+    release_failure = asyncio.Event()
+    failure_refused = asyncio.Event()
+    fresh_acked = asyncio.Event()
+    accepted: list[str] = []
+    processed: set[str] = set()
+    provider_busy = True
+    replay_available = False
+    deferred_message = _backlog_message("busy-deferred")
+
+    async def get_next(room_id: str) -> PlatformMessage | None:
+        sync_started.set()
+        if replay_available and deferred_message.id not in processed:
+            return deferred_message
+        return None
+
+    async def refuse_failure(room_id: str, msg_id: str, error: str) -> bool:
+        failure_entered.set()
+        await release_failure.wait()
+        failure_refused.set()
+        raise RoomExecutionStoppedError(room_id)
+
+    async def acknowledge(room_id: str, msg_id: str) -> bool:
+        processed.add(msg_id)
+        if msg_id == "fresh-after-deferral":
+            fresh_acked.set()
+        return True
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        if event.payload.id == deferred_message.id and provider_busy:
+            raise TurnDeferred("provider session is busy")
+        accepted.append(event.payload.id)
+
+    mock_link.get_next_message.side_effect = get_next
+    mock_link.mark_failed.side_effect = refuse_failure
+    mock_link.mark_processed.side_effect = acknowledge
+    ctx = ExecutionContext(
+        "room-123",
+        mock_link,
+        handler,
+        agent_id="agent-123",
+        config=SessionConfig(enable_working_state=False),
+    )
+    await ctx.start()
+    try:
+        async with asyncio.timeout(2):
+            await sync_started.wait()
+            await ctx.on_event(make_message_event(msg_id=deferred_message.id))
+            await failure_entered.wait()
+            release_failure.set()
+            await failure_refused.wait()
+
+            assert ctx._process_loop_task is not None
+            assert not ctx._process_loop_task.done()
+            assert not ctx.is_stopped
+
+            # REST redelivery must remain retryable beyond the failure budget.
+            for _ in range(ctx.config.max_message_retries + 1):
+                assert (
+                    await ctx._process_backlog_message(deferred_message)
+                    == BacklogProcessResult.RETRY_LATER
+                )
+            assert accepted == []
+            mock_link.mark_processed.assert_not_awaited()
+            assert not ctx.claims.is_ack_pending(ctx.room_id, deferred_message.id)
+            assert not ctx.claims.is_completed(ctx.room_id, deferred_message.id)
+
+            provider_busy = False
+            replay_available = True
+            await ctx.request_resync()
+            await ctx.on_event(make_message_event(msg_id="fresh-after-deferral"))
+            await fresh_acked.wait()
+            assert accepted == ["busy-deferred", "fresh-after-deferral"]
+            assert processed == {"busy-deferred", "fresh-after-deferral"}
+            assert not ctx.is_stopped
+            assert not ctx._process_loop_task.done()
+    finally:
+        release_failure.set()
+        await ctx.stop()
+
+
+@pytest.mark.parametrize("local_kind", ["contact-hub", "participant-added"])
+async def test_local_queue_waits_for_stop_observer_cleanup_without_replay(
+    mock_link: Any, monkeypatch: pytest.MonkeyPatch, local_kind: str
+) -> None:
+    observer_entered = asyncio.Event()
+    release_observer = asyncio.Event()
+    local_blocked = asyncio.Event()
+    release_local_result = asyncio.Event()
+    later_acked = asyncio.Event()
+    executed: list[str] = []
+
+    async def observer(ctx: ExecutionContext, scope: TurnScope) -> None:
+        observer_entered.set()
+        await release_observer.wait()
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        if event.payload.id == "stop-before-local":
+            await AgentTools.from_context(ctx).send_event("stopped", "thought")
+            return
+        executed.append(event.payload.id)
+
+    async def acknowledge(room_id: str, msg_id: str) -> bool:
+        if msg_id == "after-local":
+            later_acked.set()
+        return True
+
+    mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
+        side_effect=RoomExecutionStoppedError("room-123")
+    )
+    mock_link.mark_processed.side_effect = acknowledge
+    ctx = ExecutionContext(
+        "room-123",
+        mock_link,
+        handler,
+        agent_id="agent-123",
+        on_platform_stop=observer,
+        config=SessionConfig(enable_working_state=False, idle_resync_seconds=0.01),
+    )
+    if local_kind == "contact-hub":
+        local_event = make_message_event(
+            msg_id="local-contact",
+            sender_id="contact-events",
+            sender_type="System",
+        )
+        local_event.raw = {"contact_event_type": "contact_request_received"}
+        local_id = "local-contact"
+    else:
+        local_event = make_participant_added_event(participant_id="local-participant")
+        local_id = "local-participant"
+
+    process_event = ctx._process_event
+
+    async def observe_local_attempt(event: Any) -> bool:
+        try:
+            return await process_event(event)
+        finally:
+            if event is local_event and not release_observer.is_set():
+                local_blocked.set()
+                # Keep the next queued event from racing the observer release.
+                await release_local_result.wait()
+
+    monkeypatch.setattr(ctx, "_process_event", observe_local_attempt)
+    monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0)
+    try:
+        async with asyncio.timeout(2):
+            assert not await ctx._process_event(
+                make_message_event(msg_id="stop-before-local")
+            )
+            await observer_entered.wait()
+            assert ctx.current_scope is not None
+            observer_task = ctx.current_scope.observer_task
+            assert observer_task is not None
+
+            await ctx.start()
+            await ctx.on_event(local_event)
+            await ctx.on_event(make_message_event(msg_id="after-local"))
+            await local_blocked.wait()
+            assert executed == []
+            assert not observer_task.done()
+
+            release_observer.set()
+            await observer_task
+            release_local_result.set()
+            await later_acked.wait()
+            assert executed == [local_id, "after-local"]
+            mock_link.mark_processed.assert_awaited_once_with(ctx.room_id, "after-local")
+            mock_link.mark_failed.assert_not_awaited()
+    finally:
+        release_observer.set()
+        release_local_result.set()
+        await ctx.stop()
 
 
 async def test_pending_stop_cleanup_defers_claims_with_bounded_wait(
