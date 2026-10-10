@@ -13,7 +13,7 @@ from typing import TypeVar
 
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
-from band_rest.types.chat_message_metadata import ChatMessageMetadata
+from band_rest.types.chat_message import ChatMessage
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
@@ -49,9 +49,18 @@ def _accepted_response(
     return data
 
 
-def _message_metadata(metadata: ChatMessageMetadata | None) -> dict[str, object]:
-    """Normalize a Fern-typed message metadata into the plain dict PlatformMessage carries."""
-    return metadata_to_dict(metadata, exclude_none=True)
+def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
+    return PlatformMessage(
+        id=item.id,
+        room_id=item.chat_room_id or room_id,
+        content=item.content,
+        sender_id=item.sender_id,
+        sender_type=item.sender_type,
+        sender_name=item.sender_name or "",
+        message_type=item.message_type,
+        metadata=metadata_to_dict(item.metadata, exclude_none=True),
+        created_at=item.inserted_at or datetime.now(UTC),
+    )
 
 
 class MessageLifecycle:
@@ -222,18 +231,7 @@ class MessageLifecycle:
         )
         if response.status_code == HTTPStatus.NO_CONTENT:
             return None
-        item = _accepted_response(response).data
-        return PlatformMessage(
-            id=item.id,
-            room_id=item.chat_room_id or room_id,
-            content=item.content,
-            sender_id=item.sender_id,
-            sender_type=item.sender_type,
-            sender_name=item.sender_name or "",
-            message_type=item.message_type,
-            metadata=_message_metadata(item.metadata),
-            created_at=item.inserted_at or datetime.now(UTC),
-        )
+        return _platform_message(_accepted_response(response).data, room_id)
 
     async def get_stale_processing_messages(
         self, rest: AsyncRestClient, room_id: str
@@ -255,19 +253,7 @@ class MessageLifecycle:
                     request_options=DEFAULT_REQUEST_OPTIONS,
                 )
                 for item in response.data:
-                    messages.append(
-                        PlatformMessage(
-                            id=item.id,
-                            room_id=item.chat_room_id or room_id,
-                            content=item.content,
-                            sender_id=item.sender_id,
-                            sender_type=item.sender_type,
-                            sender_name=item.sender_name or "",
-                            message_type=item.message_type,
-                            metadata=_message_metadata(item.metadata),
-                            created_at=item.inserted_at or datetime.now(UTC),
-                        )
-                    )
+                    messages.append(_platform_message(item, room_id))
 
                 total_pages = response.metadata.total_pages
                 if total_pages is None or page >= total_pages:
