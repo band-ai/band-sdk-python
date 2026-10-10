@@ -853,9 +853,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         ) or self._session_ids.get(room_id)
 
         try:
-            client = await self._room_session(
-                room_id, stored_session_id, tools, msg.id
-            )
+            client = await self._room_session(room_id, stored_session_id, tools, msg.id)
         except ClaudeSessionManagerStoppedError:
             raise
         except BaseException:
@@ -1021,8 +1019,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
     def _holds_room_continuity(self, room_id: str) -> bool:
-        """Whether the room still has a live session, a released session to
-        resume, or replay memory not yet delivered to a fresh session."""
+        """Whether the room still owns workspace, session, or replay state."""
+        if self._workspaces is not None and room_id in self._workspaces.rooms:
+            return True
         if self._session_manager is not None and self._session_manager.has_session(
             room_id
         ):
