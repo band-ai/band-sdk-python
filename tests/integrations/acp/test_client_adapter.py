@@ -24,7 +24,11 @@ from pydantic import ValidationError
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.exceptions import BandConfigError
-from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnDeferred,
+)
 from band.core.types import Capability, Emit
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import (
@@ -806,6 +810,185 @@ class TestACPClientAdapterOnMessage:
         assert len(failures) == 1
         assert failures[0]["provider"] == "acp"
         assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_session_busy_retries_without_replacing_the_runtime(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        runtime = self._runtime(adapter_with_mocks)
+        conn = runtime._conn
+        prompts: list[str] = []
+        prompt_times: list[float] = []
+
+        async def reject_then_reply(*, session_id: str, prompt: object) -> None:
+            prompts.append(session_id)
+            prompt_times.append(asyncio.get_running_loop().time())
+            if len(prompts) == 1:
+                raise RequestError(
+                    -32003, "Session is busy", {"reason": "session_busy"}
+                )
+            await runtime._client.session_update(
+                session_id, update_agent_message_text("Recovered reply")
+            )
+
+        conn.prompt = AsyncMock(side_effect=reject_then_reply)
+        tools = FakeAgentTools()
+
+        await adapter_with_mocks.on_message(
+            make_platform_message("Hello", room_id=_MOCK_ROOM),
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id=_MOCK_ROOM,
+        )
+
+        assert [event["content"] for event in events_of_type(tools, "thought")] == [
+            "Recovered reply"
+        ]
+        assert reported_failures(tools) == []
+        assert prompts == ["acp-session-123", "acp-session-123"]
+        assert prompt_times[1] - prompt_times[0] >= 0.01
+        assert adapter_with_mocks._runtimes[_MOCK_ROOM] is runtime
+        assert (
+            adapter_with_mocks._room_to_session[_MOCK_ROOM].session_id
+            == "acp-session-123"
+        )
+        assert runtime._conn is conn
+        conn.cancel.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_persistent_session_busy_is_bounded_and_preserves_the_session(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        adapter_with_mocks.config = adapter_with_mocks.config.model_copy(
+            update={"turn_timeout_s": 0.06}
+        )
+        runtime = self._runtime(adapter_with_mocks)
+        conn = runtime._conn
+        conn.prompt = AsyncMock(
+            side_effect=RequestError(
+                -32003, "Session is busy", {"reason": "session_busy"}
+            )
+        )
+        tools = FakeAgentTools()
+        started = asyncio.get_running_loop().time()
+
+        with pytest.raises(TurnDeferred):
+            await adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id=_MOCK_ROOM),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id=_MOCK_ROOM,
+            )
+
+        elapsed = asyncio.get_running_loop().time() - started
+        assert 0.04 <= elapsed < 1.0
+        assert 1 <= conn.prompt.await_count <= 5
+        assert reported_failures(tools) == []
+        assert tools.messages_sent == []
+        assert tools.events_sent == []
+        assert adapter_with_mocks._runtimes[_MOCK_ROOM] is runtime
+        assert runtime._conn is conn
+        assert (
+            adapter_with_mocks._room_to_session[_MOCK_ROOM].session_id
+            == "acp-session-123"
+        )
+        conn.cancel.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_while_session_busy_does_not_cancel_remote_work(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        rejected = asyncio.Event()
+        runtime = self._runtime(adapter_with_mocks)
+        conn = runtime._conn
+
+        async def reject_prompt(**_: object) -> None:
+            rejected.set()
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+
+        conn.prompt = AsyncMock(side_effect=reject_prompt)
+        tools = FakeAgentTools()
+        turn = asyncio.create_task(
+            adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id=_MOCK_ROOM),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id=_MOCK_ROOM,
+            )
+        )
+        await rejected.wait()
+        await asyncio.sleep(0.01)
+        turn.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        assert adapter_with_mocks._runtimes[_MOCK_ROOM] is runtime
+        assert runtime._conn is conn
+        conn.cancel.assert_not_awaited()
+        assert reported_failures(tools) == []
+        assert tools.events_sent == []
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RequestError(-32603, "Session is busy", {"reason": "session_busy"}),
+            RequestError(-32003, "Session is busy"),
+            RequestError(-32003, "Session is busy", "session_busy"),
+            RequestError(-32003, "Session is busy", [{"reason": "session_busy"}]),
+            RequestError(-32003, "Session is busy", {"reason": "other"}),
+            RequestError(-32003, "Session is busy", {}),
+            RuntimeError("session_busy"),
+            ConnectionError("prompt response lost"),
+        ],
+        ids=[
+            "legacy-internal-error",
+            "no-data",
+            "string-data",
+            "list-data",
+            "different-reason",
+            "missing-reason",
+            "not-request-error",
+            "unknown-acceptance",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_session_busy_guard_does_not_replay_ordinary_failures(
+        self, adapter_with_mocks: ACPClientAdapter, error: Exception
+    ) -> None:
+        if isinstance(error, RuntimeError):
+            error.code = -32003
+            error.data = {"reason": "session_busy"}
+        runtime = self._runtime(adapter_with_mocks)
+        conn = runtime._conn
+        conn.prompt = AsyncMock(side_effect=error)
+        tools = FakeAgentTools()
+
+        with pytest.raises(type(error)) as raised:
+            await adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id=_MOCK_ROOM),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id=_MOCK_ROOM,
+            )
+
+        assert raised.value is error
+        conn.prompt.assert_awaited_once()
+        assert runtime._conn is None
+        assert _MOCK_ROOM not in adapter_with_mocks._runtimes
+        assert len(reported_failures(tools)) == 1
 
     @pytest.mark.asyncio
     async def test_prompt_timeout_error_is_not_reported_as_adapter_timeout(

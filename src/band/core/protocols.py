@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
@@ -71,6 +72,22 @@ class FailureMetadataKey(StrEnum):
     """Room metadata key used by the shared failure event contract."""
 
     FAILURE = "failure"
+
+
+class TurnDeferredCancellation(asyncio.CancelledError):
+    """Cancellation reached a turn proven unaccepted by its provider.
+
+    External cancellation still propagates as cancellation. A runtime-owned
+    watchdog may instead retain the delivery for retry.
+    """
+
+
+class TurnDeferred(Exception):
+    """The turn was not accepted and is safe to retry later.
+
+    Delivery remains actionable without consuming the ordinary failure budget
+    or reporting a terminal failure to the room.
+    """
 
 
 class TurnResultAlreadyReported(Exception):

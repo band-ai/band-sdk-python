@@ -17,15 +17,18 @@ from __future__ import annotations
 import asyncio
 import re
 from typing import Any
+from unittest.mock import AsyncMock
 from urllib.parse import urlsplit
 
 import pytest
 from acp import RequestError
+from acp.helpers import start_tool_call, update_tool_call
 from pydantic import BaseModel
 
 from band.adapters.copilot_acp import CopilotACPAdapter
 from band.adapters.cursor_acp import CursorACPAdapter
 from band.adapters.omp_acp import OmpACPAdapter
+from band.core.protocols import TurnDeferred
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
@@ -36,9 +39,13 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.mcp import BandMCPBackendStoppedError
+from band.platform.event import MessageEvent
+from band.runtime.execution import BacklogProcessResult, ExecutionContext
 from band.runtime.formatters import build_participants_message
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, TURN_COMPLETION_GUIDANCE
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
+from band.runtime.types import SessionConfig
+from tests.conftest import make_message_event
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
@@ -53,6 +60,7 @@ from tests.mcpclient import (
     endpoint_path,
     tool_arguments,
 )
+from tests.runtime.conftest import make_link_mock, platform_msg
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -118,6 +126,201 @@ async def test_agent_message_relayed_as_room_message(fake_agent) -> None:
     assert reply.texts == []
     assert reply.thoughts == ["The weather is sunny."]
     assert len(fake_agent.prompts) == 1  # the prompt really round-tripped to the agent
+
+
+@pytest.mark.asyncio
+async def test_session_busy_recovers_over_the_acp_wire_without_a_new_session(
+    fake_agent: FakeACPAgent,
+) -> None:
+    @fake_agent.on_prompt
+    async def reject_then_reply(agent: FakeACPAgent, session_id: str) -> None:
+        if len(agent.prompts) == 1:
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        await agent.say(session_id, "Recovered over ACP.")
+
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?", room="room-1")
+        original_session = session.session_id("room-1")
+        followup = await session.send("another question?", room="room-1")
+
+        assert session.session_id("room-1") == original_session
+        assert fake_agent.session_ids() == [original_session]
+
+    assert reply.thoughts == ["Recovered over ACP."]
+    assert reply.errors == []
+    assert followup.thoughts == ["Recovered over ACP."]
+    assert followup.errors == []
+    assert len(fake_agent.prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_rejected_attempt_cannot_suppress_accepted_reply(fake_agent) -> None:
+    @fake_agent.on_prompt
+    async def reject_then_reply(agent: FakeACPAgent, session_id: str) -> None:
+        if len(agent.prompts) == 1:
+            await agent.emit(
+                session_id,
+                start_tool_call("autonomous", "band_send_message"),
+            )
+            await agent.emit(
+                session_id,
+                update_tool_call("autonomous", status="completed", raw_output="sent"),
+            )
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        await agent.say(session_id, "The accepted turn's answer.")
+
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?", room="room-1")
+
+    assert reply.thoughts == ["The accepted turn's answer."]
+    assert reply.errors == []
+
+
+@pytest.mark.asyncio
+async def test_synthetic_contact_delivery_survives_busy_deferral(fake_agent) -> None:
+    busy = True
+    deferred = asyncio.Event()
+    delivered = asyncio.Event()
+
+    @fake_agent.on_prompt
+    async def reject_while_busy(agent: FakeACPAgent, session_id: str) -> None:
+        if busy:
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        await agent.say(session_id, "Contact update handled.")
+
+    link = make_link_mock()
+    link.get_stale_processing_messages = AsyncMock(return_value=[])
+    async with acp_adapter(
+        fake_agent, config=fake_agent_config(turn_timeout_s=0.03)
+    ) as session:
+
+        async def deliver(ctx, event):
+            try:
+                await session.send(event.payload.content, room=ctx.room_id)
+            except TurnDeferred:
+                deferred.set()
+                raise
+            delivered.set()
+
+        ctx = ExecutionContext(
+            "room-1",
+            link,
+            deliver,
+            agent_id="agent-1",
+            config=SessionConfig(
+                idle_resync_seconds=0.01,
+                enable_context_hydration=False,
+                enable_working_state=False,
+            ),
+        )
+        await ctx.start()
+        try:
+            await ctx.on_event(
+                make_message_event(
+                    room_id="room-1",
+                    msg_id="local-contact",
+                    sender_id="contact-events",
+                    sender_type="System",
+                )
+            )
+            async with asyncio.timeout(1):
+                await deferred.wait()
+                busy = False
+                await delivered.wait()
+            assert session.last_reply.thoughts == ["Contact update handled."]
+            assert session.last_reply.errors == []
+            link.mark_processing.assert_not_awaited()
+            link.mark_processed.assert_not_awaited()
+            link.mark_failed.assert_not_awaited()
+        finally:
+            await ctx.stop(timeout=0)
+
+
+@pytest.mark.parametrize("path", ["websocket", "backlog"])
+@pytest.mark.parametrize(
+    "max_cycle_seconds", [None, 0.2], ids=["adapter-deadline", "runtime-deadline"]
+)
+@pytest.mark.asyncio
+async def test_persistent_session_busy_defers_delivery_without_exhausting_retries(
+    fake_agent: FakeACPAgent, path: str, max_cycle_seconds: float | None
+) -> None:
+    busy = True
+
+    @fake_agent.on_prompt
+    async def reject_while_busy(agent: FakeACPAgent, session_id: str) -> None:
+        if busy:
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        await agent.say(session_id, "Delivery recovered.")
+
+    link = make_link_mock()
+    link.mark_processing.return_value = True
+    link.mark_processed.return_value = True
+    link.mark_failed.return_value = True
+    room_events = AsyncMock()
+    link.rest.agent_api_events.create_agent_chat_event = room_events
+    msg = platform_msg("busy-message")
+    event = make_message_event(room_id="room-1", msg_id=msg.id, sender_id="user-1")
+
+    # Keep the runtime watchdog inside the busy backoff window: it must fire
+    # after the session_busy rejection lands (else the in-flight cancel is
+    # misread as a turn timeout) and before the 250ms backoff ends, and stay
+    # tighter than the adapter turn timeout so it remains the binding
+    # deadline. The adapter-deadline variant keeps the 100ms turn timeout.
+    turn_timeout_s = 0.4 if max_cycle_seconds is not None else 0.1
+    async with acp_adapter(
+        fake_agent, config=fake_agent_config(turn_timeout_s=turn_timeout_s)
+    ) as session:
+
+        async def deliver(ctx: ExecutionContext, event: MessageEvent) -> None:
+            await session.send(event.payload.content, room=ctx.room_id)
+
+        ctx = ExecutionContext(
+            "room-1",
+            link,
+            deliver,
+            agent_id="agent-1",
+            config=SessionConfig(
+                max_message_retries=1,
+                max_cycle_seconds=max_cycle_seconds,
+                enable_context_hydration=False,
+                enable_working_state=False,
+            ),
+        )
+
+        async def process() -> bool | BacklogProcessResult:
+            if path == "websocket":
+                return await ctx._process_event(event)
+            return await ctx._process_backlog_message(msg)
+
+        for _ in range(3):
+            result = await process()
+            if path == "websocket":
+                assert result is False
+            else:
+                assert result is BacklogProcessResult.RETRY_LATER
+            assert session.last_reply.outline == []
+            assert not ctx.claims.is_completed(ctx.room_id, msg.id)
+            assert not ctx.claims.is_ack_pending(ctx.room_id, msg.id)
+            assert not ctx._retry_tracker.is_permanently_failed(msg.id)
+
+        assert link.mark_failed.await_count == 3
+        link.mark_processed.assert_not_awaited()
+        room_events.assert_not_awaited()
+        original_session = session.session_id("room-1")
+
+        busy = False
+        recovered = await process()
+
+        if path == "websocket":
+            assert recovered is True
+        else:
+            assert recovered is BacklogProcessResult.ADVANCED
+        assert session.last_reply.thoughts == ["Delivery recovered."]
+        assert session.last_reply.errors == []
+        assert ctx.claims.is_completed(ctx.room_id, msg.id)
+        link.mark_processed.assert_awaited_once_with("room-1", msg.id)
+        assert fake_agent.session_ids() == [original_session]
+        room_events.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -871,6 +1074,69 @@ def rehydration_history(
         room_to_session={room: session} if session else {},
         replay_messages=list(lines),
     )
+
+
+@pytest.mark.parametrize("restored", [False, True], ids=["fresh", "restored"])
+@pytest.mark.asyncio
+async def test_first_session_busy_deferral_preserves_bootstrap_context(
+    restored: bool,
+) -> None:
+    busy = True
+    agent = FakeACPAgent(supports_session_load=True)
+    persisted_session = "restored-session" if restored else None
+    if persisted_session is not None:
+        agent.knows_session(persisted_session)
+    history = rehydration_history(
+        "[Marco]: The deploy code is 7421.", session=persisted_session
+    )
+    transcript = [
+        {
+            "id": "earlier-message",
+            "message_type": "text",
+            "sender_id": "user-marco",
+            "sender_type": "User",
+            "sender_name": "Marco",
+            "content": "The deploy code is 7421.",
+        }
+    ]
+
+    @agent.on_prompt
+    async def reject_while_busy(fake: FakeACPAgent, session_id: str) -> None:
+        if busy:
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        await fake.say(session_id, "7421.")
+
+    async with acp_adapter(
+        agent, config=fake_agent_config(turn_timeout_s=0.1)
+    ) as session:
+        with pytest.raises(TurnDeferred):
+            await session.send(
+                "What is the deploy code?", bootstrap=True, history=history
+            )
+        assert session.last_reply.outline == []
+        original_session = session.session_id("room-1")
+
+        busy = False
+        reply = await session.send("What is the deploy code?", room_context=transcript)
+        await session.send("Another question?")
+        assert session.session_id("room-1") == original_session
+
+    rejected, accepted, followup = agent.prompt_texts()
+    assert "[System Context]" in rejected
+    assert "[System Context]" in accepted
+    assert "Current chat_id: room-1" in accepted
+    assert closes_the_prompt(accepted, live_line("What is the deploy code?"))
+    if restored:
+        assert REPLAY_HEADER_LINE not in accepted
+        assert "[Marco]: The deploy code is 7421." not in accepted
+    else:
+        assert REPLAY_HEADER_LINE in accepted
+        assert "[Marco]: The deploy code is 7421." in accepted
+        assert accepted.index("[System Context]") < replay_boundary(accepted)
+    assert "[System Context]" not in followup
+    assert REPLAY_HEADER_LINE not in followup
+    assert reply.thoughts == ["7421."]
+    assert reply.errors == []
 
 
 @pytest.mark.asyncio

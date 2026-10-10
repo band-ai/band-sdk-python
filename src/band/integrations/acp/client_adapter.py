@@ -46,6 +46,8 @@ from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
+    TurnDeferred,
+    TurnDeferredCancellation,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -197,6 +199,8 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
+SESSION_BUSY_BACKOFF_SECONDS = 0.25
+SESSION_BUSY_MAX_BACKOFF_SECONDS = 5.0
 
 
 class SessionCloseReason(StrEnum):
@@ -428,6 +432,7 @@ class ACPClientAdapter(
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._bootstrapped_sessions: set[str] = set()
+        self._restored_sessions: set[tuple[str, str]] = set()
         self._session_lock = asyncio.Lock()
 
     @property
@@ -652,14 +657,14 @@ class ACPClientAdapter(
                 await self.on_cleanup(room_id, expected_runtime=runtime)
             await self._report_config_error(tools, error)
             return
-        runtime.reset_session(session_id)
 
-        # A just-created session holds no remote context (a restored one does),
-        # so seed it with the Band room's transcript. On bootstrap the converter
-        # carried it; a session minted later (the previous runtime was torn down
-        # mid-run) re-fetches it.
+        # A fresh session still owes its transcript after a busy deferral;
+        # a restored session already holds that history remotely.
         replay: list[str] | None = None
-        if created:
+        if created or (
+            session_id not in self._bootstrapped_sessions
+            and (room_id, session_id) not in self._restored_sessions
+        ):
             replay = (
                 history.replay_messages
                 if is_session_bootstrap
@@ -681,61 +686,96 @@ class ACPClientAdapter(
         # __aexit__ emits the held thought (unless the turn replied) and the session
         # bookkeeping event; on failure it posts nothing and the error is handled
         # below.
+        deadline = asyncio.get_running_loop().time() + self.config.turn_timeout_s
+        prompt_may_be_running = False
+        busy_backoff = SESSION_BUSY_BACKOFF_SECONDS
+        turn_deadline: asyncio.Timeout | None = None
         try:
-            async with RoomTurnEmitter(
-                tools,
-                session_id=session_id,
-                room_id=room_id,
-                emit=self.features.emit,
-                # Injected Band tools record their own effects in process.
-                records_tool_effects=not self.config.inject_band_tools,
-            ) as emitter:
-                self._install_turn_handlers(
-                    runtime,
-                    emitter=emitter,
-                    room_id=room_id,
-                    session_id=session_id,
-                )
-                turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
-                try:
-                    async with turn_deadline:
-                        await runtime.prompt(
+            try:
+                while True:
+                    runtime.reset_session(session_id)
+                    turn_deadline = asyncio.timeout_at(deadline)
+                    try:
+                        async with RoomTurnEmitter(
+                            tools,
                             session_id=session_id,
-                            prompt_text=prompt_text,
-                            on_chunk=emitter.emit,
-                        )
-                except asyncio.CancelledError:
-                    # Cancelling the local request leaves the agent running the
-                    # prompt; it only stops on session/cancel.
-                    await self._await_shielded(
-                        asyncio.create_task(
-                            self._cancel_agent_turn(
-                                runtime, room_id=room_id, session_id=session_id
-                            )
-                        )
-                    )
-                    raise
-                except TimeoutError:
-                    if not turn_deadline.expired():
-                        raise
-                    await self._await_shielded(
-                        asyncio.create_task(
-                            self._handle_turn_timeout(
+                            room_id=room_id,
+                            emit=self.features.emit,
+                            # Injected Band tools record their own effects in process.
+                            records_tool_effects=not self.config.inject_band_tools,
+                        ) as emitter:
+                            self._install_turn_handlers(
                                 runtime,
+                                emitter=emitter,
                                 room_id=room_id,
                                 session_id=session_id,
-                                tools=tools,
                             )
+                            async with turn_deadline:
+                                # A structured rejection is the only proof
+                                # that this prompt owns no remote work.
+                                prompt_may_be_running = True
+                                await runtime.prompt(
+                                    session_id=session_id,
+                                    prompt_text=prompt_text,
+                                    on_chunk=emitter.emit,
+                                )
+                                self._bootstrapped_sessions.add(session_id)
+                        break
+                    except RequestError as error:
+                        if not (
+                            error.code == -32003
+                            and isinstance(error.data, dict)
+                            and error.data.get("reason") == "session_busy"
+                        ):
+                            raise
+                        # The rejected emitter must close unsuccessfully before
+                        # another attempt can collect or settle this delivery.
+                        prompt_may_be_running = False
+                        turn_deadline = asyncio.timeout_at(deadline)
+                        async with turn_deadline:
+                            await asyncio.sleep(busy_backoff)
+                        busy_backoff = min(
+                            busy_backoff * 2, SESSION_BUSY_MAX_BACKOFF_SECONDS
+                        )
+            except asyncio.CancelledError:
+                # Cancelling a rejected prompt would stop its autonomous owner.
+                if not prompt_may_be_running:
+                    raise TurnDeferredCancellation(
+                        "ACP session is busy; delivery deferred"
+                    ) from None
+                await self._await_shielded(
+                    asyncio.create_task(
+                        self._cancel_agent_turn(
+                            runtime, room_id=room_id, session_id=session_id
                         )
                     )
-                    raise ACPTurnTimeoutError(
-                        f"ACP turn timed out after {self.config.turn_timeout_s}s"
+                )
+                raise
+            except TimeoutError:
+                if turn_deadline is None or not turn_deadline.expired():
+                    raise
+                if not prompt_may_be_running:
+                    raise TurnDeferred(
+                        "ACP session is busy; delivery deferred"
                     ) from None
+                await self._await_shielded(
+                    asyncio.create_task(
+                        self._handle_turn_timeout(
+                            runtime,
+                            room_id=room_id,
+                            session_id=session_id,
+                            tools=tools,
+                        )
+                    )
+                )
+                raise ACPTurnTimeoutError(
+                    f"ACP turn timed out after {self.config.turn_timeout_s}s"
+                ) from None
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
             reraise_delivery_cause(e)
-        except ACPTurnTimeoutError:
+        except (ACPTurnTimeoutError, TurnDeferred):
             raise
         except Exception as e:
             logger.exception("ACP agent error")
@@ -1168,6 +1208,7 @@ class ACPClientAdapter(
         await self._record_session(
             room_id, RoomSession(session_id=session_id, band_url=mcp.band_url)
         )
+        self._restored_sessions.add((room_id, session_id))
         logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
         return session_id
 
@@ -1406,22 +1447,6 @@ class ACPClientAdapter(
             )
         )
 
-    def _claim_session_bootstrap(self, session_id: str) -> bool:
-        """True exactly once per session — the caller owns the bootstrap prompt.
-
-        Lock-free: the check-and-add runs without an ``await``, so the event
-        loop's run-to-completion makes it atomic. ``on_cleanup``,
-        ``cleanup_all`` and ``_get_or_create_session`` mutate this same set
-        under ``_session_lock`` instead — also safe today for the same
-        no-``await``-in-between reason, not because of the lock. Adding an
-        ``await`` before any of these mutations would need a real lock added
-        back everywhere ``_bootstrapped_sessions`` is touched.
-        """
-        if session_id in self._bootstrapped_sessions:
-            return False
-        self._bootstrapped_sessions.add(session_id)
-        return True
-
     def _system_update_sections(
         self, participants_msg: str | None, contacts_msg: str | None
     ) -> list[str]:
@@ -1456,16 +1481,16 @@ class ACPClientAdapter(
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
     ) -> str:
-        """Add room context, and the transcript replay if one is due, on the
-        first prompt sent to an ACP session. The current message always comes
-        last, so the model answers it rather than the replayed history."""
+        """Add room context, and any owed transcript replay, until the first
+        prompt completes. The current message always comes last, so the model
+        answers it rather than the replayed history."""
         # Attributed like history lines ([sender]: content), so in a multi-party
         # room the model always knows who is speaking now and, on replay turns,
         # where the transcript ends and the live message begins.
         live_message = msg.format_for_llm()
         system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        if not self._claim_session_bootstrap(session_id):
+        if session_id in self._bootstrapped_sessions:
             return "\n\n".join([*system_updates, live_message])
 
         sections = [self._build_system_context(room_id, msg), *system_updates]
@@ -1495,6 +1520,7 @@ class ACPClientAdapter(
             self._room_tools.pop(room_id, None)
             if session is not None:
                 self._bootstrapped_sessions.discard(session.session_id)
+                self._restored_sessions.discard((room_id, session.session_id))
             runtime = self._runtimes.pop(room_id, None)
             self._workspaces.release(room_id)
 
@@ -1533,6 +1559,7 @@ class ACPClientAdapter(
             self._room_to_session.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
+            self._restored_sessions.clear()
             runtimes = list(self._runtimes.values())
             self._runtimes.clear()
             for room_id in self._workspaces.rooms:
@@ -1565,13 +1592,12 @@ class ACPClientAdapter(
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
     ) -> list[str] | None:
-        """The room transcript for a session created off-bootstrap.
+        """The room transcript for a fresh, not-yet-bootstrapped session.
 
         The runtime hands history to the adapter only on session bootstrap;
-        when a session is minted later (the previous runtime was torn down
-        mid-run), the transcript is re-fetched so the fresh session does not
-        start amnesiac. Entries from the trigger onward are excluded: they are
-        this turn and pending turns of their own.
+        a later-created session or a deferred first prompt must re-fetch it.
+        Entries from the trigger onward are excluded: they are this turn and
+        pending turns of their own.
         """
         try:
             context = await tools.fetch_room_context(room_id=msg.room_id)

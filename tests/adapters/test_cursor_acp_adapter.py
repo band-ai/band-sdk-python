@@ -1249,7 +1249,7 @@ async def test_a_cleanup_cancelled_mid_stop_still_releases_the_session() -> None
         cleanup = asyncio.create_task(adapter.on_cleanup("room-1"))
         await exiting.received.wait()
 
-        assert adapter._claim_session_bootstrap(released)
+        assert released not in adapter._bootstrapped_sessions
         cleanup.cancel()
         await asyncio.gather(cleanup, return_exceptions=True)
         assert released not in adapter._cursor_profile._todos_by_session
