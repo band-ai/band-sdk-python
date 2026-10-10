@@ -7,7 +7,8 @@ import json
 import logging
 import time as _time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -41,6 +42,8 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
+from band.core.exceptions import BandConnectionError
+from band.core.harness import PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -3925,3 +3928,65 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return model_id, []
         return model_id, self._supported_efforts(result, model_id)
+
+    async def preflight(self) -> PreflightResult:
+        """Launch a throwaway app-server, handshake, check its login, close it."""
+        return await preflight(self.config)
+
+
+@asynccontextmanager
+async def _probe_client(config: CodexAdapterConfig) -> AsyncIterator[CodexStdioClient]:
+    """A throwaway, initialized app-server that no room owns.
+
+    Runs with the configured command and environment but no room workspace,
+    and is closed on every exit path, cancellation included.
+    """
+    client = CodexStdioClient(command=config.codex_command, env=config.codex_env)
+    try:
+        await client.connect()
+        await client.initialize(
+            client_name=config.client_name,
+            client_title=config.client_title,
+            client_version=config.client_version,
+            experimental_api=config.experimental_api,
+        )
+        yield client
+    finally:
+        await client.close()
+
+
+async def preflight(config: CodexAdapterConfig) -> PreflightResult:
+    """Launch, handshake, and check the login of a throwaway Codex app-server."""
+    try:
+        async with _probe_client(config) as client:
+            return await _login_state(client)
+    except BandConnectionError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            return PreflightResult.failed(
+                str(exc),
+                "Install Codex (`npm install -g @openai/codex`) or set "
+                "CodexAdapterConfig.codex_command.",
+            )
+        return _handshake_failed(exc)
+    except Exception as exc:  # noqa: BLE001 -- any launch/handshake failure is the probe's answer, not a crash
+        return _handshake_failed(exc)
+
+
+def _handshake_failed(exc: Exception) -> PreflightResult:
+    return PreflightResult.failed(
+        f"Codex app-server did not complete its handshake: {exc}",
+        "Run `codex app-server` in a terminal to check the install, then retry.",
+    )
+
+
+async def _login_state(client: CodexStdioClient) -> PreflightResult:
+    """``account/read`` reports a missing login; a harness without it is not judged."""
+    try:
+        account = await client.request("account/read", {})
+    except CodexJsonRpcError:
+        return PreflightResult.passed()
+    if account.get("account") is None and account.get("requiresOpenaiAuth"):
+        return PreflightResult.failed(
+            "Codex is not logged in.", "Run `codex login`, then retry."
+        )
+    return PreflightResult.passed()
