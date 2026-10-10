@@ -113,6 +113,17 @@ failure fails that room turn visibly instead of falling back.
   `OmpACPAdapterConfig.model` is passed as OMP's `--model` flag; OMP does not read an
   `OMP_MODEL` env variable. Set `api_key` with it and the adapter passes the key in the env
   variable that model's provider needs.
+  On the first prompt sent to each new or restored session, the adapter adds
+  background-work guidance alongside `custom_section`: continue independent
+  work while jobs run, then use OMP's
+  native `wait` when blocked on required work instead of ending the ACP prompt
+  for a later automatic wakeup. A partial wakeup is not completion; failed jobs
+  are reported through `band_send_message`, and `band_no_reply` never means
+  "still waiting". Unrelated long-lived services do not prevent completion.
+  This is an instruction-based mitigation, not an async lifecycle barrier:
+  it requires the model to follow the guidance and does not change OMP,
+  `turn_timeout_s`, cancellation, or missing-reply detection. Without `wait`,
+  required work should run in the foreground.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
