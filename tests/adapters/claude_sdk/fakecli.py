@@ -73,8 +73,8 @@ class StreamFails:
 
 @dataclass
 class Hold:
-    """Parks the turn at this step: ``async with hold`` waits for the turn to
-    reach it and lets the turn continue on exit."""
+    """Parks a step of the fake CLI, a turn's or the process's exit:
+    ``async with hold`` waits for it to be reached and lets it continue on exit."""
 
     reached: asyncio.Event = field(default_factory=asyncio.Event)
     released: asyncio.Event = field(default_factory=asyncio.Event)
@@ -117,6 +117,7 @@ class FakeClaude:
         # neither stops nor ends.
         self.ignore_interrupt = False
         self.errors: list[BaseException] = []
+        # A CLI slow to exit: close() parks on it.
         self.closing: Hold | None = None
         self.refuse_close = False
 
