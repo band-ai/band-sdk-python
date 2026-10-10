@@ -369,12 +369,13 @@ async def test_requests_during_reconciliation_are_not_lost(
     gate = ResponseGate(peer, "/next")
     async with rest_client_over(gate.answer) as rest:
         ctx.link.rest = rest
+        requested_at = asyncio.get_running_loop().time()
         await ctx.request_resync()
         await gate.entered.wait()
         await ctx.request_resync()
         gate.release.set()
         await wait_for_condition(lambda: len(peer.next_reads) == 3)
-    assert peer.next_reads == pytest.approx([0, 0.01, 0.01])
+    assert peer.next_reads == pytest.approx([0, requested_at, requested_at])
 
 
 @pytest.mark.looptime
