@@ -18,7 +18,7 @@ from pydantic import Field, JsonValue, field_validator, model_validator
 from typing_extensions import Unpack
 
 from band.core.model_catalog import ModelSelection
-from band.core.types import FeatureKwargs
+from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -51,6 +51,7 @@ from band.integrations.omp import (
     validate_omp_command,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.tools.types import BandTool
 from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,28 @@ logger = logging.getLogger(__name__)
 _OMP_FORM_CAPABILITIES = ClientCapabilities(
     elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities())
 )
+
+_OMP_BACKGROUND_WORK_GUIDANCE = f"""## OMP background work in Band
+
+Background jobs are allowed. Continue independent work while they run.
+When blocked on background work you started that is required for the current
+request, call OMP's native `wait` tool rather than ending the turn with plain
+text. This applies even if a background-launch result suggests ending your
+reply to await an automatic wakeup: ending the ACP prompt can close the Band
+turn before the required result arrives.
+
+A `wait` call can wake for a message, an interrupt, or a still-running snapshot.
+Honor cancellation and steering. If the request remains active and required
+work is still pending, continue applicable work or call `wait` again when
+blocked. Wait only on work you started, not merely on another agent or an
+unrelated long-lived service. If `wait` is unavailable, run required work in
+the foreground.
+
+Do not call `{BandTool.NO_REPLY}` to mean "waiting" or "will answer later".
+Deliver the completed answer, or the actual failure, through
+`{BandTool.SEND_MESSAGE}`. A progress message does not complete a request whose
+required work is still pending. Once all required work and Band actions are
+complete, end with brief plain text without sending a duplicate reply."""
 
 
 class OmpACPCollectingClient(ACPCollectingClient):
@@ -181,6 +204,10 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
         """OMP gets ``config.model`` as a launch flag, so only the effort is
         selected per session."""
         return super().model_selection.model_copy(update={"model": None})
+
+    def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
+        context = super()._build_system_context(room_id, msg)
+        return f"{context}\n\n{_OMP_BACKGROUND_WORK_GUIDANCE}"
 
     def _credential_env(self) -> dict[str, str]:
         if self.config.api_key is None or self.config.model is None:
