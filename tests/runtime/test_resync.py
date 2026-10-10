@@ -345,6 +345,21 @@ async def test_unchanged_completed_head_defers_without_spinning(
 
 
 @pytest.mark.looptime
+async def test_stopped_probe_keeps_pause_on_nonrunnable_head(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    ctx.claims.remember_completed(ROOM_ID, "stuck")
+    peer.add_message("stuck")
+    ctx.stop_room()
+    peer.stopped = True
+    outcome = await ctx._wait_until_resync_complete()
+    assert outcome is ResyncOutcome.STOPPED
+    assert ctx.is_stopped
+    assert invoked == []
+
+
+@pytest.mark.looptime
 async def test_requests_during_reconciliation_are_not_lost(
     reconciled_room: ReconciledRoom,
 ) -> None:

@@ -1200,6 +1200,8 @@ class ExecutionContext:
                     return ResyncOutcome.BLOCKED
                 if candidate is None:
                     return ResyncOutcome.STOPPED
+                if self._backlog_is_nonrunnable(candidate):
+                    return ResyncOutcome.STOPPED
                 self._resume_room()
                 revision = self._control_revision
 
