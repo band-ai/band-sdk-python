@@ -24,6 +24,7 @@ from band.runtime.execution import (
     Execution,
     ExecutionContext,
     ExecutionState,
+    ResyncOutcome,
     _error_label,
 )
 from band.runtime.tools import AgentTools
@@ -1715,7 +1716,7 @@ class TestCrashRecoverySync:
 
         synchronized = await ctx._resync_pending_messages()
 
-        assert synchronized is False
+        assert synchronized is ResyncOutcome.RETRY
         mock_link_with_next.get_next_message.assert_awaited_once()
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-resync-claim-fails"

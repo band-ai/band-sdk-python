@@ -139,6 +139,7 @@ class LifecyclePlatform:
         self.requested_marks: list[tuple[str, str]] = []
         self.posts: list[str] = []
         self.processing_list_reads = 0
+        self.next_reads: list[float] = []
 
     def add_message(self, message_id: str) -> None:
         self.messages.append(
@@ -165,6 +166,7 @@ class LifecyclePlatform:
                 200, json={"data": self.messages, "metadata": {"total_pages": 1}}
             )
         if tail == "next":
+            self.next_reads.append(asyncio.get_running_loop().time())
             if self.stopped or not self.messages:
                 return httpx.Response(204)
             return httpx.Response(200, json={"data": self.messages[0]})
@@ -243,3 +245,20 @@ class ClaimGate:
                 self.peer.requested_marks.append((self.message_id, "processing"))
                 return self.response
         return self.peer.answer(request)
+
+
+class ResponseGate:
+    """Hold a real HTTP response across an execution control boundary."""
+
+    def __init__(self, peer: LifecyclePlatform, suffix: str) -> None:
+        self.peer = peer
+        self.suffix = suffix
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        response = self.peer.answer(request)
+        if request.url.path.endswith(self.suffix):
+            self.entered.set()
+            await self.release.wait()
+        return response

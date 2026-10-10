@@ -8,7 +8,11 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import band.runtime
-from band.client.streaming import AgentControlPayload, ControlMode
+from band.client.streaming import (
+    AgentControlPayload,
+    ControlMode,
+    MessageCreatedPayload,
+)
 from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
@@ -29,7 +33,9 @@ class ControlRuntime:
     replayed work completes. This makes STOP -> PLAY observable without an LLM.
     """
 
-    def __init__(self, *, block_cycles: int = 1) -> None:
+    def __init__(
+        self, *, block_cycles: int = 1, withheld_message_marker: str | None = None
+    ) -> None:
         self._block_cycles = block_cycles
         self._invocations = 0
         self.started = asyncio.Event()
@@ -38,6 +44,20 @@ class ControlRuntime:
         self.cancelled = asyncio.Event()
         self.received_control_modes: list[ControlMode] = []
         self.completed_message_ids: list[str] = []
+        self.withheld_message_marker = withheld_message_marker
+        self.withheld_message_ids: list[str] = []
+        self.message_withheld = asyncio.Event()
+        self.control_received = asyncio.Event()
+
+    async def wait_for_withheld_message(self, *, deadline_s: float) -> None:
+        async with asyncio.timeout(deadline_s):
+            await self.message_withheld.wait()
+
+    async def wait_for_control(self, mode: ControlMode, *, deadline_s: float) -> None:
+        async with asyncio.timeout(deadline_s):
+            while mode not in self.received_control_modes:
+                self.control_received.clear()
+                await self.control_received.wait()
 
     async def on_execute(self, _ctx: ExecutionContext, event: PlatformEvent) -> None:
         self._invocations += 1
@@ -139,6 +159,26 @@ class ObservedExecution(ExecutionContext):
         return synced
 
 
+class ControlLink(BandLink):
+    """Withhold a selected push while keeping the real transports active."""
+
+    control: ControlRuntime
+    control_room_id: str
+
+    async def _on_message_created(
+        self, room_id: str, payload: MessageCreatedPayload
+    ) -> None:
+        if (
+            room_id == self.control_room_id
+            and self.control.withheld_message_marker is not None
+            and self.control.withheld_message_marker in payload.content
+        ):
+            self.control.withheld_message_ids.append(payload.id)
+            self.control.message_withheld.set()
+            return
+        await super()._on_message_created(room_id, payload)
+
+
 @asynccontextmanager
 async def running_control_runtime(
     agent: ProvisionedAgent,
@@ -151,16 +191,18 @@ async def running_control_runtime(
     forwarded_control_modes: frozenset[ControlMode] = frozenset(ControlMode),
 ) -> AsyncGenerator[ControlRuntime, None]:
     """Run one controlled agent and leave its room playable on teardown."""
-    link = BandLink(
+    if control is None:
+        control = ControlRuntime(block_cycles=block_cycles)
+    link = ControlLink(
         agent_id=agent.id,
         api_key=agent.api_key,
         ws_url=settings.endpoints.ws_url,
         rest_url=settings.endpoints.rest_url,
     )
+    link.control = control
+    link.control_room_id = room_id
     # The SDK control path's DEBUG lines explain a failing control test.
     with sdk_logs_at(band.runtime, logging.DEBUG):
-        if control is None:
-            control = ControlRuntime(block_cycles=block_cycles)
 
         def execution_factory(
             room: str, link: BandLink, *, hub_room_id: str | None = None
@@ -169,7 +211,7 @@ async def running_control_runtime(
                 room,
                 link,
                 control.on_execute,
-                config=SessionConfig(idle_resync_seconds=1),
+                config=SessionConfig(idle_resync_seconds=1, idle_resync_max_seconds=2),
                 agent_id=agent.id,
                 hub_room_id=hub_room_id,
             )
@@ -187,6 +229,7 @@ async def running_control_runtime(
 
         async def record_control(payload: AgentControlPayload) -> None:
             control.received_control_modes.append(payload.mode)
+            control.control_received.set()
             if payload.mode in forwarded_control_modes:
                 await runtime.handle_control(payload)
 

@@ -62,6 +62,7 @@ from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
+from band.runtime.resync import ResyncSchedule
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import (
     ConversationContext,
@@ -90,11 +91,7 @@ def _log_turn_error(error: Exception, message: str, *args: object) -> None:
 
 
 class ResyncRequest:
-    """Sentinel pushed into the execution queue to trigger an immediate /next resync.
-
-    Used by request_resync() so a reconnect signal wakes the Phase 2 loop
-    without waiting for the idle-timeout to expire.
-    """
+    """Request reconciliation at the next serial queue boundary."""
 
     type: str = "_resync"  # Matches the .type attribute pattern of PlatformEvent
 
@@ -102,6 +99,14 @@ class ResyncRequest:
 class BacklogProcessResult(Enum):
     ADVANCED = "advanced"
     RETRY_LATER = "retry_later"
+
+
+class ResyncOutcome(Enum):
+    EMPTY = "empty"
+    WORK = "work"
+    BLOCKED = "blocked"
+    RETRY = "retry"
+    STOPPED = "stopped"
 
 
 class ExecutionState(StrEnum):
@@ -337,7 +342,12 @@ class ExecutionContext:
 
         # Pending system messages to inject (e.g., contact broadcasts)
         self._pending_system_messages: list[str] = []
-        self._reconnect_sync_requested = False
+        self._pending_resync: ResyncRequest | None = None
+        self._resync_schedule = ResyncSchedule(
+            self.config.idle_resync_seconds, self.config.idle_resync_max_seconds
+        )
+        self._resync_handled_work = False
+        self._queue_wait: asyncio.Timeout | None = None
 
         # Per-cycle interrupt. The reasoning cycle runs as a child
         # task so a control signal can abort just this turn without killing the
@@ -366,11 +376,8 @@ class ExecutionContext:
         # Cleared in the per-message ``finally``.
         self._turn_failure_reported: bool = False
 
-        # Durable stop (play to resume). Trigger suppression is
-        # platform-authoritative (dispatch gated server-side, persists across
-        # reconnect); this flag is a PURE LOCAL EFFICIENCY CACHE — it pauses
-        # idle /next polling and short-circuits WS triggers while stopped to
-        # avoid /next->204 and mark->204/reply->403 churn. Not persisted.
+        # Received STOP suppresses local triggers. Base-interval probes discover
+        # a missed PLAY; platform claims remain authoritative.
         self._stopped: bool = False
 
         # Optional seam for clearing user-visible activity state ("reasoning…")
@@ -476,6 +483,8 @@ class ExecutionContext:
         """Retry durable processed ack for a locally completed message."""
         if not self.claims.is_ack_pending(self.room_id, message_id):
             return False
+        if self._stopped:
+            return False
 
         try:
             durable_processed = await self.link.mark_processed(self.room_id, message_id)
@@ -486,6 +495,8 @@ class ExecutionContext:
             self.claims.remember_completed(self.room_id, message_id)
             return True
 
+        if self._stopped:
+            return False
         retries = self.claims.record_ack_retry(self.room_id, message_id)
         if retries >= self._retry_tracker.max_retries:
             logger.warning(
@@ -632,15 +643,7 @@ class ExecutionContext:
                 "ExecutionContext %s: Reconnected, scheduling synchronization",
                 self.room_id,
             )
-            if self._reconnect_sync_requested:
-                logger.debug(
-                    "ExecutionContext %s: Reconnect sync already pending",
-                    self.room_id,
-                )
-                return
-            self._reconnect_sync_requested = True
-            self.queue.put_nowait(event)
-            logger.debug("Event %s enqueued for room %s", event.type, self.room_id)
+            await self.request_resync()
             return
 
         # Track first WebSocket message ID for sync point
@@ -654,14 +657,11 @@ class ExecutionContext:
         logger.debug("Event %s enqueued for room %s", event.type, self.room_id)
 
     async def request_resync(self) -> None:
-        """
-        Signal the process loop to re-poll /next immediately.
-
-        Pushes a sentinel into the event queue so the Phase 2 loop wakes up
-        and runs a /next catch-up without waiting for the idle timeout. Called
-        by AgentRuntime after WebSocket reconnect.
-        """
-        self.queue.put_nowait(ResyncRequest())  # type: ignore[arg-type]  # Sentinel is intentionally not a PlatformEvent.
+        """Queue an immediate /next reconciliation, coalescing pending requests."""
+        if self._pending_resync is not None:
+            return
+        self._pending_resync = ResyncRequest()
+        self.queue.put_nowait(self._pending_resync)  # type: ignore[arg-type]  # The sentinel only wakes this loop.
         logger.debug("ExecutionContext %s: Resync sentinel enqueued", self.room_id)
 
     def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
@@ -723,28 +723,27 @@ class ExecutionContext:
         return False
 
     def stop_room(self) -> None:
-        """Durable stop for this room: abort the in-flight cycle and
-        go quiet until a play signal.
-
-        The platform is authoritative on trigger suppression; ``_stopped`` is a
-        local efficiency cache only (pause idle /next polling, short-circuit WS
-        triggers). Called from the receive task — surface stays flag + cancel.
-        Leaves any in-flight message in 'processing' so the platform replays it
-        via /next on play.
-        """
+        """Pause triggers and abort the cycle, leaving it actionable for PLAY."""
         self._stopped = True
+        self._reset_resync_interval()
         self.interrupt(kind=ControlMode.STOP)
 
     async def resume_room(self) -> None:
-        """Resume a stopped room (play): clear the local stop flag and catch up
-        rehydration-style via /next, so callouts made while stopped are seen.
+        """Clear the local pause and request immediate reconciliation."""
+        self._resume_room()
+        await self.request_resync()
 
-        Clears ``_stopped`` BEFORE enqueuing the resync sentinel so the loop
-        does not skip the catch-up it just requested.
-        """
+    def _resume_room(self) -> None:
         self._control_revision += 1
         self._stopped = False
-        await self.request_resync()
+        self._reset_resync_interval()
+
+    def _reset_resync_interval(self) -> None:
+        if self._resync_schedule.due_at is None:
+            return
+        self._resync_schedule.reset(asyncio.get_running_loop().time())
+        if self._queue_wait is not None and not self._queue_wait.expired():
+            self._queue_wait.reschedule(self._resync_schedule.due_at)
 
     def owns_scope(self, scope: TurnScope) -> bool:
         return (
@@ -1124,18 +1123,7 @@ class ExecutionContext:
     # --- Internal processing ---
 
     async def _process_loop(self) -> None:
-        """
-        Main processing loop for this room.
-
-        SYNCHRONIZATION FLOW:
-        1. Call /next to get unprocessed messages from backend
-        2. For each /next message, check if it matches WebSocket queue head
-        3. If match → synchronized! Process once, then switch to WebSocket only
-        4. If no match → process /next message, repeat
-        5. After sync, process only from WebSocket queue
-
-        Uses asyncio cancellation for shutdown.
-        """
+        """Synchronize startup, then serialize queued events and due recovery."""
         try:
             # Phase 1: Sync via /next until we catch up with WebSocket.
             # If a pending message cannot be claimed yet, stay in startup sync
@@ -1150,58 +1138,29 @@ class ExecutionContext:
                 self.room_id,
             )
 
-            # Phase 2: Process from WebSocket queue, with idle-timeout resync safety net
+            loop = asyncio.get_running_loop()
+            self._resync_schedule.start(loop.time())
             while True:
-                logger.debug(
-                    "ExecutionContext %s: Waiting for next event (queue size=%d)",
-                    self.room_id,
-                    self.queue.qsize(),
-                )
+                deadline = self._resync_schedule.due_at
+                if deadline is not None and deadline <= loop.time():
+                    await self._reconcile()
+                    continue
                 try:
-                    # asyncio.timeout() (not wait_for): wait_for wraps the
-                    # awaitable in a child task, and on Python 3.11 cancelling
-                    # this loop while it is parked there can be lost — the cancel
-                    # is recorded but never delivered, wedging shutdown (a routine
-                    # race on the Windows Proactor loop). asyncio.timeout() arms a
-                    # timer on the current task instead, so an external cancel
-                    # propagates directly into `queue.get()`.
-                    async with asyncio.timeout(self.config.idle_resync_seconds):
+                    # Keep cancellation on the owner task so shutdown cannot
+                    # be lost in a child queue-wait task on Windows.
+                    async with asyncio.timeout_at(deadline) as self._queue_wait:
                         event = await self.queue.get()
                 except TimeoutError:
-                    if self._stopped:
-                        # Efficiency: a stopped room would only get /next->204.
-                        logger.debug(
-                            "ExecutionContext %s: stopped, skipping idle /next poll",
-                            self.room_id,
-                        )
-                        continue
-                    logger.debug(
-                        "ExecutionContext %s: Idle for %ss, re-polling /next",
-                        self.room_id,
-                        self.config.idle_resync_seconds,
-                    )
-                    await self._wait_until_resync_complete()
                     continue
+                finally:
+                    self._queue_wait = None
 
                 if isinstance(event, ResyncRequest):
-                    if self._stopped:
-                        # resume_room() clears _stopped before enqueuing its
-                        # sentinel, so a sentinel seen while stopped is a stale
-                        # reconnect resync — platform gate keeps us quiet anyway.
-                        logger.debug(
-                            "ExecutionContext %s: stopped, ignoring resync sentinel",
-                            self.room_id,
-                        )
-                        continue
-                    logger.debug(
-                        "ExecutionContext %s: Resync requested (post-reconnect)",
-                        self.room_id,
-                    )
-                    await self._wait_until_resync_complete()
+                    if event is self._pending_resync:
+                        await self._reconcile()
                     continue
-
                 if await self._process_event(event) is False:
-                    await self._wait_until_resync_complete()
+                    await self._reconcile()
 
         except asyncio.CancelledError:
             logger.debug("ExecutionContext %s cancelled", self.room_id)
@@ -1216,14 +1175,45 @@ class ExecutionContext:
                 return False
         return True
 
-    async def _wait_until_resync_complete(self) -> None:
-        """Retry pending acks and /next resync without running newer queued events."""
+    async def _reconcile(self) -> None:
+        # Requests received after this pass starts retain their own sentinel.
+        self._pending_resync = None
+        outcome = await self._wait_until_resync_complete()
+        self._resync_schedule.complete(
+            asyncio.get_running_loop().time(),
+            empty=outcome is ResyncOutcome.EMPTY and not self._stopped,
+        )
+
+    async def _wait_until_resync_complete(self) -> ResyncOutcome:
+        """Preserve recovery ordering while allowing stopped-room discovery."""
+        handled_work = False
         while True:
-            if (
-                await self._retry_pending_processed_acks()
-                and await self._resync_pending_messages()
-            ):
-                return
+            candidate: PlatformMessage | None = None
+            revision = self._control_revision
+            if self._stopped:
+                try:
+                    candidate = await self._get_next_message()
+                except Exception:
+                    logger.exception("Stopped-room probe failed for %s", self.room_id)
+                    return ResyncOutcome.RETRY
+                if revision != self._control_revision:
+                    return ResyncOutcome.BLOCKED
+                if candidate is None:
+                    return ResyncOutcome.STOPPED
+                self._resume_room()
+                revision = self._control_revision
+
+            if await self._retry_pending_processed_acks():
+                if revision != self._control_revision:
+                    return ResyncOutcome.BLOCKED
+                outcome = await self._resync_pending_messages(candidate)
+                handled_work = handled_work or self._resync_handled_work
+                if outcome is not ResyncOutcome.RETRY:
+                    if outcome is ResyncOutcome.EMPTY and handled_work:
+                        return ResyncOutcome.WORK
+                    return outcome
+            if self._stopped:
+                return ResyncOutcome.STOPPED
             self._set_state(ExecutionState.IDLE)
             await asyncio.sleep(self.config.idle_resync_seconds)
 
@@ -1239,9 +1229,20 @@ class ExecutionContext:
             "ExecutionContext %s: Starting /next synchronization", self.room_id
         )
 
+        previous_id: str | None = None
         try:
-            while True:  # Cancellation handles exit
+            while True:
+                revision = self._control_revision
                 next_msg = await self._get_next_message()
+                if revision != self._control_revision:
+                    return self._stopped
+                if (
+                    next_msg is not None
+                    and next_msg.id == previous_id
+                    and self._backlog_is_nonrunnable(next_msg)
+                ):
+                    break
+                previous_id = next_msg.id if next_msg is not None else None
 
                 if next_msg is None:
                     logger.debug(
@@ -1259,30 +1260,25 @@ class ExecutionContext:
                     )
                     break
 
-                if next_msg.id == self._first_ws_msg_id:
-                    logger.info(
-                        "ExecutionContext %s: Sync point reached at message %s",
-                        self.room_id,
-                        next_msg.id,
-                    )
-                    result = await self._process_backlog_message(next_msg)
-                    if result == BacklogProcessResult.ADVANCED:
-                        # Remove all WS copies of the sync-point message while
-                        # preserving the relative order of other queued events.
-                        self._drain_duplicate_from_queue(next_msg.id)
-                        self._first_ws_msg_id = None  # Clear marker
-                        self._sync_complete = True
-                        return True
-                    return False
-
-                logger.debug(
-                    "ExecutionContext %s: Processing backlog message %s",
-                    self.room_id,
-                    next_msg.id,
+                at_sync_point = next_msg.id == self._first_ws_msg_id
+                level = logging.INFO if at_sync_point else logging.DEBUG
+                message = (
+                    "ExecutionContext %s: Sync point reached at message %s"
+                    if at_sync_point
+                    else "ExecutionContext %s: Processing backlog message %s"
                 )
-                result = await self._process_backlog_message(next_msg)
-                if result == BacklogProcessResult.RETRY_LATER:
+                logger.log(level, message, self.room_id, next_msg.id)
+                result = await self._process_backlog_message(
+                    next_msg, revision=revision
+                )
+                if result is BacklogProcessResult.RETRY_LATER:
                     return False
+                if at_sync_point:
+                    # Preserve other queued events when removing the sync point.
+                    self._drain_duplicate_from_queue(next_msg.id)
+                    self._first_ws_msg_id = None
+                    self._sync_complete = True
+                    return True
 
                 if self._stopped:
                     # A stop control signal landed mid-cycle: the message was
@@ -1323,88 +1319,64 @@ class ExecutionContext:
         """
         return await self.link.get_next_message(self.room_id)
 
-    async def _resync_pending_messages(self) -> bool:
-        """
-        Poll /next to catch up on messages missed while idle or disconnected.
-
-        Runs the same REST catch-up loop as startup sync but without the
-        WebSocket sync-point marker. Called:
-        - After idle timeout in Phase 2 (platform may have missed a push)
-        - After WebSocket reconnect (messages arrived during downtime)
-        """
-        logger.debug(
-            "ExecutionContext %s: Re-polling /next for missed messages", self.room_id
-        )
-        caught_up = 0
+    async def _resync_pending_messages(
+        self, candidate: PlatformMessage | None = None
+    ) -> ResyncOutcome:
+        """Drain actionable work, distinguishing empty from blocked recovery."""
+        self._resync_handled_work = False
+        previous_id: str | None = None
         try:
             while True:
-                next_msg = await self._get_next_message()
+                revision = self._control_revision
+                next_msg = candidate
+                candidate = None
                 if next_msg is None:
-                    break
-
-                if self._retry_tracker.is_permanently_failed(next_msg.id):
-                    logger.warning(
-                        "ExecutionContext %s: Skipping permanently failed message %s during resync",
-                        self.room_id,
-                        next_msg.id,
+                    next_msg = await self._get_next_message()
+                if revision != self._control_revision:
+                    return ResyncOutcome.BLOCKED
+                if next_msg is None:
+                    return (
+                        ResyncOutcome.WORK
+                        if self._resync_handled_work
+                        else ResyncOutcome.EMPTY
                     )
-                    break
-
-                logger.info(
-                    "ExecutionContext %s: Catching up missed message %s via /next resync",
-                    self.room_id,
-                    next_msg.id,
+                if (
+                    next_msg.id == previous_id
+                    and self._backlog_is_nonrunnable(next_msg)
+                ) or self._retry_tracker.is_permanently_failed(next_msg.id):
+                    return ResyncOutcome.BLOCKED
+                previous_id = next_msg.id
+                result = await self._process_backlog_message(
+                    next_msg, revision=revision
                 )
-                result = await self._process_backlog_message(next_msg)
-                if result == BacklogProcessResult.RETRY_LATER:
-                    return False
-
-                caught_up += 1
-
-                if caught_up % 100 == 0:
-                    logger.info(
-                        "ExecutionContext %s: Still catching up, %d messages processed so far",
-                        self.room_id,
-                        caught_up,
-                    )
-
                 if self._stopped:
-                    # See the matching guard in _synchronize_with_next: a stop
-                    # mid-cycle leaves the message 'processing' for replay, and
-                    # /next would just hand it straight back next iteration.
-                    logger.debug(
-                        "ExecutionContext %s: stopped mid-resync, pausing "
-                        "/next polling",
-                        self.room_id,
-                    )
-                    break
-
-                if self._retry_tracker.is_permanently_failed(next_msg.id):
-                    break
-
+                    return ResyncOutcome.STOPPED
+                if revision != self._control_revision:
+                    return ResyncOutcome.BLOCKED
+                if result is BacklogProcessResult.RETRY_LATER:
+                    return ResyncOutcome.RETRY
         except Exception:
             logger.exception(
-                "ExecutionContext %s: Error during /next resync",
-                self.room_id,
+                "ExecutionContext %s: Error during /next resync", self.room_id
             )
-            return False
+            return ResyncOutcome.RETRY
 
-        if caught_up:
-            logger.info(
-                "ExecutionContext %s: Caught up %d missed message(s) via /next resync",
-                self.room_id,
-                caught_up,
+    def _backlog_is_nonrunnable(self, msg: PlatformMessage) -> bool:
+        return (
+            self.claims.is_completed(self.room_id, msg.id)
+            or self._retry_tracker.is_permanently_failed(msg.id)
+            or bool(
+                self._agent_id
+                and is_self_echo(
+                    sender_id=msg.sender_id or "",
+                    sender_type=msg.sender_type or "",
+                    agent_id=self._agent_id,
+                )
             )
-        else:
-            logger.debug(
-                "ExecutionContext %s: No missed messages found via /next resync",
-                self.room_id,
-            )
-
-        return True
+        )
 
     async def _process_backlog_message(
-        self, msg: PlatformMessage
+        self, msg: PlatformMessage, *, revision: int | None = None
     ) -> BacklogProcessResult:
         """
         Process a backlog message from /next during sync.
@@ -1451,14 +1423,16 @@ class ExecutionContext:
             if not acquired:
                 logger.debug("Deferring in-flight backlog message: %s", msg_id)
                 return BacklogProcessResult.RETRY_LATER
-            return await self._process_claimed_backlog_message(msg)
+            return await self._process_claimed_backlog_message(msg, revision=revision)
 
     async def _process_claimed_backlog_message(
-        self, msg: PlatformMessage
+        self, msg: PlatformMessage, *, revision: int | None = None
     ) -> BacklogProcessResult:
         """Process a backlog message while its in-flight claim is held."""
         msg_id = msg.id
-        if not await self._begin_scope():
+        if revision is None:
+            revision = self._control_revision
+        if not await self._begin_scope() or revision != self._control_revision:
             return BacklogProcessResult.RETRY_LATER
         self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
@@ -1501,9 +1475,11 @@ class ExecutionContext:
                 )
                 return BacklogProcessResult.RETRY_LATER
 
-            # Hydrate context on first message (loads participants always,
-            # history only if enable_context_hydration is True)
+            if revision != self._control_revision:
+                return await self._defer_superseded_backlog(msg_id)
             await self._ensure_fresh_context()
+            if revision != self._control_revision:
+                return await self._defer_superseded_backlog(msg_id)
 
             # Format timestamps for MessageCreatedPayload validation
             created_at_str = (
@@ -1600,6 +1576,13 @@ class ExecutionContext:
             self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
 
+    async def _defer_superseded_backlog(self, msg_id: str) -> BacklogProcessResult:
+        if self._pending_interrupt is not None:
+            await self._abort_cycle(self._pending_interrupt, msg_id)
+            return BacklogProcessResult.ADVANCED
+        self._retry_tracker.discard_attempt(msg_id)
+        return BacklogProcessResult.RETRY_LATER
+
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
         """
         Remove duplicate message from WebSocket queue after sync point reached.
@@ -1658,6 +1641,8 @@ class ExecutionContext:
         """
         await self._working_reporter.start()
         try:
+            self._resync_handled_work = True
+            self._reset_resync_interval()
             await self._on_execute(self, event)
         finally:
             await self._working_reporter.stop()
@@ -1976,27 +1961,7 @@ class ExecutionContext:
         5. Mark as processed (success) or failed (exception)
         """
         if isinstance(event, ReconnectedEvent):
-            self._set_state(ExecutionState.PROCESSING)
-            logger.debug("Processing %s in room %s", event.type, self.room_id)
-            try:
-                if self._reconnect_sync_requested:
-                    self._reconnect_sync_requested = False
-                    if self._stopped:
-                        # Efficiency: a stopped room's /next is guaranteed 204
-                        # (platform-authoritative gate) — skip locally instead
-                        # of making a call known to come back empty, same as
-                        # the idle-timeout and resync-sentinel paths.
-                        logger.debug(
-                            "ExecutionContext %s: stopped, skipping reconnect /next sync",
-                            self.room_id,
-                        )
-                    else:
-                        while not await self._synchronize_with_next():
-                            self._set_state(ExecutionState.IDLE)
-                            await asyncio.sleep(self.config.idle_resync_seconds)
-                logger.debug("Event %s processed successfully", event.type)
-            finally:
-                self._set_state(ExecutionState.IDLE)
+            await self._reconcile()
             return True
 
         # While stopped, leave message triggers actionable for replay on play.
