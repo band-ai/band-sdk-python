@@ -92,6 +92,38 @@ are unchanged.
 These are breaking changes; integrations relying on native-text relay must
 migrate before upgrading. TypeScript parity is a separate change.
 
+## Busy-session backpressure
+
+Only a structured ACP `RequestError` with code `-32003` and
+`data.reason == "session_busy"` proves that the prompt was rejected without starting
+work. The adapter retries that response with asynchronous exponential backoff from
+0.25 seconds to a maximum of 5 seconds, within the existing `turn_timeout_s` budget.
+It keeps the same runtime and session and does not post a failure or cancel the
+autonomous work that owns the session.
+
+If either the adapter budget or the runtime cycle watchdog expires while the prompt
+remains rejected, the runtime leaves its delivery failed and actionable for recovery
+without consuming the ordinary message retry budget or acknowledging it as processed.
+Local contact events have no durable delivery row, so the runtime retains them in
+queue order until accepted; stopping the room pauses their retry until play.
+Cancelling a busy wait does not send `session/cancel`, and shutdown cancellation
+still terminates the execution loop. Once a prompt might be running, the existing
+turn timeout and cancellation behavior still applies. Transport errors and other
+provider errors are not replayed by this busy-response path.
+
+Band bootstrap is remembered only after an ACP prompt completes. A deferred first
+prompt still receives system context and, for a fresh session, transcript replay when
+retried. A restored session receives Band system context without duplicating its remote
+transcript.
+
+Each retry uses a fresh stream collector and reply emitter. Notifications received
+during a rejected prompt cannot settle that attempt's reply or suppress the accepted
+retry's reply.
+
+OMP 18.6.1 emits this structured busy response; the generic internal error emitted by
+18.6.0 does not qualify. This recovery does not give Band ownership of OMP's autonomous
+turns or guarantee forwarding of their unsolicited output.
+
 ## Isolation
 
 - The per-room workspace (`./.band-workspaces/<room-id>`) is not an OS sandbox; configure

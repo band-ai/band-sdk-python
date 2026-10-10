@@ -19,6 +19,7 @@ import pytest
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import RoomExecutionStoppedError
+from band.core.protocols import TurnDeferred, TurnDeferredCancellation
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import BacklogProcessResult, ExecutionContext
 from band.runtime.tools.agent import AgentTools
@@ -649,6 +650,76 @@ _AMPLE_CYCLE_BUDGET_SECONDS = 5.0
 class TestCycleWatchdog:
     """``max_cycle_seconds`` cancels a cycle from *inside* ExecutionContext when
     a handler never returns, unlike interrupt/stop which are external signals."""
+
+    async def test_stopped_local_message_remains_replayable(self, mock_link):
+        entered = asyncio.Event()
+        attempts = 0
+
+        async def local_handler(ctx, event):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                entered.set()
+                await asyncio.Event().wait()
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            local_handler,
+            config=SessionConfig(enable_working_state=False),
+        )
+        event = make_message_event(
+            msg_id="local-contact", sender_id="contact-events", sender_type="System"
+        )
+        processing = asyncio.create_task(ctx._process_event(event))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        ctx.stop_room()
+        with pytest.raises(TurnDeferred):
+            await processing
+        await ctx.resume_room()
+        assert await ctx._process_event(event) is True
+        assert attempts == 2
+        mock_link.mark_processing.assert_not_awaited()
+        mock_link.mark_processed.assert_not_awaited()
+        mock_link.mark_failed.assert_not_awaited()
+
+    async def test_shutdown_during_unaccepted_cycle_cleanup_is_not_deferred(
+        self, mock_link
+    ):
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def unaccepted_handler(ctx, event):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                raise TurnDeferredCancellation("provider did not accept this turn")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            unaccepted_handler,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
+        )
+        processing = asyncio.create_task(
+            ctx._process_event(make_message_event(msg_id="shutdown-unaccepted"))
+        )
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            processing.cancel()
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await processing
+            mock_link.mark_failed.assert_not_awaited()
+            mock_link.mark_processed.assert_not_awaited()
+        finally:
+            release_cleanup.set()
+            if not processing.done():
+                processing.cancel()
+            await asyncio.gather(processing, return_exceptions=True)
 
     async def test_cycle_exceeding_max_cycle_seconds_is_cancelled_and_marked_failed(
         self, mock_link
