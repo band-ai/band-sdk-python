@@ -127,13 +127,20 @@ def codex(
             result = perform(request["tool_name"], request["input"])
             emit(
                 {
-                    "method": "item/agentMessage/delta",
+                    "id": "peer-reply",
+                    "method": "item/tool/call",
                     "params": {
-                        "itemId": "message",
-                        "delta": reply_text(request["tool_name"], result),
+                        "tool": BandTool.SEND_MESSAGE,
+                        "arguments": {
+                            "content": reply_text(request["tool_name"], result),
+                            "mentions": ["@alice"],
+                        },
                     },
                 }
             )
+            response = json.loads(sys.stdin.readline())
+            if not response.get("result", {}).get("success"):
+                raise RuntimeError("The Band reply tool failed")
             emit(
                 {
                     "method": "turn/completed",

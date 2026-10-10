@@ -16,7 +16,13 @@ from enum import StrEnum
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+)
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -28,11 +34,11 @@ from typing_extensions import Unpack
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.adapterconfig import EnvAdapterConfig
+from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
     deliver_notice,
-    relay_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -43,6 +49,7 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
@@ -81,8 +88,9 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.tools import (
+    get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
@@ -344,10 +352,26 @@ class PendingApproval:
 
 
 @dataclass
+class NativeMessage:
+    """One agent-message item's streamed and authoritative completed text."""
+
+    phase: str | None = None
+    streamed_text: str = ""
+    completed_text: str | None = None
+
+    @property
+    def unstreamed_text(self) -> str:
+        text = self.completed_text or ""
+        if text.startswith(self.streamed_text):
+            return text[len(self.streamed_text) :]
+        return text
+
+
+@dataclass
 class TurnResult:
     """Aggregated result from processing a single Codex turn's event stream."""
 
-    final_text: str = ""
+    native_messages: dict[str, NativeMessage] = dataclass_field(default_factory=dict)
     turn_status: str = "failed"
     turn_error: str = ""
 
@@ -458,7 +482,6 @@ class CodexAdapterConfig(EnvAdapterConfig):
         default=False,
         validation_alias=AliasChoices("CODEX_TURN_TASK_MARKERS"),
     )
-    fallback_send_agent_text: bool = True
     approval_mode: ApprovalMode = "manual"
     approval_text_notifications: bool = True
     approval_wait_timeout_s: float = 300.0
@@ -1085,7 +1108,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     turn_id=turn_id or None,
                     turn_status=result.turn_status,
                     turn_error=result.turn_error,
-                    final_text=result.final_text,
+                    native_messages=result.native_messages,
                     duration_s=_turn_duration_s,
                 )
                 # A turn wound down by room cleanup was aborted, not missed.
@@ -1181,7 +1204,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             turn_id=turn_id,
             turn_status=result.turn_status,
             turn_error=result.turn_error,
-            final_text=result.final_text,
+            native_messages=result.native_messages,
             duration_s=_time.perf_counter() - turn_start,
             include_reply=False,
         )
@@ -1357,44 +1380,59 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         )
                     continue
 
+                if event.method == "item/started":
+                    item = params.get("item")
+                    if (
+                        isinstance(item, dict)
+                        and item.get("type") == CodexItemType.AGENT_MESSAGE
+                    ):
+                        result.native_messages[str(item["id"])] = NativeMessage(
+                            phase=item.get("phase"),
+                        )
+                    continue
+
                 if event.method == "item/agentMessage/delta":
+                    item_id = str(params.get("itemId") or "")
+                    message = result.native_messages.get(item_id)
                     delta = params.get("delta")
-                    phase = params.get("phase")
-                    if isinstance(delta, str):
-                        if (
-                            phase == "commentary"
-                            and self.config.stream_commentary_events
-                        ):
-                            # Stream as thought; exclude from final_text.
-                            await send_event_safe(
-                                tools,
-                                content=delta,
-                                message_type="thought",
-                                metadata={
-                                    "streaming": True,
-                                    "subtype": "commentary",
-                                    "codex_item_id": str(params.get("itemId") or ""),
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": thread_id,
-                                    "codex_turn_id": turn_id,
-                                },
-                                log_label="commentary delta",
-                                log_level=logging.DEBUG,
-                            )
-                        else:
-                            # When streaming is disabled, commentary accumulates
-                            # into final_text for backward compatibility.
-                            result.final_text += delta
+                    if (
+                        message is not None
+                        and message.phase == "commentary"
+                        and isinstance(delta, str)
+                        and self.config.stream_commentary_events
+                        and Emit.THOUGHTS in self.features.emit
+                    ):
+                        delivered = await send_event_safe(
+                            tools,
+                            content=delta,
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "subtype": "commentary",
+                                "codex_item_id": item_id,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                            log_label="commentary delta",
+                            log_level=logging.DEBUG,
+                        )
+                        if delivered:
+                            message.streamed_text += delta
                     continue
 
                 if event.method == "item/completed":
-                    item = params.get("item") if isinstance(params, dict) else {}
+                    item = params.get("item")
                     if isinstance(item, dict):
-                        item_type = item.get("type")
-                        if item_type == CodexItemType.AGENT_MESSAGE:
+                        if item.get("type") == CodexItemType.AGENT_MESSAGE:
+                            message = result.native_messages.setdefault(
+                                str(item["id"]),
+                                NativeMessage(),
+                            )
+                            message.phase = item.get("phase")
                             text = item.get("text")
-                            if isinstance(text, str) and text:
-                                result.final_text = text
+                            if isinstance(text, str):
+                                message.completed_text = text
                         else:
                             await self._emit_item_completed_events(
                                 tools=tools,
@@ -1750,7 +1788,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         seen: set[str] = set()
 
         for schema in tools.get_openai_tool_schemas(
-            capabilities=self.features.capabilities,
+            capabilities=self.features.capabilities
         ):
             if not isinstance(schema, dict):
                 continue
@@ -1789,6 +1827,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             seen.add(name)
 
+        dynamic_tools = filter_tool_schemas(
+            dynamic_tools,
+            self.features,
+            get_name=lambda schema: schema["name"],
+            get_category=lambda schema: get_band_tool_category(schema["name"]),
+        )
         for tool in self.config.additional_dynamic_tools:
             if not isinstance(tool, dict):
                 continue
@@ -2171,7 +2215,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         turn_id: str | None,
         turn_status: str,
         turn_error: str,
-        final_text: str,
+        native_messages: dict[str, NativeMessage],
         duration_s: float = 0.0,
         include_reply: bool = True,
     ) -> None:
@@ -2260,8 +2304,23 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         mention = self._sender_mention(msg)
 
         if turn_status == "completed":
-            if self.config.fallback_send_agent_text:
-                await relay_reply(tools, final_text.strip(), mentions=mention)
+            if not tools.turn.replied and Emit.THOUGHTS in self.features.emit:
+                for item_id, message in native_messages.items():
+                    text = message.unstreamed_text
+                    if not has_visible_content(text):
+                        continue
+                    await send_event_safe(
+                        tools,
+                        content=text,
+                        message_type="thought",
+                        metadata={
+                            "codex_item_id": item_id,
+                            "codex_room_id": room_id,
+                            "codex_thread_id": thread_id,
+                            "codex_turn_id": turn_id,
+                        },
+                        log_label="Codex completed thought",
+                    )
             return
 
         if turn_status == "interrupted":
@@ -3448,7 +3507,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     def _build_system_prompt(self) -> None:
         if self.config.system_prompt:
-            self._system_prompt = self.config.system_prompt
+            self._system_prompt = (
+                f"{self.config.system_prompt}\n\n{COMMUNICATION_INSTRUCTIONS}"
+            )
             return
 
         self._system_prompt = render_system_prompt(
@@ -3458,6 +3519,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             include_base_instructions=self.config.include_base_instructions,
             features=self.features,
         )
+        if not self.config.include_base_instructions:
+            self._system_prompt += f"\n\n{COMMUNICATION_INSTRUCTIONS}"
 
     def _apply_turn_overrides(
         self, params: dict[str, Any], *, room_id: str | None = None

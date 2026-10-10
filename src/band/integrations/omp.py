@@ -45,6 +45,13 @@ OMP_UNSAFE_APPROVAL_FLAGS: frozenset[str] = frozenset(
 
 XD_URL_PREFIX = "xd://"
 XD_MCP_PREFIX = "mcp__"
+# OMP's own test (xdev.ts HELP_CONTENT_RE) for a device write that shows the
+# tool's docs instead of running it.
+_XD_HELP_CONTENT = re.compile(r"^\s*(\?|help)?\s*$", re.IGNORECASE)
+# OMP's ACP tool kinds for a device write and a read (acp-event-mapper.ts
+# mapToolKind).
+_ACP_KIND_EXECUTE = "execute"
+_ACP_KIND_READ = "read"
 
 OMP_FORM_APPROVE = "Approve"
 OMP_FORM_DENY = "Deny"
@@ -251,8 +258,18 @@ def normalize_omp_mcp_device_call(
     name: str,
     arguments: Mapping[str, object],
     own_names: Collection[str],
+    *,
+    kind: str | None = None,
 ) -> tuple[str, dict[str, object]]:
-    """Map OMP MCP device writes / ``mcp__`` titles to canonical Band tool names."""
+    """Map OMP MCP device writes / ``mcp__`` titles to canonical Band tool names.
+
+    Only a call OMP executes is the tool. OMP reports a device write with ACP
+    ``kind`` ``execute`` and a read with ``read``; a read, and a write asking
+    for docs (empty, ``?`` or ``help`` content), are left as they are. An
+    executed write whose payload is missing or not a JSON object keeps the
+    tool's name with the raw arguments: the tool refuses it, and that failed
+    attempt must still read as the tool's (a failed reply is not narration).
+    """
     args = dict(arguments)
     path: str | None = None
     for key in ("path", "file_path", "target"):
@@ -263,17 +280,19 @@ def normalize_omp_mcp_device_call(
 
     if path is not None:
         canonical = normalize_omp_mcp_tool_name(path, own_names)
-        if canonical is None:
-            return name, args
         content = args.get("content")
+        if canonical is None or kind == _ACP_KIND_READ:
+            return name, args
         if not isinstance(content, str):
+            return (canonical, args) if kind == _ACP_KIND_EXECUTE else (name, args)
+        if _XD_HELP_CONTENT.match(content):
             return name, args
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError:
-            return name, args
+            return canonical, args
         if not isinstance(parsed, dict):
-            return name, args
+            return canonical, args
         return canonical, parsed
 
     canonical = normalize_omp_mcp_tool_name(name, own_names)

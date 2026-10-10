@@ -205,7 +205,47 @@ def turn_completed(turn_id: str = "turn-1", *, status: str = "completed") -> Rpc
 
 
 def final_text(text: str) -> RpcEvent:
-    return event_notification("item/agentMessage/delta", {"itemId": "m", "delta": text})
+    return agent_message_completed(text)
+
+
+def agent_message_started(
+    item_id: str = "m", *, phase: str | None = "final_answer"
+) -> RpcEvent:
+    return event_notification(
+        "item/started",
+        {
+            "threadId": "thr-1",
+            "turnId": "turn-1",
+            "startedAtMs": 1,
+            "item": {"type": "agentMessage", "id": item_id, "text": "", "phase": phase},
+        },
+    )
+
+
+def agent_message_delta(text: str, item_id: str = "m") -> RpcEvent:
+    return event_notification(
+        "item/agentMessage/delta",
+        {"threadId": "thr-1", "turnId": "turn-1", "itemId": item_id, "delta": text},
+    )
+
+
+def agent_message_completed(
+    text: str, item_id: str = "m", *, phase: str | None = "final_answer"
+) -> RpcEvent:
+    return event_notification(
+        "item/completed",
+        {
+            "threadId": "thr-1",
+            "turnId": "turn-1",
+            "completedAtMs": 2,
+            "item": {
+                "type": "agentMessage",
+                "id": item_id,
+                "text": text,
+                "phase": phase,
+            },
+        },
+    )
 
 
 def tool_call_request(

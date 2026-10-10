@@ -372,7 +372,7 @@ class TestRunWithGracefulShutdown:
             assert mock_add.called
 
     async def test_run_with_graceful_shutdown_runs_agent(self, mock_agent):
-        """run_with_graceful_shutdown should run the agent."""
+        """It runs the agent and keeps the transport off the signals it owns."""
         loop = asyncio.get_running_loop()
 
         with (
@@ -381,7 +381,9 @@ class TestRunWithGracefulShutdown:
         ):
             await run_with_graceful_shutdown(mock_agent)
 
-            mock_agent.run.assert_called_once_with(shutdown_timeout=30.0)
+            mock_agent.run.assert_called_once_with(
+                shutdown_timeout=30.0, install_signal_handlers=False
+            )
 
     async def test_run_with_graceful_shutdown_uses_custom_timeout(self, mock_agent):
         """run_with_graceful_shutdown should use custom timeout."""
@@ -393,7 +395,9 @@ class TestRunWithGracefulShutdown:
         ):
             await run_with_graceful_shutdown(mock_agent, timeout=60.0)
 
-            mock_agent.run.assert_called_once_with(shutdown_timeout=60.0)
+            mock_agent.run.assert_called_once_with(
+                shutdown_timeout=60.0, install_signal_handlers=False
+            )
 
     async def test_run_with_graceful_shutdown_handles_cancelled_error(self, mock_agent):
         """run_with_graceful_shutdown should handle CancelledError."""

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from band_rest.errors import ForbiddenError
+from band_rest.types import Error, ErrorError
 
 from band.client.rest import ChatEventRequest, ChatMessageRequest
+from band.core.exceptions import RoomExecutionStoppedError
 from band.platform.posting import post_event, post_message
 from tests.content import BLANK_CONTENT_CASES
 
@@ -137,3 +140,63 @@ class TestPostEvent:
         )
         assert call_args.kwargs["message"].content == content
         assert result is not None
+
+
+class TestPostEventStoppedExecution:
+    """The platform rejects a room's event posts while its agent execution is
+    stopped. That 403 must surface as the typed error, not a plain
+    ForbiddenError, so execution-aware callers can adopt the stopped state
+    instead of retrying a rejection that cannot succeed."""
+
+    @staticmethod
+    def _forbidden(message: str) -> ForbiddenError:
+        return ForbiddenError(
+            body=Error(
+                error=ErrorError(code="forbidden", message=message, request_id="req-1")
+            )
+        )
+
+    async def test_stopped_execution_guard_raises_typed_error(self, mock_rest_client):
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            self._forbidden("Agent execution is stopped; cannot post events")
+        )
+
+        with pytest.raises(RoomExecutionStoppedError) as excinfo:
+            await post_event(
+                rest=mock_rest_client,
+                room_id="room-123",
+                request=ChatEventRequest(content="thinking", message_type="thought"),
+            )
+
+        assert excinfo.value.room_id == "room-123"
+
+    async def test_other_403s_stay_plain_forbidden(self, mock_rest_client):
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            self._forbidden("You are not a participant of this room")
+        )
+
+        with pytest.raises(ForbiddenError):
+            await post_event(
+                rest=mock_rest_client,
+                room_id="room-123",
+                request=ChatEventRequest(content="thinking", message_type="thought"),
+            )
+
+    async def test_guard_matched_on_unparsed_body(self, mock_rest_client):
+        """A body the Fern client leaves unparsed (raw text) is still
+        identified by the guard's message."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            ForbiddenError(
+                body=(
+                    "error=ErrorError(code='forbidden', "
+                    "message='Agent execution is stopped; cannot post events')"
+                )
+            )
+        )
+
+        with pytest.raises(RoomExecutionStoppedError):
+            await post_event(
+                rest=mock_rest_client,
+                room_id="room-123",
+                request=ChatEventRequest(content="thinking", message_type="thought"),
+            )

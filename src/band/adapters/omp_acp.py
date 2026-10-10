@@ -80,6 +80,7 @@ class OmpACPCollectingClient(ACPCollectingClient):
             chunk.tool.name,
             chunk.tool.arguments,
             self._own_tool_names,
+            kind=getattr(update, "kind", None),
         )
         if name == chunk.tool.name and args == chunk.tool.arguments:
             return chunk

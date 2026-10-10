@@ -90,7 +90,6 @@ async def main() -> None:
             personality="pragmatic",
             custom_section=custom_section,
             include_base_instructions=True,
-            fallback_send_agent_text=True,
         ),
         emit={Emit.TASK_EVENTS, Emit.THOUGHTS},
     )

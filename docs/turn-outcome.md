@@ -15,7 +15,7 @@ A turn is **complete** when it:
 - declined on purpose (`band_no_reply`)
 - did real work (any Band tool whose effect is `act`, such as
   `band_add_participant`)
-- was settled by the adapter itself (a control reply, a busy notice)
+- was settled by the adapter itself (a control reply or a busy notice)
 - already reported a failure (`send_failure`)
 
 Anything else is a **missing reply**. Fetching state or narrating through
@@ -215,6 +215,22 @@ toward: the base prompt still says plain text is never delivered, because
 without that line models more often send their closing narration as a second
 `band_send_message` (measured live on gemini-2.5-flash).
 
+### ACP and Codex native text
+
+ACP clients (including OMP, Copilot and Cursor) and Codex use Band tools for
+room replies and deliberate declines. Native assistant text is optional thought
+telemetry without mentions, gated by `Emit.THOUGHTS`. It never settles a turn:
+native-only output and failed tools followed by narration reach the existing
+missing-reply verdict even with thoughts disabled. Successful reply/decline
+suppresses redundant closing text; qualifying successful work still completes.
+Other relaying adapters retain their native-text fallback.
+
+Remove the retired `assistant_text_mode` config key from ACP and Codex and
+`fallback_send_agent_text` from Codex. Explicit configs reject these as unknown
+fields. Remove `CODEX_ASSISTANT_TEXT_MODE` and `CODEX_FALLBACK_SEND_AGENT_TEXT`
+from the environment; they are no longer read. OpenCode's separate fallback
+setting remains supported.
+
 Parlant joins the non-preamble final segments from one event batch before
 relaying, so recording the fallback reply cannot suppress a later segment of
 that same answer.
@@ -224,9 +240,9 @@ to its call by `tool_call_id` and records that core tool's turn effect. Failed
 returns record nothing; self-hosted tools record their own effects.
 
 `tests/framework_conformance/test_reply_boundary.py` pins every `send_message`,
-`deliver_reply` and `relay_reply` call outside the tool implementations, per
-file with the reason it carries the model's words, so a new one fails until it
-is justified.
+`deliver_reply` and `relay_reply` call outside the tool
+implementations, per file with the reason it carries the model's words, so a
+new one fails until it is justified.
 
 ## Failed runs returned as data: `ProviderRunError`
 
@@ -275,3 +291,23 @@ answer through Band tools: `A2AAdapter`, `A2AGatewayAdapter`,
 `CrewAIFlowAdapter`, `BandACPServerAdapter`, `ParlantAdapter` (its engine owns
 its replies) and a LangGraph adapter built from a static `graph=` (it never
 gets Band tools). Synthetic contact-hub turns are never judged.
+
+## Platform execution refusals
+
+Recovery selects work through `/next`, including unfinished processing messages.
+A refused processing mark never invokes the adapter. Stopped message/event writes
+abort their originating execution scope, prevent further posts from that scope,
+and leave unfinished work actionable. The refusal does not permanently pause the
+room: later `/next` reconciliation can recover after PLAY without its push signal.
+Scope identity and control revision prevent delayed responses from cancelling
+newer work or invoking an outdated adapter interrupt hook.
+
+Once the handler completes, its delivery is `ACK_PENDING` until the platform
+accepts completion. A stopped refusal retains that marker and retries only the
+acknowledgement, without replaying handler effects or charging the acknowledgement
+retry budget. This protects the running process; it does not provide exactly-once
+side effects across process restarts. Ordinary acknowledgement failures retain
+the existing retry policy.
+
+One-shot invocations also require accepted claims and completion. They raise on
+refusal instead of returning `DONE`; a drain records only accepted messages.

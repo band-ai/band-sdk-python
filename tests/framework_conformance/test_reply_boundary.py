@@ -27,7 +27,6 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
         Counter(send_message=1, deliver_reply=1),
         "deliver_reply posts the reply; relay_reply delegates to it",
     ),
-    "adapters/codex.py": (Counter(relay_reply=1), "the model's final text"),
     "adapters/copilot_sdk.py": (
         Counter(relay_reply=1, deliver_reply=1),
         "the model's final text, and its ask_user question as the turn's reply",
@@ -35,10 +34,6 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
     "adapters/letta.py": (Counter(relay_reply=1), "the model's final text"),
     "adapters/opencode/adapter.py": (Counter(relay_reply=1), "the model's final text"),
     "adapters/parlant.py": (Counter(relay_reply=1), "the engine's message"),
-    "integrations/acp/room_emitter.py": (
-        Counter(relay_reply=1),
-        "the agent's held text runs",
-    ),
     "integrations/crewai/catalog.py": (Counter(send_message=1), "the crew's tool"),
     "integrations/parlant/tools.py": (Counter(send_message=1), "the engine's tool"),
     "integrations/claude_sdk/dedup_tools.py": (

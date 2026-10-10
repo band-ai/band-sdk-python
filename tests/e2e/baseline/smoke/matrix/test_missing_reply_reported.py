@@ -53,6 +53,15 @@ async def test_a_turn_that_did_nothing_is_reported_and_failed(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
+    await assert_missing_reply(agent, resource_manager, user_ops, reply_capture)
+
+
+async def assert_missing_reply(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
     room_id = await resource_manager.provision_room(
         title=f"e2e-missing-reply-{agent.adapter_id}", participants=[agent.id]
     )
@@ -80,3 +89,21 @@ async def test_a_turn_that_did_nothing_is_reported_and_failed(
         band_sdk_core.missing_reply_message()
     ]
     messages.assert_none()
+
+
+@per_adapter(
+    Adapter.CODEX,
+    Adapter.COPILOT_ACP,
+    Adapter.CURSOR_ACP,
+    Adapter.OMP_ACP,
+    prompt=silent_turn_prompt(),
+    features=AdapterFeatures(exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}),
+)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    await assert_missing_reply(agent, resource_manager, user_ops, reply_capture)

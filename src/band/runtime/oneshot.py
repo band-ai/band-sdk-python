@@ -54,6 +54,7 @@ from band_sdk_core import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.core.exceptions import BandConnectionError, RoomExecutionStoppedError
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -306,10 +307,13 @@ class OneShotInvoker:
     ) -> None:
         match evaluate_adapter_result(room_id, message_id, succeeded):
             case {"decision": "processed"}:
-                await self._link.mark_processed(room_id, message_id)
+                if not await self._link.mark_processed(room_id, message_id):
+                    raise BandConnectionError("Platform refused message completion")
             case {"decision": "failed"}:
                 try:
                     await self._link.mark_failed(room_id, message_id, error)
+                except RoomExecutionStoppedError:
+                    raise
                 except Exception:
                     logger.warning(
                         "Could not mark %s failed in room %s",
@@ -369,43 +373,45 @@ class OneShotInvoker:
                 pass
 
         logger.info("Claiming msg %s in room %s", msg_id, room_id)
-        await self._link.mark_processing(room_id, msg_id)
+        if not await self._link.mark_processing(room_id, msg_id):
+            raise BandConnectionError("Platform refused message claim")
+
+        participants = await self._fetch_participants(room_id)
+        sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
+
+        msg = _build_platform_message(payload, room_id, sender_name, participants)
+        history, seen_ids, history_truncated = await self._fetch_history(
+            room_id,
+            exclude_message_id=msg.id,
+            participants=participants,
+        )
+        # The triggering message is always something the LLM "saw".
+        seen_ids.add(msg_id)
+
+        tools = AgentTools(
+            room_id=room_id, rest=self._link.rest, participants=participants
+        )
+
+        inp = AgentInput(
+            msg=msg,
+            tools=tools,
+            history=HistoryProvider(raw=history),
+            # OneShotInvoker has no cross-call state to diff the roster
+            # against, so every invocation is "first time" from that
+            # perspective — the same condition under which the
+            # long-running path itself sends the roster (see
+            # ExecutionContext.participants_changed).
+            participants_msg=build_participants_message(participants),
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=room_id,
+        )
 
         try:
-            participants = await self._fetch_participants(room_id)
-            sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
-
-            msg = _build_platform_message(payload, room_id, sender_name, participants)
-            history, seen_ids, history_truncated = await self._fetch_history(
-                room_id,
-                exclude_message_id=msg.id,
-                participants=participants,
-            )
-            # The triggering message is always something the LLM "saw".
-            seen_ids.add(msg_id)
-
-            tools = AgentTools(
-                room_id=room_id, rest=self._link.rest, participants=participants
-            )
-
-            inp = AgentInput(
-                msg=msg,
-                tools=tools,
-                history=HistoryProvider(raw=history),
-                # OneShotInvoker has no cross-call state to diff the roster
-                # against, so every invocation is "first time" from that
-                # perspective — the same condition under which the
-                # long-running path itself sends the roster (see
-                # ExecutionContext.participants_changed).
-                participants_msg=build_participants_message(participants),
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id=room_id,
-            )
-
             await self._adapter.on_event(inp)
 
-            await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
+        except RoomExecutionStoppedError:
+            raise
         except Exception as exc:
             logger.exception(
                 "Adapter failed for message %s in room %s", msg_id, room_id
@@ -417,6 +423,8 @@ class OneShotInvoker:
                 error=str(exc)[:500] or "error",
             )
             raise
+
+        await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
 
         # Drain is scoped to what the LLM saw (seen_ids). A message that
         # arrived after the history snapshot is NOT swallowed; it's left open
@@ -456,8 +464,13 @@ class OneShotInvoker:
                     break
                 case {"decision": "drain", "message_id": stale_id}:
                     stale_id = cast(str, stale_id)
-                    await self._link.mark_processing(room_id, stale_id)
-                    await self._link.mark_processed(room_id, stale_id)
+                    try:
+                        if not await self._link.mark_processing(room_id, stale_id):
+                            break
+                        if not await self._link.mark_processed(room_id, stale_id):
+                            break
+                    except RoomExecutionStoppedError:
+                        break
                     drained.append(stale_id)
         else:
             drain_truncated = True

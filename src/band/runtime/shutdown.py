@@ -35,10 +35,15 @@ class GracefulShutdown:
 
         1. Context manager (recommended):
             async with GracefulShutdown(agent, timeout=30.0):
-                await agent.run()
+                await agent.run(install_signal_handlers=False)
 
         2. Manual await:
             await agent.stop(timeout=30.0)
+
+        This helper owns SIGINT/SIGTERM, so pair it with
+        ``install_signal_handlers=False`` on ``agent.run`` /
+        ``agent.run_forever`` — otherwise the transport also claims those
+        signals.
 
     Note:
         Signal handlers using asyncio's add_signal_handler() only work on
@@ -69,7 +74,7 @@ class GracefulShutdown:
             shutdown.register_signals()
 
             try:
-                await agent.run()
+                await agent.run(install_signal_handlers=False)
             except asyncio.CancelledError:
                 pass  # Normal shutdown
 
@@ -80,7 +85,7 @@ class GracefulShutdown:
             agent = Agent.create(...)
 
             async with GracefulShutdown(agent, timeout=30.0):
-                await agent.run()
+                await agent.run(install_signal_handlers=False)
 
     Example (manual signal handling):
         import logging
@@ -98,7 +103,7 @@ class GracefulShutdown:
             shutdown.on_signal = on_signal
             shutdown.register_signals()
 
-            await agent.run()
+            await agent.run(install_signal_handlers=False)
 
     Attributes:
         agent: The Agent instance to shut down.
@@ -348,7 +353,8 @@ async def run_with_graceful_shutdown(
 
     async with shutdown:
         try:
-            await agent.run(shutdown_timeout=timeout)
+            # This helper owns the signals, so the transport must not take them.
+            await agent.run(shutdown_timeout=timeout, install_signal_handlers=False)
         except asyncio.CancelledError:
             # Normal shutdown via signal
             pass

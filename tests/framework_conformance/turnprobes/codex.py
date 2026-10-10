@@ -48,5 +48,5 @@ async def ask_codex_status(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "codex": TurnOutcomeProbe(run=run_codex, settle=ask_codex_status, relays=True),
+    "codex": TurnOutcomeProbe(run=run_codex, settle=ask_codex_status, relays=False),
 }

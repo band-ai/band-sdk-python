@@ -48,6 +48,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -102,13 +103,18 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.formatters import messages_before
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import (
+    COMMUNICATION_INSTRUCTIONS,
+    TURN_COMPLETION_GUIDANCE,
+    render_system_prompt,
+)
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
     LEGACY_SEND_MESSAGE_TOOL,
     ToolDefinition,
     canonicalize_mcp_tool_name,
+    get_band_tool_category,
     iter_tool_definitions,
 )
 from band.workspaces import (
@@ -541,6 +547,12 @@ class ACPClientAdapter(
                 capabilities=self.features.capabilities | {Capability.CONTACTS},
             )
         )
+        definitions = filter_tool_schemas(
+            definitions,
+            self.features,
+            get_name=lambda definition: definition.name,
+            get_category=lambda definition: get_band_tool_category(definition.name),
+        )
         # Resembles OpenCodeAdapter's equivalent vocabulary block but isn't
         # extracted into a shared helper: the two sets serve different
         # consumers (opencode's gates auto-approve/permission matching; this
@@ -662,19 +674,16 @@ class ACPClientAdapter(
             participants_msg=participants_msg,
             contacts_msg=contacts_msg,
         )
-        sender_name = msg.sender_name or msg.sender_id or "Unknown"
-        mentions = [{"id": msg.sender_id, "name": sender_name}]
 
         # The emitter posts the turn's events live, in the order the ACP stream
         # delivers them (see RoomTurnEmitter), so narration stays interleaved with
         # the permission pair and any in-room tool post. On a clean turn its
-        # __aexit__ relays the held text (unless the turn replied) and the session
+        # __aexit__ emits the held thought (unless the turn replied) and the session
         # bookkeeping event; on failure it posts nothing and the error is handled
         # below.
         try:
             async with RoomTurnEmitter(
                 tools,
-                mentions=mentions,
                 session_id=session_id,
                 room_id=room_id,
                 emit=self.features.emit,
@@ -948,12 +957,8 @@ class ACPClientAdapter(
         room_context = (
             f"\n## Room Context\n"
             f"You are connected to Band using the Band tools.\n"
-            f"Use the Band tools for any visible room action. If you post a "
-            f"message with a Band tool, your plain text output is not also "
-            f"posted, so end your turn with a one-line plain text summary "
-            f"and do not post again; otherwise your plain text reply is "
-            f"delivered to the room on your behalf. Do not narrate the tool "
-            f"calls you are about to make.\n"
+            f"{COMMUNICATION_INSTRUCTIONS}\n\n"
+            f"{TURN_COMPLETION_GUIDANCE}\n"
             f"\n"
             f"{room_line}"
             f"Current requester name: {requester_name}\n"

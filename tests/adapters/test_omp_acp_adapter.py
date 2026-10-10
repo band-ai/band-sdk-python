@@ -23,6 +23,8 @@ from band.adapters.omp_acp import (
 )
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.room_emitter import RoomTurnEmitter
+from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.omp import (
     OMP_APPROVAL_FORM_TOOL_NAME,
     OMP_APPROVAL_MODE_ALWAYS_ASK,
@@ -477,3 +479,33 @@ class TestOmpDeterministicMcpReply:
         await client.session_update("sess", text_update)
         await client.flush("sess")
         assert client.get_collected_text("sess") == "hello from omp"
+
+    @pytest.mark.asyncio
+    async def test_reading_band_tool_docs_cannot_complete_the_turn(self) -> None:
+        """Reading device documentation is observation, even for a reply tool."""
+        client = OmpACPCollectingClient(own_tool_names=frozenset({"band_send_message"}))
+        client.set_sink("sess", AsyncMock())
+        update = MagicMock()
+        update.session_update = "tool_call"
+        update.title = "read"
+        update.tool_call_id = "tc-docs"
+        update.raw_input = {"path": f"xd://{XD_MCP_PREFIX}band_send_message"}
+        update.status = "completed"
+        await client.session_update("sess", update)
+        tools = FakeAgentTools()
+
+        emitter = RoomTurnEmitter(
+            tools,
+            session_id="sess",
+            room_id="room-1",
+            records_tool_effects=True,
+        )
+        async with emitter:
+            for chunk in client.get_collected_chunks("sess"):
+                await emitter.emit(chunk)
+            await emitter.emit(
+                CollectedChunk(chunk_type=ChunkType.TEXT, content="The answer.")
+            )
+
+        assert tools.chat == []
+        assert not tools.turn.complete

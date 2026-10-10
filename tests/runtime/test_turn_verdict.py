@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import band_sdk_core
 import pytest
@@ -29,19 +28,32 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     SYNTHETIC_SENDER_TYPE,
+    Emit,
     HistoryProvider,
     PlatformMessage,
 )
-from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools import BandTool
+from band.runtime.tools.agent import AgentTools
 from band.runtime.types import SessionConfig
 from band.testing import MISSING_REPLY_FAILURE
-from tests.conftest import make_message_event, make_participant_mock
+from tests.adapters.codexturns import (
+    FakeCodexClient,
+    final_text,
+    make_codex_adapter,
+    tool_call_request,
+    turn_completed,
+)
+from tests.conftest import make_message_event
+from tests.runtime.helpers import (
+    ROOM_ID,
+    deliver,
+    failure_posts,
+    run_through,
+    runtime_failures,
+)
 
-AGENT_ID = "agent-123"
 execution_logger = ExecutionContext.__module__
-ROOM_ID = "room-123"
 USER = ["@user-1"]
 
 Step = Callable[[AgentToolsProtocol], Awaitable[Any]]
@@ -119,69 +131,6 @@ class ScriptedAdapter(SimpleAdapter[HistoryProvider]):
             await step(tools)
 
 
-@pytest.fixture
-def link(mock_rest_client: MagicMock) -> MagicMock:
-    link = MagicMock()
-    link.agent_id = AGENT_ID
-    link.rest = mock_rest_client
-    link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
-        return_value=MagicMock(
-            data=[make_participant_mock("user-1", "User One", "User")]
-        )
-    )
-    link.mark_processing = AsyncMock(return_value=True)
-    link.mark_processed = AsyncMock(return_value=True)
-    link.mark_failed = AsyncMock(return_value=True)
-    link.get_next_message = AsyncMock(return_value=None)
-    link.get_stale_processing_messages = AsyncMock(return_value=[])
-    return link
-
-
-def run_through(
-    adapter: SimpleAdapter[Any],
-    link: MagicMock,
-    *,
-    config: SessionConfig | None = None,
-) -> ExecutionContext:
-    preprocessor = DefaultPreprocessor()
-
-    async def handler(ctx: ExecutionContext, event: Any) -> None:
-        inp = await preprocessor.process(ctx=ctx, event=event, agent_id=AGENT_ID)
-        if inp is not None:
-            await adapter.on_event(inp)
-
-    return ExecutionContext(
-        ROOM_ID,
-        link,
-        handler,
-        config=config or SessionConfig(enable_context_hydration=False),
-        agent_id=AGENT_ID,
-    )
-
-
-async def deliver(ctx: ExecutionContext, path: str) -> None:
-    """Deliver one user message live over the socket, or from the backlog."""
-    match path:
-        case "live":
-            await ctx._process_event(
-                make_message_event(room_id=ROOM_ID, sender_id="user-1")
-            )
-        case "backlog":
-            await ctx._process_backlog_message(
-                PlatformMessage(
-                    id="msg-backlog",
-                    room_id=ROOM_ID,
-                    content="@agent hi",
-                    sender_id="user-1",
-                    sender_type="User",
-                    sender_name="User One",
-                    message_type="text",
-                    metadata={},
-                    created_at=datetime.now(UTC),
-                )
-            )
-
-
 async def crash(tools: AgentToolsProtocol) -> None:
     raise RuntimeError("provider exploded")
 
@@ -195,22 +144,6 @@ async def report_and_stop(tools: AgentToolsProtocol) -> None:
     raise TurnResultAlreadyReported(ADAPTER_FAILURE[1])
 
 
-def failure_posts(link: MagicMock) -> list[tuple[str, str]]:
-    """Every attempted failure post, as (provider, text), in order."""
-    return [
-        (
-            call.kwargs["event"].metadata["failure"]["provider"],
-            call.kwargs["event"].content,
-        )
-        for call in link.rest.agent_api_events.create_agent_chat_event.call_args_list
-        if call.kwargs["event"].metadata and "failure" in call.kwargs["event"].metadata
-    ]
-
-
-def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
-    return [post for post in failure_posts(link) if post[0] == TURN_FAILURE_PROVIDER]
-
-
 @pytest.mark.parametrize("row", sorted(ROWS))
 async def test_each_turn_outcome_is_reported_honestly(
     row: str, link: MagicMock
@@ -220,14 +153,7 @@ async def test_each_turn_outcome_is_reported_honestly(
 
     await ctx._process_event(make_message_event(room_id=ROOM_ID, sender_id="user-1"))
 
-    if completes:
-        link.mark_processed.assert_awaited_once()
-        link.mark_failed.assert_not_awaited()
-        assert runtime_failures(link) == []
-    else:
-        link.mark_failed.assert_awaited_once()
-        link.mark_processed.assert_not_awaited()
-        assert runtime_failures(link) == [MISSING_REPLY_FAILURE]
+    assert_runtime_outcome(link, completes)
 
 
 @pytest.mark.parametrize("path", ["live", "backlog"])
@@ -328,3 +254,153 @@ async def test_a_contact_hub_turn_is_never_judged(link: MagicMock) -> None:
 
     assert runtime_failures(link) == []
     link.mark_failed.assert_not_awaited()
+
+
+NATIVE_OUTCOMES = {
+    "native-only": ([], False),
+    "invalid-decline": ([(BandTool.NO_REPLY, {"reason": 123})], False),
+    "failed-send": (
+        [(BandTool.SEND_MESSAGE, {"content": "hi", "mentions": ["@missing"]})],
+        False,
+    ),
+    "decline": ([(BandTool.NO_REPLY, {})], True),
+    "reply": ([(BandTool.SEND_MESSAGE, {"content": "hi", "mentions": USER})], True),
+    "act": ([(BandTool.CREATE_CHATROOM, {})], True),
+    "failed-then-decline": (
+        [(BandTool.NO_REPLY, {"reason": 123}), (BandTool.NO_REPLY, {})],
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("path", ["live", "backlog"])
+@pytest.mark.parametrize("thoughts", [True, False])
+@pytest.mark.parametrize("row", sorted(NATIVE_OUTCOMES))
+async def test_codex_native_text_does_not_change_the_runtime_verdict(
+    link: MagicMock,
+    path: str,
+    thoughts: bool,
+    row: str,
+) -> None:
+    calls, completes = NATIVE_OUTCOMES[row]
+    events = [
+        tool_call_request(index, name, arguments)
+        for index, (name, arguments) in enumerate(calls, 1)
+    ]
+    adapter = make_codex_adapter(
+        FakeCodexClient(
+            events=[*events, final_text("Closing narration"), turn_completed()]
+        ),
+        emit={Emit.THOUGHTS} if thoughts else set(),
+    )
+    await adapter.on_started("Agent", "A coding agent")
+    try:
+        await deliver(run_through(adapter, link), path)
+    finally:
+        await adapter.on_cleanup(ROOM_ID)
+    assert_runtime_outcome(link, completes)
+
+
+def assert_runtime_outcome(link: MagicMock, completes: bool) -> None:
+    if completes:
+        link.mark_processed.assert_awaited_once()
+        link.mark_failed.assert_not_awaited()
+        assert runtime_failures(link) == []
+    else:
+        link.mark_failed.assert_awaited_once()
+        link.mark_processed.assert_not_awaited()
+        assert runtime_failures(link) == [MISSING_REPLY_FAILURE]
+
+
+@pytest.mark.parametrize("path", ["live", "backlog"])
+@pytest.mark.parametrize("thoughts", [True, False])
+@pytest.mark.parametrize(
+    "row",
+    [
+        "native-only",
+        "invalid-decline",
+        "decline",
+        "reply",
+        "act",
+        "failed-then-decline",
+    ],
+)
+async def test_acp_native_text_does_not_change_the_runtime_verdict(
+    link: MagicMock,
+    path: str,
+    thoughts: bool,
+    row: str,
+) -> None:
+    pytest.importorskip(
+        "acp", reason="ACP extra is tested in its supported dependency lane"
+    )
+    from band.integrations.acp.client_adapter import (  # noqa: PLC0415 -- optional ACP extra
+        ACPClientAdapter,
+    )
+    from tests.integrations.acp.acp_toolkit import (  # noqa: PLC0415 -- optional ACP extra
+        FakeACPAgent,
+        fake_agent_config,
+        started_acp_adapter,
+    )
+
+    calls, completes = NATIVE_OUTCOMES[row]
+    agent = FakeACPAgent()
+    for index, (name, arguments) in enumerate(calls):
+        if name == BandTool.NO_REPLY and arguments.get("reason") == 123:
+            agent.will_call_invalid_mcp_tool(str(index), name, arguments=arguments)
+        else:
+            agent.will_call_mcp_tool(str(index), name, arguments=arguments)
+    agent.will_say("Closing narration")
+    adapter = ACPClientAdapter(
+        fake_agent_config(inject_band_tools=True),
+        emit={Emit.THOUGHTS} if thoughts else set(),
+    )
+    async with started_acp_adapter(adapter, agent):
+        await deliver(run_through(adapter, link), path)
+    assert_runtime_outcome(link, completes)
+
+
+@pytest.mark.parametrize(
+    "selection, expected",
+    [
+        ({"exclude_tools": {BandTool.SEND_MESSAGE, BandTool.NO_REPLY}}, None),
+        (
+            {
+                "include_tools": {
+                    BandTool.SEND_MESSAGE,
+                    BandTool.NO_REPLY,
+                    BandTool.GET_PARTICIPANTS,
+                }
+            },
+            {BandTool.SEND_MESSAGE, BandTool.NO_REPLY, BandTool.GET_PARTICIPANTS},
+        ),
+        (
+            {
+                "include_categories": {"chat"},
+                "include_tools": {
+                    BandTool.SEND_MESSAGE,
+                    BandTool.NO_REPLY,
+                    BandTool.GET_PARTICIPANTS,
+                },
+                "exclude_tools": {BandTool.NO_REPLY},
+            },
+            {BandTool.SEND_MESSAGE, BandTool.GET_PARTICIPANTS},
+        ),
+    ],
+)
+async def test_codex_advertises_filtered_central_registry_tools(
+    link: MagicMock, selection: dict[str, Any], expected: set[str] | None
+) -> None:
+    tools = AgentTools(ROOM_ID, link.rest)
+    adapter = make_codex_adapter(FakeCodexClient(), **selection)
+    if expected is None:
+        registry_names = {
+            schema["function"]["name"]
+            for schema in tools.get_openai_tool_schemas(
+                capabilities=adapter.features.capabilities
+            )
+        }
+        expected = registry_names - {BandTool.SEND_MESSAGE, BandTool.NO_REPLY}
+    assert {
+        schema["name"] for schema in adapter._build_dynamic_tools(tools)
+    } == expected

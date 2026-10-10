@@ -37,7 +37,12 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
-from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    Emit,
+    HistoryProvider,
+    PlatformMessage,
+)
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import (
     _MAX_ERROR_DETAIL_CHARS,
@@ -50,6 +55,7 @@ from band.integrations.codex.types import (
 )
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
 from band.runtime.decisions import DecisionRegistry
+from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from band.runtime.tools import BandTool, ToolCallOutcome, TurnEffect
 from band.testing import (
     MISSING_REPLY_FAILURE,
@@ -60,6 +66,9 @@ from band.testing import (
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
+    agent_message_completed,
+    agent_message_delta,
+    agent_message_started,
     await_released_turn,
     event_notification,
     event_request,
@@ -312,7 +321,7 @@ class TestCodexAdapter:
         assert config.approval_mode == "manual"
 
     @pytest.mark.asyncio
-    async def test_bootstrap_starts_thread_and_sends_fallback_message(self) -> None:
+    async def test_bootstrap_starts_thread_without_relaying_native_deltas(self) -> None:
         events = [
             event_notification(
                 "item/agentMessage/delta",
@@ -342,9 +351,44 @@ class TestCodexAdapter:
         assert "band_send_message" in dynamic_names
         assert "band_send_event" in dynamic_names
 
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "harness-ok"
-        assert tools.messages_sent[0]["mentions"][0]["id"] == "user-1"
+        assert tools.messages_sent == []
+        assert not tools.turn.complete
+
+    @pytest.mark.asyncio
+    async def test_assistant_text_as_thought_posts_no_reply(self) -> None:
+        """Completed native text is narration, without mentions or settlement."""
+        events = [
+            agent_message_completed("(Waiting on the review.)", "msg-1"),
+            turn_completed(),
+        ]
+        adapter = make_codex_adapter(
+            FakeCodexClient(events=events),
+            config=CodexAdapterConfig(),
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert tools.messages_sent == []
+        thoughts = [e for e in tools.events_sent if e["message_type"] == "thought"]
+        assert [e["content"] for e in thoughts] == ["(Waiting on the review.)"]
+        assert not tools.turn.complete
+
+    @pytest.mark.parametrize(
+        "field", ["fallback_send_agent_text", "assistant_text_mode"]
+    )
+    def test_retired_delivery_config_is_rejected(self, field: str) -> None:
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            CodexAdapterConfig.model_validate({field: True})
 
     @pytest.mark.asyncio
     async def test_system_prompt_retry_after_turn_start_failure(self) -> None:
@@ -430,7 +474,7 @@ class TestCodexAdapter:
         assert response_payload["success"] is True
 
     @pytest.mark.asyncio
-    async def test_fallback_text_not_suppressed_when_send_message_tool_fails(
+    async def test_failed_reply_leaves_native_text_as_unsettled_thought(
         self,
     ) -> None:
         """Fallback agent text should still be delivered when send_message fails.
@@ -489,8 +533,11 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "fallback final text"
+        assert tools.messages_sent == []
+        assert not tools.turn.complete
+        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+            "fallback final text"
+        ]
         assert len(fake_client.responses) == 1
         _, payload = fake_client.responses[0]
         assert payload["success"] is False
@@ -1552,9 +1599,10 @@ class TestCodexAdapter:
         )
 
         # The authoritative text from item/completed should be used, not the deltas.
-        assert any(
-            msg["content"] == "authoritative final text" for msg in tools.messages_sent
-        )
+        assert tools.messages_sent == []
+        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+            "authoritative final text"
+        ]
 
     @pytest.mark.asyncio
     async def test_custom_tools_schemas_merged_into_dynamic_tools(self) -> None:
@@ -2543,7 +2591,7 @@ class TestItemCompletedForwarding:
         assert tool_events == []
 
     @pytest.mark.asyncio
-    async def test_item_completed_agentMessage_still_sets_final_text(self) -> None:
+    async def test_completed_agent_message_is_emitted_as_a_thought(self) -> None:
         """Existing agentMessage behavior preserved alongside new forwarding."""
         events = [
             event_notification(
@@ -2588,7 +2636,9 @@ class TestItemCompletedForwarding:
         )
 
         # agentMessage text should still be sent as the final message
-        assert any(msg["content"] == "All tests pass!" for msg in tools.messages_sent)
+        assert tools.messages_sent == []
+        assert events_of_type(tools, "thought") == []
+        assert not tools.turn.complete
         # commandExecution should also be forwarded as tool events
         tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
@@ -2718,7 +2768,11 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_injected_on_resume_failure(self) -> None:
         """Resume fails, fresh thread created, first turn input contains history block."""
-        events = [final_text("Done."), turn_completed()]
+        events = [
+            tool_call_request(1, BandTool.NO_REPLY),
+            final_text("Done."),
+            turn_completed(),
+        ]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
@@ -2776,7 +2830,11 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_not_injected_on_successful_resume(self) -> None:
         """Resume succeeds, no history injection."""
-        events = [final_text("Done."), turn_completed()]
+        events = [
+            tool_call_request(1, BandTool.NO_REPLY),
+            final_text("Done."),
+            turn_completed(),
+        ]
         fake_client = FakeCodexClient(events=events)
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
@@ -2817,7 +2875,11 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_not_injected_when_disabled(self) -> None:
         """inject_history_on_resume_failure=False, no injection even on failure."""
-        events = [final_text("Done."), turn_completed()]
+        events = [
+            tool_call_request(1, BandTool.NO_REPLY),
+            final_text("Done."),
+            turn_completed(),
+        ]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
@@ -2856,7 +2918,11 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_filters_non_text_messages(self) -> None:
         """Only canonical text messages appear in injected context."""
-        events = [final_text("Done."), turn_completed()]
+        events = [
+            tool_call_request(1, BandTool.NO_REPLY),
+            final_text("Done."),
+            turn_completed(),
+        ]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -2931,7 +2997,11 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_respects_max_messages(self) -> None:
         """Only last max_history_messages are injected."""
-        events = [final_text("Done."), turn_completed()]
+        events = [
+            tool_call_request(1, BandTool.NO_REPLY),
+            final_text("Done."),
+            turn_completed(),
+        ]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -2987,7 +3057,11 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_cleared_after_injection(self) -> None:
         """Raw history removed from memory after first turn."""
-        events = [final_text("Done."), turn_completed()]
+        events = [
+            tool_call_request(1, BandTool.NO_REPLY),
+            final_text("Done."),
+            turn_completed(),
+        ]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -3972,23 +4046,17 @@ class TestRealtimeStreaming:
 
     @pytest.mark.asyncio
     async def test_commentary_phase_streamed_as_thought(self) -> None:
-        """item/agentMessage/delta with phase=commentary streams as thought."""
+        """A started commentary item supplies the phase for streamed deltas."""
         events = [
-            event_notification(
-                "item/agentMessage/delta",
-                {
-                    "delta": "Let me think about this...",
-                    "itemId": "msg-1",
-                    "phase": "commentary",
-                },
+            agent_message_started("comment", phase="commentary"),
+            agent_message_delta("Let me think about this...", "comment"),
+            agent_message_completed(
+                "Let me think about this...", "comment", phase="commentary"
             ),
-            event_notification(
-                "item/agentMessage/delta",
-                {
-                    "delta": "Here is the answer.",
-                    "itemId": "msg-1",
-                    "phase": "final_answer",
-                },
+            agent_message_started("answer", phase="final_answer"),
+            agent_message_delta("Here is the answer.", "answer"),
+            agent_message_completed(
+                "Here is the answer.", "answer", phase="final_answer"
             ),
             turn_completed(),
         ]
@@ -4015,31 +4083,24 @@ class TestRealtimeStreaming:
         assert len(commentary_thoughts) == 1
         assert commentary_thoughts[0]["content"] == "Let me think about this..."
 
-        # Only the final_answer delta should be in the fallback text
-        assert any("Here is the answer." in m["content"] for m in tools.messages_sent)
+        assert tools.messages_sent == []
+        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+            "Let me think about this...",
+            "Here is the answer.",
+        ]
 
     @pytest.mark.asyncio
-    async def test_commentary_excluded_from_final_text_when_streaming_enabled(
+    async def test_streamed_commentary_is_not_replayed_on_completion(
         self,
     ) -> None:
-        """When stream_commentary_events=True, commentary is excluded from final_text."""
+        """Streamed commentary is not replayed when its item completes."""
         events = [
-            event_notification(
-                "item/agentMessage/delta",
-                {
-                    "delta": "thinking...",
-                    "itemId": "msg-1",
-                    "phase": "commentary",
-                },
-            ),
-            event_notification(
-                "item/agentMessage/delta",
-                {
-                    "delta": "real answer",
-                    "itemId": "msg-1",
-                    "phase": "final_answer",
-                },
-            ),
+            agent_message_started("comment", phase="commentary"),
+            agent_message_delta("thinking...", "comment"),
+            agent_message_completed("thinking...", "comment", phase="commentary"),
+            agent_message_started("answer", phase="final_answer"),
+            agent_message_delta("real answer", "answer"),
+            agent_message_completed("real answer", "answer", phase="final_answer"),
             turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
@@ -4059,32 +4120,24 @@ class TestRealtimeStreaming:
             room_id="room-1",
         )
 
-        # Only the final_answer delta should be in the message text
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "real answer"
+        assert tools.messages_sent == []
+        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+            "thinking...",
+            "real answer",
+        ]
 
     @pytest.mark.asyncio
-    async def test_commentary_included_in_final_text_when_streaming_disabled(
+    async def test_unstreamed_completed_messages_are_separate_thoughts(
         self,
     ) -> None:
-        """When stream_commentary_events=False (default), commentary accumulates into final_text."""
+        """Unstreamed completed messages remain separate thoughts."""
         events = [
-            event_notification(
-                "item/agentMessage/delta",
-                {
-                    "delta": "thinking...",
-                    "itemId": "msg-1",
-                    "phase": "commentary",
-                },
-            ),
-            event_notification(
-                "item/agentMessage/delta",
-                {
-                    "delta": "real answer",
-                    "itemId": "msg-1",
-                    "phase": "final_answer",
-                },
-            ),
+            agent_message_started("comment", phase="commentary"),
+            agent_message_delta("thinking...", "comment"),
+            agent_message_completed("thinking...", "comment", phase="commentary"),
+            agent_message_started("answer", phase="final_answer"),
+            agent_message_delta("real answer", "answer"),
+            agent_message_completed("real answer", "answer", phase="final_answer"),
             turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
@@ -4104,9 +4157,11 @@ class TestRealtimeStreaming:
             room_id="room-1",
         )
 
-        # Both phases should be accumulated (backward compatible)
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "thinking...real answer"
+        assert tools.messages_sent == []
+        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+            "thinking...",
+            "real answer",
+        ]
 
 
 # ===========================================================================
@@ -4838,9 +4893,7 @@ class TestReviewFixes:
                 raise ConnectionError("transport died")
 
         fake_client = BrokenClient()
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(fallback_send_agent_text=True)
-        )
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
@@ -6618,7 +6671,7 @@ class TestSkillRoots:
 
 class TestNoReply:
     @pytest.mark.asyncio
-    async def test_no_reply_suppresses_the_fallback_text(self) -> None:
+    async def test_no_reply_suppresses_the_closing_thought(self) -> None:
         turn = await run_codex_turn(
             events=[
                 tool_call_request(1, BandTool.NO_REPLY, {"reason": "not for me"}),
@@ -6641,12 +6694,16 @@ class TestNoReply:
         )
 
         await room.send("First message")
-        await room.send("Second message")
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("Second message")
 
-        assert room.chat == ["Second answer"]
+        assert room.chat == []
+        assert [
+            e["content"] for e in events_of_type(room.deliveries[-1], "thought")
+        ] == ["Second answer"]
 
 
-class TestFinalTextRelay:
+class TestNativeTextAuthority:
     @pytest.mark.asyncio
     async def test_a_tool_reply_suppresses_the_final_text(self) -> None:
         turn = await run_codex_turn(
@@ -6676,7 +6733,11 @@ class TestFinalTextRelay:
         )
 
         assert turn.tools.chat == [
-            "Approval requested (command: a). Policy decision: accept.",
+            "Approval requested (command: a). Policy decision: accept."
+        ]
+        assert not turn.tools.turn.complete
+        assert [e["content"] for e in events_of_type(turn.tools, "thought")] == [
+            "Codex approval request handled automatically (accept).",
             "Tests pass.",
         ]
 
@@ -6693,7 +6754,7 @@ class TestCustomToolEffect:
             pytest.param(
                 declares_turn_effect(TurnEffect.DECLINE), [], id="declared-silence"
             ),
-            pytest.param(undeclared, ["Nothing to add."], id="undeclared"),
+            pytest.param(undeclared, [], id="undeclared"),
         ],
     )
     async def test_only_a_declared_tool_settles_the_reply(
@@ -6775,15 +6836,14 @@ class TestDetachedTurnOutcome:
         await room.settled()
 
         turn, busy, approval = room.deliveries
-        assert turn.messages_sent[-1]["content"] == "Tests pass."
+        assert [e["content"] for e in events_of_type(turn, "thought")] == [
+            "Codex approval request handled automatically (accept).",
+            "Tests pass.",
+        ]
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
         assert busy.chat == [TURN_IN_PROGRESS_MESSAGE]
         assert turn.turn.complete and busy.turn.complete and approval.turn.complete
-        assert (
-            failure_reports(turn)
-            == failure_reports(busy)
-            == failure_reports(approval)
-            == []
-        )
+        assert failure_reports(busy) == failure_reports(approval) == []
 
     @pytest.mark.asyncio
     async def test_a_released_turn_ended_by_room_cleanup_posts_nothing(
@@ -6796,3 +6856,169 @@ class TestDetachedTurnOutcome:
 
         [turn] = room.deliveries
         assert failure_reports(turn) == []
+
+
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("emit_thoughts", [True, False])
+@pytest.mark.parametrize("completed", ["thinking", "thinking longer", "revised"])
+async def test_completed_native_items_reconcile_streamed_thoughts(
+    stream: bool,
+    emit_thoughts: bool,
+    completed: str,
+) -> None:
+    turn = await run_codex_turn(
+        events=[
+            agent_message_started("comment", phase="commentary"),
+            agent_message_delta("thinking", "comment"),
+            agent_message_completed(completed, "comment", phase="commentary"),
+            agent_message_completed("final", "answer"),
+            turn_completed(),
+        ],
+        config=CodexAdapterConfig(stream_commentary_events=stream),
+        emit={Emit.THOUGHTS} if emit_thoughts else set(),
+    )
+    expected: list[str] = []
+    if emit_thoughts:
+        expected = [completed, "final"]
+        if stream:
+            expected = ["thinking"]
+            if completed != "thinking":
+                expected.append(
+                    " longer" if completed == "thinking longer" else "revised"
+                )
+            expected.append("final")
+    assert [e["content"] for e in events_of_type(turn.tools, "thought")] == expected
+    assert turn.tools.chat == []
+    assert not turn.tools.turn.complete
+
+
+@pytest.mark.parametrize("effect", [BandTool.SEND_MESSAGE, BandTool.NO_REPLY])
+async def test_completed_native_text_waits_for_later_reply_effects(effect: str) -> None:
+    args = (
+        {"content": "tool answer", "mentions": ["@a"]}
+        if effect == BandTool.SEND_MESSAGE
+        else {}
+    )
+    turn = await run_codex_turn(
+        events=[
+            agent_message_completed("early closing text"),
+            tool_call_request(1, effect, args),
+            turn_completed(),
+        ]
+    )
+    assert events_of_type(turn.tools, "thought") == []
+    assert turn.tools.turn.replied
+
+
+@pytest.mark.parametrize("status", ["interrupted", "failed"])
+async def test_completed_native_text_is_suppressed_after_provider_failure(
+    status: str,
+) -> None:
+    tools = ToolSchemaFakeTools()
+    if status == "failed":
+        with pytest.raises(TurnResultAlreadyReported):
+            await run_codex_turn(
+                tools=tools,
+                events=[
+                    agent_message_completed("not delivered"),
+                    turn_completed(status=status),
+                ],
+            )
+    else:
+        await run_codex_turn(
+            tools=tools,
+            events=[
+                agent_message_completed("not delivered"),
+                turn_completed(status=status),
+            ],
+        )
+    assert events_of_type(tools, "thought") == []
+
+
+@pytest.mark.parametrize("phase", [None, "final_answer", "commentary"])
+async def test_incomplete_native_items_have_no_closing_fallback(
+    phase: str | None,
+) -> None:
+    turn = await run_codex_turn(
+        events=[
+            agent_message_started(phase=phase),
+            agent_message_delta("partial"),
+            turn_completed(),
+        ]
+    )
+    assert turn.tools.chat == []
+    assert events_of_type(turn.tools, "thought") == []
+    assert not turn.tools.turn.complete
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        CodexAdapterConfig(),
+        CodexAdapterConfig(system_prompt="custom"),
+        CodexAdapterConfig(include_base_instructions=False),
+    ],
+)
+async def test_codex_transport_contract_is_in_default_and_custom_prompts(
+    config: CodexAdapterConfig,
+) -> None:
+    turn = await run_codex_turn(
+        events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()],
+        config=config,
+    )
+    inputs = turn.client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
+    assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
+
+
+async def test_failed_native_thought_delivery_does_not_settle_the_turn() -> None:
+    tools = ToolSchemaFakeTools()
+    tools.send_event_error = RuntimeError("telemetry unavailable")
+    await run_codex_turn(
+        tools=tools,
+        events=[agent_message_completed("closing narration"), turn_completed()],
+    )
+    assert not tools.turn.complete
+    assert tools.chat == []
+
+
+@pytest.mark.parametrize(
+    "phase, include_phase",
+    [(None, False), (None, True), ("final_answer", True), ("commentary", True)],
+)
+async def test_completed_native_messages_without_reply_effects_remain_thoughts(
+    phase: str | None,
+    include_phase: bool,
+) -> None:
+    completed = agent_message_completed("native", phase=phase)
+    if not include_phase:
+        completed.params["item"].pop("phase")
+    turn = await run_codex_turn(events=[completed, turn_completed()])
+    assert [event["content"] for event in events_of_type(turn.tools, "thought")] == [
+        "native"
+    ]
+    assert turn.tools.chat == []
+    assert not turn.tools.turn.complete
+
+
+async def test_restored_codex_thread_receives_the_mandatory_transport_contract() -> (
+    None
+):
+    client = FakeCodexClient(
+        events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()]
+    )
+    adapter = make_codex_adapter(
+        client, config=CodexAdapterConfig(system_prompt="custom")
+    )
+    await adapter.on_started("Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        ToolSchemaFakeTools(),
+        CodexSessionState(thread_id="restored"),
+        None,
+        None,
+        is_session_bootstrap=True,
+        room_id=ROOM_ID,
+    )
+    inputs = client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
+    assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
+    assert client.params_of(CodexRequestMethod.THREAD_RESUME)

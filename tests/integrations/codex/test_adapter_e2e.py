@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import (
     AgentInput,
     Capability,
@@ -25,6 +26,7 @@ from tests.adapters.codexturns import (
     RecordedRequests,
     await_released_turn,
     final_text,
+    tool_call_request,
     turn_completed,
 )
 
@@ -205,8 +207,12 @@ def _request(request_id: int, method: str, params: dict[str, Any]) -> RpcEvent:
 
 
 def _answered_turn() -> list[RpcEvent]:
-    """A turn whose final text the adapter relays as its reply."""
-    return [final_text("Done."), turn_completed()]
+    """A turn explicitly completed through a Band decline tool."""
+    return [
+        tool_call_request(1, "band_no_reply"),
+        final_text("Done."),
+        turn_completed(),
+    ]
 
 
 async def test_on_event_uses_converter_history_to_resume_thread() -> None:
@@ -483,14 +489,15 @@ async def test_item_completed_forwards_internal_operations() -> None:
         fake_client, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS | Emit.THOUGHTS
     )
     await adapter.on_started("Codex Agent", "Integration test agent")
-    await adapter.on_event(
-        _agent_input(
-            "fix the failing test",
-            tools,
-            room_id="room-ops",
-            is_session_bootstrap=True,
+    with pytest.raises(TurnResultAlreadyReported):
+        await adapter.on_event(
+            _agent_input(
+                "fix the failing test",
+                tools,
+                room_id="room-ops",
+                is_session_bootstrap=True,
+            )
         )
-    )
 
     # Verify tool events for commandExecution
     tool_call_events = [
@@ -512,11 +519,8 @@ async def test_item_completed_forwards_internal_operations() -> None:
 
     # Verify thought event for reasoning
     thought_events = [e for e in tools.events_sent if e["message_type"] == "thought"]
-    assert len(thought_events) == 1
+    assert len(thought_events) == 2
     assert "Tests pass" in thought_events[0]["content"]
 
     # Verify final text message from agentMessage
-    assert any(
-        msg["content"] == "Fixed the bug and all tests pass."
-        for msg in tools.messages_sent
-    )
+    assert tools.messages_sent == []

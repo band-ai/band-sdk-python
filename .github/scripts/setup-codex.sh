@@ -22,6 +22,22 @@ npm install -g "@openai/codex@${CODEX_CLI_VERSION}" \
 printenv OPENAI_API_KEY | codex login --with-api-key
 codex login status
 
+# Codex's workspace-write sandbox runs every command through bwrap. The runner
+# image ships none, and Codex's bundled fallback needs the unprivileged user
+# namespaces Ubuntu 24.04's AppArmor blocks -- so each command fails before it
+# runs and the model only reports it couldn't. Setup per Codex's sandboxing docs,
+# except 24.04 ships the profile under extra-profiles, not /etc/apparmor.d. The
+# probe makes a still-broken sandbox fail here, not as a missing test file.
+if [[ "$(uname -s)" == Linux* ]]; then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq bubblewrap apparmor-profiles
+  sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+  if ! bwrap --unshare-user --ro-bind / / true; then
+    echo "bwrap cannot create a user namespace; Codex's sandbox is unusable" >&2
+    exit 1
+  fi
+fi
+
 # Codex may write to its working dir, so point it at a throwaway path outside the
 # checkout and opt in explicitly (the requirement gate enforces this).
 codex_cwd="$(mktemp -d)"
