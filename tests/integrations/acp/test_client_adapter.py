@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlsplit
@@ -12,6 +13,8 @@ import pytest
 from acp.exceptions import RequestError
 from acp.helpers import update_agent_message_text
 from acp.schema import (
+    AgentCapabilities,
+    InitializeResponse,
     McpServerStdio,
     NewSessionResponse,
     PermissionOption,
@@ -35,7 +38,7 @@ from band.integrations.acp.client_adapter import (
     _resolve_launcher,
 )
 from band.integrations.acp.client_profiles import CursorACPClientProfile
-from band.integrations.acp.client_runtime import ACPCollectingClient
+from band.integrations.acp.client_runtime import ACPCollectingClient, ACPRuntime
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
@@ -2314,3 +2317,106 @@ def test_retired_acp_delivery_mode_is_rejected() -> None:
         ACPClientAdapterConfig.model_validate(
             {"command": "codex", "assistant_text_mode": "thought"}
         )
+
+
+async def _overlap_with_failed_setup(
+    workspace: Path, *, hold_configuration: bool
+) -> tuple[BaseException | None, BaseException | None, AsyncMock, bool]:
+    """Turn one's session/new fails while turn two already waits to set up the
+    same room, and turn two starts its own setup before turn one hears of the
+    failure. Returns both outcomes, the connection, and whether turn two's held
+    session configuration was cancelled."""
+    arrival = asyncio.Event()
+    second_waiting = asyncio.Event()
+    release_configuration = asyncio.Event()
+    configuration_cancelled = False
+    requests = 0
+    conn = AsyncMock()
+    conn.initialize.return_value = InitializeResponse(
+        protocol_version=1, agent_capabilities=AgentCapabilities()
+    )
+
+    async def new_session(**kwargs: object) -> NewSessionResponse:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            # Wake the waiting second turn before this setup fails, so it runs
+            # before the first turn's waiter resumes.
+            arrival.set()
+            raise RequestError.internal_error()
+        return NewSessionResponse(session_id="newer-session")
+
+    conn.new_session = new_session
+
+    @asynccontextmanager
+    async def spawn(*args: object, **kwargs: object):
+        yield conn, None
+
+    async def configure(request: object) -> None:
+        nonlocal configuration_cancelled
+        if hold_configuration:
+            try:
+                await release_configuration.wait()
+            except asyncio.CancelledError:
+                configuration_cancelled = True
+                raise
+
+    adapter = ACPClientAdapter(
+        ACPClientAdapterConfig(
+            command=("fake-agent",), inject_band_tools=False, cwd=str(workspace)
+        ),
+        resolve_session_config=configure,
+    )
+    adapter._build_runtime = lambda workspace=None: ACPRuntime(
+        command=["fake-agent"],
+        cwd=workspace,
+        spawn_process=spawn,
+        pass_builtin_transport_options=False,
+    )
+    await adapter.on_started("Probe", "")
+
+    async def send(content: str) -> None:
+        await adapter.on_message(
+            make_platform_message(content, room_id="room-1"),
+            FakeAgentTools(),
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+    async def second_turn() -> None:
+        second_waiting.set()
+        await arrival.wait()
+        await send("second")
+
+    try:
+        async with asyncio.timeout(3):
+            second = asyncio.create_task(second_turn())
+            await second_waiting.wait()
+            first = asyncio.create_task(send("first"))
+            (first_result,) = await asyncio.gather(first, return_exceptions=True)
+            release_configuration.set()
+            (second_result,) = await asyncio.gather(second, return_exceptions=True)
+    finally:
+        release_configuration.set()
+        await adapter.stop()
+    return first_result, second_result, conn, configuration_cancelled
+
+
+@pytest.mark.parametrize("hold_configuration", [False, True])
+async def test_a_failed_setup_never_tears_down_a_newer_one(
+    tmp_path: Path, hold_configuration: bool
+) -> None:
+    """A room's runtime is retired after its session setup fails, but only while
+    that failed setup is still the room's own: a setup another turn started on
+    the room meanwhile keeps its runtime, and its turn runs."""
+    first, second, conn, cancelled = await _overlap_with_failed_setup(
+        tmp_path, hold_configuration=hold_configuration
+    )
+
+    assert isinstance(first, RequestError)
+    assert second is None
+    assert conn.prompt.await_count == 1
+    assert not cancelled

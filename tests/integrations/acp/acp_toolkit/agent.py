@@ -86,6 +86,10 @@ class FakeACPAgent:
         self._supports_session_load = supports_session_load
         self._persisted_sessions: set[str] = set()
         self._session_load_error: RequestError | None = None
+        # The connection whose process refuses every session/new, modelling an
+        # agent process left broken; a fresh connection is unaffected.
+        self._wedges_next_connection = False
+        self._wedged_conn: AgentSideConnection | None = None
         # A room-owned ACPRuntime opens its own connection, so a genuinely
         # concurrent multi-room turn (see test_independent_rooms_configure_
         # without_waiting_for_each_other) can have more than one live
@@ -217,6 +221,12 @@ class FakeACPAgent:
     def breaks_session_load(self, error: RequestError | None = None) -> FakeACPAgent:
         """Make every ``session/load`` fail with a non-missing-session error."""
         self._session_load_error = error or RequestError.internal_error()
+        return self
+
+    def wedges_its_process(self) -> FakeACPAgent:
+        """Make the current process refuse every ``session/new`` with an
+        internal error for as long as it lives; a respawned process works."""
+        self._wedges_next_connection = True
         return self
 
     def will_stream(self, *parts: str) -> FakeACPAgent:
@@ -602,6 +612,11 @@ class FakeACPAgent:
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
     ) -> NewSessionResponse:
         del kwargs
+        if self._wedges_next_connection:
+            self._wedges_next_connection = False
+            self._wedged_conn = self._current_conn
+        if self._wedged_conn is not None and self._current_conn is self._wedged_conn:
+            raise RequestError.internal_error()
         sid = f"fake-session-{len(self.sessions) + 1}"
         self.sessions.append(
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}
