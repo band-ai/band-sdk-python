@@ -152,13 +152,7 @@ class TestRouting:
 
 class TestStopSurvivesReconnect:
     async def test_reconnect_while_stopped_does_not_invoke_adapter(self):
-        """After stop, a reconnect (ReconnectedEvent -> /next sync incl. stale
-        recovery) must NOT re-fire the adapter. Needs no SDK persistence — the
-        local _stopped guard + platform /next->204 keep the room quiet.
-
-        Asserts the adapter is NOT invoked (covers both the no-persistence claim
-        and the recovery-sweep guard), per architect's Step-4 should-fix.
-        """
+        """A received STOP keeps reconnect quiet until PLAY."""
         link = MagicMock()
         link.agent_id = "agent-123"
         link.rest = MagicMock()
@@ -173,10 +167,7 @@ class TestStopSurvivesReconnect:
         link.mark_processing = AsyncMock(return_value=True)
         link.mark_processed = AsyncMock(return_value=True)
         link.mark_failed = AsyncMock(return_value=True)
-        # Platform /next gate returns 204 (None) for a stopped agent — that path
-        # is platform-authoritative. The LOCAL risk is the recovery sweep, which
-        # fetches 'processing' messages DIRECTLY (bypassing /next): the stop path
-        # leaves the interrupted message there. The _stopped guard must skip it.
+        # Listing must not become an alternate execution path.
         stuck = PlatformMessage(
             id="stuck",
             room_id="room-123",
@@ -205,7 +196,7 @@ class TestStopSurvivesReconnect:
 
         assert executed == []  # adapter never invoked while stopped
         link.mark_processing.assert_not_awaited()
-        # Recovery sweep (the gate-bypassing path) was skipped locally.
+        # Diagnostic listing is never used to dispatch execution.
         link.get_stale_processing_messages.assert_not_awaited()
         # Efficiency: the reconnect sync must short-circuit on _stopped locally,
         # same as the idle-timeout and resync-sentinel paths, instead of making
@@ -230,3 +221,32 @@ class TestGracefulDegradation:
 
         for mode in ("interrupt", "stop", "play"):
             await runtime.handle_control(_control(mode, scope="room", room_id="r1"))
+
+
+async def test_rest_stop_uses_default_runtime_adapter_hook_without_latching() -> None:
+    link = MagicMock()
+    link.get_next_message = AsyncMock(return_value=None)
+    heard: list[tuple[str, ControlMode]] = []
+
+    async def on_control(room_id: str, mode: ControlMode) -> None:
+        heard.append((room_id, mode))
+
+    runtime = AgentRuntime(
+        link=link,
+        agent_id="agent-123",
+        on_execute=never_executes,
+        on_control=on_control,
+    )
+    ctx = await runtime._create_execution("room-1")
+    assert isinstance(ctx, ExecutionContext)
+    try:
+        await ctx._begin_scope()
+        scope = ctx.current_scope
+        assert scope is not None
+        ctx.observe_platform_stop(scope)
+        assert scope.observer_task is not None
+        await scope.observer_task
+        assert heard == [("room-1", ControlMode.STOP)]
+        assert not ctx.is_stopped
+    finally:
+        await ctx.stop()

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
-import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -1512,34 +1512,13 @@ class TestAgentToolsSendEvent:
         assert result is None
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
-    async def test_send_event_in_a_stopped_room_makes_no_call(self, mock_rest_client):
-        """A room stopped on the platform rejects its event posts; once the
-        room is known stopped, send_event makes no API call at all, so an
-        in-flight turn's remaining chunks do not each hit the guard."""
-        ctx = ExecutionContext(
-            room_id="room-123",
-            link=MagicMock(rest=mock_rest_client),
-            on_execute=AsyncMock(),
-        )
-        tools = AgentTools.from_context(ctx)
-        ctx.stop_room()
-
-        result = await tools.send_event("thinking", "thought")
-
-        assert result is None
-        mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_awaited()
-
-    async def test_send_event_adopts_a_platform_stop_and_quiets(
-        self, mock_rest_client, caplog
+    async def test_stopped_scope_cancels_posts_without_latching_room(
+        self, mock_rest_client
     ):
-        """The first rejected post adopts the platform's stopped state for the
-        room; the room's later event posts short-circuit locally -- one API
-        call, one warning, no 403 storm for the rest of the turn."""
         ctx = ExecutionContext(
-            room_id="room-123",
-            link=MagicMock(rest=mock_rest_client),
-            on_execute=AsyncMock(),
+            "room-123", MagicMock(rest=mock_rest_client), AsyncMock()
         )
+        await ctx._begin_scope()
         tools = AgentTools.from_context(ctx)
         mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
             ForbiddenError(
@@ -1552,19 +1531,12 @@ class TestAgentToolsSendEvent:
                 )
             )
         )
-
-        with caplog.at_level(logging.WARNING, logger="band.runtime.execution"):
-            first = await tools.send_event("a", "thought")
-            second = await tools.send_event("b", "tool_call")
-
-        assert first is None
-        assert second is None
-        assert ctx.is_stopped is True
+        for content in ("first", "later"):
+            with pytest.raises(asyncio.CancelledError):
+                await tools.send_event(content, "thought")
+        assert not ctx.is_stopped
+        assert not tools.turn.complete
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
-        assert (
-            caplog.text.count("the platform reports the room's execution as stopped")
-            == 1
-        )
 
     async def test_send_event_without_an_execution_still_raises_the_typed_error(
         self, mock_rest_client
@@ -2623,3 +2595,29 @@ async def test_valid_memory_dispatch_addresses_item(
         assert [(q.method, q.url.path) for q in requests] == [
             (method, f"/api/v1/agent/memories/{UUID_ID}{suffix}")
         ]
+
+
+@pytest.mark.parametrize("boundary", ["dispatcher", "failure"])
+async def test_unbound_stopped_refusal_escapes_tool_error_conversion(
+    mock_rest_client, boundary: str
+) -> None:
+    tools = AgentTools("room-123", mock_rest_client)
+    mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+        ForbiddenError(
+            body=Error(
+                error=ErrorError(
+                    code="forbidden",
+                    message="Agent execution is stopped; cannot post events",
+                    request_id="req-1",
+                )
+            )
+        )
+    )
+    with pytest.raises(RoomExecutionStoppedError):
+        if boundary == "dispatcher":
+            await tools.execute_tool_call_structured(
+                "band_send_event", {"content": "thought", "message_type": "thought"}
+            )
+        else:
+            await tools.send_failure(AgentFailure("provider", "failed"))
+    assert not tools.turn.complete

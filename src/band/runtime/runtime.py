@@ -16,10 +16,10 @@ from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
-
-from .execution import Execution, ExecutionContext, ExecutionHandler
-from .presence import RoomPresence
-from .types import (
+from band.runtime.cycle import TurnScope
+from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
+from band.runtime.presence import RoomPresence
+from band.runtime.types import (
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
     SessionConfig,
@@ -419,6 +419,7 @@ class AgentRuntime:
                 on_participant_removed=self._on_participant_removed,
                 hub_room_id=self._hub_room_id,
                 claim_registry=self._claim_registry,
+                on_platform_stop=self._on_platform_stop,
             )
 
         self.executions[room_id] = execution
@@ -426,6 +427,10 @@ class AgentRuntime:
 
         logger.debug("Created execution for room %s", room_id)
         return execution
+
+    async def _on_platform_stop(self, ctx: ExecutionContext, scope: TurnScope) -> None:
+        if ctx.owns_scope(scope) and self._on_control is not None:
+            await self._on_control(ctx.room_id, ControlMode.STOP)
 
     async def _destroy_execution(
         self, room_id: str, timeout: float | None = None

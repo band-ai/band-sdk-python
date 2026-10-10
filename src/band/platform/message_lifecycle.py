@@ -1,23 +1,52 @@
 """Message-lifecycle REST operations — no WebSocket state involved.
 
-Split out of BandLink: mark_processing/processed/failed, report_activity,
-and the /next + stale-processing REST reads share nothing with WebSocket
-connection or subscription state, only a REST client.
+Lifecycle acceptance is checked against actual HTTP status, independently
+of WebSocket connection or subscription state.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from http import HTTPStatus
+from typing import TypeVar
 
 from band_rest.core.api_error import ApiError
+from band_rest.core.http_response import AsyncHttpResponse
 from band_rest.types.chat_message_metadata import ChatMessageMetadata
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.core.exceptions import RoomExecutionStoppedError
 from band.core.types import metadata_to_dict
 from band.runtime.types import PlatformMessage
 
 logger = logging.getLogger(__name__)
+
+
+ResponseData = TypeVar("ResponseData")
+
+
+def _accepted_response(
+    response: AsyncHttpResponse[ResponseData | None],
+    *,
+    stopped_room_id: str | None = None,
+) -> ResponseData:
+    if response.status_code == HTTPStatus.NO_CONTENT and stopped_room_id is not None:
+        raise RoomExecutionStoppedError(stopped_room_id)
+    data = response.data
+    payload = getattr(data, "data", None)
+    if (
+        response.status_code != HTTPStatus.OK
+        or data is None
+        or payload is None
+        or getattr(payload, "success", True) is False
+    ):
+        raise ApiError(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            body="Lifecycle response did not confirm acceptance",
+        )
+    return data
 
 
 def _message_metadata(metadata: ChatMessageMetadata | None) -> dict[str, object]:
@@ -51,11 +80,14 @@ class MessageLifecycle:
         """
         logger.debug("Marking message %s as processing", message_id)
         try:
-            await rest.agent_api_messages.mark_agent_message_processing(
+            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_processing(
                 chat_id=room_id,
                 id=message_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
+            _accepted_response(response, stopped_room_id=room_id)
+        except RoomExecutionStoppedError:
+            raise
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to mark message %s as processing: %s", message_id, e)
             return False
@@ -71,11 +103,14 @@ class MessageLifecycle:
         """
         logger.debug("Marking message %s as processed", message_id)
         try:
-            await rest.agent_api_messages.mark_agent_message_processed(
+            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_processed(
                 chat_id=room_id,
                 id=message_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
+            _accepted_response(response, stopped_room_id=room_id)
+        except RoomExecutionStoppedError:
+            raise
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to mark message %s as processed: %s", message_id, e)
             return False
@@ -92,12 +127,15 @@ class MessageLifecycle:
         error = error.strip() or "Unknown error"
         logger.warning("Marking message %s as failed: %s", message_id, error)
         try:
-            await rest.agent_api_messages.mark_agent_message_failed(
+            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
                 chat_id=room_id,
                 id=message_id,
                 error=error,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
+            _accepted_response(response, stopped_room_id=room_id)
+        except RoomExecutionStoppedError:
+            raise
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to mark message %s as failed: %s", message_id, e)
             return False
@@ -176,24 +214,15 @@ class MessageLifecycle:
         silently drop messages at the claim step.
         """
         logger.debug("Getting next message for room %s", room_id)
-        try:
-            response = await rest.agent_api_messages.get_agent_next_message(
+        response = (
+            await rest.agent_api_messages.with_raw_response.get_agent_next_message(
                 chat_id=room_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-        except ApiError as e:
-            # 204 No Content means no actionable messages — the only "None"
-            # case the platform expresses through an ApiError.
-            if e.status_code == 204:
-                logger.debug("No actionable messages for room %s", room_id)
-                return None
-            logger.warning("Failed to get next message: %s", e)
-            raise
-
-        if response is None or response.data is None:
+        )
+        if response.status_code == HTTPStatus.NO_CONTENT:
             return None
-
-        item = response.data
+        item = _accepted_response(response).data
         return PlatformMessage(
             id=item.id,
             room_id=item.chat_room_id or room_id,
@@ -212,16 +241,8 @@ class MessageLifecycle:
         """
         Get messages stuck in 'processing' state for a room.
 
-        Recovery sweep for agent restart: a crash mid-processing leaves
-        messages in 'processing', and the long-running runtime calls this at
-        startup to drain them.
-
-        Redundant for callers already polling ``/next``: it includes
-        stuck-processing messages in its "actionable" set too (excludes only
-        ``processed`` — see ``Chat.get_next_actionable_message`` on the
-        platform side), so the bridge's rehydration nudge and
-        ``OneShotInvoker``'s claim step don't need this method. It exists for
-        callers that want every stuck message up front, not one per room.
+        Diagnostic listing only. Execution recovery uses /next, which includes
+        processing messages and applies the platform's stopped-room gate.
         """
         try:
             messages = []

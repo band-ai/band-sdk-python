@@ -57,13 +57,12 @@ def _truncate_event_content(content: str) -> str:
 
 # The platform's guard against a room whose agent execution is stopped. The
 # error code is the generic "forbidden", so only the message text identifies
-# this rejection among the other 403s the events API returns.
+# this rejection among other permission failures.
 _EXECUTION_STOPPED_MESSAGE = "execution is stopped"
 
 
 def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
-    """Whether a 403 from the events API is the platform's guard against a
-    stopped room execution, not a generic permission rejection.
+    """Whether a posting rejection identifies stopped room execution.
 
     The body is the parsed Fern ``Error`` model when the response parsed, or
     a raw dict/str when it did not; every shape that carries the message is
@@ -98,11 +97,16 @@ async def post_message(
         )
         return None
 
-    response = await rest.agent_api_messages.create_agent_chat_message(
-        chat_id=room_id,
-        message=request,
-        request_options=DEFAULT_REQUEST_OPTIONS,
-    )
+    try:
+        response = await rest.agent_api_messages.create_agent_chat_message(
+            chat_id=room_id,
+            message=request,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+    except ForbiddenError as error:
+        if _is_execution_stopped_rejection(error):
+            raise RoomExecutionStoppedError(room_id) from error
+        raise
     if not response.data:
         raise RuntimeError("Failed to send message - no response data")
     return response.data
@@ -123,8 +127,7 @@ async def post_event(
         RoomExecutionStoppedError: When the platform rejects the post because
             this room's agent execution is stopped. The platform keeps
             rejecting the room's posts until the execution is resumed (a play
-            signal), so callers must not retry; execution-aware callers
-            (``AgentTools``) adopt the stopped state instead.
+            signal), so execution-owned callers abort the originating turn.
     """
     if not has_visible_content(request.content):
         logger.warning(

@@ -26,3 +26,16 @@ Accepted strings retain their exact spelling. Task references also accept the
 existing leading `#` shorthand, including board numbers and UUIDs. This lexical
 check does not establish resource existence. Direct REST client calls remain
 responsible for their own input validation.
+
+## Lifecycle acceptance
+
+`MessageLifecycle` uses the public `agent_api_messages.with_raw_response` API
+for `/next` and processing/processed/failed marks. Only an actual HTTP 204 is
+quiet on `/next`; on marks it is a stopped-execution refusal. An accepted mark
+requires HTTP 200 with valid success data. Empty errors and empty success bodies
+cannot establish acceptance.
+
+The generated client's empty-body shortcut runs before status classification in
+pinned `band-client-rest` 0.0.41 and remains in released 0.0.46. Public raw response
+status preserves the distinction without accessing generated private fields or
+adding another HTTP client. Real-client HTTP transport tests pin this boundary.

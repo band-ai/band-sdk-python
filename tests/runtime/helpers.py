@@ -126,3 +126,76 @@ def failure_posts(link: MagicMock) -> list[tuple[str, str]]:
 
 def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
     return [post for post in failure_posts(link) if post[0] == TURN_FAILURE_PROVIDER]
+
+
+class LifecyclePlatform:
+    """A controlled HTTP peer for the real Fern lifecycle and posting client."""
+
+    def __init__(self, *, stopped: bool = False) -> None:
+        self.stopped = stopped
+        self.messages: list[dict[str, Any]] = []
+        self.accepted_marks: list[tuple[str, str]] = []
+        self.posts: list[str] = []
+        self.processing_list_reads = 0
+
+    def add_message(self, message_id: str) -> None:
+        self.messages.append(
+            {
+                "id": message_id,
+                "chat_room_id": ROOM_ID,
+                "content": "hello",
+                "sender_id": "user-1",
+                "sender_type": "User",
+                "sender_name": "User",
+                "message_type": "text",
+                "metadata": {},
+                "inserted_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        )
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        tail = path.rsplit("/", 1)[-1]
+        if tail == "messages" and request.method == "GET":
+            self.processing_list_reads += 1
+            return httpx.Response(
+                200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+            )
+        if tail == "next":
+            if self.stopped or not self.messages:
+                return httpx.Response(204)
+            return httpx.Response(200, json={"data": self.messages[0]})
+        if tail in {"processing", "processed", "failed"}:
+            if self.stopped:
+                return httpx.Response(204)
+            message_id = path.split("/")[-2]
+            self.accepted_marks.append((message_id, tail))
+            if tail == "processed":
+                self.messages = [m for m in self.messages if m["id"] != message_id]
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": message_id,
+                        "attempt_number": 1,
+                        "status": tail,
+                        "success": True,
+                    }
+                },
+            )
+        if request.method == "POST" and tail in {"messages", "events"}:
+            self.posts.append(tail)
+            return httpx.Response(
+                403,
+                json={
+                    "error": {
+                        "code": "forbidden",
+                        "message": "Agent execution is stopped; cannot post " + tail,
+                        "request_id": "request-1",
+                    }
+                },
+            )
+        return httpx.Response(
+            200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
+        )

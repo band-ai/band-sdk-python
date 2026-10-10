@@ -69,16 +69,13 @@ class ProviderRunError(BandError):
 
 
 class RoomExecutionStoppedError(BandError):
-    """The platform rejected a post because this room's agent execution is
-    stopped (a stop issued while this process was offline, or by another
-    connection). The platform keeps rejecting the room's posts until the
-    execution is resumed (a play signal), so retrying them cannot succeed."""
+    """The platform refused a claim, acknowledgement, or post while stopped.
+
+    The refusal describes that request, not the room's current execution state.
+    """
 
     def __init__(self, room_id: str) -> None:
-        super().__init__(
-            f"Room {room_id}: the platform's agent execution is stopped; "
-            "its posts are rejected until the execution is resumed"
-        )
+        super().__init__(f"Room {room_id}: platform execution was stopped")
         self.room_id = room_id
 
 

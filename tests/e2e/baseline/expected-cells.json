@@ -1439,6 +1439,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_stopped_restart_recovers_without_play_push",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_tool_calls.py::test_capture_exposes_replies_and_tool_calls",
       "adapter": "suite",
       "lanes": [

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ from band.core.protocols import (
 )
 from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
+from band.platform.link import BandLink
 from band.runtime.execution import (
     BacklogProcessResult,
     Execution,
@@ -35,6 +37,7 @@ from tests.conftest import (
     make_participant_removed_event,
 )
 from tests.runtime.conftest import wait_for_condition
+from tests.runtime.helpers import LifecyclePlatform, rest_client_over
 
 
 @pytest.fixture
@@ -2689,3 +2692,36 @@ class TestBandSdkCoreConstructorValidation:
     def test_rejects_invalid_constructor_args(self, factory):
         with pytest.raises(ValueError):
             factory()
+
+
+async def test_stopped_startup_uses_next_gate_not_processing_list() -> None:
+    peer = LifecyclePlatform(stopped=True)
+    peer.add_message("stale")
+    peer.add_message("newer")
+    invoked: list[str] = []
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        invoked.append(event.payload.id)
+
+    async with rest_client_over(peer.answer) as rest:
+        link = BandLink(agent_id="agent-123", api_key="test")
+        link.rest = rest
+        ctx = ExecutionContext(
+            "room-123",
+            link,
+            handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        assert await ctx._synchronize_with_next()
+        assert invoked == []
+        assert peer.accepted_marks == []
+        assert peer.processing_list_reads == 0
+        peer.stopped = False
+        assert await ctx._synchronize_with_next()
+        assert invoked == ["stale", "newer"]
+        assert peer.accepted_marks == [
+            ("stale", "processing"),
+            ("stale", "processed"),
+            ("newer", "processing"),
+            ("newer", "processed"),
+        ]
