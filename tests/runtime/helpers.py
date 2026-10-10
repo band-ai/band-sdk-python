@@ -169,10 +169,10 @@ class LifecyclePlatform:
                 return httpx.Response(204)
             return httpx.Response(200, json={"data": self.messages[0]})
         if tail in {"processing", "processed", "failed"}:
-            self.requested_marks.append((path.split("/")[-2], tail))
+            message_id = path.split("/")[-2]
+            self.requested_marks.append((message_id, tail))
             if self.stopped:
                 return httpx.Response(204)
-            message_id = path.split("/")[-2]
             self.accepted_marks.append((message_id, tail))
             if tail == "processed":
                 self.messages = [m for m in self.messages if m["id"] != message_id]

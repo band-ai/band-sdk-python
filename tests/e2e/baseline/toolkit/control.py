@@ -159,11 +159,8 @@ async def running_control_runtime(
     )
     # The SDK control path's DEBUG lines explain a failing control test.
     with sdk_logs_at(band.runtime, logging.DEBUG):
-        control = (
-            control
-            if control is not None
-            else ControlRuntime(block_cycles=block_cycles)
-        )
+        if control is None:
+            control = ControlRuntime(block_cycles=block_cycles)
 
         def execution_factory(
             room: str, link: BandLink, *, hub_room_id: str | None = None

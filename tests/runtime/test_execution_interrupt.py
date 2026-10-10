@@ -1421,14 +1421,13 @@ async def test_detached_auxiliary_response_cannot_continue_or_notify_room(
         async def handler(ctx: ExecutionContext, event: Any) -> None:
             if event.payload.id == "old":
                 try:
-                    try:
-                        await ctx.claim_message("old-aux")
-                        downstream.append("old")
-                    except asyncio.CancelledError:
-                        with pytest.raises(RuntimeError, match="active handler"):
-                            await ctx.claim_message("detached")
-                        misuse_rejected.append(True)
-                        raise
+                    await ctx.claim_message("old-aux")
+                    downstream.append("old")
+                except asyncio.CancelledError:
+                    with pytest.raises(RuntimeError, match="active handler"):
+                        await ctx.claim_message("detached")
+                    misuse_rejected.append(True)
+                    raise
                 finally:
                     old_finished.set()
             else:
