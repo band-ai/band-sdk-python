@@ -1296,13 +1296,6 @@ class TestGetStaleProcessingMessages:
         messages = await link.get_stale_processing_messages("room-1")
 
         assert [message.id for message in messages] == ["msg-1", "msg-2"]
-        assert link.rest.agent_api_messages.list_agent_messages.await_count == 2
-        first_call = link.rest.agent_api_messages.list_agent_messages.await_args_list[0]
-        second_call = link.rest.agent_api_messages.list_agent_messages.await_args_list[
-            1
-        ]
-        assert first_call.kwargs["page"] == 1
-        assert second_call.kwargs["page"] == 2
 
     @pytest.mark.asyncio
     async def test_stops_after_first_page_when_total_pages_missing(self):
@@ -1332,20 +1325,16 @@ class TestGetStaleProcessingMessages:
         link.rest.agent_api_messages.list_agent_messages.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_on_failure(self):
-        """This is a best-effort startup recovery sweep: a REST failure
-        (mid-pagination or otherwise) must not crash agent startup — it
-        returns an empty list instead of raising, unlike get_next_message's
-        propagate-on-failure contract above."""
+    async def test_raises_on_listing_failure(self):
+        """A failed sweep cannot report the room drained; startup must retry."""
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
         link.rest.agent_api_messages.list_agent_messages = AsyncMock(
-            side_effect=Exception("network down")
+            side_effect=ConnectionError("network down")
         )
 
-        messages = await link.get_stale_processing_messages("room-1")
-
-        assert messages == []
+        with pytest.raises(ConnectionError, match="network down"):
+            await link.get_stale_processing_messages("room-1")
 
 
 class TestReportActivity:
