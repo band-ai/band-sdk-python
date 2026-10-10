@@ -18,6 +18,7 @@ from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
 from tests.adapters.claude_sdk import conftest as claude_conftest
+from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.codexturns import FakeCodexClient, turn_completed
 from tests.adapters.test_codex_adapter import make_codex_adapter, send_bootstrap
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
