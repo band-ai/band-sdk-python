@@ -423,6 +423,9 @@ class ACPClientAdapter(
         self._room_to_session: dict[str, RoomSession] = {}
         # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
+        # Sessions of rooms whose agent process was released while idle; the
+        # next turn's fresh process loads them with session/load.
+        self._released_sessions: dict[str, str] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -1141,7 +1144,9 @@ class ACPClientAdapter(
         mcp: SessionMcpServers,
     ) -> str | None:
         """Restore and configure the persisted session for this room, if available."""
-        session_id = history.room_to_session.get(room_id) if history else None
+        session_id = self._released_sessions.pop(room_id, None) or (
+            history.room_to_session.get(room_id) if history else None
+        )
         if session_id is None:
             return None
 
@@ -1481,6 +1486,32 @@ class ACPClientAdapter(
             sections.append(live_message)
         return "\n\n".join(sections)
 
+    async def _release_loadable_session(self, room_id: str) -> None:
+        """Stop an idle room's agent process, keeping its session to load.
+
+        The building block for adapters whose agent has been shown to recall
+        a conversation across processes through ``session/load``; the generic
+        ACP adapter does not release (``release_room_resources`` stays the
+        default no-op). Only acts when the agent advertised ``session/load``
+        and the room's session is fully set up. If a later load fails, the
+        existing fallback (a new session plus a transcript replay) applies.
+        """
+        async with self._session_lock:
+            runtime = self._runtimes.get(room_id)
+            session = self._room_to_session.get(room_id)
+            if (
+                runtime is None
+                or session is None
+                or room_id in self._session_initializers
+                or not runtime.supports_session_load
+            ):
+                return
+            del self._runtimes[room_id]
+            del self._room_to_session[room_id]
+            self._released_sessions[room_id] = session.session_id
+        await runtime.stop()
+        logger.info("Released idle ACP agent process for room %s", room_id)
+
     async def on_cleanup(
         self, room_id: str, *, expected_runtime: ACPRuntime | None = None
     ) -> None:
@@ -1490,6 +1521,7 @@ class ACPClientAdapter(
                 and self._runtimes.get(room_id) is not expected_runtime
             ):
                 return
+            self._released_sessions.pop(room_id, None)
             session = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
@@ -1531,6 +1563,7 @@ class ACPClientAdapter(
             initializers = tuple(self._session_initializers.values())
             self._session_initializers.clear()
             self._room_to_session.clear()
+            self._released_sessions.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())
