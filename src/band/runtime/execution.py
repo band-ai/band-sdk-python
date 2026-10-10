@@ -43,6 +43,7 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
+from band.core.exceptions import RoomExecutionStoppedError
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TURN_FAILURE_PROVIDER,
@@ -58,6 +59,7 @@ from band.platform.event import (
     ReconnectedEvent,
 )
 from band.runtime.context_serialization import context_item_to_dict
+from band.runtime.cycle import TurnScope
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.tools.agent import AgentTools
@@ -254,6 +256,8 @@ class ExecutionContext:
         *,
         hub_room_id: str | None = None,
         claim_registry: ClaimRegistry | None = None,
+        on_platform_stop: Callable[[ExecutionContext, TurnScope], Awaitable[None]]
+        | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -299,6 +303,7 @@ class ExecutionContext:
         self.queue: asyncio.Queue[PlatformEvent] = asyncio.Queue()
         self.state = ExecutionState.STARTING
         self._is_running = False
+        self._closing = False
         self._process_loop_task: asyncio.Task[None] | None = None
         self._context_cache: ConversationContext | None = None
         self._context_hydrated = False
@@ -342,6 +347,9 @@ class ExecutionContext:
         self._active_cycle_task: asyncio.Task[None] | None = None
         self._detached_cycle_tasks: set[asyncio.Task[None]] = set()
         self._interrupt_kind: ControlMode | None = None
+        self.current_scope: TurnScope | None = None
+        self._control_revision = 0
+        self._on_platform_stop = on_platform_stop
 
         # Signal that landed in the claim->cycle window, where a message is
         # claimed (mark_processing) and hydrating but the cancellable cycle task
@@ -379,6 +387,11 @@ class ExecutionContext:
     def is_processing(self) -> bool:
         """Check if context is currently processing an event."""
         return self.state is ExecutionState.PROCESSING
+
+    @property
+    def is_stopped(self) -> bool:
+        """Whether a received STOP control has paused this room."""
+        return self._stopped
 
     def _set_state(self, new_state: ExecutionState) -> None:
         """
@@ -464,7 +477,10 @@ class ExecutionContext:
         if not self.claims.is_ack_pending(self.room_id, message_id):
             return False
 
-        durable_processed = await self.link.mark_processed(self.room_id, message_id)
+        try:
+            durable_processed = await self.link.mark_processed(self.room_id, message_id)
+        except RoomExecutionStoppedError:
+            return False
         if durable_processed:
             self._retry_tracker.mark_success(message_id)
             self.claims.remember_completed(self.room_id, message_id)
@@ -510,6 +526,7 @@ class ExecutionContext:
             return
 
         logger.info("Starting ExecutionContext for room: %s", self.room_id)
+        self._closing = False
         self._is_running = True
         self._process_loop_task = asyncio.create_task(
             self._process_loop(),
@@ -532,7 +549,9 @@ class ExecutionContext:
             True if stopped gracefully (processing completed or was idle),
             False if had to cancel mid-processing after timeout.
         """
+        self._closing = True
         if self._process_loop_task is None:
+            await self._stop_retained_tasks()
             return True
 
         logger.info("Stopping ExecutionContext for room: %s", self.room_id)
@@ -571,6 +590,7 @@ class ExecutionContext:
         if cycle_task is not None:
             await self._drain_cancelled_cycle_task(cycle_task)
         self._active_cycle_task = None
+        await self._stop_retained_tasks()
 
         # Defensively clear any lingering working-state keep-alive so a removed
         # room can't leak its refresh task. Idempotent: a no-op if not active
@@ -675,6 +695,10 @@ class ExecutionContext:
         if kind is ControlMode.PLAY:
             raise ValueError("interrupt() does not accept kind=PLAY; use resume_room()")
 
+        self._control_revision += 1
+        return self._cancel_cycle(kind)
+
+    def _cancel_cycle(self, kind: ControlMode) -> bool:
         task = self._active_cycle_task
         if task is not None and not task.done():
             self._interrupt_kind = kind
@@ -718,8 +742,50 @@ class ExecutionContext:
         Clears ``_stopped`` BEFORE enqueuing the resync sentinel so the loop
         does not skip the catch-up it just requested.
         """
+        self._control_revision += 1
         self._stopped = False
         await self.request_resync()
+
+    def owns_scope(self, scope: TurnScope) -> bool:
+        return (
+            self.current_scope is scope
+            and scope.control_revision == self._control_revision
+        )
+
+    def observe_platform_stop(self, scope: TurnScope) -> None:
+        scope.stop_observed = True
+        if self.current_scope is not scope:
+            return
+        kind = self._interrupt_kind or self._pending_interrupt or ControlMode.STOP
+        self._cancel_cycle(kind)
+        if (
+            not self._closing
+            and self.owns_scope(scope)
+            and scope.observer_task is None
+            and self._on_platform_stop is not None
+        ):
+            scope.observer_task = asyncio.create_task(self._notify_platform_stop(scope))
+            self._retain_detached_cycle_task(scope.observer_task)
+
+    async def _notify_platform_stop(self, scope: TurnScope) -> None:
+        if self.owns_scope(scope) and self._on_platform_stop is not None:
+            await self._on_platform_stop(self, scope)
+
+    async def _begin_scope(self) -> bool:
+        previous = self.current_scope
+        if previous is not None and previous.observer_task is not None:
+            await self._drain_cancelled_cycle_task(previous.observer_task)
+            if not previous.observer_task.done():
+                return False
+        self.current_scope = TurnScope(self._control_revision)
+        return True
+
+    async def _stop_retained_tasks(self) -> None:
+        tasks = tuple(self._detached_cycle_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            await self._drain_cancelled_cycle_task(task)
 
     async def _clear_activity(self) -> None:
         """Invoke the optional activity-clear seam after an aborted cycle."""
@@ -1165,27 +1231,15 @@ class ExecutionContext:
         """
         Synchronize backlog via /next API until caught up with WebSocket.
 
-        First recovers any messages stuck in 'processing' state from a
-        previous crash, then processes pending messages via /next.
-
-        Uses _first_ws_msg_id marker:
-        1. Recover stale processing messages (crash recovery)
-        2. Call /next to get next unprocessed message
-        3. If None → no backlog, we're synced
-        4. Check if message ID matches _first_ws_msg_id (first WebSocket message)
-        5. If match → synced! Process this message, pop duplicate from queue
-        6. If no match → process /next message, repeat from step 1
+        /next includes unfinished processing messages and gates stopped rooms.
+        Process in platform order until empty or the first queued WebSocket
+        message is reached; remove its queued duplicate before continuing.
         """
         logger.debug(
             "ExecutionContext %s: Starting /next synchronization", self.room_id
         )
 
         try:
-            # Recover messages stuck in 'processing' from a previous crash. /next
-            # returns these too (it excludes only 'processed'); this sweep just
-            # drains all of them up front instead of one-per-/next-poll.
-            if not await self._recover_stale_processing_messages():
-                return False
             while True:  # Cancellation handles exit
                 next_msg = await self._get_next_message()
 
@@ -1258,58 +1312,6 @@ class ExecutionContext:
 
         logger.debug("ExecutionContext %s: Synchronization complete", self.room_id)
         self._sync_complete = True
-        return True
-
-    async def _recover_stale_processing_messages(self) -> bool:
-        """
-        Recover messages stuck in 'processing' state from a previous crash.
-
-        When an agent crashes mid-processing, the message stays in 'processing'
-        state on the server. The /next endpoint returns these messages one at a
-        time, while this sweep finds and re-processes all of them up front by
-        calling mark_processing (creates a new attempt).
-
-        Skipped while stopped: the stop path deliberately leaves the interrupted
-        message in 'processing', and a reconnect must not resurrect it through
-        the recovery sweep. The platform replays it via /next on play instead.
-        This keeps stop-survives-reconnect correct in the SDK without relying on
-        the platform gating the mark endpoint for this path.
-        """
-        if self._stopped:
-            logger.debug(
-                "ExecutionContext %s: stopped, skipping stale-processing recovery",
-                self.room_id,
-            )
-            return True
-
-        stale_messages = await self.link.get_stale_processing_messages(self.room_id)
-        if not stale_messages:
-            return True
-
-        logger.info(
-            "ExecutionContext %s: Recovering %d stale processing message(s)",
-            self.room_id,
-            len(stale_messages),
-        )
-
-        for msg in stale_messages:
-            logger.info(
-                "ExecutionContext %s: Re-processing stale message %s",
-                self.room_id,
-                msg.id,
-            )
-            try:
-                result = await self._process_backlog_message(msg)
-                if result == BacklogProcessResult.RETRY_LATER:
-                    return False
-            except Exception:
-                logger.exception(
-                    "ExecutionContext %s: Failed to recover stale message %s",
-                    self.room_id,
-                    msg.id,
-                )
-                return False
-
         return True
 
     async def _get_next_message(self) -> PlatformMessage | None:
@@ -1456,6 +1458,8 @@ class ExecutionContext:
     ) -> BacklogProcessResult:
         """Process a backlog message while its in-flight claim is held."""
         msg_id = msg.id
+        if not await self._begin_scope():
+            return BacklogProcessResult.RETRY_LATER
         self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
@@ -1552,6 +1556,8 @@ class ExecutionContext:
             # handled inside _run_cycle and we advance without sending
             # anything.
             if not await self._run_cycle(event, msg_id):
+                if self.current_scope is not None and self.current_scope.stop_observed:
+                    return BacklogProcessResult.RETRY_LATER
                 return BacklogProcessResult.ADVANCED
 
             # SUCCESS: record ack-pending BEFORE the awaited mark_processed
@@ -1575,6 +1581,11 @@ class ExecutionContext:
 
             logger.debug("Message %s processed successfully", msg_id)
             return BacklogProcessResult.ADVANCED
+
+        except RoomExecutionStoppedError:
+            if not self.claims.is_ack_pending(self.room_id, msg_id):
+                self._retry_tracker.discard_attempt(msg_id)
+            return BacklogProcessResult.RETRY_LATER
 
         except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
             _log_turn_error(e, "Error processing backlog message %s", msg_id)
@@ -1651,12 +1662,14 @@ class ExecutionContext:
         finally:
             await self._working_reporter.stop()
 
-    def _take_interrupt_kind(self) -> ControlMode | None:
+    def _take_interrupt_kind(self, scope: TurnScope | None) -> ControlMode | None:
         """Read-and-clear ``_interrupt_kind`` atomically (no ``await`` between
         the read and the clear), so a consumed signal never leaks into a
         later, unrelated cycle."""
         kind = self._interrupt_kind
         self._interrupt_kind = None
+        if kind is None and scope is not None and scope.stop_observed:
+            return ControlMode.STOP
         return kind
 
     def _retain_detached_cycle_task(self, task: asyncio.Task[None]) -> None:
@@ -1688,7 +1701,8 @@ class ExecutionContext:
             async with asyncio_timeout(CYCLE_CANCEL_GRACE_SECONDS):
                 await asyncio.shield(task)
         except asyncio.CancelledError:
-            if not task.cancelled():
+            parent = asyncio.current_task()
+            if not task.cancelled() or (parent is not None and parent.cancelling()):
                 raise
         except TimeoutError:
             if task.done():
@@ -1735,6 +1749,7 @@ class ExecutionContext:
         # stop_room() with no cycle task to cancel yet). Reading/clearing the
         # flags and creating the task below all run without an intervening
         # await, so interrupt() on the receive task can't interleave here.
+        scope = self.current_scope
         pending = self._pending_interrupt
         self._pending_interrupt = None
         self._cycle_armed = False
@@ -1803,7 +1818,7 @@ class ExecutionContext:
                         # its documented contract (mirrors that branch) rather
                         # than reporting the user's own stop/interrupt as a
                         # timeout failure.
-                        kind = self._take_interrupt_kind()
+                        kind = self._take_interrupt_kind(scope)
                         if kind is not None:
                             return await self._abort_cycle(kind, msg_id)
                         # Replace whatever bare TimeoutError arrived
@@ -1819,7 +1834,12 @@ class ExecutionContext:
             # A handler may suppress CancelledError and return normally. In
             # that case the control signal was consumed by this cycle and must
             # not misclassify a later shutdown cancellation as an interrupt.
-            self._interrupt_kind = None
+            kind = self._take_interrupt_kind(scope)
+            parent = asyncio.current_task()
+            if parent is not None and parent.cancelling():
+                raise asyncio.CancelledError
+            if kind is not None and scope is not None and scope.stop_observed:
+                return await self._abort_cycle(kind, msg_id)
             return True
         except asyncio.CancelledError:
             # If two control signals raced before this ran, last-writer-wins on
@@ -1828,7 +1848,10 @@ class ExecutionContext:
             cycle_task = self._active_cycle_task
             if cycle_task is not None and not cycle_task.done():
                 cycle_task.cancel()
-            kind = self._take_interrupt_kind()
+            kind = self._take_interrupt_kind(scope)
+            parent = asyncio.current_task()
+            if parent is not None and parent.cancelling():
+                kind = None
             if kind is None:
                 # Shutdown cancel of the loop task must propagate so the loop
                 # exits. The child was cancelled above; retain it if cleanup
@@ -1845,8 +1868,11 @@ class ExecutionContext:
     async def _claim(self, msg_id: str) -> bool:
         """Mark ``msg_id`` processing on the platform; a refused claim never
         ran the handler, so it gives back the attempt already charged."""
-        if await self.link.mark_processing(self.room_id, msg_id):
-            return True
+        try:
+            if await self.link.mark_processing(self.room_id, msg_id):
+                return True
+        except RoomExecutionStoppedError:
+            pass
         self._retry_tracker.discard_attempt(msg_id)
         return False
 
@@ -1870,7 +1896,12 @@ class ExecutionContext:
             # Consume the message so the idle /next resync does not re-return it
             # (excludes-only-processed) and re-fire the cycle the user just
             # interrupted. Mirror the success-path bookkeeping.
-            if await self.link.mark_processed(self.room_id, msg_id):
+            self.claims.remember_ack_pending(self.room_id, msg_id)
+            try:
+                accepted = await self.link.mark_processed(self.room_id, msg_id)
+            except RoomExecutionStoppedError:
+                accepted = False
+            if accepted:
                 self.claims.remember_completed(self.room_id, msg_id)
             else:
                 # Durable ack failed. Mark the message locally consumed and
@@ -1878,7 +1909,6 @@ class ExecutionContext:
                 # path does — otherwise the interrupted message stays locally
                 # replayable and the idle /next resync re-fires the cycle the
                 # user just interrupted.
-                self.claims.remember_ack_pending(self.room_id, msg_id)
                 logger.warning(
                     "ExecutionContext %s: durable mark_processed failed for "
                     "interrupted message %s; retrying ack in background",
@@ -2023,38 +2053,48 @@ class ExecutionContext:
         safe for agent senders too. ``attempts`` is None when the failure
         preceded ``record_attempt``, which can't be judged final.
         """
-        if not await self.link.mark_failed(self.room_id, msg_id, _error_label(error)):
-            logger.warning(
-                "ExecutionContext %s: Failed to mark message %s as failed",
-                self.room_id,
-                msg_id,
-            )
+        try:
+            if not await self.link.mark_failed(
+                self.room_id, msg_id, _error_label(error)
+            ):
+                logger.warning(
+                    "ExecutionContext %s: Failed to mark message %s as failed",
+                    self.room_id,
+                    msg_id,
+                )
 
-        is_final = attempts is not None and attempts >= self._retry_tracker.max_retries
-        # Only a post that landed counts: an adapter raises
-        # TurnResultAlreadyReported even when its send_failure did not post.
-        already_reported = self._turn_failure_reported
-        if not (
-            self.config.report_turn_failures_to_room
-            and is_final
-            and not already_reported
-        ):
+            is_final = (
+                attempts is not None and attempts >= self._retry_tracker.max_retries
+            )
+            # Only a post that landed counts: an adapter raises
+            # TurnResultAlreadyReported even when its send_failure did not post.
+            already_reported = self._turn_failure_reported
+            if not (
+                self.config.report_turn_failures_to_room
+                and is_final
+                and not already_reported
+            ):
+                logger.debug(
+                    "ExecutionContext %s: No turn-failure report for message %s "
+                    "(enabled=%s, final=%s, already_reported=%s)",
+                    self.room_id,
+                    msg_id,
+                    self.config.report_turn_failures_to_room,
+                    is_final,
+                    already_reported,
+                )
+                return
+
+            # The exception text can carry credentials; it stays in mark_failed
+            # and the logs, and the room gets the generic message.
+            await AgentTools.from_context(self, bind_scope=False).send_failure(
+                AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+        except RoomExecutionStoppedError:
             logger.debug(
-                "ExecutionContext %s: No turn-failure report for message %s "
-                "(enabled=%s, final=%s, already_reported=%s)",
+                "ExecutionContext %s: failure reporting refused while stopped",
                 self.room_id,
-                msg_id,
-                self.config.report_turn_failures_to_room,
-                is_final,
-                already_reported,
             )
-            return
-
-        # The exception text can carry credentials; it stays in mark_failed
-        # and the logs, and the room gets the generic message.
-        await AgentTools.from_context(self).send_failure(
-            AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-        )
 
     async def _process_event_body(
         self, event: PlatformEvent, msg_id: str | None, payload: Any
@@ -2073,6 +2113,9 @@ class ExecutionContext:
             )
             self.claims.remember_completed(self.room_id, msg_id)
             return True
+
+        if not await self._begin_scope():
+            return False
 
         self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
@@ -2152,7 +2195,9 @@ class ExecutionContext:
             # cycles report the working signal (see _invoke_handler);
             # participant add/remove events are housekeeping and skip it.
             if not await self._run_cycle(event, msg_id):
-                return True
+                return not (
+                    self.current_scope is not None and self.current_scope.stop_observed
+                )
 
             # For messages: record ack-pending BEFORE the awaited mark_processed
             # call, synchronously, so a cancellation landing inside that await
@@ -2175,6 +2220,11 @@ class ExecutionContext:
 
             logger.debug("Event %s processed successfully", event.type)
             return True
+
+        except RoomExecutionStoppedError:
+            if msg_id and not self.claims.is_ack_pending(self.room_id, msg_id):
+                self._retry_tracker.discard_attempt(msg_id)
+            return False
 
         except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
             _log_turn_error(e, "Error processing %s", event.type)

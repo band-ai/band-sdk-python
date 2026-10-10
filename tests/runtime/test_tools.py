@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -14,6 +15,8 @@ from band_rest import (
     GetAgentChatContextResponse,
     GetAgentChatContextResponseMetadata,
 )
+from band_rest.errors import ForbiddenError
+from band_rest.types import Error, ErrorError
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ValidationError
 
@@ -25,7 +28,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.config.settings import RuntimeSettings
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, RoomExecutionStoppedError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
@@ -1509,6 +1512,54 @@ class TestAgentToolsSendEvent:
         assert result is None
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
+    async def test_stopped_scope_cancels_posts_without_latching_room(
+        self, mock_rest_client
+    ):
+        ctx = ExecutionContext(
+            "room-123", MagicMock(rest=mock_rest_client), AsyncMock()
+        )
+        await ctx._begin_scope()
+        tools = AgentTools.from_context(ctx)
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            ForbiddenError(
+                body=Error(
+                    error=ErrorError(
+                        code="forbidden",
+                        message="Agent execution is stopped; cannot post events",
+                        request_id="req-1",
+                    )
+                )
+            )
+        )
+        for content in ("first", "later"):
+            with pytest.raises(asyncio.CancelledError):
+                await tools.send_event(content, "thought")
+        assert not ctx.is_stopped
+        assert not tools.turn.complete
+        mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
+
+    async def test_send_event_without_an_execution_still_raises_the_typed_error(
+        self, mock_rest_client
+    ):
+        """Tools built without an execution context have no room state to
+        adopt: the typed error propagates so the caller sees the platform's
+        rejection."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            ForbiddenError(
+                body=Error(
+                    error=ErrorError(
+                        code="forbidden",
+                        message="Agent execution is stopped; cannot post events",
+                        request_id="req-1",
+                    )
+                )
+            )
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(RoomExecutionStoppedError):
+            await tools.send_event("thinking", "thought")
+
 
 class TestAgentToolsSendFailure:
     """Test send_failure's best-effort delegation over the real REST boundary."""
@@ -2544,3 +2595,29 @@ async def test_valid_memory_dispatch_addresses_item(
         assert [(q.method, q.url.path) for q in requests] == [
             (method, f"/api/v1/agent/memories/{UUID_ID}{suffix}")
         ]
+
+
+@pytest.mark.parametrize("boundary", ["dispatcher", "failure"])
+async def test_unbound_stopped_refusal_escapes_tool_error_conversion(
+    mock_rest_client, boundary: str
+) -> None:
+    tools = AgentTools("room-123", mock_rest_client)
+    mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+        ForbiddenError(
+            body=Error(
+                error=ErrorError(
+                    code="forbidden",
+                    message="Agent execution is stopped; cannot post events",
+                    request_id="req-1",
+                )
+            )
+        )
+    )
+    with pytest.raises(RoomExecutionStoppedError):
+        if boundary == "dispatcher":
+            await tools.execute_tool_call_structured(
+                "band_send_event", {"content": "thought", "message_type": "thought"}
+            )
+        else:
+            await tools.send_failure(AgentFailure("provider", "failed"))
+    assert not tools.turn.complete

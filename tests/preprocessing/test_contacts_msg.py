@@ -1,5 +1,7 @@
 """Tests for contacts_msg in preprocessing."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -20,6 +22,7 @@ def mock_execution_context():
     ctx.config.enable_context_hydration = False
     ctx.is_llm_initialized = False
     ctx.participants = []
+    ctx.current_scope = None
     ctx.get_pending_system_messages = MagicMock(return_value=[])
     ctx.mark_llm_initialized = MagicMock()
     # AgentTools.from_context needs ctx.link.rest

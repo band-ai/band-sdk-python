@@ -6,6 +6,7 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import hashlib
@@ -33,7 +34,7 @@ from band.client.rest import (
 )
 from band.config.settings import RuntimeSettings
 from band.core.content import has_visible_content
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, RoomExecutionStoppedError
 from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
@@ -57,6 +58,7 @@ from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
+from band.runtime.cycle import TurnScope
 from band.runtime.participants import log_roster_call, participant_snapshot
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
@@ -328,6 +330,7 @@ class AgentTools(AgentToolsProtocol):
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+        self._scope: TurnScope | None = None
         self.turn = Turn()
 
     @property
@@ -345,7 +348,9 @@ class AgentTools(AgentToolsProtocol):
         return available_mention_handles(self.participants, self._agent_id)
 
     @classmethod
-    def from_context(cls, ctx: ExecutionContext) -> AgentTools:
+    def from_context(
+        cls, ctx: ExecutionContext, *, bind_scope: bool = True
+    ) -> AgentTools:
         """
         Create AgentTools from an ExecutionContext.
 
@@ -365,8 +370,19 @@ class AgentTools(AgentToolsProtocol):
             agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
+        tools._scope = ctx.current_scope if bind_scope else None
         tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
+
+    def _abort_stopped_post(self, error: RoomExecutionStoppedError) -> None:
+        if self._ctx is not None and self._scope is not None:
+            self._ctx.observe_platform_stop(self._scope)
+            raise asyncio.CancelledError() from error
+        raise error
+
+    def _check_post_scope(self) -> None:
+        if self._scope is not None and self._scope.stop_observed:
+            self._abort_stopped_post(RoomExecutionStoppedError(self.room_id))
 
     # --- Tool methods ---
 
@@ -432,6 +448,7 @@ class AgentTools(AgentToolsProtocol):
         *,
         attachment_ids: list[str] | None = None,
     ) -> Any:
+        self._check_post_scope()
         resolved_mentions = self._resolve_required_mentions(mentions)
 
         logger.debug("Sending message to room %s", self.room_id)
@@ -451,11 +468,14 @@ class AgentTools(AgentToolsProtocol):
         if attachment_ids is not None:
             message_kwargs["attachment_ids"] = attachment_ids
 
-        return await post_message(
-            rest=self.rest,
-            room_id=self.room_id,
-            request=ChatMessageRequest(**message_kwargs),
-        )
+        try:
+            return await post_message(
+                rest=self.rest,
+                room_id=self.room_id,
+                request=ChatMessageRequest(**message_kwargs),
+            )
+        except RoomExecutionStoppedError as error:
+            self._abort_stopped_post(error)
 
     async def no_reply(self, reason: str | None = None) -> dict[str, str]:
         """End the turn without posting to the room.
@@ -485,17 +505,23 @@ class AgentTools(AgentToolsProtocol):
         Returns:
             Fern EventCreatedResponse model (Pydantic), serialized to dict by
             execute_tool_call() at the adapter boundary, or ``None`` if
-            *content* had no visible characters and the send was refused.
+            *content* had no visible characters. A stopped refusal cancels the
+            originating execution turn, or raises RoomExecutionStoppedError
+            when these tools have no execution scope.
         """
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
 
-        return await post_event(
-            rest=self.rest,
-            room_id=self.room_id,
-            request=ChatEventRequest(
-                content=content, message_type=message_type, metadata=metadata
-            ),
-        )
+        self._check_post_scope()
+        try:
+            return await post_event(
+                rest=self.rest,
+                room_id=self.room_id,
+                request=ChatEventRequest(
+                    content=content, message_type=message_type, metadata=metadata
+                ),
+            )
+        except RoomExecutionStoppedError as error:
+            self._abort_stopped_post(error)
 
     async def send_failure(self, failure: band_sdk_core.AgentFailure) -> Any:
         """
@@ -508,6 +534,8 @@ class AgentTools(AgentToolsProtocol):
         content, metadata = to_failure_event(failure)
         try:
             response = await self.send_event(content, MessageType.ERROR, metadata)
+        except RoomExecutionStoppedError:
+            raise
         except Exception as exc:
             logger.exception("send_failure could not post the failure event")
             return {"ok": False, "error": str(exc)}
@@ -1993,9 +2021,8 @@ class AgentTools(AgentToolsProtocol):
             method = getattr(self, definition.method_name)
             result = await method(**arguments)
             return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
-        except BandToolError:
-            # Let BandToolError propagate so framework wrappers can
-            # translate it into framework-native failure results.
+        except (BandToolError, RoomExecutionStoppedError):
+            # Stopped execution must escape ordinary tool-error conversion.
             raise
         except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
             msg = f"Error executing {tool_name}: {e}"
