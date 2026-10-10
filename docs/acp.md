@@ -115,8 +115,10 @@ failure fails that room turn visibly instead of falling back.
   variable that model's provider needs.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Band's own tools, including
-  `additional_tools`, never wait for a decision in any `approval_mode`: they are
-  approved once per call. Cursor omits the session id on its
+  `additional_tools`, are approved once per call in every `approval_mode` during
+  an active turn. If Cursor offers no allow-once option, the configured approval
+  policy applies instead. Late Band permission requests are refused after the
+  turn closes or is interrupted. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
   session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
   replies post through `send_notice`, so they never count as the model's reply, and a

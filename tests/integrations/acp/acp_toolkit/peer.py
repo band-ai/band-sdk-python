@@ -14,6 +14,8 @@ from acp import run_agent
 from acp.schema import InitializeResponse
 
 from band.integrations.acp.client_adapter import ACPClientAdapterConfig
+from band.runtime.tools import BandTool
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
 INITIALIZE_PENDING_LINE = "initialization pending"
@@ -48,7 +50,7 @@ def stdio_peer_config(
     return ACPClientAdapterConfig(
         command=command,
         env={"__PYVENV_LAUNCHER__": sys.executable},
-        inject_band_tools=False,
+        inject_band_tools=crash_marker is not None,
     )
 
 
@@ -85,7 +87,12 @@ class StdioPeer(FakeACPAgent):
         del agent
         if self.crash_marker is not None:
             if self.crash_marker.exists():
-                await self.say(session_id, RECOVERED_REPLY)
+                await self.call_mcp_tool(
+                    session_id=session_id,
+                    server=BAND_MCP_SERVER_NAME,
+                    tool_name=BandTool.SEND_MESSAGE,
+                    arguments={"content": RECOVERED_REPLY, "mentions": ["@user-456"]},
+                )
                 return
             self.crash_marker.touch()
         match self.stage:

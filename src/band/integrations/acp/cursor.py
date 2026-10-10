@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Collection
 from enum import StrEnum
 
-from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
+from band.runtime.tools.registry import (
+    BAND_MCP_SERVER_NAME,
+    canonicalize_mcp_tool_name,
+    mcp_tool_spelling,
+)
 
 DECISION_NOT_PENDING_TEMPLATE = "Cursor decision `{token}` is not pending."
 DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisions."
@@ -34,6 +38,13 @@ def is_cursor_band_tool(title: str, own_names: Collection[str]) -> bool:
     return tool in own_names and spelling == mcp_tool_spelling(
         BAND_MCP_SERVER_NAME, tool
     )
+
+
+def canonicalize_cursor_tool_name(name: str, own_names: Collection[str]) -> str:
+    """Decode a registered tool's exact Cursor title before generic MCP names."""
+    if is_cursor_band_tool(name, own_names):
+        return name.partition(CURSOR_TITLE_SEPARATOR)[2]
+    return canonicalize_mcp_tool_name(name, own_names)
 
 
 class CursorCommandWord(StrEnum):
