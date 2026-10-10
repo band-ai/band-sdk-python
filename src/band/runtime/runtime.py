@@ -7,7 +7,6 @@ Framework-light users can use RoomPresence or BandLink directly.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -455,13 +454,9 @@ class AgentRuntime:
         if execution is None:
             return True
 
-        try:
-            graceful = await execution.stop(timeout=timeout)
-        except asyncio.CancelledError:
-            # Leave the execution registered so a later stop() can finish
-            # release and session cleanup after a cancelled teardown.
-            raise
-
+        # Pop only after stop() finishes; a cancelled stop() must leave the
+        # execution registered so a later stop() can finish release/cleanup.
+        graceful = await execution.stop(timeout=timeout)
         self.executions.pop(room_id, None)
 
         # Durable completion state is safe to release with the room. Pending
