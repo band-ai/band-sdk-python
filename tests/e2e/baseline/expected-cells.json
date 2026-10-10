@@ -1439,6 +1439,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_refused_auxiliary_claim_aborts_and_replays",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_stopped_restart_recovers_without_play_push",
       "adapter": "suite",
       "lanes": [
