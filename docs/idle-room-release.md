@@ -13,8 +13,9 @@ failed release is logged and the room keeps serving. Leaving the room or stoppin
 the agent waits for an in-flight teardown to finish.
 
 `SimpleAdapter.release_room_resources` is the adapter hook; the default is a
-no-op. Managed-host adapters override it when they can tear down a per-room
-process and resume on the next message.
+no-op. **Codex** closes the idle room's app-server and resumes the same thread
+on the next turn via `thread/resume`, refetching transcript when resume fails.
+Other managed-host adapters document their behavior in their adapter guides.
 
 ```python
 from band.runtime.types import SessionConfig

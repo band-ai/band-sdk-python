@@ -17,7 +17,8 @@ import pytest_asyncio
 from band.runtime.execution import ExecutionContext, ExecutionState
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
-from tests.adapters.codexturns import FakeCodexClient, run_codex_turn, turn_completed
+from tests.adapters.codexturns import FakeCodexClient, turn_completed
+from tests.adapters.test_codex_adapter import make_codex_adapter, send_bootstrap
 from tests.runtime.conftest import make_link_mock, platform_msg, wait_for_condition
 
 ROOM = "room-1"
@@ -357,14 +358,16 @@ class GatedCloseCodexClient(FakeCodexClient):
 
 async def test_stopping_mid_codex_release_still_closes_the_app_server(room) -> None:
     client = GatedCloseCodexClient(events=[turn_completed()])
-    codex = await run_codex_turn(client=client)
+    adapter = make_codex_adapter(client)
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await send_bootstrap(adapter)
     r = await _started(
-        room(room_id="room-1", adapter_release=codex.adapter.release_room_resources)
+        room(room_id="room-1", adapter_release=adapter.release_room_resources)
     )
     await r.send("msg-1")
 
     await r.stop_while_parked(entered=client.close_entered, gate=client.close_gate)
 
-    room_client = codex.adapter._room_clients["room-1"]
+    room_client = adapter._room_clients["room-1"]
     assert (client.closed, room_client.client) == (True, None)
-    assert codex.adapter._released_threads == {"room-1": "thr-1"}
+    assert adapter._released_threads == {"room-1": "thr-1"}

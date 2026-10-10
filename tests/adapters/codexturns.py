@@ -74,6 +74,7 @@ class FakeCodexClient(RecordedRequests):
         self._model_list_result = model_list_result
         self._model_list_error = model_list_error
         self._skill_roots_error = skill_roots_error
+        self.thread_start_errors: list[Exception] = []
         self._thread_counter = 0
         self._turn_counter = 0
 
@@ -117,6 +118,8 @@ class FakeCodexClient(RecordedRequests):
                     raise self._resume_error
                 return {"thread": {"id": payload.get("threadId", "thr-resumed")}}
             case CodexRequestMethod.THREAD_START:
+                if self.thread_start_errors:
+                    raise self.thread_start_errors.pop(0)
                 self._thread_counter += 1
                 return {"thread": {"id": f"thr-{self._thread_counter}"}}
             case CodexRequestMethod.TURN_START:

@@ -7022,7 +7022,10 @@ async def test_restored_codex_thread_receives_the_mandatory_transport_contract()
     )
     inputs = client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
     assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
-    assert client.params_of(CodexRequestMethod.THREAD_RESUME)def _methods(client: FakeCodexClient) -> list[str]:
+    assert client.params_of(CodexRequestMethod.THREAD_RESUME)
+
+
+def _methods(client: FakeCodexClient) -> list[str]:
     return [method for method, _ in client.requests]
 
 
