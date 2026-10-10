@@ -254,6 +254,76 @@ class TestResyncPendingMessages:
 
 
 # ---------------------------------------------------------------------------
+# TestDrainProgressGuard
+# ---------------------------------------------------------------------------
+
+
+class RepeatingNextMessage:
+    """A ``/next`` stub that keeps returning the same message — what the
+    endpoint does while that message stays the oldest not-processed one."""
+
+    def __init__(self, msg: PlatformMessage) -> None:
+        self.msg = msg
+        self.calls = 0
+
+    async def __call__(self, room_id: str) -> PlatformMessage:
+        self.calls += 1
+        if self.calls > 10:
+            raise RuntimeError("/next drain did not terminate")
+        return self.msg
+
+
+class TestDrainProgressGuard:
+    """Tests for /next drains refusing to spin on a message they cannot advance."""
+
+    async def test_resync_ends_when_next_repeats_a_skipped_message(
+        self, mock_link, mock_handler
+    ):
+        msg = make_platform_message(msg_id="wedged-1", room_id="room-1")
+        next_message = RepeatingNextMessage(msg)
+        mock_link.get_next_message.side_effect = next_message.__call__
+
+        ctx = ExecutionContext("room-1", mock_link, mock_handler)
+        ctx.claims.remember_completed(ctx.room_id, "wedged-1")
+
+        assert await ctx._resync_pending_messages() is True
+        assert next_message.calls == 2
+
+    async def test_startup_sync_ends_when_next_repeats_a_skipped_message(
+        self, mock_link, mock_handler
+    ):
+        msg = make_platform_message(msg_id="wedged-1", room_id="room-1")
+        next_message = RepeatingNextMessage(msg)
+        mock_link.get_next_message.side_effect = next_message.__call__
+
+        ctx = ExecutionContext("room-1", mock_link, mock_handler)
+        ctx.claims.remember_completed(ctx.room_id, "wedged-1")
+
+        assert await ctx._synchronize_with_next() is True
+        assert next_message.calls == 2
+
+    async def test_startup_sync_retries_failed_message_in_same_drain(self, mock_link):
+        # A turn that fails with retry budget left stays actionable, so /next
+        # offers it again in the same drain and the retry must run there.
+        calls = []
+
+        async def handler(_ctx: object, _event: object) -> None:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("transient turn failure")
+
+        msg = make_platform_message(msg_id="retry-1", room_id="room-1")
+        mock_link.get_next_message.side_effect = [msg, msg, None]
+
+        ctx = ExecutionContext(
+            "room-1", mock_link, handler, config=SessionConfig(max_message_retries=2)
+        )
+
+        assert await ctx._synchronize_with_next() is True
+        assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
 # TestAgentRuntimeOnReconnected
 # ---------------------------------------------------------------------------
 
