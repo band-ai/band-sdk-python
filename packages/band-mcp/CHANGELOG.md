@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.5](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.4...band-mcp-v2.2.5) (2026-10-10)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 4.0.0 ([#720](https://github.com/band-ai/band-sdk-python/issues/720)) ([d309468](https://github.com/band-ai/band-sdk-python/commit/d309468409f60dd88f121b46b1183dc6ef8b3045))
+
 ## [2.2.4](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.3...band-mcp-v2.2.4) (2026-10-01)
 
 
