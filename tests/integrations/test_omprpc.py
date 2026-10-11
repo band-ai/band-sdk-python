@@ -671,7 +671,20 @@ async def test_cancelled_cleanup_reaps_descendants_but_not_unrelated_processes(
             await asyncio.to_thread(sibling.process.parents)
         )
         starting = asyncio.create_task(client.start())
-        descendants = [await process_gate.connection(), await process_gate.connection()]
+        try:
+            descendants = [
+                await process_gate.connection(),
+                await process_gate.connection(),
+            ]
+        except TimeoutError:
+            if starting.done():
+                await starting
+            process = client._proc
+            pytest.fail(
+                f"Peer did not connect its descendants: startup_done={starting.done()}, "
+                f"root_pid={process.pid if process else None}, "
+                f"returncode={process.returncode if process else None}"
+            )
         root = client._proc
         assert root is not None
         root_process = await asyncio.to_thread(psutil.Process, root.pid)
