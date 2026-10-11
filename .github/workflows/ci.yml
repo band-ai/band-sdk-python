@@ -97,12 +97,15 @@ jobs:
 
     - name: Prepare Windows shell wait diagnostics
       if: matrix.os == 'windows-latest'
-      run: |
-        dotnet publish .github/scripts/shellwaits/ShellWaits.csproj -c Release -r win-x64 --self-contained false -o artifacts/shell-waits
-        uv run python -c "import subprocess; subprocess.run(['artifacts/shell-waits/ShellWaits.exe', '--self-test'], check=True, timeout=15)"
+      run: dotnet publish .github/scripts/shellwaits/ShellWaits.csproj -c Release -r win-x64 --self-contained false -o artifacts/shell-waits
 
     - name: Run tests
       run: uv run --all-packages pytest
+
+    # Keep the original test order free of a PowerShell warm-up invocation.
+    - name: Validate Windows shell wait diagnostics
+      if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
+      run: uv run python -c "import subprocess; subprocess.run(['artifacts/shell-waits/ShellWaits.exe', '--self-test'], check=True, timeout=15)"
 
     - name: Run markdown doc tests
       # Linux-only: doc snippets are OS-independent, and this step relies on
