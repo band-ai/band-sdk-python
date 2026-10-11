@@ -24,10 +24,11 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
 from band.core.types import Emit
 
 configure_logging(logging.INFO)
@@ -55,7 +56,7 @@ async def main() -> None:
     adapter = StrandsAdapter(
         # Full override: custom_section would be ignored alongside this.
         StrandsAdapterConfig(system_prompt=SUPPORT_PROMPT),
-        llm=OpenAIModel(model_id="gpt-6-luna"),
+        llm=OpenAIResponsesModel(model_id=OPENAI_MODEL),
         # Post each tool call and result into the room for visibility.
         emit=Emit.TOOL_CALLS,
     )

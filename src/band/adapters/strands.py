@@ -17,6 +17,7 @@ try:
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
     from strands.models.openai import OpenAIModel
+    from strands.models.openai_responses import OpenAIResponsesModel
     from strands.types.media import ImageFormat
     from strands.types.tools import (
         AgentTool,
@@ -503,7 +504,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             history_converter: Optional custom history converter.
             additional_tools: Strands tools and/or portable ``CustomToolDef``
                 (InputModel, handler) tuples.
-            llm: A constructed Strands ``Model`` (e.g. ``OpenAIModel``,
+            llm: A constructed Strands ``Model`` (e.g. ``OpenAIResponsesModel``,
                 ``BedrockModel``), used instead of ``config.model``. Exactly one
                 of the two must be set.
         """
@@ -588,7 +589,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> StrandsMessages:
         """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
-            if isinstance(self._model, OpenAIModel):
+            if isinstance(self._model, (OpenAIModel, OpenAIResponsesModel)):
                 history = _openai_history(history)
             self._message_history[room_id] = list(history)
             if history:

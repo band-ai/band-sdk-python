@@ -26,7 +26,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -34,6 +34,7 @@ from prompts.characters import generate_jerry_prompt
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ async def main() -> None:
 
     adapter = StrandsAdapter(
         StrandsAdapterConfig(custom_section=generate_jerry_prompt("Jerry")),
-        llm=OpenAIModel(model_id="gpt-6-luna"),
+        llm=OpenAIResponsesModel(model_id=OPENAI_MODEL),
     )
 
     logger.info("Jerry is watching for Tom from his mouse hole...")

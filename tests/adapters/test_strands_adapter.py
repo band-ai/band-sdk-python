@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, ClassVar, cast
@@ -27,6 +28,7 @@ import itertools
 
 from strands import tool as strands_tool
 from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 from strands.types.content import Messages
 from strands.types.exceptions import EventLoopException
 from strands.types.streaming import StreamEvent
@@ -56,6 +58,7 @@ from band.core.types import (
     Capability,
     Emit,
     HistoryProvider,
+    MessageType,
     PlatformMessage,
     TurnUsage,
     is_usage_event,
@@ -70,10 +73,12 @@ from band.testing import (
     ScriptedTurn,
     TextTurn,
     ToolTurn,
+    events_of_type,
     failure_reports,
     reported_failures,
 )
 from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
+from tests.responsespeer import ResponsesPeer
 
 _INPUT_TOKENS_PER_CALL = 7
 _OUTPUT_TOKENS_PER_CALL = 3
@@ -395,6 +400,43 @@ class TestOpenAIRehydration:
         text("also, hello"),
         tool_result("calc", "4", "call-1"),
     ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("history_converter", [None, StrandsHistoryConverter()])
+    async def test_responses_rehydrates_tool_results_before_user_text(
+        self,
+        history_converter: StrandsHistoryConverter | None,
+        tools: FakeAgentTools,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        peer = ResponsesPeer([SEND_TURN, TextTurn("")])
+        monkeypatch.setattr("openai.AsyncOpenAI", peer.client)
+        model = OpenAIResponsesModel(
+            client_args={"api_key": "test"}, model_id="test-model"
+        )
+        adapter = StrandsAdapter(llm=model, history_converter=history_converter)
+        await adapter.on_started("Bot", "A bot")
+        inp = replace(
+            turn_input(tools, msg=_make_msg(ROOM)),
+            history=HistoryProvider(raw=self._HISTORY),
+        )
+
+        await adapter.on_event(inp)
+
+        assert peer.requests[0]["input"][:3] == [
+            {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "calc",
+                "arguments": '{"expr": "2+2"}',
+            },
+            {"type": "function_call_output", "call_id": "call-1", "output": "4"},
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "[Alice]: also, hello"}],
+            },
+        ]
+        tools.assert_message_sent(content="hi", count=1)
 
     class RecordingOpenAIModel(OpenAIModel):
         """Run the real OpenAI serializer, then answer from the offline model."""
@@ -974,6 +1016,57 @@ class TestTurnProductivity:
 
 
 class TestTurnFailure:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fails", [False, True], ids=["completed", "failed-stream"])
+    async def test_responses_tool_events_usage_and_failure(
+        self, tools: FakeAgentTools, monkeypatch: pytest.MonkeyPatch, fails: bool
+    ) -> None:
+        final = ErrorTurn(RuntimeError("provider down")) if fails else TextTurn("")
+        peer = ResponsesPeer([SEND_TURN, final])
+        monkeypatch.setattr("openai.AsyncOpenAI", peer.client)
+        adapter = StrandsAdapter(
+            llm=OpenAIResponsesModel(
+                client_args={"api_key": "test"}, model_id="test-model"
+            ),
+            emit=Emit.TOOL_CALLS | Emit.USAGE,
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        if fails:
+            with pytest.raises(EventLoopException, match="provider down"):
+                await _run_turn(adapter, tools)
+        else:
+            await _run_turn(adapter, tools)
+
+        tools.assert_message_sent(content="hi", count=1)
+        (call,) = events_of_type(tools, MessageType.TOOL_CALL)
+        (result,) = events_of_type(tools, MessageType.TOOL_RESULT)
+        assert json.loads(call["content"])["tool_call_id"] == peer.CALL_ID
+        result_data = json.loads(result["content"])
+        assert json.loads(result_data.pop("output")) == {
+            "id": "msg-0",
+            "recipients": [{"handle": "tester", "id": "tester", "name": None}],
+            "success": True,
+        }
+        assert result_data == {
+            "name": SEND_TURN.name,
+            "tool_call_id": peer.CALL_ID,
+            "is_error": False,
+        }
+        (usage,) = [
+            event for event in tools.events_sent if is_usage_event(event["metadata"])
+        ]
+        completed_calls = 1 if fails else 2
+        assert usage["metadata"][USAGE_METADATA_KEY] == {
+            "input_tokens": completed_calls * peer.INPUT_TOKENS,
+            "output_tokens": completed_calls * peer.OUTPUT_TOKENS,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+        assert failure_reports(tools) == (
+            [("strands", GENERIC_PROVIDER_FAILURE_MESSAGE)] if fails else []
+        )
+
     @pytest.mark.asyncio
     async def test_provider_failure_keeps_the_transcript_and_reports_usage(
         self, tools, scripted

@@ -7,7 +7,7 @@ Strands agent on Amazon Bedrock.
 
 Strands is model-agnostic, but it has no provider-prefix string shorthand: a
 bare ``StrandsAdapterConfig(model=...)`` string is a **Bedrock** model id, not
-a provider route. The other examples therefore pass an ``OpenAIModel`` as
+a provider route. The other examples therefore pass an ``OpenAIResponsesModel`` as
 ``llm=``, while this one uses the string form and its explicit ``BedrockModel``
 equivalent — reach for the latter when you need a region, profile, or client
 config.

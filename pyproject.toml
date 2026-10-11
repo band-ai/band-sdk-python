@@ -170,7 +170,8 @@ agno = [
     "agno>=2.6.0",
 ]
 strands = [
-    "strands-agents[openai]>=1.40,<2",
+    "strands-agents[openai]>=1.50.1,<2",
+    "openai>=2.0.0",
 ]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai and parlant.
@@ -235,7 +236,7 @@ dev = [
     # Include Agno for testing
     "agno>=2.6.0",
     # Include Strands Agents for testing
-    "strands-agents[openai]>=1.40,<2",
+    "strands-agents[openai]>=1.50.1,<2",
     # Include letta-client for testing
     "letta-client>=1.0.0",
     # Include bridge deps for testing

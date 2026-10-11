@@ -488,6 +488,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/guards/test_strands_provider.py::test_strands_builder_executes_a_responses_tool_once",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_ctx_field_collision_raises_clear_error",
       "adapter": "suite",
       "lanes": [

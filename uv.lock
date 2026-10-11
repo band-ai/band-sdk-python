@@ -786,6 +786,7 @@ slack = [
     { name = "uvicorn" },
 ]
 strands = [
+    { name = "openai" },
     { name = "strands-agents", extra = ["openai"] },
 ]
 
@@ -877,6 +878,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'langgraph'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'parlant'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'pydantic-ai'", specifier = ">=2.0.0" },
+    { name = "openai", marker = "extra == 'strands'", specifier = ">=2.0.0" },
     { name = "opentelemetry-instrumentation-logging", marker = "extra == 'dev'", specifier = ">=0.65b0" },
     { name = "opentelemetry-resourcedetector-gcp", marker = "extra == 'dev'", specifier = ">=1.12.0a0,!=1.13.0" },
     { name = "opentelemetry-resourcedetector-gcp", marker = "extra == 'google-adk'", specifier = ">=1.12.0a0,!=1.13.0" },
@@ -941,8 +943,8 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
-    { name = "strands-agents", extras = ["openai"], marker = "extra == 'dev'", specifier = ">=1.40,<2" },
-    { name = "strands-agents", extras = ["openai"], marker = "extra == 'strands'", specifier = ">=1.40,<2" },
+    { name = "strands-agents", extras = ["openai"], marker = "extra == 'dev'", specifier = ">=1.50.1,<2" },
+    { name = "strands-agents", extras = ["openai"], marker = "extra == 'strands'", specifier = ">=1.50.1,<2" },
     { name = "tenacity", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "tenacity", marker = "extra == 'dev-crewai'", specifier = ">=8.0.0" },
     { name = "tenacity", marker = "extra == 'dev-parlant'", specifier = ">=8.0.0" },

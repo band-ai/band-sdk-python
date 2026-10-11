@@ -27,10 +27,11 @@ import logging
 
 from dotenv import load_dotenv
 from strands import tool
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
+from band.core.defaultmodels import OPENAI_MODEL
 from band.core.types import Emit
 
 configure_logging(logging.INFO)
@@ -67,7 +68,7 @@ async def main() -> None:
             custom_section="You convert currencies with the convert_from_usd tool. Escalate to a "
             "human only when the request is outside currency conversion."
         ),
-        llm=OpenAIModel(model_id="gpt-6-luna"),
+        llm=OpenAIResponsesModel(model_id=OPENAI_MODEL),
         additional_tools=[convert_from_usd, escalate_to_human],
         emit=Emit.TOOL_CALLS,
     )
