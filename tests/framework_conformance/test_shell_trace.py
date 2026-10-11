@@ -9,16 +9,29 @@ from pathlib import Path
 
 import pytest
 
-from tests.framework_conformance.shelltrace import ShellPhase, ShellProbeProcess
+from tests.framework_conformance.shelltrace import (
+    SHELL_PHASE_FIELD,
+    SHELL_RETURNCODE_FIELD,
+    ShellPhase,
+    ShellProbeProcess,
+)
+
+
+def wait_for_release_script(release: Path) -> str:
+    return (
+        "import time; from pathlib import Path; "
+        f"release = Path({str(release)!r}); "
+        "\nwhile not release.exists(): time.sleep(0.01)"
+    )
 
 
 def timeout_returncode(caplog: pytest.LogCaptureFixture) -> int | None:
     [timeout] = [
         record
         for record in caplog.records
-        if getattr(record, "shell_phase", None) == ShellPhase.TIMEOUT
+        if getattr(record, SHELL_PHASE_FIELD, None) == ShellPhase.TIMEOUT
     ]
-    return vars(timeout)["shell_returncode"]
+    return vars(timeout)[SHELL_RETURNCODE_FIELD]
 
 
 def test_timeout_records_exited_child_before_cleanup(
@@ -26,11 +39,7 @@ def test_timeout_records_exited_child_before_cleanup(
 ) -> None:
     caplog.set_level(logging.INFO, logger=ShellProbeProcess.__module__)
     release = tmp_path / "release"
-    descendant = (
-        "import time; from pathlib import Path; "
-        f"release = Path({str(release)!r}); "
-        "\nwhile not release.exists(): time.sleep(0.01)"
-    )
+    descendant = wait_for_release_script(release)
     parent = (
         "import subprocess, sys; "
         f"subprocess.Popen([sys.executable, '-c', {descendant!r}])"
@@ -55,11 +64,7 @@ def test_timeout_keeps_the_original_running_child_alive(
 ) -> None:
     caplog.set_level(logging.INFO, logger=ShellProbeProcess.__module__)
     release = tmp_path / "release"
-    child = (
-        "import time; from pathlib import Path; "
-        f"release = Path({str(release)!r}); "
-        "\nwhile not release.exists(): time.sleep(0.01)"
-    )
+    child = wait_for_release_script(release)
     with ShellProbeProcess(
         [sys.executable, "-c", child],
         stdout=subprocess.PIPE,

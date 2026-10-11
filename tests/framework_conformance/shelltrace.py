@@ -10,6 +10,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+SHELL_PHASE_FIELD = "shell_phase"
+SHELL_RETURNCODE_FIELD = "shell_returncode"
+
 
 class ShellPhase(StrEnum):
     CREATED = "created"
@@ -24,7 +27,7 @@ class ShellProbeProcess(subprocess.Popen[bytes]):
             "Shell process created: pid=%s launch_s=%s",
             self.pid,
             time.monotonic() - started,
-            extra={"shell_phase": ShellPhase.CREATED},
+            extra={SHELL_PHASE_FIELD: ShellPhase.CREATED},
         )
 
     def communicate(
@@ -48,8 +51,8 @@ class ShellProbeProcess(subprocess.Popen[bytes]):
                 returncode,
                 readers,
                 extra={
-                    "shell_phase": ShellPhase.TIMEOUT,
-                    "shell_returncode": returncode,
+                    SHELL_PHASE_FIELD: ShellPhase.TIMEOUT,
+                    SHELL_RETURNCODE_FIELD: returncode,
                 },
             )
             raise
