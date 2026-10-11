@@ -35,6 +35,7 @@ from tests.e2e.baseline.agents import (
 )
 from tests.e2e.baseline.scorecard import (
     ENV_GATED_MARKER,
+    FAILURE_DETAIL_LIMIT,
     SUITE_ADAPTER,
     ExpectedCell,
     GateResult,
@@ -50,9 +51,79 @@ from tests.e2e.baseline.scorecard import (
     na_rows,
     outcome_row,
     to_markdown,
+    write_json,
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 from tests.paths import REPO_ROOT
+
+
+def test_completed_reports_survive_a_watchdog_exit(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest(f"""
+from __future__ import annotations
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from tests.e2e.baseline.scorecard import ScorecardCollector
+
+def pytest_configure(config):
+    config.pluginmanager.register(ScorecardCollector("scorecard.json"))
+""")
+    pytester.makepyfile(
+        test_watchdog="""
+from __future__ import annotations
+import threading
+import pytest
+
+def test_pass():
+    assert True
+
+def test_fail():
+    pytest.fail("original failure before watchdog exit")
+
+@pytest.mark.timeout(1, method="thread")
+def test_hang():
+    threading.Event().wait()
+
+def test_unreached():
+    pytest.fail("must never run")
+"""
+    )
+    result = pytester.runpytest_subprocess(
+        "-v", "--tb=short", "-p", "no:rerunfailures", timeout=30
+    )
+    assert result.ret == 1
+    result.stdout.fnmatch_lines(["*Timeout*"])
+    details = [
+        json.loads(line)
+        for line in (pytester.path / "scorecard.failures.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert len(details) == 1
+    assert details[0]["nodeid"] == "test_watchdog.py::test_fail"
+    assert details[0]["phase"] == "call"
+    assert "original failure before watchdog exit" in details[0]["longrepr"]
+    rows = [
+        ScorecardRow(**row)
+        for row in json.loads((pytester.path / "scorecard.json").read_text())
+    ]
+    assert rows == [
+        ScorecardRow("test_watchdog.py::test_fail", SUITE_ADAPTER, "fail"),
+        ScorecardRow("test_watchdog.py::test_pass", SUITE_ADAPTER, "pass"),
+    ]
+    cells = [
+        ExpectedCell(f"test_watchdog.py::{name}", SUITE_ADAPTER, ("core",), "pass")
+        for name in ("test_pass", "test_fail", "test_hang", "test_unreached")
+    ]
+    gate = gate_manifest(
+        {("core", "windows"): rows}, cells, {"core": ("windows",)}, "core", "windows"
+    )
+    assert not gate.ok
+    assert [row.test for row in gate.failing] == ["test_watchdog.py::test_fail"]
+    assert [row.test for row in gate.missing] == [
+        "test_watchdog.py::test_hang",
+        "test_watchdog.py::test_unreached",
+    ]
+
 
 # --- ExcludedAdapter: a reason is mandatory -----------------------------------------
 
@@ -155,16 +226,15 @@ def _report(
     outcome: str,
     reason: str | None = None,
     keywords: tuple[str, ...] = (),
-) -> object:
+) -> pytest.TestReport:
     longrepr = ("m.py", 1, f"Skipped: {reason}") if reason is not None else None
-    return SimpleNamespace(
+    return pytest.TestReport(
         nodeid=nodeid,
+        location=("m.py", 1, nodeid),
         when=when,
-        skipped=outcome == "skipped",
-        failed=outcome == "failed",
-        passed=outcome == "passed",
+        outcome=outcome,
         longrepr=longrepr,
-        keywords=frozenset(keywords),
+        keywords=dict.fromkeys(keywords, True),
     )
 
 
@@ -230,8 +300,8 @@ def test_outcome_row_keeps_non_adapter_parametrization_distinct() -> None:
 # --- collector + merge: a run's rows, then the cross-lane union ----------------------
 
 
-def test_collector_combines_outcomes_and_na() -> None:
-    collector = ScorecardCollector(path="unused")
+def test_collector_combines_outcomes_and_na(tmp_path: Path) -> None:
+    collector = ScorecardCollector(path=tmp_path / "scorecard.json")
     collector.pytest_runtest_logreport(
         _report("m.py::t[anthropic]", "call", outcome="passed")
     )
@@ -243,13 +313,104 @@ def test_collector_combines_outcomes_and_na() -> None:
     assert rows[("m.py::t", "crewai")].status == "na"
 
 
-def test_collector_keeps_a_failed_first_attempt() -> None:
-    collector = ScorecardCollector(path="unused")
+def test_collector_keeps_a_failed_first_attempt(tmp_path: Path) -> None:
+    collector = ScorecardCollector(path=tmp_path / "scorecard.json")
     nodeid = "m.py::t[anthropic]"
     collector.pytest_runtest_logreport(_report(nodeid, "call", outcome="failed"))
     collector.pytest_runtest_logreport(_report(nodeid, "call", outcome="passed"))
     rows = collector.scorecard([_FakeItem(nodeid)])
     assert rows == [ScorecardRow("m.py::t", "anthropic", "fail")]
+
+
+def test_collection_checkpoints_exclusions_without_inventing_outcomes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scorecard.json"
+    collector = ScorecardCollector(path)
+    item = _FakeItem(
+        "m.py::t[anthropic]", (ExcludedAdapter(Adapter.CREWAI, "no usage"),)
+    )
+    collector.pytest_collection_finish(SimpleNamespace(items=[item]))
+    assert json.loads(path.read_text()) == [
+        {
+            "test": "m.py::t",
+            "adapter": "crewai",
+            "status": "na",
+            "reason": "no usage",
+            "lane": None,
+            "os": None,
+        }
+    ]
+    assert collector.diagnostics_path.read_text() == ""
+
+
+def test_teardown_failure_supersedes_pass_and_preserves_each_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scorecard.json"
+    collector = ScorecardCollector(path)
+    nodeid = "m.py::t[anthropic]"
+    for phase, outcome in (
+        ("call", "passed"),
+        ("teardown", "failed"),
+        ("setup", "failed"),
+        ("call", "passed"),
+    ):
+        collector.pytest_runtest_logreport(_report(nodeid, phase, outcome=outcome))
+    assert [ScorecardRow(**row) for row in json.loads(path.read_text())] == [
+        ScorecardRow("m.py::t", "anthropic", "fail")
+    ]
+    details = [
+        json.loads(line) for line in collector.diagnostics_path.read_text().splitlines()
+    ]
+    assert [(entry["nodeid"], entry["phase"]) for entry in details] == [
+        (nodeid, "teardown"),
+        (nodeid, "setup"),
+    ]
+
+
+def test_failure_details_redact_before_bounding_and_keep_captured_logs(
+    tmp_path: Path,
+) -> None:
+    collector = ScorecardCollector(
+        tmp_path / "scorecard.json", credentials=["", "opaque-key"]
+    )
+    report = _report("m.py::t[anthropic]", "call", outcome="failed")
+    report.longrepr = "provider rejected opaque-key\nAuthorization: Bearer auth-key"
+    report.sections = [("Captured log call", "processing room abc; tool band_no_reply")]
+    collector.pytest_runtest_logreport(report)
+    detail = json.loads(collector.diagnostics_path.read_text())
+    assert "opaque-key" not in detail["longrepr"]
+    assert "auth-key" not in detail["longrepr"]
+    assert "provider rejected [REDACTED]" in detail["longrepr"]
+    assert "processing room abc; tool band_no_reply" in detail["longrepr"]
+    assert not detail["truncated"]
+    report.longrepr = "x" * (FAILURE_DETAIL_LIMIT - 5) + "opaque-key"
+    collector.pytest_runtest_logreport(report)
+    bounded = json.loads(collector.diagnostics_path.read_text().splitlines()[-1])
+    assert len(bounded["longrepr"]) == FAILURE_DETAIL_LIMIT
+    assert bounded["truncated"]
+    assert "opaqu" not in bounded["longrepr"]
+
+
+def test_failed_atomic_replacement_preserves_the_previous_scorecard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "scorecard.json"
+    prior = [ScorecardRow("m.py::test_pass", SUITE_ADAPTER, "pass")]
+    write_json(prior, path)
+
+    def refuse_replacement(source: Path, target: Path) -> None:
+        assert json.loads(source.read_text())[0]["status"] == "fail"
+        assert [ScorecardRow(**row) for row in json.loads(target.read_text())] == prior
+        raise OSError("destination unavailable")
+
+    monkeypatch.setattr(Path, "replace", refuse_replacement)
+    with pytest.raises(OSError, match="destination unavailable"):
+        write_json([ScorecardRow("m.py::test_fail", SUITE_ADAPTER, "fail")], path)
+    assert [ScorecardRow(**row) for row in json.loads(path.read_text())] == prior
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_merge_prefers_real_outcome_over_skip_and_keeps_na() -> None:

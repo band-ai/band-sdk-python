@@ -38,6 +38,32 @@ class SlowTurnBudget:
     extra_s: int
 
 
+def backstop_extra(turn_budget_s: int, phase_total_s: float) -> int:
+    return max(
+        int(phase_total_s) + TIMEOUT_BACKSTOP_MARGIN_S - turn_budget_s,
+        TIMEOUT_BACKSTOP_MARGIN_S,
+    )
+
+
+@dataclass(frozen=True)
+class BusyRoomBudget:
+    """Seed, queued flood/probe and recall deadlines, with one whole-test backstop."""
+
+    seed_s: int
+    flood_s: int
+    recall_s: int
+
+    @property
+    def extra_s(self) -> int:
+        return backstop_extra(self.seed_s, self.seed_s + self.flood_s + self.recall_s)
+
+
+def busy_room_budget(turn_budget_s: int) -> BusyRoomBudget:
+    return BusyRoomBudget(
+        seed_s=turn_budget_s, flood_s=4 * turn_budget_s, recall_s=turn_budget_s
+    )
+
+
 def slow_turn_budget(turn_budget_s: int, *, barriers: int) -> SlowTurnBudget:
     """Budget a test that awaits ``barriers`` sequential slow-live-turn barriers.
 
@@ -46,8 +72,7 @@ def slow_turn_budget(turn_budget_s: int, *, barriers: int) -> SlowTurnBudget:
     so a stall surfaces as the barrier's ``TimeoutError`` naming the phase, never as
     a bare pytest-timeout kill.
     """
-    total = SLOW_TURN_DEADLINE_S * barriers + TIMEOUT_BACKSTOP_MARGIN_S
     return SlowTurnBudget(
         deadline_s=SLOW_TURN_DEADLINE_S,
-        extra_s=max(int(total) - turn_budget_s, TIMEOUT_BACKSTOP_MARGIN_S),
+        extra_s=backstop_extra(turn_budget_s, SLOW_TURN_DEADLINE_S * barriers),
     )

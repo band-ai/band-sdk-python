@@ -347,8 +347,7 @@ jobs:
       if: always() && matrix.lane == 'letta'
       run: docker rm -f letta-server || true
 
-    # Emitted even when tests fail (session end still runs), so a red lane still
-    # contributes its pass/fail rows to the merged scorecard.
+    # Report-time checkpoints survive watchdog exits with completed verdicts and details.
     - name: Upload lane scorecard
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -356,6 +355,7 @@ jobs:
         name: scorecard-${{ matrix.lane }}-${{ matrix.os }}
         path: |
           artifacts/scorecard-*.json
+          artifacts/scorecard-*.failures.jsonl
           artifacts/environment-*.json
         if-no-files-found: ignore
 

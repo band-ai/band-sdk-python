@@ -73,10 +73,12 @@ __all__ = [
 def pytest_configure(config: pytest.Config) -> None:
     # Register the scorecard plugin only when a path is set (empty = don't emit, the
     # local default), so its hooks own their state instead of module globals.
-    scorecard_json = BaselineSettings().run.scorecard_json
+    settings = BaselineSettings()
+    scorecard_json = settings.run.scorecard_json
     if scorecard_json:
         config.pluginmanager.register(
-            ScorecardCollector(scorecard_json), name="baseline-scorecard"
+            ScorecardCollector(scorecard_json, credentials=settings.credential_values),
+            name="baseline-scorecard",
         )
     config.addinivalue_line(
         "markers",

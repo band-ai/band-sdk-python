@@ -231,7 +231,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
 | `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/deps.py`, where the enum and its facts actually live) |
-| `timeouts.py` | `slow_turn_budget(e2e_timeout, barriers=N)` → the paired `deadline_s` (per barrier) + `extra_s` (`@pytest.mark.timeout(extra=)`) for a test awaiting N sequential slow-backend turns, so the soft barrier always fires before the hard backstop |
+| `timeouts.py` | Paired phase and backstop budgets: `slow_turn_budget(e2e_timeout, barriers=N)` for slow turns; `busy_room_budget(T)` for seed=T, flood/probe=4T, recall=T, with a hard backstop of 6T plus the shared margin |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
 | `guards/` | E2E-tree harness self-tests (E2E-gated): `test_adapter_registry.py` (static discovery/lane guard), `test_provisioning.py`, `test_user_ops.py`, `test_adapter_cell.py`, `test_tool_spec.py`, and `test_agent_wiring.py` (only the `pytester` real-collection cases). **Pure policy tests run every PR from `tests/framework_conformance/`** — see the note below the table |
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
@@ -684,10 +684,16 @@ nodeid. Excluded adapters get explicit N/A rows.
   without saying why. The records ride the `PerAdapter` marker, so collection can read
   them back.
 - **Emission is settings-driven.** Set `BAND_E2E_SCORECARD_JSON=<path>` and the session
-  writes that run's rows at the end — collected cells' pass/fail (read from each test
+  atomically checkpoints at collection, each changed verdict and session end —
+  collected cells' pass/fail (read from each test
   report, keyed by exact nodeid — no junit scraping), out-of-lane cells as `skip`, and
   the `@per_adapter` exclusions as `na` with their reasons. Empty (the local default)
-  emits nothing.
+  emits nothing. Active and unreached cells stay absent, so the manifest gate remains
+  red after a watchdog kills the process. Failed setup/call/teardown reports also
+  append their nodeid, phase and bounded longrepr (including captured logs) to
+  `<scorecard-stem>.failures.jsonl`, flushed at report time. Configured credentials
+  and credential-shaped text are redacted before truncation (32,768 characters).
+  CI uploads that companion artifact separately from the merge's JSON inputs.
 - **CI checks every supported lane and OS pair.** Each lane writes
   `artifacts/scorecard-<lane>-<os>.json`. The final job compares every fragment
   with `expected-cells.json`, including bespoke smokes, and writes a merged grid

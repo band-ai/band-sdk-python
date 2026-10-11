@@ -29,10 +29,12 @@ import sys
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal, TypeVar
 
 import pytest
 
+from band.core.redaction import redact_credentials
 from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
 from tests.e2e.baseline.lane_selection import expected_lane as _resolve_expected_lane
 from tests.e2e.baseline.toolkit.ci_lanes import (
@@ -48,6 +50,7 @@ logger = logging.getLogger(__name__)
 # be mistaken for adapters when reading outcomes off a report.
 _ADAPTER_IDS: frozenset[str] = frozenset(str(adapter) for adapter in Adapter)
 SUITE_ADAPTER = "suite"
+FAILURE_DETAIL_LIMIT = 32_768
 
 # ``na`` = deliberately excluded (with a reason); ``skip`` = collected but not run in this
 # lane (lane scoping / E2E disabled). Ranked so a real outcome beats ``skip`` when the
@@ -180,27 +183,68 @@ class ScorecardCollector:
     is unit-testable without a running session.
     """
 
-    def __init__(self, path: str | Path) -> None:
-        self._path = path
+    def __init__(self, path: str | Path, *, credentials: Iterable[str] = ()) -> None:
+        self._path = Path(path)
         self._outcomes: dict[tuple[str, str], ScorecardRow] = {}
+        self._na: dict[tuple[str, str], ScorecardRow] = {}
+        self._credentials = sorted(set(credentials) - {""}, key=len, reverse=True)
+
+    @property
+    def diagnostics_path(self) -> Path:
+        return self._path.with_suffix(".failures.jsonl")
+
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        self._na = na_rows(session.items)
+        self._checkpoint()
+        self.diagnostics_path.write_text("", encoding="utf-8")
+
+    def _failure_details(self, report: pytest.TestReport) -> None:
+        detail = "\n".join(
+            [
+                report.longreprtext,
+                *(f"{name}\n{content}" for name, content in report.sections),
+            ]
+        )
+        for credential in self._credentials:
+            detail = detail.replace(credential, "[REDACTED]")
+        detail = redact_credentials(detail)
+        record = {
+            "nodeid": report.nodeid,
+            "phase": report.when,
+            "longrepr": detail[:FAILURE_DETAIL_LIMIT],
+            "truncated": len(detail) > FAILURE_DETAIL_LIMIT,
+        }
+        self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.diagnostics_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record) + "\n")
+            stream.flush()
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         row = outcome_row(report)
-        if row is not None and (
-            row[0] not in self._outcomes or self._outcomes[row[0]].status != "fail"
-        ):
-            # A later report can never rescue a failed first attempt.
-            self._outcomes[row[0]] = row[1]
+        if row is None:
+            return
+        if row[1].status == "fail":
+            self._failure_details(report)
+        previous = self._outcomes.get(row[0])
+        # A later report can never rescue a failed first attempt.
+        if previous is not None and (previous.status == "fail" or previous == row[1]):
+            return
+        self._outcomes[row[0]] = row[1]
+        self._checkpoint()
 
-    def scorecard(self, items: Iterable[pytest.Item]) -> list[ScorecardRow]:
+    def scorecard(
+        self, items: Iterable[pytest.Item] | None = None
+    ) -> list[ScorecardRow]:
         """Collected outcomes plus explicit N/A rows for excluded adapters."""
-        items = list(items)
         rows = dict(self._outcomes)
-        rows.update(na_rows(items))
+        rows.update(self._na if items is None else na_rows(items))
         return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
 
+    def _checkpoint(self) -> None:
+        write_json(self.scorecard(), self._path)
+
     def pytest_sessionfinish(self, session: pytest.Session) -> None:
-        write_json(self.scorecard(session.items), self._path)
+        self._checkpoint()
 
 
 def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:
@@ -474,10 +518,25 @@ def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
 
 
 def write_json(rows: list[ScorecardRow], path: str | Path) -> None:
-    """Write ``rows`` as a JSON array to ``path`` (creating parent dirs)."""
+    """Atomically replace the JSON array, leaving a complete prior checkpoint on failure."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps([asdict(row) for row in rows], indent=2) + "\n")
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=out.parent,
+            prefix=out.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps([asdict(row) for row in rows], indent=2) + "\n")
+        temporary.replace(out)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _load(path: str | Path) -> list[ScorecardRow]:

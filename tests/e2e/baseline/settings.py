@@ -94,7 +94,7 @@ class BaselineRun(BaseSettings):
     # concurrent run on the same shared platform is never deleted mid-flight.
     orphan_max_age_minutes: int = 120  # BAND_E2E_ORPHAN_MAX_AGE_MINUTES
     # Write this run's adapter×test scorecard (pass/fail/skip + N/A reasons) as JSON
-    # to this path at session end. Empty = don't emit (the local default). CI sets one
+    # to this path as reports arrive. Empty = don't emit (the local default). CI sets one
     # path per lane; a final job merges them (see scorecard.py).
     scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
     # Emit content-free approval phase records in focused first-attempt runs.
@@ -276,3 +276,13 @@ class BaselineSettings(BaseSettings):
     llm_models: LLMModels = Field(default_factory=LLMModels)
     backends: Backends = Field(default_factory=Backends)
     deployment: DeploymentFeatures = Field(default_factory=DeploymentFeatures)
+
+    @property
+    def credential_values(self) -> tuple[str, ...]:
+        """Values hidden from settings repr must also be hidden from failure artifacts."""
+        return tuple(
+            value
+            for group in (self.credentials, self.llm_credentials, self.backends)
+            for name, field in type(group).model_fields.items()
+            if not field.repr and (value := getattr(group, name))
+        )

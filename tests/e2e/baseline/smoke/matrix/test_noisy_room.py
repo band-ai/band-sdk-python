@@ -33,9 +33,12 @@ from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
+from tests.e2e.baseline.timeouts import busy_room_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+BUSY_ROOM_BUDGET = busy_room_budget(BaselineSettings().e2e_timeout)
 
 
 @per_adapter(
@@ -47,14 +50,13 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
     ]
 )
 @flaky_infra("only transient failures")
-@pytest.mark.timeout(extra=300)  # seed + several noise inferences + probe + recall
+@pytest.mark.timeout(extra=BUSY_ROOM_BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recall_and_ignore_crosstalk_in_busy_room(
     agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
-    baseline_settings: BaselineSettings,
 ) -> None:
     """Recall a buried fact and stay off chatter addressed to a bystander."""
     needle = unique_marker("project")
@@ -68,11 +70,6 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         title=f"e2e-noisy-{agent.adapter_id}",
         participants=[agent.id, bystander.id],
     )
-    # The agent processes the room one message at a time, so the probe answer only
-    # arrives after it has chewed through every noise message — budget several
-    # sequential inferences off the single-source per-turn timeout.
-    flood_deadline = baseline_settings.e2e_timeout * 4
-
     async with reply_capture(room_id) as capture:
         # Phase 1: seed the needle (addressed to our agent).
         mid = await user_ops.send_message(
@@ -81,7 +78,9 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        await capture.wait_for_processed(
+            mid, agent.id, deadline_s=BUSY_ROOM_BUDGET.seed_s
+        )
 
         # Phase 2: flood with chatter addressed to the BYSTANDER, each carrying a
         # decoy, then a liveness probe addressed to our agent (sent last).
@@ -106,7 +105,7 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         # independently-delivered delivery-status frame. Only our agent replies (the
         # bystander never runs), so no sender filtering is needed.
         flood_replies = await capture.wait_for_reply(
-            probe, agent.id, since=flood_mark, deadline_s=flood_deadline
+            probe, agent.id, since=flood_mark, deadline_s=BUSY_ROOM_BUDGET.flood_s
         )
         # Liveness: it answered its own probe.
         flood_replies.assert_contains_any([live])
@@ -121,6 +120,8 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        recall = await capture.wait_for_reply(mid, agent.id, since=recall_mark)
+        recall = await capture.wait_for_reply(
+            mid, agent.id, since=recall_mark, deadline_s=BUSY_ROOM_BUDGET.recall_s
+        )
         recall.assert_contains_any([needle])
         recall.assert_contains_none(decoys)
