@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 const PROGRESS_INTERVAL_MS = 30_000;
+const DATA_PREFIX = "data:";
 const EVENTS = new Set([
   "message.updated", "message.part.updated", "message.part.delta",
   "permission.asked", "permission.replied", "question.asked",
@@ -93,10 +94,10 @@ export default async function streamTrace(_context, { path }) {
                 // Count SSE line prefixes without retaining generation content.
                 for (const character of decoder.decode(part.value, { stream: true })) {
                   if (character === "\n") {
-                    if (line.startsWith("data:")) dataLines += 1;
+                    if (line.startsWith(DATA_PREFIX)) dataLines += 1;
                     if (line.startsWith(":")) commentLines += 1;
                     line = "";
-                  } else if (line.length < 5) {
+                  } else if (line.length < DATA_PREFIX.length) {
                     line += character;
                   }
                 }
