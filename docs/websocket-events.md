@@ -38,6 +38,18 @@ STOP, PLAY or INTERRUPT controls invalidate obsolete recovery results. A 204
 response preserves the local pause because it cannot distinguish stopped from
 empty rooms.
 
+While working-state reporting is active, its existing activity keep-alive also
+recovers a missed STOP: the platform answers a `working: true` report with
+`working: false` when the room execution is stopped. The runtime cancels the
+originating turn through the same platform-stop path as a refused claim or post,
+leaving its message PROCESSING for later replay. Responses from before PLAY,
+a replacement turn, or shutdown cannot stop newer work. Request failures never
+count as STOP, and the public activity-report boolean still means request success.
+
+This recovery ends when working-state reporting is disabled, capped, or excluded
+for a hub room. It does not recover INTERRUPT or a STOP cleared before the next
+report. Native control pushes remain the immediate cancellation path.
+
 Failed requests, refused claims and pending acknowledgements retain the base
 retry cadence. A completed or skipped head that cannot advance ends the pass
 without spinning; retryable handler failures retain their normal attempt budget.

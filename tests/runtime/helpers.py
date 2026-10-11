@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -137,6 +138,7 @@ class LifecyclePlatform:
         self.processing_list_reads = 0
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
+        self.activity_reports: list[tuple[bool, bool]] = []
 
     def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(
@@ -157,6 +159,11 @@ class LifecyclePlatform:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
+        if tail == "activity":
+            working = json.loads(request.content)["working"]
+            recorded = working and not self.stopped
+            self.activity_reports.append((working, recorded))
+            return httpx.Response(200, json={"data": {"working": recorded}})
         if tail == "me":
             return httpx.Response(
                 200,
