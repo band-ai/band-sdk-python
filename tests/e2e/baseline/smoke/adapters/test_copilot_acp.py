@@ -400,8 +400,7 @@ async def test_copilot_switches_model_and_effort_in_a_live_room(
 
     The check is Copilot's persisted session, read by a fresh process, so a
     switch that only updated the adapter's own record, or an effort Copilot
-    silently ignored, fails. Band tools stay off: with them, a hosted turn
-    keeps calling band_send_message after its reply and never ends.
+    silently ignored, fails.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapter,

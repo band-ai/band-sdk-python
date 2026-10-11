@@ -38,7 +38,7 @@ from acp.schema import (
 )
 from mcp.types import Tool
 
-from band.integrations.acp.client_runtime import ALLOW_ONCE_KIND
+from band.integrations.acp.client_runtime import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
@@ -460,12 +460,7 @@ class FakeACPAgent:
         tool_call: ToolCallUpdate | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            resp = await a.ask_permission(
-                sid,
-                tool_call
-                or ToolCallUpdate(
-                    tool_call_id=tool_call_id, title=title, raw_input=raw_input
-                ),
+            offered = (
                 options
                 if options is not None
                 else [
@@ -475,9 +470,22 @@ class FakeACPAgent:
                     PermissionOption(
                         kind="reject_once", name="Reject", optionId="reject-1"
                     ),
-                ],
+                ]
             )
-            a.approved = allow_option_id in str(resp)
+            resp = await a.ask_permission(
+                sid,
+                tool_call
+                or ToolCallUpdate(
+                    tool_call_id=tool_call_id, title=title, raw_input=raw_input
+                ),
+                offered,
+            )
+            selected = getattr(resp.outcome, "option_id", None)
+            a.approved = any(
+                option.option_id == selected
+                and option.kind in (ALLOW_ONCE_KIND, ALLOW_ALWAYS_KIND)
+                for option in offered
+            )
 
         self._script.append(_action)
         return self

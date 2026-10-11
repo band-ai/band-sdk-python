@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from acp import text_block, tool_content
 from acp.schema import PermissionOption, ToolCallUpdate
 
 from band.adapters.cursor_acp import CursorACPAdapterConfig
@@ -17,7 +18,7 @@ from band.integrations.acp.cursor import (
     ROOM_COMMAND,
     CursorCommandWord,
 )
-from band.runtime.tools import BandTool
+from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from band.testing import failure_reports
 from tests.adapters.test_cursor_acp_adapter import CursorRoom, decision_token, said
 from tests.e2e.baseline.settings import BaselineSettings
@@ -39,7 +40,10 @@ CURSOR_REPLY_PERMISSION = ToolCallUpdate.model_validate_json(
 
 
 def reply_invocation(
-    *, server: str = "band", tool: str = BandTool.SEND_MESSAGE, args: Any = None
+    *,
+    server: str = BAND_MCP_SERVER_NAME,
+    tool: str = BandTool.SEND_MESSAGE,
+    args: Any = None,
 ) -> dict[str, Any]:
     return {
         "providerIdentifier": server,
@@ -49,14 +53,14 @@ def reply_invocation(
 
 
 def options(*, once: bool = True) -> list[PermissionOption]:
-    return [
+    offered = [
         PermissionOption(kind=ALLOW_ALWAYS_KIND, name="Allow", option_id=ALWAYS_ID),
-        *(
-            [PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", option_id=ONCE_ID)]
-            if once
-            else []
-        ),
     ]
+    if once:
+        offered.append(
+            PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", option_id=ONCE_ID)
+        )
+    return offered
 
 
 def decisions(agent: FakeACPAgent) -> list[str | None]:
@@ -164,22 +168,8 @@ async def test_other_permissions_still_require_the_room_decision(
                 *CURSOR_REPLY_PERMISSION.content,
             ]
         },
-        {
-            "content": [
-                {
-                    "type": "content",
-                    "content": {"type": "text", "text": "```json\n{}\n```"},
-                }
-            ]
-        },
-        {
-            "content": [
-                {
-                    "type": "content",
-                    "content": {"type": "text", "text": "```json\ninvalid\n```"},
-                }
-            ]
-        },
+        {"content": [tool_content(text_block("```json\n{}\n```"))]},
+        {"content": [tool_content(text_block("```json\ninvalid\n```"))]},
     ],
     ids=["foreign", "case", "shell", "raw-input", "missing", "extra", "schema", "json"],
 )
@@ -231,7 +221,7 @@ async def test_completion_cannot_grant_outside_the_active_turn(mismatch: str) ->
                 room.adapter._active_turn = turn
             await peer.call_mcp_tool(
                 session_id=peer.session_ids()[0],
-                server="band",
+                server=BAND_MCP_SERVER_NAME,
                 tool_name=BandTool.NO_REPLY,
                 arguments={"reason": "permission cancelled"},
             )
@@ -268,7 +258,7 @@ async def test_native_commands_on_both_sides_of_completion_remain_manual(
                     )
                     await peer.call_mcp_tool(
                         session_id=session_id,
-                        server="band",
+                        server=BAND_MCP_SERVER_NAME,
                         tool_name=BandTool.SEND_MESSAGE,
                         arguments=REPLY_ARGS,
                     )
