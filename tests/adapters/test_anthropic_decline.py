@@ -14,7 +14,7 @@ import pytest
 from anthropic import AsyncAnthropic
 
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
-from band.core.types import Emit, PlatformMessage, ToolEventKey
+from band.core.types import Emit, MessageType, PlatformMessage, ToolEventKey
 from band.runtime.tools import BandTool, ToolCallOutcome
 from band.runtime.tools.agent import AgentTools
 from band.testing import FakeAgentTools
@@ -33,6 +33,12 @@ class NativeTools(FakeAgentTools, AgentTools):
 
 def tool(name: BandTool, arguments: dict[str, Any], call_id: str) -> dict[str, Any]:
     return {"type": "tool_use", "name": name, "input": arguments, "id": call_id}
+
+
+def reply(content: str) -> dict[str, Any]:
+    return tool(
+        BandTool.SEND_MESSAGE, {"content": content, "mentions": ["user"]}, "reply"
+    )
 
 
 def response(*tools: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +127,7 @@ async def run_turn(
 def result_names(tools: FakeAgentTools) -> list[str]:
     return [
         json.loads(event["content"])[ToolEventKey.NAME]
-        for event in events_of_type(tools, "tool_result")
+        for event in events_of_type(tools, MessageType.TOOL_RESULT)
     ]
 
 
@@ -176,13 +182,7 @@ async def test_failed_decline_allows_a_later_reply(
     peer = NativePeer(
         [
             response(tool(BandTool.NO_REPLY, {}, "decline")),
-            response(
-                tool(
-                    BandTool.SEND_MESSAGE,
-                    {"content": "recovered", "mentions": ["user"]},
-                    "reply",
-                )
-            ),
+            response(reply("recovered")),
             response(),
         ]
     )
@@ -204,13 +204,7 @@ async def test_invalid_decline_arguments_do_not_end_the_turn(
     peer = NativePeer(
         [
             response(tool(BandTool.NO_REPLY, {"reason": 42}, "decline")),
-            response(
-                tool(
-                    BandTool.SEND_MESSAGE,
-                    {"content": "recovered", "mentions": ["user"]},
-                    "reply",
-                )
-            ),
+            response(reply("recovered")),
             response(),
         ]
     )
@@ -235,13 +229,7 @@ async def test_decline_preserves_batch_results_and_replay_on_the_next_turn(
                 tool(BandTool.NO_REPLY, {}, "decline"),
                 tool(BandTool.GET_PARTICIPANTS, {}, "read"),
             ),
-            response(
-                tool(
-                    BandTool.SEND_MESSAGE,
-                    {"content": "new turn", "mentions": ["user"]},
-                    "reply",
-                )
-            ),
+            response(reply("new turn")),
             response(),
         ]
     )
@@ -273,13 +261,7 @@ async def test_successful_reply_and_reads_keep_the_native_loop_running(
 ) -> None:
     peer = NativePeer(
         [
-            response(
-                tool(
-                    BandTool.SEND_MESSAGE,
-                    {"content": "progress", "mentions": ["user"]},
-                    "reply",
-                )
-            ),
+            response(reply("progress")),
             response(tool(BandTool.GET_PARTICIPANTS, {}, "read")),
             response(),
         ]
@@ -301,11 +283,7 @@ async def test_decline_keeps_effects_already_requested_in_the_same_batch(
         [
             response(
                 tool(BandTool.NO_REPLY, {}, "decline"),
-                tool(
-                    BandTool.SEND_MESSAGE,
-                    {"content": "requested work", "mentions": ["user"]},
-                    "reply",
-                ),
+                reply("requested work"),
             )
         ]
     )
