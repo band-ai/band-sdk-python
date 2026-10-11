@@ -4,6 +4,9 @@ Facts about the ACP integration that span modules or that the code cannot say fo
 itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
 the server side is `ACPServer` + `BandACPServerAdapter`.
 
+Client-side automatic idle release is unavailable pending provider-specific
+safety qualification; see [idle room resource retention](idle-room-release.md).
+
 ## Configuration
 
 `ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig`,
