@@ -1781,7 +1781,7 @@ class ExecutionContext:
         )
         with _observe_phase("cycle", self.room_id, message_id):
             if isinstance(event, MessageEvent):
-                await self._execute_message_cycle(event)
+                await self._execute_message_cycle(event, message_id)
             else:
                 await self._on_execute(self, event)
 
@@ -1810,18 +1810,15 @@ class ExecutionContext:
         )
         self.observe_platform_stop(scope, control_revision=revision)
 
-    async def _execute_message_cycle(self, event: PlatformEvent) -> None:
+    async def _execute_message_cycle(
+        self, event: PlatformEvent, message_id: str | None
+    ) -> None:
         await self._working_reporter.start()
         scope = self.current_scope
         if scope is not None and scope.terminating:
             raise asyncio.CancelledError
         self._resync_handled_work = True
         self._reset_resync_interval()
-        message_id = (
-            event.payload.id
-            if isinstance(event, MessageEvent) and event.payload
-            else None
-        )
         with _observe_phase("handler", self.room_id, message_id):
             await self._on_execute(self, event)
 

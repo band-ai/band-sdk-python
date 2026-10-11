@@ -80,6 +80,7 @@ from band.runtime.tools.schema import is_failed_tool_output
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "pydantic_ai"
+DIAGNOSTIC_TOOL_NAME_LIMIT = 80
 
 _native_turn: ContextVar[tuple[str, str, float] | None] = ContextVar(
     "pydantic_native_turn", default=None
@@ -107,7 +108,7 @@ def _log_native_progress(
         monotonic() - started,
         request,
         events,
-        tool[:80] if tool is not None else None,
+        tool[:DIAGNOSTIC_TOOL_NAME_LIMIT] if tool is not None else None,
         type(error).__name__ if error is not None else None,
     )
 
