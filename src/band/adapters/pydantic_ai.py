@@ -26,6 +26,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
+from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -66,6 +67,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    BandTool,
     image_block_placeholder,
     redact_tool_call_args,
 )
@@ -74,6 +76,26 @@ from band.runtime.tools.schema import is_failed_tool_output
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "pydantic_ai"
+
+
+def _finish_explicit_decline(
+    ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    """Finish after the current run's successful decline and complete tool batch."""
+    if not request_context.messages:
+        return request_context
+    request = request_context.messages[-1]
+    if not isinstance(request, ModelRequest) or request.run_id != ctx.run_id:
+        return request_context
+    if any(
+        isinstance(part, ToolReturnPart)
+        and part.tool_name == BandTool.NO_REPLY
+        and part.outcome == "success"
+        and not is_failed_tool_output(part.content)
+        for part in request.parts
+    ):
+        raise SkipModelRequest(ModelResponse(parts=[]))
+    return request_context
 
 
 OUTPUT_RETRIES_EXHAUSTED = "exceeded maximum output retries"
@@ -359,6 +381,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # handled where the run is driven.
             retries={"tools": 3, "output": 0},
             capabilities=[
+                # Inspect native run metadata before replay history is processed.
+                Hooks(before_model_request=_finish_explicit_decline),
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
                 ProcessHistory(_drop_non_replayable_messages),

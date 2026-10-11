@@ -7,6 +7,9 @@ This file contains PydanticAI-specific behavior: agent creation, tool registrati
 stream event handling, execution reporting, and custom tools.
 """
 
+from __future__ import annotations
+
+import asyncio
 import contextlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -49,6 +52,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import UsageLimits
 
 from band.adapters.pydantic_ai import (
     OUTPUT_RETRIES_EXHAUSTED,
@@ -72,6 +76,7 @@ from band.core.types import (
     Emit,
     MessageType,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.runtime.custom_tools import (
@@ -99,7 +104,8 @@ from band.testing import (
     failure_reports,
     reported_failures,
 )
-from tests.adapters.usage_events import sent_usage_payloads
+from band.testing.fake_tools import events_of_type
+from tests.adapters.usage_events import recorded_usage_payloads, sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 from tests.framework_conformance.turnprobes import (
     CUSTOM_TOOL_DECLARATIONS,
@@ -793,6 +799,335 @@ def _streamed_tool_calls(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
             yield ""
 
     return FunctionModel(stream_function=stream)
+
+
+class DecliningModel:
+    """A native streaming model that keeps declining if asked again."""
+
+    def __init__(self) -> None:
+        self.requests = 0
+        self.model = FunctionModel(stream_function=self.stream)
+
+    async def stream(
+        self, messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        self.requests += 1
+        yield {
+            0: DeltaToolCall(
+                name=BandTool.NO_REPLY,
+                json_args=json.dumps({"reason": "Already answered"}),
+                tool_call_id=f"decline-{self.requests}",
+            )
+        }
+
+
+class TestExplicitDecline:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_limit", [1, 3])
+    async def test_decline_ends_native_stream_on_last_allowed_request(
+        self, request_limit: int
+    ) -> None:
+        model = DecliningModel()
+        adapter = PydanticAIAdapter(llm=model.model)
+        await adapter.on_started("Probe", "probe")
+        tools = FakeAgentTools()
+        results = []
+        async with adapter._agent.run_stream_events(
+            "go", deps=tools, usage_limits=UsageLimits(request_limit=request_limit)
+        ) as events:
+            async for event in events:
+                if isinstance(event, AgentRunResultEvent):
+                    results.append(event.result)
+
+        assert model.requests == 1
+        assert len(results) == 1
+        assert results[0].output is None
+        assert _tool_returns(results[0]) == [{"status": "no_reply"}]
+        assert tools.turn.replied
+        assert reported_failures(tools) == []
+
+    @pytest.mark.asyncio
+    async def test_adapter_preserves_decline_events_history_and_per_turn_usage(
+        self, sample_message: PlatformMessage
+    ) -> None:
+        model = DecliningModel()
+        adapter = PydanticAIAdapter(llm=model.model, emit=(Emit.TOOL_CALLS, Emit.USAGE))
+        await adapter.on_started("Probe", "probe")
+        tools = FakeAgentTools()
+        await _run_on_message(adapter, sample_message, tools)
+
+        assert model.requests == 1
+        assert _emitted_tool_results(tools) == [
+            (BandTool.NO_REPLY, "{'status': 'no_reply'}", "decline-1")
+        ]
+        prior = list(adapter._message_history[tools.room_id])
+        assert _history_tool_returns(prior) == [
+            (BandTool.NO_REPLY, "decline-1", {"status": "no_reply"})
+        ]
+        assert all(_is_replayable_history_message(message) for message in prior)
+        _assert_billed_responses(tools, prior)
+        assert reported_failures(tools) == []
+
+        seen_history: list[ModelMessage] = []
+
+        async def followup(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if not seen_history:
+                seen_history.extend(messages)
+                yield {
+                    0: DeltaToolCall(
+                        name=BandTool.SEND_MESSAGE,
+                        json_args=json.dumps(
+                            {
+                                "content": "A fresh reply",
+                                "mentions": [sample_message.sender_name],
+                            }
+                        ),
+                    )
+                }
+            else:
+                yield "done"
+
+        next_tools = FakeAgentTools(room_id=tools.room_id)
+        with adapter._agent.override(model=FunctionModel(stream_function=followup)):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=next_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id=tools.room_id,
+            )
+
+        assert _history_tool_returns(seen_history) == _history_tool_returns(prior)
+        assert next_tools.messages_sent[0]["content"] == "A fresh reply"
+        new_history = adapter._message_history[tools.room_id][len(prior) :]
+        _assert_billed_responses(next_tools, new_history, model_requests=2)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "rejection",
+        [RuntimeError("decline rejected"), {"ok": False}, None],
+        ids=["raised", "returned_failure", "invalid_arguments"],
+    )
+    async def test_failed_decline_keeps_required_reply_executable(
+        self, sample_message: PlatformMessage, rejection: Any
+    ) -> None:
+        tools = FakeAgentTools()
+        if isinstance(rejection, Exception):
+            tools.no_reply = AsyncMock(side_effect=rejection)
+        elif rejection is not None:
+            tools.no_reply = AsyncMock(return_value=rejection)
+        decline_args = (
+            {"unexpected": True} if rejection is None else {"reason": "decline"}
+        )
+        adapter = await _started_adapter()
+        with adapter._agent.override(
+            model=_streamed_tool_calls(
+                (BandTool.NO_REPLY, decline_args),
+                (
+                    BandTool.SEND_MESSAGE,
+                    {
+                        "content": "Required reply",
+                        "mentions": [sample_message.sender_name],
+                    },
+                ),
+            )
+        ):
+            await _run_on_message(adapter, sample_message, tools)
+
+        assert [message["content"] for message in tools.messages_sent] == [
+            "Required reply"
+        ]
+        assert reported_failures(tools) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "first_tool", [BandTool.SEND_MESSAGE, BandTool.GET_PARTICIPANTS, "do_work"]
+    )
+    async def test_other_successful_tools_do_not_end_the_loop(
+        self, sample_message: PlatformMessage, first_tool: str
+    ) -> None:
+        work_done = []
+
+        @declares_turn_effect(TurnEffect.ACT)
+        async def do_work() -> str:
+            work_done.append("worked")
+            return "worked"
+
+        tools = FakeAgentTools()
+        adapter = await _started_adapter(additional_tools=[do_work])
+        arguments = (
+            {"content": "First reply", "mentions": [sample_message.sender_name]}
+            if first_tool == BandTool.SEND_MESSAGE
+            else {}
+        )
+        with adapter._agent.override(
+            model=_streamed_tool_calls(
+                (first_tool, arguments),
+                (
+                    BandTool.SEND_MESSAGE,
+                    {
+                        "content": "Required next reply",
+                        "mentions": [sample_message.sender_name],
+                    },
+                ),
+            )
+        ):
+            await _run_on_message(adapter, sample_message, tools)
+
+        assert tools.messages_sent[-1]["content"] == "Required next reply"
+        if first_tool == "do_work":
+            assert work_done == ["worked"]
+        assert reported_failures(tools) == []
+
+    @pytest.mark.asyncio
+    async def test_decline_preserves_every_result_in_its_tool_batch(
+        self, sample_message: PlatformMessage
+    ) -> None:
+        async def batch(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[dict[int, DeltaToolCall]]:
+            yield {
+                0: DeltaToolCall(
+                    name=BandTool.NO_REPLY, json_args="{}", tool_call_id="decline"
+                ),
+                1: DeltaToolCall(
+                    name=BandTool.SEND_MESSAGE,
+                    json_args=json.dumps(
+                        {
+                            "content": "Already sent",
+                            "mentions": [sample_message.sender_name],
+                        }
+                    ),
+                    tool_call_id="reply",
+                ),
+                2: DeltaToolCall(
+                    name=BandTool.GET_PARTICIPANTS, json_args="{}", tool_call_id="read"
+                ),
+            }
+
+        adapter = PydanticAIAdapter(
+            llm=FunctionModel(stream_function=batch), emit=Emit.TOOL_CALLS
+        )
+        await adapter.on_started("Probe", "probe")
+        tools = FakeAgentTools()
+        await _run_on_message(adapter, sample_message, tools)
+
+        returns = _history_tool_returns(adapter._message_history[tools.room_id])
+        assert {(name, call_id) for name, call_id, _ in returns} == {
+            (BandTool.NO_REPLY, "decline"),
+            (BandTool.SEND_MESSAGE, "reply"),
+            (BandTool.GET_PARTICIPANTS, "read"),
+        }
+        assert {
+            (name, call_id) for name, _, call_id in _emitted_tool_results(tools)
+        } == {(name, call_id) for name, call_id, _ in returns}
+        assert [message["content"] for message in tools.messages_sent] == [
+            "Already sent"
+        ]
+        assert reported_failures(tools) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancel", [False, True], ids=["continue", "cancel"])
+    async def test_concurrent_room_keeps_its_lifecycle(
+        self, sample_message: PlatformMessage, cancel: bool
+    ) -> None:
+        entered, release, cleaned = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def wait_for_work() -> str:
+            entered.set()
+            try:
+                await release.wait()
+                return "work completed"
+            finally:
+                cleaned.set()
+
+        adapter = await _started_adapter(additional_tools=[wait_for_work])
+        slow_tools, decline_tools = (
+            FakeAgentTools(room_id="slow"),
+            FakeAgentTools(room_id="decline"),
+        )
+
+        async def slow_room() -> None:
+            with adapter._agent.override(
+                model=_streamed_tool_calls(
+                    ("wait_for_work", {}),
+                    (
+                        BandTool.SEND_MESSAGE,
+                        {
+                            "content": "Finished work",
+                            "mentions": [sample_message.sender_name],
+                        },
+                    ),
+                )
+            ):
+                await _run_on_message(adapter, sample_message, slow_tools)
+
+        async with asyncio.TaskGroup() as group:
+            task = group.create_task(slow_room())
+            try:
+                await entered.wait()
+                with adapter._agent.override(model=DecliningModel().model):
+                    await _run_on_message(adapter, sample_message, decline_tools)
+                assert not task.done()
+                if cancel:
+                    task.cancel()
+                else:
+                    release.set()
+            finally:
+                release.set()
+
+        assert cleaned.is_set()
+        assert task.cancelled() is cancel
+        assert [message["content"] for message in slow_tools.messages_sent] == (
+            [] if cancel else ["Finished work"]
+        )
+        assert decline_tools.messages_sent == []
+        assert reported_failures(slow_tools) == reported_failures(decline_tools) == []
+
+
+def _history_tool_returns(messages: list[ModelMessage]) -> list[tuple[str, str, Any]]:
+    return [
+        (part.tool_name, part.tool_call_id, part.content)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+def _emitted_tool_results(tools: FakeAgentTools) -> list[tuple[str, str, str]]:
+    results = [
+        json.loads(event["content"]) for event in events_of_type(tools, "tool_result")
+    ]
+    return [
+        (
+            result[ToolEventKey.NAME],
+            result[ToolEventKey.OUTPUT],
+            result[ToolEventKey.TOOL_CALL_ID],
+        )
+        for result in results
+    ]
+
+
+def _assert_billed_responses(
+    tools: FakeAgentTools, messages: list[ModelMessage], *, model_requests: int = 1
+) -> None:
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert len(responses) == model_requests
+    (payload,) = recorded_usage_payloads(tools)
+    assert (
+        payload["input_tokens"]
+        == sum(response.usage.input_tokens for response in responses)
+        > 0
+    )
+    assert (
+        payload["output_tokens"]
+        == sum(response.usage.output_tokens for response in responses)
+        > 0
+    )
 
 
 async def _run_on_message(
