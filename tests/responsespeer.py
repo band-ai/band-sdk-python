@@ -46,6 +46,11 @@ class ResponsesPeer:
         match next(self.turns):
             case ToolTurn(name=name, args=args):
                 item_id = "fc-1"
+                call_id = (
+                    self.CALL_ID
+                    if len(self.requests) == 1
+                    else f"{self.CALL_ID}-{len(self.requests)}"
+                )
                 events.extend(
                     [
                         {
@@ -54,7 +59,7 @@ class ResponsesPeer:
                             "item": {
                                 "type": "function_call",
                                 "id": item_id,
-                                "call_id": self.CALL_ID,
+                                "call_id": call_id,
                                 "name": name,
                                 "arguments": "",
                                 "status": "in_progress",

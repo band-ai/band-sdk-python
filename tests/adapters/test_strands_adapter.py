@@ -64,7 +64,7 @@ from band.core.types import (
     is_usage_event,
 )
 from band.runtime.custom_tools import declares_turn_effect
-from band.runtime.tools import TurnEffect, get_tool_description
+from band.runtime.tools import BandTool, TurnEffect, get_tool_description
 from band.testing import (
     MISSING_REPLY_FAILURE,
     ErrorTurn,
@@ -1016,6 +1016,48 @@ class TestTurnProductivity:
 
 
 class TestTurnFailure:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fails", [False, True], ids=["declined", "failed-decline"])
+    @pytest.mark.parametrize("emit_execution", [False, True])
+    async def test_responses_decline_ends_only_a_successful_turn(
+        self, monkeypatch: pytest.MonkeyPatch, fails: bool, emit_execution: bool
+    ) -> None:
+        tools = FakeAgentTools(room_id=ROOM)
+        peer = ResponsesPeer(
+            [
+                ToolTurn(BandTool.NO_REPLY, {"reason": [] if fails else "FYI only"}),
+                ToolTurn(BandTool.NO_REPLY, {"reason": "FYI only"}),
+                ErrorTurn(RuntimeError("decline requested another model call")),
+            ]
+        )
+        monkeypatch.setattr("openai.AsyncOpenAI", peer.client)
+        adapter = StrandsAdapter(
+            llm=OpenAIResponsesModel(
+                client_args={"api_key": "test"}, model_id="test-model"
+            ),
+            emit=Emit.USAGE | Emit.TOOL_CALLS if emit_execution else Emit.USAGE,
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        await _run_turn(adapter, tools)
+
+        assert len(peer.requests) == (2 if fails else 1)
+        assert tools.turn.complete
+        assert tools.messages_sent == []
+        assert failure_reports(tools) == []
+        if emit_execution:
+            results = events_of_type(tools, MessageType.TOOL_RESULT)
+            assert [
+                json.loads(result["content"])["is_error"] for result in results
+            ] == ([True, False] if fails else [False])
+        (usage,) = [
+            event for event in tools.events_sent if is_usage_event(event["metadata"])
+        ]
+        requests = 2 if fails else 1
+        assert usage["metadata"][USAGE_METADATA_KEY]["input_tokens"] == (
+            requests * peer.INPUT_TOKENS
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fails", [False, True], ids=["completed", "failed-stream"])
     async def test_responses_tool_events_usage_and_failure(

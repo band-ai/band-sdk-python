@@ -74,6 +74,7 @@ from band.runtime.tools import (
     iter_tool_definitions,
     redact_tool_call_args,
     serialize_tool_result,
+    turn_effect,
     validate_tool_arguments,
 )
 from band.runtime.tools.schema import is_failed_tool_output
@@ -416,6 +417,9 @@ class BandTurnHooks(HookProvider):
             ToolEventKey.IS_ERROR: not succeeded,
         }
         call.update(result_payload)
+        if succeeded and turn_effect(name) is TurnEffect.DECLINE:
+            # Strands stops after recording every result in the current tool batch.
+            event.invocation_state["request_state"]["stop_event_loop"] = True
         # Native Strands tools run outside execute_custom_tool, so their
         # declared effect is recorded here.
         if (
