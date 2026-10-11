@@ -37,6 +37,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 )
 from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall, ToolCalls
+from tests.framework_conformance.shelltrace import ShellProbeProcess
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +206,14 @@ def test_shell_redirect_readback_handles_host_encodings(
     ids=lambda shell: shell or "host",
 )
 def test_approval_commands_write_and_append_with_host_shell(
-    tmp_path: Path, shell: str | None, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    shell: str | None,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     caplog.set_level(logging.INFO, logger=__name__)
+    caplog.set_level(logging.INFO, logger=ShellProbeProcess.__module__)
+    monkeypatch.setattr(subprocess, "Popen", ShellProbeProcess)
     logger.info(
         "Shell probe: platform=%s python=%s executable=%s cwd=%s",
         sys.platform,
