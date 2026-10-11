@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 import band.adapters.opencode
+import band.integrations.opencode
 from band.client.streaming import DeliveryStatus
 from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.agents import Adapter, per_adapter
@@ -65,6 +66,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.paths import REPO_ROOT
 
 
 def readback_commands(target: Path) -> frozenset[str]:
@@ -113,11 +115,18 @@ async def approval_room(
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
+    trace_path = (
+        REPO_ROOT / "artifacts/opencode-sdk.log"
+        if cell.settings.run.first_attempt_diagnostics
+        and cell.adapter_id == Adapter.OPENCODE
+        else None
+    )
     # OpenCode's turn-phase records are content-free INFO lines; a failing
     # cell's captured log then shows where its turn stopped. Scoped to that
     # package: other adapters log tool input at INFO.
     with (
-        sdk_logs_at(band.adapters.opencode, logging.INFO),
+        sdk_logs_at(band.adapters.opencode, logging.INFO, path=trace_path),
+        sdk_logs_at(band.integrations.opencode, logging.INFO, path=trace_path),
         tempfile.TemporaryDirectory(
             prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
         ) as workdir,

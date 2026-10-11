@@ -292,6 +292,7 @@ jobs:
       env:
         # The OpenCode Zen provider key the server reads via {env:...} substitution.
         OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
+        BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
       run: bash .github/scripts/setup-opencode.sh
 
     # The Letta server runs in docker with a host-gateway alias so it can call
@@ -338,7 +339,10 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: opencode-serve-${{ matrix.os }}
-        path: ${{ env.OPENCODE_SERVE_LOG }}
+        path: |
+          ${{ env.OPENCODE_SERVE_LOG }}
+          artifacts/opencode-stream.jsonl
+          artifacts/opencode-sdk.log
         if-no-files-found: ignore
         # The server log quotes gated commands and question answers.
         retention-days: 14

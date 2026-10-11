@@ -29,6 +29,24 @@ read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
 }
 JSON
 
+if [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" = "true" ]; then
+  # The released native plugin wraps the existing provider fetch, preserving its
+  # endpoint, request, abort signal and streaming bytes.
+  OPENCODE_CONFIG_JSON=$(node --input-type=module - "$PWD" "$OPENCODE_CONFIG_JSON" <<'JS'
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, raw] = process.argv.slice(2);
+const config = JSON.parse(raw);
+config.plugin = [[pathToFileURL(resolve(root, '.github/scripts/opencode-trace.mjs')).href,
+  {path: resolve(root, 'artifacts/opencode-stream.jsonl')}]];
+process.stdout.write(JSON.stringify(config));
+JS
+)
+  # Each SDK room uses a different native directory; process-level config makes
+  # the diagnostic plugin visible in all of them, including on Windows.
+  export OPENCODE_CONFIG_CONTENT="$OPENCODE_CONFIG_JSON"
+fi
+
 # Serve from an empty throwaway dir: opencode is a coding agent with shell/read/grep
 # tools, so in the repo checkout a weak free model wanders into the source instead of
 # replying. An empty cwd keeps it on task.

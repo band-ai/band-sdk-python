@@ -49,3 +49,22 @@ in order after the session becomes available.
 owns: it may select reasoning effort or be a custom provider setting, so read
 the server's model catalog rather than assuming `"high"` exists. The model
 override is sent only when `provider_id` and `model_id` are both set.
+
+CI dispatches with `first_attempt_diagnostics=true` install a local native
+plugin that traces the existing Zen provider fetch. The `opencode-serve-<os>`
+artifact includes `opencode-stream.jsonl`: correlated provider dispatch,
+headers, first bytes, periodic byte/SSE-line counts, cancellation and stream
+completion, plus native event types. `read_pending` distinguishes a pending
+provider body read from a wrapper waiting for its consumer to request more.
+SDK logs show SSE connection and the
+first received event of each type per turn; these INFO records also persist in
+`opencode-sdk.log`. The trace contains identifiers
+and counts, never credentials, prompts, generation text or exception messages.
+
+Compare the timelines before attributing a stalled turn: no headers after
+dispatch, headers with only comment lines, data without native progress, and
+native permission without SDK receipt identify different boundaries. A timeout
+abort is cleanup evidence; a later passing run does not explain the earlier
+stall. The plugin adds a streaming read layer, so retain the uninstrumented
+failure as well as diagnostic results. Scenario, model, permission policy and
+deadlines remain those of the original test.

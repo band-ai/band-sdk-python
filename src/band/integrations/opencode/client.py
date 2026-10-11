@@ -230,6 +230,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             ),
         ) as response:
             response.raise_for_status()
+            logger.info("OpenCode SSE: connected status=%s", response.status_code)
 
             event_name: str | None = None
             event_id: str | None = None

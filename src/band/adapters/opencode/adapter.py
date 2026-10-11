@@ -96,6 +96,7 @@ class TurnState:
     pending_mentions: list[dict[str, str]] = field(default_factory=list)
     text_parts: OrderedDict[str, str] = field(default_factory=OrderedDict)
     assistant_message_ids: set[str] = field(default_factory=set)
+    received_event_types: set[str] = field(default_factory=set)
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
@@ -817,6 +818,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state = await self._room_state_for_session(event.session_id)
         if room_state is None:
             return
+
+        turn = room_state.turn
+        if turn is not None and event.type not in turn.received_event_types:
+            turn.received_event_types.add(event.type)
+            logger.info(
+                "OpenCode SSE: first event room=%s session=%s type=%s",
+                room_state.room_id,
+                turn.session_id,
+                event.type,
+            )
 
         match event:
             case MessageUpdatedEvent():
