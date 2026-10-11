@@ -4,6 +4,7 @@
 request makes at most three HTTP attempts. Google genai owns transient error
 classification, exponential backoff and jitter. Completed tools and the ADK
 runner are never replayed. Exhausted errors retain normal turn failure reporting.
+Generation uses HTTPX to avoid aiohttp reconnect resends outside that budget.
 
 Set `GoogleADKAdapterConfig(max_retries=0)` for one HTTP attempt per request.
 The frozen config accepts only nonnegative budgets.

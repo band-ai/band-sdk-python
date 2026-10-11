@@ -15,6 +15,7 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+import httpx
 from pydantic import NonNegativeInt, PositiveInt, ValidationError
 from typing_extensions import Unpack
 
@@ -50,6 +51,7 @@ from band.runtime.tools import (
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
     from google.adk.tools import ToolContext
+    from google.genai import Client
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,9 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
         ImportError: If google-adk is not installed.
     """
     try:
+        from google import (  # noqa: PLC0415 -- optional google_adk extra
+            genai,
+        )
         from google.adk import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             Agent as ADKAgent,
         )
@@ -131,15 +136,43 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
         from google.adk.tools import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             BaseTool,
         )
-        from google.genai import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
-            types,
-        )
     except ImportError as exc:
         raise ImportError(
             "google-adk is required for GoogleADKAdapter. "
             "Install with: uv add band-sdk[google_adk]"
         ) from exc
-    return ADKAgent, InMemoryRunner, BaseTool, Gemini, types
+
+    class BoundedGemini(Gemini):
+        @functools.cached_property
+        def httpx_client(self) -> httpx.AsyncClient:
+            return httpx.AsyncClient()
+
+        @functools.cached_property
+        def api_client(self) -> Client:
+            # aiohttp reconnects outside genai's configured attempt budget.
+            return genai.Client(
+                http_options=genai.types.HttpOptions(
+                    headers=self._tracking_headers,
+                    retry_options=self.retry_options,
+                    httpx_async_client=self.httpx_client,
+                )
+            )
+
+        async def aclose(self) -> None:
+            client = self.__dict__.get("api_client")
+            httpx_client = self.__dict__.get("httpx_client")
+            try:
+                if client is not None:
+                    await client.aio.aclose()
+            finally:
+                try:
+                    if httpx_client is not None:
+                        await httpx_client.aclose()
+                finally:
+                    if client is not None:
+                        client.close()
+
+    return ADKAgent, InMemoryRunner, BaseTool, BoundedGemini, genai.types
 
 
 @functools.lru_cache(maxsize=1)
@@ -647,7 +680,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 await self.emit_usage(tools, turn_usage)
             finally:
                 if runner is not None:
-                    await runner.close()
+                    try:
+                        await runner.close()
+                    finally:
+                        await cast(Any, runner.agent).model.aclose()
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(

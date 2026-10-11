@@ -214,9 +214,11 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
     from band.adapters.google_adk import (  # noqa: PLC0415 -- google_adk extra, absent from some lane venvs
         GoogleADKAdapter,
         _get_tool_bridge_class,
+        _require_adk,
     )
 
     tool_bridge = _get_tool_bridge_class()
+    _, _, _, model_class, _ = _require_adk()
 
     def scripted_runner(turn_tools: Any) -> MagicMock:
         """An ADK runner whose tool loop calls the script through the adapter's
@@ -239,6 +241,7 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
         runner.session_service.create_session = AsyncMock()
         runner.run_async = run_async
         runner.close = AsyncMock()
+        runner.agent.model = model_class(model=adapter.config.model)
         return runner
 
     adapter = GoogleADKAdapter()

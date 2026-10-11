@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 import pytest_asyncio
+from google import genai
 from google.genai import Client, types
 from google.genai.errors import APIError
 from pydantic import BaseModel, Field
@@ -74,8 +75,9 @@ class GoogleHTTPPeer:
     """Script provider HTTP responses while retaining the real ADK tool loop."""
 
     def __init__(self) -> None:
-        self.responses: list[int | types.GenerateContentResponse] = []
+        self.responses: list[int | types.GenerateContentResponse | None] = []
         self.requests: list[httpx.Request] = []
+        self.clients: list[Client] = []
         self.initial_delay = 0.001
         self.max_delay = 0.001
         self.retry_started = asyncio.Event()
@@ -83,6 +85,7 @@ class GoogleHTTPPeer:
     def respond(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         response = self.responses.pop(0)
+        assert response is not None, "Disconnects require the TCP peer"
         if isinstance(response, int):
             return httpx.Response(
                 response,
@@ -96,11 +99,69 @@ class GoogleHTTPPeer:
     def generation_requests(self) -> list[dict[str, Any]]:
         return [json.loads(request.content) for request in self.requests]
 
+    @property
+    def clients_closed(self) -> bool:
+        return bool(self.clients) and all(
+            client._api_client._httpx_client.is_closed
+            and client._api_client._async_httpx_client.is_closed
+            for client in self.clients
+        )
 
-@pytest_asyncio.fixture
-async def google_http() -> AsyncIterator[GoogleHTTPPeer]:
+    async def serve(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            headers = await reader.readuntil(b"\r\n\r\n")
+            request_headers = httpx.Headers(
+                line.split(b":", 1)
+                for line in headers.split(b"\r\n")[1:]
+                if b":" in line
+            )
+            content = await reader.readexactly(int(request_headers["content-length"]))
+            request = httpx.Request(
+                "POST",
+                "http://localhost/generate",
+                headers=request_headers,
+                content=content,
+            )
+            if self.responses[0] is None:
+                self.responses.pop(0)
+                self.requests.append(request)
+                return
+            response = self.respond(request)
+            writer.write(
+                f"HTTP/1.1 {response.status_code} {response.reason_phrase}\r\n"
+                "Content-Type: application/json\r\nConnection: close\r\n"
+                f"Content-Length: {len(response.content)}\r\n\r\n".encode()
+                + response.content
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def google_http(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[GoogleHTTPPeer]:
     peer = GoogleHTTPPeer()
-    clients: list[Client] = []
+    mode = getattr(request, "param", "mock")
+    server = (
+        await asyncio.start_server(peer.serve, "127.0.0.1", 0)
+        if mode != "mock"
+        else None
+    )
+    base_url = (
+        f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}" if server else None
+    )
+    if mode == "proxy":
+        assert base_url is not None
+        monkeypatch.setenv("HTTP_PROXY", base_url)
+        monkeypatch.setenv("NO_PROXY", "")
+        base_url = "http://provider.invalid"
+    elif server is not None:
+        monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
 
     def create_client(*, http_options: types.HttpOptions) -> Client:
         retry = http_options.retry_options
@@ -112,16 +173,17 @@ async def google_http() -> AsyncIterator[GoogleHTTPPeer]:
                     "jitter": 0.001,
                 }
             )
+        options: dict[str, Any] = {"retry_options": retry}
+        if base_url is not None:
+            options["base_url"] = base_url
+        else:
+            options["httpx_async_client"] = None
+            options["async_client_args"] = {
+                "transport": httpx.MockTransport(peer.respond)
+            }
         client = Client(
             api_key=LOCAL_API_KEY,
-            http_options=http_options.model_copy(
-                update={
-                    "retry_options": retry,
-                    "async_client_args": {
-                        "transport": httpx.MockTransport(peer.respond)
-                    },
-                }
-            ),
+            http_options=http_options.model_copy(update=options),
         )
         # Signal from native backoff, after the retry decision and before sleeping.
         native_before_sleep = client._api_client._async_retry.before_sleep
@@ -132,16 +194,25 @@ async def google_http() -> AsyncIterator[GoogleHTTPPeer]:
                 native_before_sleep(state)
 
         client._api_client._async_retry.before_sleep = before_sleep
-        clients.append(client)
+        peer.clients.append(client)
         return client
 
-    with patch.object(_google_llm, "Client", create_client):
+    with (
+        patch.object(genai, "Client", create_client),
+        patch.object(_google_llm, "Client", create_client),
+    ):
         try:
             yield peer
         finally:
-            for client in clients:
-                await client.aio.aclose()
-                client.close()
+            for client in peer.clients:
+                try:
+                    await client.aio.aclose()
+                finally:
+                    await client._api_client._async_httpx_client.aclose()
+                    client.close()
+            if server is not None:
+                server.close()
+                await server.wait_closed()
 
 
 @pytest.fixture
@@ -1673,6 +1744,7 @@ async def _empty_async_iter(**kwargs):
     yield  # Make it an async generator
 
 
+@pytest.mark.parametrize("google_http", ["mock", "tcp"], indirect=True)
 class TestNativeHTTPRecovery:
     @pytest.mark.parametrize(
         ("responses", "max_retries", "expected_calls", "error_code"),
@@ -1732,6 +1804,7 @@ class TestNativeHTTPRecovery:
                 assert tools.chat == []
                 assert recorded_usage_payloads(tools) == []
         assert len(google_http.requests) == expected_calls
+        assert google_http.clients_closed
         repeated = (
             google_http.generation_requests[:2]
             if error_code is None
@@ -1776,6 +1849,7 @@ class TestNativeHTTPRecovery:
             await adapter.on_event(turn_input(tools))
             assert failure_reports(tools) == []
         assert tools.chat == ["Completed effect"]
+        assert google_http.clients_closed
         assert tools.tool_calls == [
             {
                 "tool_name": BandTool.SEND_MESSAGE,
@@ -1824,6 +1898,7 @@ class TestNativeHTTPRecovery:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
         assert len(google_http.requests) == 2
+        assert google_http.clients_closed
         assert tools.tool_calls == [
             {
                 "tool_name": BandTool.SEND_MESSAGE,
@@ -1834,6 +1909,75 @@ class TestNativeHTTPRecovery:
         assert tools.chat == ["Completed effect"]
         # Cancellation suppresses best-effort usage emission by contract.
         assert recorded_usage_payloads(tools) == []
+
+
+class TestWireBudget:
+    @pytest.mark.parametrize("google_http", ["proxy"], indirect=True)
+    @pytest.mark.asyncio
+    async def test_generation_preserves_environment_proxy_routing(
+        self, google_http: GoogleHTTPPeer
+    ) -> None:
+        google_http.responses = [
+            tool_call(BandTool.SEND_MESSAGE, EFFECT_ARGS),
+            text_reply("Done"),
+        ]
+        adapter = GoogleADKAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        tools = RecoveryTools()
+        await adapter.on_event(turn_input(tools))
+        assert tools.chat == ["Completed effect"]
+        assert len(google_http.requests) == 2
+        assert google_http.clients_closed
+
+    @pytest.mark.parametrize("google_http", ["tcp"], indirect=True)
+    @pytest.mark.asyncio
+    async def test_provider_clients_close_when_runner_cleanup_fails(
+        self, google_http: GoogleHTTPPeer
+    ) -> None:
+        google_http.responses = [
+            tool_call(BandTool.SEND_MESSAGE, EFFECT_ARGS),
+            text_reply("Done"),
+        ]
+        adapter = GoogleADKAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        _, runner_class, _, _, _ = _google_adk_mod._require_adk()
+        with (
+            patch.object(
+                runner_class,
+                "close",
+                new=AsyncMock(side_effect=RuntimeError("Tool cleanup failed")),
+            ),
+            pytest.raises(RuntimeError, match="Tool cleanup failed"),
+        ):
+            await adapter.on_event(turn_input(RecoveryTools()))
+        assert google_http.clients_closed
+
+    @pytest.mark.parametrize("google_http", ["tcp"], indirect=True)
+    @pytest.mark.parametrize("post_tool", [False, True], ids=["initial", "post-tool"])
+    @pytest.mark.asyncio
+    async def test_zero_budget_never_resends_a_disconnected_request(
+        self, google_http: GoogleHTTPPeer, post_tool: bool
+    ) -> None:
+        google_http.responses = [
+            *([tool_call(BandTool.SEND_MESSAGE, EFFECT_ARGS)] if post_tool else []),
+            None,
+            *([] if post_tool else [tool_call(BandTool.SEND_MESSAGE, EFFECT_ARGS)]),
+            text_reply("Done"),
+        ]
+        adapter = GoogleADKAdapter(
+            GoogleADKAdapterConfig(max_retries=0), emit={Emit.USAGE}
+        )
+        await adapter.on_started("TestBot", "Test bot")
+        tools = RecoveryTools()
+        with pytest.raises(httpx.RemoteProtocolError):
+            await adapter.on_event(turn_input(tools))
+        assert len(google_http.requests) == (2 if post_tool else 1)
+        assert tools.chat == (["Completed effect"] if post_tool else [])
+        assert failure_reports(tools) == [
+            ("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+        ]
+        assert len(recorded_usage_payloads(tools)) == (1 if post_tool else 0)
+        assert google_http.clients_closed
 
     def test_negative_retry_budget_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="max_retries"):
