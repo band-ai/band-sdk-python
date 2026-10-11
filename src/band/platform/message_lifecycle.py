@@ -264,6 +264,19 @@ class MessageLifecycle:
             [_platform_message(item, room_id) for item in response.data], next_cursor
         )
 
+    async def get_actionable_message(
+        self, rest: AsyncRestClient, room_id: str, message_id: str
+    ) -> PlatformMessage | None:
+        cursor: str | None = None
+        while True:
+            page = await self.get_actionable_page(rest, room_id, cursor=cursor)
+            for message in page.messages:
+                if message.id == message_id:
+                    return message
+            if page.next_cursor is None:
+                return None
+            cursor = page.next_cursor
+
     async def get_stale_processing_messages(
         self, rest: AsyncRestClient, room_id: str
     ) -> list[PlatformMessage]:

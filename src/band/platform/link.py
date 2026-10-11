@@ -599,15 +599,9 @@ class BandLink:
     async def get_actionable_message(
         self, room_id: str, message_id: str
     ) -> PlatformMessage | None:
-        cursor: str | None = None
-        while True:
-            page = await self.get_actionable_page(room_id, cursor=cursor)
-            for message in page.messages:
-                if message.id == message_id:
-                    return message
-            if page.next_cursor is None:
-                return None
-            cursor = page.next_cursor
+        return await self._messages.get_actionable_message(
+            self.rest, room_id, message_id
+        )
 
     async def get_stale_processing_messages(
         self, room_id: str
