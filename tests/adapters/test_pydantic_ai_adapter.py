@@ -879,10 +879,7 @@ class TestExplicitDecline:
                     0: DeltaToolCall(
                         name=BandTool.SEND_MESSAGE,
                         json_args=json.dumps(
-                            {
-                                "content": "A fresh reply",
-                                "mentions": [sample_message.sender_name],
-                            }
+                            _reply_arguments(sample_message, "A fresh reply")
                         ),
                     )
                 }
@@ -902,7 +899,7 @@ class TestExplicitDecline:
             )
 
         assert _history_tool_returns(seen_history) == _history_tool_returns(prior)
-        assert next_tools.messages_sent[0]["content"] == "A fresh reply"
+        assert next_tools.chat[0] == "A fresh reply"
         new_history = adapter._message_history[tools.room_id][len(prior) :]
         _assert_billed_responses(next_tools, new_history, model_requests=2)
 
@@ -929,18 +926,13 @@ class TestExplicitDecline:
                 (BandTool.NO_REPLY, decline_args),
                 (
                     BandTool.SEND_MESSAGE,
-                    {
-                        "content": "Required reply",
-                        "mentions": [sample_message.sender_name],
-                    },
+                    _reply_arguments(sample_message, "Required reply"),
                 ),
             )
         ):
             await _run_on_message(adapter, sample_message, tools)
 
-        assert [message["content"] for message in tools.messages_sent] == [
-            "Required reply"
-        ]
+        assert tools.chat == ["Required reply"]
         assert reported_failures(tools) == []
 
     @pytest.mark.asyncio
@@ -960,7 +952,7 @@ class TestExplicitDecline:
         tools = FakeAgentTools()
         adapter = await _started_adapter(additional_tools=[do_work])
         arguments = (
-            {"content": "First reply", "mentions": [sample_message.sender_name]}
+            _reply_arguments(sample_message, "First reply")
             if first_tool == BandTool.SEND_MESSAGE
             else {}
         )
@@ -969,16 +961,13 @@ class TestExplicitDecline:
                 (first_tool, arguments),
                 (
                     BandTool.SEND_MESSAGE,
-                    {
-                        "content": "Required next reply",
-                        "mentions": [sample_message.sender_name],
-                    },
+                    _reply_arguments(sample_message, "Required next reply"),
                 ),
             )
         ):
             await _run_on_message(adapter, sample_message, tools)
 
-        assert tools.messages_sent[-1]["content"] == "Required next reply"
+        assert tools.chat[-1] == "Required next reply"
         if first_tool == "do_work":
             assert work_done == ["worked"]
         assert reported_failures(tools) == []
@@ -997,10 +986,7 @@ class TestExplicitDecline:
                 1: DeltaToolCall(
                     name=BandTool.SEND_MESSAGE,
                     json_args=json.dumps(
-                        {
-                            "content": "Already sent",
-                            "mentions": [sample_message.sender_name],
-                        }
+                        _reply_arguments(sample_message, "Already sent")
                     ),
                     tool_call_id="reply",
                 ),
@@ -1025,9 +1011,7 @@ class TestExplicitDecline:
         assert {
             (name, call_id) for name, _, call_id in _emitted_tool_results(tools)
         } == {(name, call_id) for name, call_id, _ in returns}
-        assert [message["content"] for message in tools.messages_sent] == [
-            "Already sent"
-        ]
+        assert tools.chat == ["Already sent"]
         assert reported_failures(tools) == []
 
     @pytest.mark.asyncio
@@ -1057,10 +1041,7 @@ class TestExplicitDecline:
                     ("wait_for_work", {}),
                     (
                         BandTool.SEND_MESSAGE,
-                        {
-                            "content": "Finished work",
-                            "mentions": [sample_message.sender_name],
-                        },
+                        _reply_arguments(sample_message, "Finished work"),
                     ),
                 )
             ):
@@ -1075,18 +1056,18 @@ class TestExplicitDecline:
                 assert not task.done()
                 if cancel:
                     task.cancel()
-                else:
-                    release.set()
             finally:
                 release.set()
 
         assert cleaned.is_set()
         assert task.cancelled() is cancel
-        assert [message["content"] for message in slow_tools.messages_sent] == (
-            [] if cancel else ["Finished work"]
-        )
-        assert decline_tools.messages_sent == []
+        assert slow_tools.chat == ([] if cancel else ["Finished work"])
+        assert decline_tools.chat == []
         assert reported_failures(slow_tools) == reported_failures(decline_tools) == []
+
+
+def _reply_arguments(message: PlatformMessage, content: str) -> dict[str, Any]:
+    return {"content": content, "mentions": [message.sender_name]}
 
 
 def _history_tool_returns(messages: list[ModelMessage]) -> list[tuple[str, str, Any]]:
@@ -1100,7 +1081,8 @@ def _history_tool_returns(messages: list[ModelMessage]) -> list[tuple[str, str, 
 
 def _emitted_tool_results(tools: FakeAgentTools) -> list[tuple[str, str, str]]:
     results = [
-        json.loads(event["content"]) for event in events_of_type(tools, "tool_result")
+        json.loads(event["content"])
+        for event in events_of_type(tools, MessageType.TOOL_RESULT)
     ]
     return [
         (
