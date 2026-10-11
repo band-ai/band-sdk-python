@@ -652,10 +652,6 @@ class WebSocketClient:
     async def _handle_events(self, message: PHXMessage, event_handlers: dict):
         """Generic async event handler that maps events to their corresponding async callbacks"""
         logger.debug("[WebSocket] Received event: %s", message.event)
-        if message.event == WireEvent.AGENT_CONTROL:
-            logger.warning(
-                "raw agent.control topic=%s payload=%s", message.topic, message.payload
-            )
 
         # Check if we have a handler for this event
         if message.event not in event_handlers:
