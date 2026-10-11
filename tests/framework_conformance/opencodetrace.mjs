@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,10 +30,14 @@ async function fixture(t, handle) {
   });
   const raw = () => readFileSync(path, "utf8");
   const trace = () => raw().trim().split("\n").map(JSON.parse);
+  const records = (phase) => trace().filter((event) => event.phase === phase);
   return {
     hooks, fetch: config.provider.opencode.options.fetch,
     url: `http://127.0.0.1:${server.address().port}/chat/completions?secret-query`,
-    record: (phase) => trace().find((event) => event.phase === phase),
+    record: (phase) => records(phase)[0],
+    records,
+    removeArtifact: () => rmSync(directory, { recursive: true }),
+    restoreArtifact: () => mkdirSync(directory),
     lastPhase: () => trace().at(-1).phase,
     providerPhases: () => trace().filter((event) => event.phase.startsWith("provider."))
       .map((event) => event.phase),
@@ -44,8 +48,39 @@ async function fixture(t, handle) {
 }
 
 const CORRELATION = { "x-opencode-session": "ses-test", "x-opencode-request": "msg-test" };
+const PROGRESS_TICK_MS = 30_000;
+
+for (const separator of ["\n", "\r", "\r\n"]) {
+  test(`SSE counters preserve ${JSON.stringify(separator)} line boundaries across chunks`, async (t) => {
+    const release = barrier();
+    const prefix = `: heartbeat${separator}${separator}data: secret-generation`;
+    const suffix = `${separator}${separator}data: [DONE]${separator}${separator}`;
+    const split = separator === "\r\n" ? 1 : 0;
+    const peer = await fixture(t, async (req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(prefix + suffix.slice(0, split));
+      await release.promise;
+      res.end(suffix.slice(split));
+    });
+    const response = await peer.fetch(peer.url);
+    const reader = response.body.getReader();
+    const first = await reader.read();
+    release.resolve();
+    const chunks = [Buffer.from(first.value)];
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      chunks.push(Buffer.from(part.value));
+    }
+    assert.equal(Buffer.concat(chunks).toString(), prefix + suffix);
+    assert.equal(peer.record("provider.end").data_lines, 2);
+    assert.equal(peer.record("provider.end").comment_lines, 1);
+    assert.ok(!peer.raw().includes("secret-generation"));
+  });
+}
 
 test("partial SSE bytes, request, status and headers survive tracing without content", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
   const release = barrier();
   const comment = Buffer.from(": keepalive\r\n\n");
   const generation = Buffer.from('data: {"text":"secret-generation-δ"}\n\ndata: [DONE]\n\n');
@@ -89,6 +124,83 @@ test("partial SSE bytes, request, status and headers survive tracing without con
   assert.equal(end.data_lines, 2);
   assert.equal(end.comment_lines, 1);
   assert.ok(!peer.raw().includes("secret-"));
+  const records = peer.raw();
+  t.mock.timers.tick(PROGRESS_TICK_MS);
+  assert.equal(peer.raw(), records);
+});
+
+test("artifact failure still cancels the upstream stream", async (t) => {
+  const closed = barrier();
+  const peer = await fixture(t, (req, res) => {
+    res.on("close", closed.resolve);
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(": heartbeat\n\n");
+  });
+  const response = await peer.fetch(peer.url);
+  const reader = response.body.getReader();
+  await reader.read();
+  peer.removeArtifact();
+  try {
+    await assert.rejects(reader.cancel(), { code: "ENOENT" });
+    await closed.promise;
+  } finally {
+    peer.restoreArtifact();
+  }
+});
+
+test("periodic progress distinguishes provider waits from consumer backpressure", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const release = barrier();
+  const peer = await fixture(t, async (req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(": heartbeat\n\n");
+    await release.promise;
+    res.write("data: secret-generation\n\n");
+  });
+  const response = await peer.fetch(peer.url);
+  const reader = response.body.getReader();
+  await reader.read();
+  await new Promise(setImmediate);
+  t.mock.timers.tick(PROGRESS_TICK_MS);
+  const waiting = peer.records("provider.progress").at(-1);
+  assert.equal(waiting.read_pending, true);
+  assert.equal(waiting.comment_lines, 1);
+  assert.equal(waiting.data_lines, 0);
+  release.resolve();
+  let queued;
+  do {
+    await new Promise(setImmediate);
+    t.mock.timers.tick(PROGRESS_TICK_MS);
+    queued = peer.records("provider.progress").at(-1);
+  } while (queued.data_lines === 0);
+  assert.equal(queued.read_pending, false);
+  assert.ok(queued.bytes > waiting.bytes);
+  await reader.cancel();
+  const records = peer.raw();
+  t.mock.timers.tick(PROGRESS_TICK_MS);
+  assert.equal(peer.raw(), records);
+});
+
+test("disposal releases every progress timer despite an artifact failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const peer = await fixture(t, (req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(": heartbeat\n\n");
+  });
+  const responses = await Promise.all([peer.fetch(peer.url), peer.fetch(peer.url)]);
+  const readers = responses.map((response) => response.body.getReader());
+  await Promise.all(readers.map((reader) => reader.read()));
+  peer.removeArtifact();
+  try {
+    await assert.rejects(peer.hooks.dispose(), { code: "ENOENT" });
+  } finally {
+    peer.restoreArtifact();
+  }
+  await peer.hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses-test" } } });
+  const records = peer.raw();
+  t.mock.timers.tick(PROGRESS_TICK_MS);
+  assert.equal(peer.raw(), records);
+  await Promise.all(readers.map((reader) => reader.cancel()));
 });
 
 test("abort before provider headers preserves its reason and closes the request", async (t) => {

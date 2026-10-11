@@ -93,7 +93,7 @@ export default async function streamTrace(_context, { path }) {
                 lastByteMs = Math.round(performance.now() - started);
                 // Count SSE line prefixes without retaining generation content.
                 for (const character of decoder.decode(part.value, { stream: true })) {
-                  if (character === "\n") {
+                  if (character === "\n" || character === "\r") {
                     if (line.startsWith(DATA_PREFIX)) dataLines += 1;
                     if (line.startsWith(":")) commentLines += 1;
                     line = "";
@@ -111,9 +111,11 @@ export default async function streamTrace(_context, { path }) {
               }
             },
             async cancel(reason) {
-              finish("provider.cancel");
-              try { await reader.cancel(reason); }
-              finally { reader.releaseLock(); }
+              try { finish("provider.cancel"); }
+              finally {
+                try { await reader.cancel(reason); }
+                finally { reader.releaseLock(); }
+              }
             },
           });
           return new Response(body, { status: response.status,
@@ -139,8 +141,10 @@ export default async function streamTrace(_context, { path }) {
       if (event.type === "session.idle") seen.delete(session);
     },
     async dispose() {
-      for (const finish of active) finish();
+      const results = await Promise.allSettled([...active].map(async (finish) => finish()));
       seen.clear();
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
     },
   };
 }
