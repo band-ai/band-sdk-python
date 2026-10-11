@@ -9,7 +9,9 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -47,6 +49,61 @@ SHELL_POLICIES = tuple(
 )
 
 WriteCalls = Callable[[str, Path], ToolCalls]
+
+
+class ShellProbe(subprocess.Popen[bytes]):
+    """Observe the child before subprocess.run kills it on timeout."""
+
+    def __init__(self, *args: Any, target: Path, **kwargs: Any) -> None:
+        self.target = target
+        started = time.monotonic()
+        super().__init__(*args, **kwargs)
+        logger.info(
+            "Shell child created: pid=%s elapsed=%ss",
+            self.pid,
+            time.monotonic() - started,
+        )
+
+    def communicate(
+        self, input: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        try:
+            return super().communicate(input=input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Windows readers can wait on inherited pipe handles after the child exits.
+            readers = {
+                name: thread.is_alive()
+                for name in ("stdout_thread", "stderr_thread")
+                if (thread := getattr(self, name, None)) is not None
+            }
+            logger.error(
+                "Shell deadline before cleanup: pid=%s returncode=%s readers=%s target=%r",
+                self.pid,
+                self.poll(),
+                readers,
+                self.target.read_bytes() if self.target.exists() else None,
+            )
+            raise
+
+
+def test_shell_timeout_reports_the_live_child_before_cleanup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "unchanged.txt"
+    target.write_bytes(b"old")
+    monkeypatch.setattr(subprocess, "Popen", partial(ShellProbe, target=target))
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        subprocess.run(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            timeout=0.1,
+            capture_output=True,
+            check=True,
+        )
+
+    assert "Shell deadline before cleanup:" in caplog.text
+    assert "returncode=None" in caplog.text
+    assert "target=b'old'" in caplog.text
 
 
 @pytest.fixture(params=SHELL_POLICIES, ids=lambda policy: policy.name)
@@ -205,7 +262,10 @@ def test_shell_redirect_readback_handles_host_encodings(
     ids=lambda shell: shell or "host",
 )
 def test_approval_commands_write_and_append_with_host_shell(
-    tmp_path: Path, shell: str | None, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    shell: str | None,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     caplog.set_level(logging.INFO, logger=__name__)
     logger.info(
@@ -218,6 +278,7 @@ def test_approval_commands_write_and_append_with_host_shell(
     target = tmp_path / "approval with spaces.txt"
     marker = "approval-marker"
     target.write_text("old", encoding="utf-8")
+    monkeypatch.setattr(subprocess, "Popen", partial(ShellProbe, target=target))
 
     for command in (marker_command, appending_command):
         text = command(marker, target)

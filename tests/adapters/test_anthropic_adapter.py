@@ -7,6 +7,8 @@ This file contains Anthropic-specific behavior: system prompt rendering,
 message history management, tool execution, custom tools, and error handling.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -335,7 +337,7 @@ class TestToolExecution:
             "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
         }
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert len(results) == 1
         assert results[0]["is_error"] is False
@@ -434,7 +436,7 @@ class TestToolExecution:
             "description": "File not shown inline: too large.",
         }
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert len(results) == 1
         assert isinstance(results[0]["content"], str)
@@ -460,7 +462,7 @@ class TestToolExecution:
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
         mock_tools.execute_tool_call.return_value = {"status": "sent"}
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         # Tool should still have executed successfully
         assert len(results) == 1
@@ -720,7 +722,7 @@ class TestToolExecution:
 
         mock_tools.execute_tool_call.side_effect = Exception("Tool failed!")
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert len(results) == 1
         assert results[0]["is_error"] is True
@@ -960,7 +962,7 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         # Should NOT have called platform execute_tool_call
         mock_tools.execute_tool_call.assert_not_called()
@@ -990,7 +992,7 @@ class TestCustomTools:
 
         mock_tools.execute_tool_call.return_value = {"status": "sent"}
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         # Should have called platform execute_tool_call
         mock_tools.execute_tool_call.assert_called_once_with(
@@ -1018,7 +1020,7 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert len(results) == 1
         assert results[0]["is_error"] is True
@@ -1042,7 +1044,7 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert results[0]["tool_use_id"] == "tool-abc-123"
 
@@ -1073,7 +1075,7 @@ class TestCustomTools:
             ),
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert len(results) == 2
         assert "Echo: Hello" in results[0]["content"]
@@ -1097,7 +1099,7 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _ = await adapter._process_tool_calls(mock_response, mock_tools)
 
         assert len(results) == 1
         assert results[0]["is_error"] is True

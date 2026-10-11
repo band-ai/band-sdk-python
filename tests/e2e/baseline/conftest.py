@@ -10,6 +10,7 @@ The fixture re-exports are listed in ``__all__`` so they read as intentional.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,15 @@ __all__ = [
     "second_user_ops",
     "user_ops",
 ]
+
+
+@pytest.fixture(autouse=True)
+def first_attempt_provider_logs(
+    caplog: pytest.LogCaptureFixture, baseline_settings: BaselineSettings
+) -> None:
+    """Keep content-free provider boundaries when investigating a live stall."""
+    if baseline_settings.run.first_attempt_diagnostics:
+        caplog.set_level(logging.INFO, logger="band.adapters.anthropic")
 
 
 def pytest_configure(config: pytest.Config) -> None:

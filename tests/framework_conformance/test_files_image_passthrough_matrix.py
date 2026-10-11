@@ -147,7 +147,7 @@ async def _probe_anthropic() -> bool:
         )
     ]
 
-    results = await adapter._process_tool_calls(response, tools)
+    results, _ = await adapter._process_tool_calls(response, tools)
 
     content = results[0]["content"]
     if not isinstance(content, list) or len(content) != 1:
