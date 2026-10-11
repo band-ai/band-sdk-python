@@ -12,14 +12,17 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import AsyncGenerator, Callable, Iterator
+import logging
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
+import httpx
 import pytest
-from google.genai import types
+import pytest_asyncio
+from google.genai import Client, types
+from google.genai.errors import APIError
 from pydantic import BaseModel, Field
 
 from band.core.protocols import (
@@ -29,13 +32,22 @@ from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
 from band.testing import (
     FakeAgentTools,
+    failure_reports,
 )
 from tests.adapters.genaikit import (
+    SCRIPTED_USAGE,
     ModelFailureCases,
+    PlatformSchemaFakeTools,
+    ScriptedAdapter,
     no_candidates,
+    text_reply,
+    tool_call,
 )
+from tests.adapters.usage_events import recorded_usage_payloads
 from tests.framework_conformance.turnprobes import (
     CUSTOM_TOOL_DECLARATIONS,
+    DispatchingFakeTools,
+    turn_input,
 )
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
@@ -47,44 +59,100 @@ GoogleADKAdapterConfig = _google_adk_mod.GoogleADKAdapterConfig
 _get_tool_bridge_class = _google_adk_mod._get_tool_bridge_class
 _BandToolBridge = _get_tool_bridge_class()
 _sanitize_adk_agent_name = _google_adk_mod._sanitize_adk_agent_name
-_adk_models = importlib.import_module("google.adk.models")
+_google_llm = importlib.import_module("google.adk.models.google_llm")
 
 
-class ScriptedGenaiModel(_adk_models.BaseLlm):
-    """A local ADK model that answers each request with the next scripted genai
-    response, read through ADK's own ``LlmResponse.create``."""
-
-    scripts: ClassVar[dict[str, list[types.GenerateContentResponse]]] = {}
-
-    @classmethod
-    def supported_models(cls) -> list[str]:
-        return [r"fake-gemini-.*"]
-
-    async def generate_content_async(
-        self, llm_request: Any, stream: bool = False
-    ) -> AsyncGenerator[Any, None]:
-        yield _adk_models.LlmResponse.create(self.scripts[self.model].pop(0))
+LOCAL_API_KEY = "local-test-key"
+EFFECT_ARGS = {"content": "Completed effect", "mentions": ["@alice"]}
 
 
-_adk_models.LLMRegistry.register(ScriptedGenaiModel)
+class RecoveryTools(DispatchingFakeTools, PlatformSchemaFakeTools):
+    """Advertise platform schemas and execute the observable fake tool effects."""
+
+
+class GoogleHTTPPeer:
+    """Script provider HTTP responses while retaining the real ADK tool loop."""
+
+    def __init__(self) -> None:
+        self.responses: list[int | types.GenerateContentResponse] = []
+        self.requests: list[httpx.Request] = []
+        self.initial_delay = 0.001
+        self.max_delay = 0.001
+        self.retry_started = asyncio.Event()
+
+    def respond(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        response = self.responses.pop(0)
+        if isinstance(response, int):
+            return httpx.Response(
+                response,
+                json={"error": {"code": response, "message": "Provider unavailable"}},
+            )
+        return httpx.Response(
+            200, json=response.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+
+    @property
+    def generation_requests(self) -> list[dict[str, Any]]:
+        return [json.loads(request.content) for request in self.requests]
+
+
+@pytest_asyncio.fixture
+async def google_http() -> AsyncIterator[GoogleHTTPPeer]:
+    peer = GoogleHTTPPeer()
+    clients: list[Client] = []
+
+    def create_client(*, http_options: types.HttpOptions) -> Client:
+        retry = http_options.retry_options
+        if retry is not None:
+            retry = retry.model_copy(
+                update={
+                    "initial_delay": peer.initial_delay,
+                    "max_delay": peer.max_delay,
+                    "jitter": 0.001,
+                }
+            )
+        client = Client(
+            api_key=LOCAL_API_KEY,
+            http_options=http_options.model_copy(
+                update={
+                    "retry_options": retry,
+                    "async_client_args": {
+                        "transport": httpx.MockTransport(peer.respond)
+                    },
+                }
+            ),
+        )
+        # Signal from native backoff, after the retry decision and before sleeping.
+        native_before_sleep = client._api_client._async_retry.before_sleep
+
+        def before_sleep(state: Any) -> None:
+            peer.retry_started.set()
+            if native_before_sleep is not None:
+                native_before_sleep(state)
+
+        client._api_client._async_retry.before_sleep = before_sleep
+        clients.append(client)
+        return client
+
+    with patch.object(_google_llm, "Client", create_client):
+        try:
+            yield peer
+        finally:
+            for client in clients:
+                await client.aio.aclose()
+                client.close()
 
 
 @pytest.fixture
-def scripted_adapter() -> Iterator[Callable[..., Any]]:
-    """Build a started adapter whose model plays ``responses`` in order."""
-    models: list[str] = []
-
+def scripted_adapter(google_http: GoogleHTTPPeer) -> ScriptedAdapter:
     async def build(*responses: types.GenerateContentResponse, **features: Any) -> Any:
-        model = f"fake-gemini-{uuid4().hex}"
-        ScriptedGenaiModel.scripts[model] = list(responses)
-        models.append(model)
-        adapter = GoogleADKAdapter(GoogleADKAdapterConfig(model=model), **features)
+        google_http.responses = list(responses)
+        adapter = GoogleADKAdapter(**features)
         await adapter.on_started("TestBot", "Test bot")
         return adapter
 
-    yield build
-    for model in models:
-        ScriptedGenaiModel.scripts.pop(model)
+    return build
 
 
 @pytest.fixture
@@ -147,7 +215,8 @@ class TestInitialization:
 
         runner = adapter._create_runner(mock_tools)
 
-        assert runner.agent.model == "gemini-2.5-pro"
+        assert runner.agent.model.model == "gemini-2.5-pro"
+        await runner.close()
 
     @pytest.mark.asyncio
     async def test_custom_section_is_rendered_into_the_prompt(self):
@@ -1602,3 +1671,170 @@ class TestConcurrentMessages:
 async def _empty_async_iter(**kwargs):
     return
     yield  # Make it an async generator
+
+
+class TestNativeHTTPRecovery:
+    @pytest.mark.parametrize(
+        ("responses", "max_retries", "expected_calls", "error_code"),
+        [
+            pytest.param(
+                [
+                    503,
+                    tool_call(
+                        BandTool.SEND_MESSAGE,
+                        {"content": "Recovered", "mentions": ["@alice"]},
+                    ),
+                    text_reply("Done"),
+                ],
+                2,
+                3,
+                None,
+                id="recover",
+            ),
+            pytest.param([503, 503, 503], 2, 3, 503, id="exhaust"),
+            pytest.param([503], 0, 1, 503, id="disabled"),
+            pytest.param([400], 2, 1, 400, id="nonretryable"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_generation_budget_and_failure_reporting(
+        self,
+        google_http: GoogleHTTPPeer,
+        responses: list[int | types.GenerateContentResponse],
+        max_retries: int,
+        expected_calls: int,
+        error_code: int | None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        google_http.responses = responses.copy()
+        adapter = GoogleADKAdapter(
+            GoogleADKAdapterConfig(max_retries=max_retries), emit={Emit.USAGE}
+        )
+        await adapter.on_started("TestBot", "Test bot")
+        tools = RecoveryTools()
+        with caplog.at_level(logging.INFO, logger="google_genai._api_client"):
+            if error_code is None:
+                await adapter.on_event(turn_input(tools))
+                assert failure_reports(tools) == []
+                assert tools.chat == ["Recovered"]
+                [usage] = recorded_usage_payloads(tools)
+                assert (usage["input_tokens"], usage["output_tokens"]) == (
+                    SCRIPTED_USAGE.prompt_token_count * 2,
+                    SCRIPTED_USAGE.candidates_token_count * 2,
+                )
+            else:
+                with pytest.raises(APIError) as raised:
+                    await adapter.on_event(turn_input(tools))
+                assert raised.value.code == error_code
+                assert failure_reports(tools) == [
+                    ("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                ]
+                assert tools.chat == []
+                assert recorded_usage_payloads(tools) == []
+        assert len(google_http.requests) == expected_calls
+        repeated = (
+            google_http.generation_requests[:2]
+            if error_code is None
+            else google_http.generation_requests
+        )
+        assert repeated == [repeated[0]] * len(repeated)
+        retry_logs = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "google_genai._api_client"
+            and r.getMessage().startswith("Retrying ")
+        ]
+        assert len(retry_logs) == (1 if error_code is None else expected_calls - 1)
+        for entry in retry_logs:
+            assert "ServerError" in entry and "503" in entry
+            assert LOCAL_API_KEY not in entry
+            assert "vault code" not in entry and "Completed effect" not in entry
+
+    @pytest.mark.parametrize("exhausted", [False, True], ids=["recover", "exhaust"])
+    @pytest.mark.asyncio
+    async def test_post_tool_recovery_never_replays_the_effect(
+        self, google_http: GoogleHTTPPeer, exhausted: bool
+    ) -> None:
+        google_http.responses = [
+            tool_call(
+                BandTool.SEND_MESSAGE,
+                EFFECT_ARGS,
+            ),
+            503,
+            *([503, 503] if exhausted else [text_reply("Done")]),
+        ]
+        adapter = GoogleADKAdapter(emit={Emit.USAGE})
+        await adapter.on_started("TestBot", "Test bot")
+        tools = RecoveryTools()
+        if exhausted:
+            with pytest.raises(APIError):
+                await adapter.on_event(turn_input(tools))
+            assert failure_reports(tools) == [
+                ("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            ]
+        else:
+            await adapter.on_event(turn_input(tools))
+            assert failure_reports(tools) == []
+        assert tools.chat == ["Completed effect"]
+        assert tools.tool_calls == [
+            {
+                "tool_name": BandTool.SEND_MESSAGE,
+                "arguments": EFFECT_ARGS,
+            }
+        ]
+        [usage] = recorded_usage_payloads(tools)
+        successful_responses = 1 if exhausted else 2
+        assert (usage["input_tokens"], usage["output_tokens"]) == (
+            SCRIPTED_USAGE.prompt_token_count * successful_responses,
+            SCRIPTED_USAGE.candidates_token_count * successful_responses,
+        )
+        requests = google_http.generation_requests
+        assert len(requests) == (4 if exhausted else 3)
+        assert requests[1:] == [requests[1]] * (len(requests) - 1)
+        assert any(
+            "functionResponse" in part
+            for content in requests[1]["contents"]
+            for part in content["parts"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_backoff_stops_generation(
+        self, google_http: GoogleHTTPPeer
+    ) -> None:
+        google_http.responses = [
+            tool_call(
+                BandTool.SEND_MESSAGE,
+                EFFECT_ARGS,
+            ),
+            503,
+        ]
+        google_http.initial_delay = 60
+        google_http.max_delay = 60
+        adapter = GoogleADKAdapter(emit={Emit.USAGE})
+        await adapter.on_started("TestBot", "Test bot")
+        tools = RecoveryTools()
+        task = asyncio.create_task(adapter.on_event(turn_input(tools)))
+        try:
+            await asyncio.wait_for(google_http.retry_started.wait(), timeout=5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        assert len(google_http.requests) == 2
+        assert tools.tool_calls == [
+            {
+                "tool_name": BandTool.SEND_MESSAGE,
+                "arguments": EFFECT_ARGS,
+            }
+        ]
+        assert failure_reports(tools) == []
+        assert tools.chat == ["Completed effect"]
+        # Cancellation suppresses best-effort usage emission by contract.
+        assert recorded_usage_payloads(tools) == []
+
+    def test_negative_retry_budget_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_retries"):
+            GoogleADKAdapterConfig(max_retries=-1)

@@ -15,7 +15,7 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from pydantic import PositiveInt, ValidationError
+from pydantic import NonNegativeInt, PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
@@ -105,7 +105,7 @@ def _sanitize_adk_agent_name(agent_name: str) -> str:
 
 
 @functools.lru_cache(maxsize=1)
-def _require_adk() -> tuple[type, type, type, Any]:
+def _require_adk() -> tuple[type, type, type, type, Any]:
     """Import Google ADK dependencies lazily.
 
     Cached after the first successful call so repeated access is free.
@@ -113,7 +113,7 @@ def _require_adk() -> tuple[type, type, type, Any]:
     module import time.
 
     Returns:
-        (ADKAgent, InMemoryRunner, BaseTool, types) tuple.
+        (ADKAgent, InMemoryRunner, BaseTool, Gemini, types) tuple.
 
     Raises:
         ImportError: If google-adk is not installed.
@@ -121,6 +121,9 @@ def _require_adk() -> tuple[type, type, type, Any]:
     try:
         from google.adk import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             Agent as ADKAgent,
+        )
+        from google.adk.models.google_llm import (  # noqa: PLC0415 -- optional google_adk extra
+            Gemini,
         )
         from google.adk.runners import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             InMemoryRunner,
@@ -136,7 +139,7 @@ def _require_adk() -> tuple[type, type, type, Any]:
             "google-adk is required for GoogleADKAdapter. "
             "Install with: uv add band-sdk[google_adk]"
         ) from exc
-    return ADKAgent, InMemoryRunner, BaseTool, types
+    return ADKAgent, InMemoryRunner, BaseTool, Gemini, types
 
 
 @functools.lru_cache(maxsize=1)
@@ -156,7 +159,7 @@ def _get_tool_bridge_class() -> type:
     the declaration mechanism works end-to-end (not just that the method
     exists), catching signature changes that ``hasattr`` alone would miss.
     """
-    _, _, BaseTool, types = _require_adk()
+    _, _, BaseTool, _, types = _require_adk()
 
     # Detect which declaration methods the installed BaseTool exposes.
     active_methods = [
@@ -170,7 +173,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool has no known declaration method "
             f"(tried: {', '.join(_DECLARATION_CANDIDATES)}). "
             "This adapter relies on overriding the declaration method "
-            "(pinned to google-adk >=1.0,<2). Your installed version "
+            "(pinned to google-adk >=1.10,<2). Your installed version "
             "may be incompatible."
         )
 
@@ -303,7 +306,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool declaration smoke-test failed. "
             f"Method '{active_methods[0]}' exists but did not return a valid "
             "FunctionDeclaration. The adapter is pinned to google-adk "
-            ">=1.0,<2 — your installed version may be incompatible."
+            ">=1.10,<2 — your installed version may be incompatible."
         ) from exc
 
     return _BandToolBridge
@@ -316,6 +319,8 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
         model: Gemini model name passed to the ADK agent.
         system_prompt: Replaces the rendered Band system prompt entirely.
         custom_section: Extra instructions appended to the rendered prompt.
+        max_retries: Extra HTTP attempts per provider generation request;
+            never retries a tool or turn. Zero disables recovery.
         max_history_messages: Most recent room messages replayed as a
             transcript at the start of each turn.
         max_transcript_chars: Character cap on that transcript; older lines
@@ -325,6 +330,7 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
+    max_retries: NonNegativeInt = 2
     max_history_messages: PositiveInt = 50
     max_transcript_chars: PositiveInt = 100_000
 
@@ -457,12 +463,17 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
     def _create_runner(self, tools: AgentToolsProtocol) -> InMemoryRunner:
         """Create a fresh ADK InMemoryRunner with current tools."""
-        ADKAgent, InMemoryRunnerCls, _, _ = _require_adk()
+        ADKAgent, InMemoryRunnerCls, _, Gemini, types = _require_adk()
         adk_tools = self._build_adk_tools(tools)
 
         adk_agent = ADKAgent(
             name=_sanitize_adk_agent_name(self.agent_name),
-            model=self.config.model,
+            model=Gemini(
+                model=self.config.model,
+                retry_options=types.HttpRetryOptions(
+                    attempts=self.config.max_retries + 1
+                ),
+            ),
             instruction=self._system_prompt,
             tools=adk_tools,
         )
@@ -489,7 +500,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         Uses ADK's Runner for the full tool loop. The runner handles
         LLM calls, tool execution, and conversation management.
         """
-        _, _, _, types = _require_adk()
+        _, _, _, _, types = _require_adk()
 
         logger.debug("Handling message %s in room %s", msg.id, room_id)
 
