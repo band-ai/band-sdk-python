@@ -457,11 +457,13 @@ class FakeACPAgent:
         allow_option_id: str = "allow-1",
         raw_input: Any = None,
         options: list[PermissionOption] | None = None,
+        tool_call: ToolCallUpdate | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
                 sid,
-                ToolCallUpdate(
+                tool_call
+                or ToolCallUpdate(
                     tool_call_id=tool_call_id, title=title, raw_input=raw_input
                 ),
                 options

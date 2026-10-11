@@ -32,6 +32,10 @@ from tests.integrations.acp.acp_toolkit.harness import started_acp_adapter
 REPLY_ARGS = {"content": "completed", "mentions": ["@alice"]}
 ONCE_ID = "reply-this-time"
 ALWAYS_ID = "remember-reply"
+# Frozen output from the pinned Cursor CLI's permission formatter.
+CURSOR_REPLY_PERMISSION = ToolCallUpdate.model_validate_json(
+    Path(__file__).with_name("cursorpermission.json").read_text()
+)
 
 
 def reply_invocation(
@@ -74,12 +78,20 @@ async def approval_room(
         yield CursorRoom(adapter, agent)
 
 
+@pytest.mark.parametrize(
+    "pinned_frame", [False, True], ids=["raw-input", "cursor-frame"]
+)
 async def test_completion_reply_selects_once_and_delivers_through_mcp(
     tmp_path: Path,
+    pinned_frame: bool,
 ) -> None:
     agent = (
         FakeACPAgent()
-        .will_ask_permission(raw_input=reply_invocation(), options=options())
+        .will_ask_permission(
+            raw_input=reply_invocation(),
+            options=options(),
+            tool_call=CURSOR_REPLY_PERMISSION if pinned_frame else None,
+        )
         .will_call_mcp_tool("reply", BandTool.SEND_MESSAGE, arguments=REPLY_ARGS)
     )
     adapter = cursor_approval_adapter(
@@ -139,6 +151,57 @@ async def test_other_permissions_still_require_the_room_decision(
 
 
 @pytest.mark.parametrize(
+    "changes",
+    [
+        {"title": CURSOR_REPLY_PERMISSION.title.replace("band-band_", "foreign-band_")},
+        {"title": CURSOR_REPLY_PERMISSION.title.upper()},
+        {"kind": "execute"},
+        {"raw_input": {"command": "unrelated"}},
+        {"content": []},
+        {
+            "content": [
+                *CURSOR_REPLY_PERMISSION.content,
+                *CURSOR_REPLY_PERMISSION.content,
+            ]
+        },
+        {
+            "content": [
+                {
+                    "type": "content",
+                    "content": {"type": "text", "text": "```json\n{}\n```"},
+                }
+            ]
+        },
+        {
+            "content": [
+                {
+                    "type": "content",
+                    "content": {"type": "text", "text": "```json\ninvalid\n```"},
+                }
+            ]
+        },
+    ],
+    ids=["foreign", "case", "shell", "raw-input", "missing", "extra", "schema", "json"],
+)
+async def test_other_cursor_display_frames_still_require_a_room_decision(
+    changes: dict[str, Any],
+) -> None:
+    frame = ToolCallUpdate.model_validate(
+        CURSOR_REPLY_PERMISSION.model_dump() | changes
+    )
+    agent = FakeACPAgent().will_ask_permission(tool_call=frame, options=options())
+    async with approval_room(agent) as room:
+        tools = await room.send("ask")
+        [prompt] = said(tools)
+        await room.send(
+            f"{ROOM_COMMAND} {CursorCommandWord.DENY} {decision_token(prompt)}"
+        )
+        await room.turns_finished()
+
+    assert decisions(agent) == [None]
+
+
+@pytest.mark.parametrize(
     "mismatch", ["room", "session", "missing-session", "missing-turn"]
 )
 async def test_completion_cannot_grant_outside_the_active_turn(mismatch: str) -> None:
@@ -161,7 +224,7 @@ async def test_completion_cannot_grant_outside_the_active_turn(mismatch: str) ->
             try:
                 await peer.ask_permission(
                     session_id,
-                    ToolCallUpdate(tool_call_id="reply", raw_input=reply_invocation()),
+                    CURSOR_REPLY_PERMISSION,
                     options(),
                 )
             finally:
@@ -200,9 +263,7 @@ async def test_native_commands_on_both_sides_of_completion_remain_manual(
                 if not index:
                     await peer.ask_permission(
                         session_id,
-                        ToolCallUpdate(
-                            tool_call_id="reply", raw_input=reply_invocation()
-                        ),
+                        CURSOR_REPLY_PERMISSION,
                         options(),
                     )
                     await peer.call_mcp_tool(
