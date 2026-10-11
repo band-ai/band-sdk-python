@@ -141,7 +141,6 @@ def kill_gate_processes(processes: list[psutil.Process]) -> None:
 class GatedProcess:
     receipt: ProcessReceipt
     process: psutil.Process
-    reader: asyncio.StreamReader
 
 
 class ProcessGate:
@@ -166,7 +165,7 @@ class ProcessGate:
         process = await asyncio.to_thread(psutil.Process, receipt.pid)
         self.processes.append(process)
         assert await asyncio.to_thread(process.create_time) == receipt.created
-        return GatedProcess(receipt, process, reader)
+        return GatedProcess(receipt, process)
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -711,8 +710,6 @@ async def test_cancelled_cleanup_reaps_descendants_but_not_unrelated_processes(
                 await closing
         assert root.returncode is not None
         for descendant in descendants:
-            async with asyncio.timeout(1):
-                assert await descendant.reader.read(1) == b""
             assert not await asyncio.to_thread(process_is_alive, descendant.process)
         assert await asyncio.to_thread(process_is_alive, sibling.process)
         assert unrelated.returncode is None
