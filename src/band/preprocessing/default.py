@@ -51,16 +51,13 @@ class DefaultPreprocessor(Preprocessor):
 
         is_bootstrap = not ctx.is_llm_initialized
 
-        # Load history on session bootstrap (if hydration enabled)
         raw_history: list[dict[str, Any]] = []
         if is_bootstrap and ctx.config.enable_context_hydration:
             raw_history = await self._load_history(ctx, msg)
 
-        # Check participants
         participants = ctx.participants
         participants_msg = check_and_format_participants(ctx, mark_sent=False)
 
-        # Get pending system messages (contact broadcasts)
         system_messages = ctx.peek_pending_system_messages()
         contacts_msg = "\n".join(system_messages) if system_messages else None
 
@@ -71,7 +68,6 @@ class DefaultPreprocessor(Preprocessor):
                 ctx.mark_participants_sent(participants)
             ctx.commit_system_messages(system_messages)
 
-        # Create tools
         tools = AgentTools.from_context(ctx)
 
         return AgentInput(
@@ -90,31 +86,25 @@ class DefaultPreprocessor(Preprocessor):
         ctx: ExecutionContext, event: PlatformEvent, agent_id: str
     ) -> PlatformMessage | None:
         """Project a delivery without consuming model context."""
-        # Pattern match on tagged union - only handle MessageEvent
         match event:
             case MessageEvent(room_id=room_id, payload=msg_data):
-                pass  # Continue processing
+                pass
             case _:
-                return None  # Skip non-message events
+                return None
 
-        # msg_data is now MessageCreatedPayload (fully typed)
         if msg_data is None:
             return None
 
-        # Validate room_id is present (narrows type from str | None to str)
         if not room_id:
             logger.error("MessageEvent has no room_id - cannot process")
             return None
 
-        # Skip messages from self
         if msg_data.sender_type == "Agent" and msg_data.sender_id == agent_id:
             logger.debug("Room %s: Skipping own message %s", room_id, msg_data.id)
             return None
 
-        # Look up sender name from participants list
         sender_name = DefaultPreprocessor._lookup_sender_name(ctx, msg_data.sender_id)
 
-        # Convert to PlatformMessage (typed attribute access, no dict lookups).
         # Translate @[[uuid]] mention tokens to @handle like history formatting
         # does: the platform normalizes mentions to uuid form, and a raw uuid in
         # the turn misleads the LLM (e.g. into using it as a memory subject_id).
