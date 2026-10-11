@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -130,6 +131,12 @@ def _probe_denying_omp_adapter(
         deny_probe_allow_completion,
     )
 
+    agent_home = omp_agent_home_dir(sandbox)
+    # Named MCP approvals let this fixture grant only Band completion tools.
+    Path(agent_home, "config.yml").write_text(
+        "tools:\n  xdev: false\n", encoding="utf-8"
+    )
+
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(
             command=(
@@ -139,7 +146,7 @@ def _probe_denying_omp_adapter(
             model=omp_model(settings),
             custom_section="Keep replies short.",
             cwd=sandbox,
-            env=omp_acp_env(settings, omp_agent_home_dir(sandbox)),
+            env=omp_acp_env(settings, agent_home),
         ),
         resolve_permission=deny_probe_allow_completion,
     )
