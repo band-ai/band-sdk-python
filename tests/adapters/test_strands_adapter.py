@@ -26,7 +26,9 @@ pytest.importorskip("strands", reason="strands extra not installed")
 
 import itertools
 
+import boto3
 from strands import tool as strands_tool
+from strands.models.bedrock import BedrockModel
 from strands.models.openai import OpenAIModel
 from strands.models.openai_responses import OpenAIResponsesModel
 from strands.types.content import Messages
@@ -79,6 +81,7 @@ from band.testing import (
 )
 from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 from tests.responsespeer import ResponsesPeer
+from tests.strandskit import outline
 
 _INPUT_TOKENS_PER_CALL = 7
 _OUTPUT_TOKENS_PER_CALL = 3
@@ -1016,6 +1019,121 @@ class TestTurnProductivity:
 
 
 class TestTurnFailure:
+    class RecordingBedrockModel(BedrockModel):
+        """Serialize real Bedrock requests, then supply scripted model events."""
+
+        def __init__(self) -> None:
+            super().__init__(
+                boto_session=boto3.Session(
+                    aws_access_key_id="test",
+                    aws_secret_access_key="test",
+                    region_name="us-east-1",
+                ),
+                model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            )
+            self.requests: list[dict[str, Any]] = []
+            self.scripted = ScriptedStrandsModel(
+                [
+                    ToolTurn(BandTool.NO_REPLY, {"reason": "FYI only"}),
+                    SEND_TURN,
+                    TextTurn(""),
+                ]
+            )
+
+        async def stream(
+            self,
+            messages: Messages,
+            tool_specs: list[ToolSpec] | None = None,
+            system_prompt: str | None = None,
+            **kwargs: Any,
+        ) -> AsyncGenerator[StreamEvent, None]:
+            self.requests.append(self.format_request(messages, tool_specs))
+            async for event in self.scripted.stream(
+                messages, tool_specs, system_prompt, **kwargs
+            ):
+                yield event
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("emit_execution", [False, True])
+    async def test_bedrock_decline_preserves_followup_turn(
+        self, emit_execution: bool
+    ) -> None:
+        model = self.RecordingBedrockModel()
+        adapter = StrandsAdapter(
+            llm=model, emit=Emit.TOOL_CALLS if emit_execution else []
+        )
+        await adapter.on_started("Bot", "A bot")
+        first = FakeAgentTools(room_id=ROOM)
+        await _run_turn(adapter, first)
+        second = FakeAgentTools(room_id=ROOM)
+        await adapter.on_event(
+            replace(
+                turn_input(second, msg=_make_msg(ROOM, "Please reply now.")),
+                is_session_bootstrap=False,
+                participants_msg="Bob joined",
+                contacts_msg="New contact",
+            )
+        )
+
+        assert outline(model.requests[1]["messages"]) == [
+            "user: text([Tester]: Hello)",
+            "assistant: toolUse(call-band_no_reply)",
+            (
+                "user: toolResult(call-band_no_reply, success) "
+                "text([System]: Bob joined\n\n[System]: New contact\n\n"
+                "[Tester]: Please reply now.)"
+            ),
+        ]
+        assert first.turn.complete and second.turn.complete
+        assert first.messages_sent == []
+        second.assert_message_sent(content="hi", count=1)
+        assert failure_reports(first) == failure_reports(second) == []
+
+    @pytest.mark.asyncio
+    async def test_responses_decline_preserves_followup_tool_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        peer = ResponsesPeer(
+            [
+                ToolTurn(BandTool.NO_REPLY, {"reason": "FYI only"}),
+                SEND_TURN,
+                TextTurn(""),
+            ]
+        )
+        monkeypatch.setattr("openai.AsyncOpenAI", peer.client)
+        adapter = StrandsAdapter(
+            llm=OpenAIResponsesModel(
+                client_args={"api_key": "test"}, model_id="test-model"
+            )
+        )
+        await adapter.on_started("Bot", "A bot")
+        first = FakeAgentTools(room_id=ROOM)
+        await _run_turn(adapter, first)
+        second = FakeAgentTools(room_id=ROOM)
+        await adapter.on_event(
+            replace(
+                turn_input(second, msg=_make_msg(ROOM, "Please reply now.")),
+                is_session_bootstrap=False,
+            )
+        )
+
+        assert peer.requests[1]["input"][2:] == [
+            {
+                "type": "function_call_output",
+                "call_id": peer.CALL_ID,
+                "output": '{"status": "no_reply"}',
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "[Tester]: Please reply now."}
+                ],
+            },
+        ]
+        assert first.turn.complete and second.turn.complete
+        second.assert_message_sent(content="hi", count=1)
+        assert failure_reports(first) == failure_reports(second) == []
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fails", [False, True], ids=["declined", "failed-decline"])
     @pytest.mark.parametrize("emit_execution", [False, True])

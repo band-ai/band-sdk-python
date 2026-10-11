@@ -104,14 +104,10 @@ def _patch_orphaned_tool_uses(messages: StrandsMessages) -> None:
             )
 
 
-def _merge_consecutive_roles(messages: StrandsMessages) -> StrandsMessages:
-    """Combine neighbouring messages that share a role.
+def merge_consecutive_roles(messages: StrandsMessages) -> StrandsMessages:
+    """Combine same-role neighbours without changing the input messages.
 
-    Bedrock's Converse rejects a conversation that does not alternate between
-    user and assistant, and room history routinely produces same-role
-    neighbours: two peers speaking in a row, or a peer's turn landing behind
-    the tool results it waited for.
-
+    Bedrock Converse requires alternating user and assistant roles.
     """
     merged: StrandsMessages = []
     for message in messages:
@@ -120,7 +116,7 @@ def _merge_consecutive_roles(messages: StrandsMessages) -> StrandsMessages:
                 message["content"]
             )
             continue
-        merged.append(message)
+        merged.append({**message})
     return merged
 
 
@@ -194,7 +190,7 @@ class ConverseTranscript:
         """Return the finished transcript: every call answered, roles alternating."""
         self._close_tool_exchange()
         _patch_orphaned_tool_uses(self._messages)
-        return _merge_consecutive_roles(self._messages)
+        return merge_consecutive_roles(self._messages)
 
     def _close_tool_exchange(self) -> None:
         """Emit the exchange's calls, then its results, then the turns it held."""
