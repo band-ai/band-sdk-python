@@ -12,6 +12,18 @@ from types import ModuleType
 from band.logging_config import more_verbose
 
 
+def configure_phase_handler(handler: logging.FileHandler) -> None:
+    # Diagnostic callers select packages with content-free INFO records.
+    # Other levels can contain tool inputs, provider text or exceptions.
+    handler.addFilter(lambda record: record.levelno == logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s.%(msecs)03dZ %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    formatter.converter = time.gmtime
+    handler.setFormatter(formatter)
+
+
 @contextmanager
 def sdk_logs_at(
     package: ModuleType, level: int, *, path: Path | None = None
@@ -27,15 +39,7 @@ def sdk_logs_at(
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
             handler = logging.FileHandler(path, encoding="utf-8")
-            # Diagnostic callers select packages with content-free INFO records.
-            # Other levels can contain tool inputs, provider text or exceptions.
-            handler.addFilter(lambda record: record.levelno == logging.INFO)
-            formatter = logging.Formatter(
-                "%(asctime)s.%(msecs)03dZ %(name)s %(message)s",
-                datefmt="%Y-%m-%dT%H:%M:%S",
-            )
-            formatter.converter = time.gmtime
-            handler.setFormatter(formatter)
+            configure_phase_handler(handler)
             sdk_logger.addHandler(handler)
         yield
     finally:

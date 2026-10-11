@@ -28,11 +28,18 @@ async function fixture(t, handle) {
     await new Promise((resolve) => server.close(resolve));
     rmSync(directory, { recursive: true });
   });
+  const raw = () => readFileSync(path, "utf8");
+  const trace = () => raw().trim().split("\n").map(JSON.parse);
   return {
     hooks, fetch: config.provider.opencode.options.fetch,
     url: `http://127.0.0.1:${server.address().port}/chat/completions?secret-query`,
-    trace: () => readFileSync(path, "utf8").trim().split("\n").map(JSON.parse),
-    raw: () => readFileSync(path, "utf8"),
+    record: (phase) => trace().find((event) => event.phase === phase),
+    lastPhase: () => trace().at(-1).phase,
+    providerPhases: () => trace().filter((event) => event.phase.startsWith("provider."))
+      .map((event) => event.phase),
+    nativeEventTypes: () => trace().filter((event) => event.phase === "native.event")
+      .map((event) => event.type),
+    raw,
   };
 }
 
@@ -62,11 +69,11 @@ test("partial SSE bytes, request, status and headers survive tracing without con
   const first = await reader.read();
   assert.deepEqual(Buffer.from(first.value), comment);
   assert.equal(response.headers.get("x-request-id"), "upstream-id");
-  assert.equal(peer.trace().find((e) => e.phase === "provider.headers").provider_request, "upstream-id");
+  assert.equal(peer.record("provider.headers").provider_request, "upstream-id");
   assert.equal(response.status, 200);
   assert.deepEqual(received, { body: "secret-prompt", auth: "Bearer secret-credential",
     url: "/chat/completions?secret-query" });
-  assert.equal(peer.trace().find((e) => e.phase === "provider.first_byte").data_lines, 0);
+  assert.equal(peer.record("provider.first_byte").data_lines, 0);
   release.resolve();
   const remainder = [];
   for (;;) {
@@ -75,7 +82,7 @@ test("partial SSE bytes, request, status and headers survive tracing without con
     remainder.push(Buffer.from(part.value));
   }
   assert.deepEqual(Buffer.concat(remainder), generation);
-  const end = peer.trace().find((e) => e.phase === "provider.end");
+  const end = peer.record("provider.end");
   assert.equal(end.session, CORRELATION["x-opencode-session"]);
   assert.equal(end.message, CORRELATION["x-opencode-request"]);
   assert.equal(end.bytes, comment.length + generation.length);
@@ -98,7 +105,7 @@ test("abort before provider headers preserves its reason and closes the request"
   controller.abort(reason);
   await assert.rejects(pending, (error) => error === reason);
   await closed.promise;
-  assert.deepEqual(peer.trace().filter((e) => e.phase.startsWith("provider.")).map((e) => e.phase),
+  assert.deepEqual(peer.providerPhases(),
     ["provider.dispatch", "provider.abort"]);
   assert.ok(!peer.raw().includes(reason.message));
 });
@@ -115,7 +122,7 @@ test("cancelling a partial stream closes the upstream socket", async (t) => {
   await reader.read();
   await reader.cancel("secret-cancel-reason");
   await closed.promise;
-  assert.equal(peer.trace().at(-1).phase, "provider.cancel");
+  assert.equal(peer.lastPhase(), "provider.cancel");
   assert.ok(!peer.raw().includes("secret-cancel-reason"));
 });
 
@@ -128,7 +135,7 @@ test("provider failure status and body reach the native caller unchanged", async
   assert.equal(response.status, 429);
   assert.equal(response.headers.get("retry-after"), "9");
   assert.equal(await response.text(), '{"error":"secret-provider-error"}');
-  assert.equal(peer.trace().find((e) => e.phase === "provider.headers").status, 429);
+  assert.equal(peer.record("provider.headers").status, 429);
   assert.ok(!peer.raw().includes("secret-provider-error"));
 });
 
@@ -147,7 +154,7 @@ test("abort while awaiting provider bytes closes the original transport", async 
   controller.abort(new Error("secret-interrupt-reason"));
   await assert.rejects(pending);
   await closed.promise;
-  assert.equal(peer.trace().at(-1).phase, "provider.abort");
+  assert.equal(peer.lastPhase(), "provider.abort");
   assert.ok(!peer.raw().includes("secret-interrupt-reason"));
 });
 
@@ -164,7 +171,7 @@ test("a disconnected provider after partial bytes remains a failed stream", asyn
   await reader.read();
   disconnect.resolve();
   await assert.rejects(reader.read());
-  assert.equal(peer.trace().at(-1).phase, "provider.stream_error");
+  assert.equal(peer.lastPhase(), "provider.stream_error");
 });
 
 test("native progress records the first event while retaining every permission and terminal event", async (t) => {
@@ -174,7 +181,7 @@ test("native progress records the first event while retaining every permission a
     await peer.hooks.event({ event: { type, properties: { sessionID: "ses-test",
       delta: "secret-generation", metadata: { apiKey: "secret-credential" } } } });
   }
-  assert.deepEqual(peer.trace().filter((e) => e.phase === "native.event").map((e) => e.type),
+  assert.deepEqual(peer.nativeEventTypes(),
     ["message.part.delta", "permission.asked", "permission.asked", "session.error",
       "session.idle", "message.part.delta"]);
   assert.ok(!peer.raw().includes("secret-"));
