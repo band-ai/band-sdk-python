@@ -178,8 +178,8 @@ class Backends(BaseSettings):
     cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
     cursor_api_key: str = Field(default="", repr=False)  # CURSOR_API_KEY
 
-    # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
-    # provider-qualified OMP_MODEL (passed as --model); override binary/args via OMP_COMMAND.
+    # OMP native RPC. OMP_COMMAND overrides the complete launch command;
+    # OMP_MODEL is passed through the documented --model flag.
     omp_command: str = ""  # OMP_COMMAND
     omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 

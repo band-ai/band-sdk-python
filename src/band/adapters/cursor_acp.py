@@ -299,7 +299,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             )
         except asyncio.CancelledError:
             # Until it detaches, the turn belongs to this delivery and ends
-            # with it, as an inline OMP or Copilot turn does.
+            # with it, as an inline Copilot turn does.
             _cancel(turn)
             await asyncio.wait({turn_task})
             raise

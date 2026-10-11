@@ -14,6 +14,10 @@ specific qualification blocker. This also applies to JSON/YAML configuration and
 Codex environment settings. There is no supported bypass or restricted feature
 profile.
 
+`OmpAdapterConfig` has no `retention` setting. Native OMP turn settlement gates
+Band message completion, not automatic idle process release; room processes still
+remain resident until explicit cleanup, a failed turn, or cancellation.
+
 ```python
 from pydantic import ValidationError
 
@@ -43,7 +47,7 @@ Qualification on 2026-10-11 found these blockers:
 | Codex CLI 0.160.0 and 0.162.1 | Native probes reproduced background terminal and asynchronous hook loss on shutdown after foreground completion. The hook case had an idle thread and empty terminal inventory. | Whole-session inactivity or a non-cancelling drain covering hooks, terminals, and delegated continuation. |
 | Claude SDK 0.2.159; candidate 0.2.165 with CLI 2.1.294 | Candidate probes passed isolated shell/subagent completion and same-session resume, but asynchronous hooks continued after empty Stop inventories and native idle. Disconnect killed them; a resident control completed. | Hook-inclusive inactivity/drain or a complete effective configuration and change boundary, including managed policy. |
 | Copilot ACP CLI 1.0.89 | Native probes showed scheduled `/after` work survives in a resident process but is lost after shutdown and successful reload of the same session. | Activity/drain that includes scheduled autonomous work. |
-| OMP ACP 18.2.8 | Released source shows pending-work helpers omit suppressed/acknowledged jobs and shutdown cancels jobs. | Activity/drain covering every owned job. Source evidence; no native loss probe was executed for this row. |
+| Retired OMP ACP 18.2.8 profile | Released source shows pending-work helpers omit suppressed/acknowledged jobs and shutdown cancels jobs. | Activity/drain covering every owned job. Source evidence; no native loss probe was executed for this row, and it does not qualify the replacement native RPC adapter for idle release. |
 | Cursor ACP 2026.09.28-64d2043 | Installed source drains subagent completions but does not establish general background-work inactivity. | A demonstrated whole-session safe release boundary. Source evidence; no native loss probe was executed for this row. |
 | Generic ACP | `end_turn`, `loadSession`, and session closure do not provide a general non-cancelling process drain. | Qualification for the concrete provider and launch profile. |
 
@@ -94,7 +98,7 @@ only when the next start has confirmed it.
 | --- | --- | --- |
 | Codex | Each room's process, thread and workspace compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A lost process goes through `recover()`; the next process strictly restores the same thread and verifies its provider, workspace and tools. One reader per process routes each native callback by its `turnId` to the Band turn that started it and refuses work no Band turn started. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. Examined Codex shutdown paths cancel background work. |
 | Claude SDK | Each room's CLI session, workspace and native session id compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A crashed CLI goes through `recover()`; callbacks act only for the residency generation that registered them. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. |
-| OMP, Cursor and Copilot ACP | Each room's process, connection and session compose one `RetainedRoom`. Detached work is owned before it runs; a prompt or model switch takes the room's reservation. A failed turn recovers its room, and a deliberate wake strictly reloads the same session. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. |
+| Cursor and Copilot ACP | Each room's process, connection and session compose one `RetainedRoom`. Detached work is owned before it runs; a prompt or model switch takes the room's reservation. A failed turn recovers its room, and a deliberate wake strictly reloads the same session. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. |
 
 The shared mechanics do not certify a provider's release callback. Production
 integration still needs authoritative native inactivity or a demonstrated

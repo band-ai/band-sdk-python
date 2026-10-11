@@ -79,8 +79,7 @@ def run_id_len() -> int:
 def agent_name(*, run_id: str, label: str) -> str:
     """The provisioned name for ``label`` in run ``run_id``.
 
-    Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
-    repeating a name, so an adapter-id label must already be in the form they echo.
+    Underscored adapter ids become the hyphenated names models echo.
     """
     return f"{NAME_PREFIX}{run_id}-{label.replace('_', '-')}"
 
