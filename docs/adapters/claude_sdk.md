@@ -3,6 +3,9 @@
 `ClaudeSDKAdapter` runs Claude Code as a subprocess, one session per Band room.
 Runnable scripts: [examples/claude_sdk/](../../examples/claude_sdk/).
 
+Automatic idle release is unavailable pending native safety qualification;
+see [idle room resource retention](../idle-room-release.md).
+
 Like the other adapters, it takes one settings object,
 `ClaudeSDKAdapterConfig`, plus the keyword-only `additional_tools`,
 `history_converter` and feature flags (`emit=`, `capabilities=`, ...). The
@@ -111,3 +114,11 @@ with pytest.raises(ValueError, match="wait_timeout_s must be less than"):
 
 A config is plain data, so a host can load it from YAML or JSON with
 `ClaudeSDKAdapterConfig.model_validate(data)`.
+
+An ordinary input arriving while accepted work owns the session remains
+outstanding. Approval and status commands stay reachable through the shared
+control hook under the existing sender and token checks. The active turn keeps
+its original tools; handling a control never rebinds them to the new message.
+Only a local rejection before `query()` qualifies as `InputNotAccepted`:
+transport errors and timeouts do not establish that Claude rejected the input.
+The shared room scheduler owns later attempts.

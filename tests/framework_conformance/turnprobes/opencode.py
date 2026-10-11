@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
@@ -12,6 +11,7 @@ from tests.adapters.opencode.helpers import (
     BandMCPCalls,
     FakeOpencodeClient,
     event_message_updated,
+    event_permission,
     event_session_idle,
     event_text_part,
     wait_for,
@@ -63,23 +63,26 @@ async def run_opencode(script: TurnScript, tools: FakeAgentTools) -> None:
 
 
 async def settle_opencode(tools: FakeAgentTools) -> None:
-    """A message arriving mid-turn gets only the busy notice."""
-
+    """An approval control completes independently of its parked model turn."""
     client = FakeOpencodeClient(
-        prompt_event_sequences=[[event_message_updated(SESSION_ID, MESSAGE_ID)]]
+        prompt_event_sequences=[[event_permission(SESSION_ID, "req-1")]],
+        reply_permission_events={
+            "req-1": [
+                event_message_updated(SESSION_ID, MESSAGE_ID),
+                event_text_part(SESSION_ID, MESSAGE_ID, "Done."),
+                event_session_idle(SESSION_ID),
+            ]
+        },
     )
+    original_tools = turn_tools()
     with backends_created_by():
         async with started_adapter(client) as adapter:
-            running = asyncio.create_task(adapter.on_event(turn_input(turn_tools())))
-            try:
-                await wait_for(lambda: bool(client.prompt_calls))
-                await adapter.on_event(
-                    turn_input(tools, user_message("@agent are you done?"))
-                )
-            finally:
-                running.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await running
+            await adapter.on_event(turn_input(original_tools))
+            assert await adapter.try_handle_control(
+                user_message("@agent approve req-1"), tools
+            )
+            await wait_for(lambda: original_tools.turn.replied)
+    assert len(client.prompt_calls) == 1
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {

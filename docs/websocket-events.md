@@ -7,13 +7,15 @@ and `src/band/platform/event.py`. What the code cannot say for itself:
   rule-free typed projections: `WirePayload.from_wire` has core validate and normalize the
   payload (alias sync, defaulting, coercion), then hydrates the model without
   re-validating.
-- **Delivery-lifecycle decisions are core's too.** `OneShotInvoker`
-  (`src/band/runtime/oneshot.py`) is a thin caller-owns-the-loop wrapper over core's
-  `evaluate_delivery_event`, `evaluate_next_message`, `evaluate_drain_candidate` and
-  `evaluate_adapter_result`: event routing, drain-candidate classification (including
-  self-echo) and the ack decision are core's, not SDK logic.
-- **`ExecutionContext` is a separate machine.** It calls none of those functions. It dedups
-  on `metadata.delivery_status` and calls core's `is_self_echo` directly.
+- **Terminal delivery rules live in core.** `OneShotInvoker`
+  (`src/band/runtime/oneshot.py`) uses `evaluate_delivery_event`,
+  `evaluate_drain_candidate` and `evaluate_adapter_result` for event routing,
+  history drain classification and terminal acknowledgement. Python owns
+  ordinary-work ordering and adapter-control reachability. Definitively rejected
+  input returns before the terminal acknowledgement evaluator.
+- **`ExecutionContext` owns room scheduling.** It reuses core's claims, retry
+  tracking, participant roster and self-echo rules, with delivery metadata for
+  deduplication.
 
 ## Room reconciliation
 
@@ -53,3 +55,23 @@ retry cadence. A completed or skipped head that cannot advance ends the pass
 without spinning; retryable handler failures retain their normal attempt budget.
 These intervals bound scheduling, subject to active handlers, HTTP operations
 and recovery retries.
+
+## Pending work and control recovery
+
+A provider attempt that raises `InputNotAccepted` leaves its delivery
+outstanding. The next scheduler pass retries the oldest work once at the base
+reconciliation cadence. It releases local ownership and returns that attempt's
+failure-budget charge; adapters do not wait or retry internally. Durable work
+stays in platform rows, while synthetic messages remain in the local room queue.
+No scopes or tools survive merely to retry an input.
+
+`/next` exposes only the oldest outstanding delivery. While that work is blocked,
+the runtime also scans one chronological page of actionable `/messages` per
+pass to find missed controls, retaining the cursor across ordinary traffic.
+A changed pending head or the end of the scan starts a new scan. PLAY and
+reconnect bring a pass forward without rewinding its cursor.
+
+Controls use the same duplicate checks and accepted processing gate before an
+adapter handles them. A control consumed behind pending work acknowledges only
+its own delivery; an ordinary candidate is left outstanding. Runtime recovery
+never interprets approval syntax or drains model context for a control.

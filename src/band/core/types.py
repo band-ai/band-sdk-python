@@ -529,6 +529,9 @@ class AgentInput:
 
     Contains everything an adapter needs to process a message.
     History is provided via HistoryProvider for lazy conversion.
+    Custom preprocessors that consume context can supply ``commit_context``;
+    the host calls it after model attempts except proven non-acceptance.
+    Controls leave model context owed.
     """
 
     msg: PlatformMessage
@@ -538,3 +541,16 @@ class AgentInput:
     contacts_msg: str | None  # Contact changes broadcast message
     is_session_bootstrap: bool
     room_id: str
+    commit_context: Callable[[], None] | None = None
+
+
+def delivery_status_for_agent(metadata: Any, agent_id: str | None) -> str | None:
+    """Read an agent's authoritative delivery status from wire metadata."""
+    statuses = metadata_to_dict(metadata).get("delivery_status")
+    if not isinstance(statuses, dict):
+        return None
+    delivery = statuses.get(agent_id)
+    if not isinstance(delivery, dict):
+        return None
+    status = delivery.get("status")
+    return status if isinstance(status, str) else None
