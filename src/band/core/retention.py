@@ -24,6 +24,14 @@ class RoomRetentionConfig(BaseAdapterConfig):
     idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
+def require_disabled_retention(
+    retention: RoomRetentionConfig, *, reason: str
+) -> RoomRetentionConfig:
+    if retention.idle_timeout_s is not None:
+        raise ValueError(f"{reason} Leave retention.idle_timeout_s unset.")
+    return retention
+
+
 class ProviderActivity(StrEnum):
     ACTIVE = "active"
     QUIESCENT = "quiescent"
@@ -168,7 +176,7 @@ class RetainedRoom:
                 case Residency.RESIDENT:
                     return
                 case Residency.CLEANUP_PENDING:
-                    self._start_suspend(guarded=False)
+                    self._start_suspend(automatic=False)
                 case Residency.SUSPENDED:
                     self._generation += 1
                     self._state = Residency.ACQUIRING
@@ -205,22 +213,22 @@ class RetainedRoom:
         finally:
             self._schedule(reset=True)
 
-    def _start_suspend(self, *, guarded: bool) -> None:
+    def _start_suspend(self, *, automatic: bool) -> None:
         previous = self._state
         self._state = Residency.SUSPENDING
         self._deadline = None
-        self._transition = self._owned(self._run_suspend(previous, guarded=guarded))
+        self._transition = self._owned(self._run_suspend(previous, automatic=automatic))
 
-    async def _run_suspend(self, previous: Residency, *, guarded: bool) -> None:
+    async def _run_suspend(self, previous: Residency, *, automatic: bool) -> None:
         if (
             self._closing
             or self._owner.stopping
             or not self._provider_allows_close
-            or (guarded and self._leases)
+            or (automatic and self._leases)
         ):
             self._state = previous
             self._schedule()
-            if not guarded:
+            if not automatic:
                 self._check_admission()
                 raise RuntimeError(
                     f"Room {self.room_id} cleanup pending: provider activity "
@@ -339,7 +347,7 @@ class RoomRetention:
                 if due is None:
                     continue
                 if due <= self.clock.now():
-                    room._start_suspend(guarded=True)
+                    room._start_suspend(automatic=True)
                 elif deadline is None or due < deadline:
                     deadline = due
             await self.clock.wait(self.changed, deadline)
@@ -359,11 +367,11 @@ class RoomRetention:
             logger.warning("Room retention shutdown failed: %s", error)
 
     async def _run_stop(self) -> None:
-        results = await asyncio.gather(
-            *((self._scheduler,) if self._scheduler is not None else ()),
-            *(room.dispose() for room in tuple(self._rooms.values())),
-            return_exceptions=True,
-        )
+        pending: list[Awaitable[None]] = []
+        if self._scheduler is not None:
+            pending.append(self._scheduler)
+        pending.extend(room.dispose() for room in tuple(self._rooms.values()))
+        results = await asyncio.gather(*pending, return_exceptions=True)
         failures = [result for result in results if isinstance(result, BaseException)]
         if failures:
             raise BaseExceptionGroup("Room cleanup remains incomplete", failures)

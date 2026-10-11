@@ -47,7 +47,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.retention import RoomRetentionConfig
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -331,12 +331,10 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     def _require_safe_retention(
         cls, retention: RoomRetentionConfig
     ) -> RoomRetentionConfig:
-        if retention.idle_timeout_s is not None:
-            raise ValueError(
-                f"Idle retention is unavailable: {cls.retention_unavailable_reason}. "
-                "Leave retention.idle_timeout_s unset."
-            )
-        return retention
+        return require_disabled_retention(
+            retention,
+            reason=f"Idle retention is unavailable: {cls.retention_unavailable_reason}.",
+        )
 
     @model_validator(mode="before")
     @classmethod

@@ -24,14 +24,14 @@ class ManualClock:
     def __init__(self) -> None:
         self.time = 0.0
         self.changed: asyncio.Event | None = None
-        self.waits: asyncio.Queue[float | None] = asyncio.Queue()
+        self.waits: asyncio.Queue[None] = asyncio.Queue()
 
     def now(self) -> float:
         return self.time
 
     async def wait(self, changed: asyncio.Event, deadline: float | None) -> None:
         self.changed = changed
-        self.waits.put_nowait(deadline)
+        self.waits.put_nowait(None)
         if deadline is None or deadline > self.time:
             await changed.wait()
 
@@ -58,9 +58,8 @@ class Barrier:
 class Resident:
     room: RetainedRoom = field(init=False)
     live: bool = False
-    acquisitions: list[tuple[int, bool]] = field(default_factory=list)
+    resume_requests: list[bool] = field(default_factory=list)
     suspended: asyncio.Queue[None] = field(default_factory=asyncio.Queue)
-    disposing: asyncio.Event = field(default_factory=asyncio.Event)
     opening: Barrier | None = None
     closing: Barrier | None = None
     leaving: Barrier | None = None
@@ -71,7 +70,7 @@ class Resident:
     async def acquire(self, generation: int, resume: bool) -> None:
         assert not self.live, "replacement started before the previous handle closed"
         self.live = True
-        self.acquisitions.append((generation, resume))
+        self.resume_requests.append(resume)
         if self.opening is not None:
             await self.opening.wait()
         if self.fail_acquire:
@@ -87,7 +86,6 @@ class Resident:
         self.live = False
 
     async def dispose(self) -> None:
-        self.disposing.set()
         if self.leaving is not None:
             await self.leaving.wait()
         if self.fail_dispose:
@@ -226,7 +224,7 @@ async def test_slow_close_does_not_block_another_room(host: ResidenceHost) -> No
     await fast.suspended.get()
     await fast.turn()
     assert slow.live and fast.live
-    assert len(fast.acquisitions) == 2
+    assert len(fast.resume_requests) == 2
 
 
 async def test_failed_close_retries_on_deadline_without_a_message(
@@ -256,7 +254,7 @@ async def test_failed_close_cannot_create_a_replacement(host: ResidenceHost) -> 
     await resident.suspended.get()
     with pytest.raises(RuntimeError, match="close refused"):
         await resident.turn()
-    assert len(resident.acquisitions) == 1
+    assert len(resident.resume_requests) == 1
     assert resident.live
 
 
@@ -305,8 +303,8 @@ async def test_cancelled_wake_waiter_does_not_cancel_close_or_duplicate_acquisit
         await wake
     resident.closing.released.set()
     await asyncio.gather(resident.turn(), resident.turn())
-    assert len(resident.acquisitions) == 2
-    assert resident.acquisitions[-1][1] is True
+    assert len(resident.resume_requests) == 2
+    assert resident.resume_requests[-1] is True
     assert resident.live
 
 
@@ -324,7 +322,7 @@ async def test_native_activity_queued_before_retry_close_prevents_release(
     with pytest.raises(RuntimeError, match="cleanup pending"):
         await wake
     assert resident.live
-    assert len(resident.acquisitions) == 1
+    assert len(resident.resume_requests) == 1
     assert resident.suspended.empty()
 
 
@@ -340,7 +338,7 @@ async def test_cancelled_acquire_waiter_keeps_owned_startup(
         await wake
     resident.opening.released.set()
     await resident.turn()
-    assert len(resident.acquisitions) == 1
+    assert len(resident.resume_requests) == 1
     assert resident.live
 
 
@@ -356,7 +354,7 @@ async def test_failed_resume_remains_strict_and_cleans_up_before_retry(
         await resident.turn()
     resident.fail_acquire = False
     await resident.turn()
-    assert [resume for _, resume in resident.acquisitions] == [False, True, True]
+    assert resident.resume_requests == [False, True, True]
     assert resident.live
 
 
@@ -371,12 +369,12 @@ async def test_partial_acquisition_keeps_handle_until_cleanup_succeeds(
     with pytest.raises(RuntimeError, match="close refused"):
         await resident.turn()
     assert resident.live
-    assert len(resident.acquisitions) == 1
+    assert len(resident.resume_requests) == 1
     assert resident.room.snapshot.pending_cleanup
     resident.fail_close = resident.fail_acquire = False
     await resident.turn()
     assert resident.live
-    assert len(resident.acquisitions) == 2
+    assert len(resident.resume_requests) == 2
 
 
 async def test_old_process_events_cannot_unpin_replacement(host: ResidenceHost) -> None:
@@ -406,7 +404,7 @@ async def test_leave_wins_against_wake_during_close(host: ResidenceHost) -> None
     await leaving
     with pytest.raises(RuntimeError):
         await wake
-    assert len(resident.acquisitions) == 1
+    assert len(resident.resume_requests) == 1
     assert resident.room.snapshot.state is Residency.CLOSED
     assert not resident.live
 
@@ -474,7 +472,7 @@ async def test_shutdown_preempts_queued_provider_acquisition(
     with pytest.raises(RuntimeError, match="closing"):
         await wake
     await stopping
-    assert resident.acquisitions == []
+    assert resident.resume_requests == []
     assert not resident.live
 
 

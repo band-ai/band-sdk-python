@@ -89,7 +89,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
-from band.core.retention import RoomRetentionConfig
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
@@ -369,13 +369,14 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     def _require_safe_retention(
         cls, retention: RoomRetentionConfig
     ) -> RoomRetentionConfig:
-        if retention.idle_timeout_s is not None:
-            raise ValueError(
+        return require_disabled_retention(
+            retention,
+            reason=(
                 "Claude idle retention is unavailable: native idle and background-task "
                 "inventories do not account for asynchronous managed hooks; disconnect "
-                "can cancel that work. Leave retention.idle_timeout_s unset."
-            )
-        return retention
+                "can cancel that work."
+            ),
+        )
 
     @model_validator(mode="after")
     def _check_approvals_can_decide(self) -> Self:
