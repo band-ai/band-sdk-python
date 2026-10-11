@@ -1,405 +1,243 @@
-# Band Python kit for Docker Sandboxes
+# Band Python workload for Docker Sandboxes
 
-Run your Python agent on [Band](https://band.ai) inside a Docker
-[Sandbox](https://docs.docker.com/ai/sandboxes/): an isolated microVM with a
-default-deny egress allowlist, where your project's locked dependencies are
-installed automatically — no manual SDK installation, no host pollution.
+Run a Band Python agent in a Docker Sandbox with locked project dependencies,
+an isolated SDK installation and default-deny network policy. The v3 kit is
+one OCI workload image; there is no separate kit artifact or image reference.
+The supported validation baseline is **sbx 0.47.0**. Customer `band.yaml`
+continues to use schema version `1`.
 
-Your workspace stays a plain `uv` project (`pyproject.toml` + committed
-`uv.lock`); the kit brings the Band SDK, the launcher, and the network
-policy. Tested with `sbx` v0.43.0.
+## Published echo quickstart
 
-## Why use this kit?
+Use a supported Docker Sandboxes host with Docker, `sbx` 0.47.0, `curl`, `tar`
+and `tmux`. On macOS, install `sbx` with `brew install docker/tap/sbx` and tmux
+with `brew install tmux`. Run `sbx version` and `sbx login` before continuing. Inspect `sbx policy ls`:
+if it reports that the global policy is uninitialized, run
+`sbx policy init balanced` once. Preserve an existing policy; do not reset or
+replace it. Organization policy may require administrator access.
+Choose a **released v3 version** from the release notes; existing immutable v2
+tags remain v2 and cannot be used with these instructions. The first v3 release
+holds floating tags until acceptance, so use its concrete version.
 
-It turns adopting Band into a small application task instead of an
-infrastructure project. You bring your agent code, its locked Python
-dependencies, and your Band credentials. The kit provides the SDK, a
-repeatable startup process, and sandbox network safeguards.
+This route requires a pre-registered Band **agent** id and agent API key. It
+requires no LLM key or paid inference. An entitled **user** API key is only
+needed for the optional self-registration route below.
 
-There are two separate Python environments inside the sandbox:
-
-- The kit environment runs the stable launcher. It validates configuration,
-  prepares the agent environment, and reports startup failures.
-- Your agent environment contains the dependencies from your project's
-  `uv.lock` and runs your `main.py`.
-
-This means changing your agent's adapter or packages cannot overwrite the
-launcher that starts it. If a dependency update fails, the launcher is still
-available to show the error and rebuild the agent environment on the next
-start. Your host workspace remains source code and configuration rather than
-a collection of sandbox-created virtualenv files, caches, and logs.
-
-## Quickstart
-
-You need [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`),
-Docker, and a registered Band agent (its id and API key). The kit and its image
-are published to Docker Hub (`bandhq/…`; GHCR mirror also exists), so there is
-**no repo checkout and no local build** — the sandbox runtime pulls both.
-
-Registering that agent yourself first (steps 3-4 below) is one path. If you'd
-rather skip pre-provisioning entirely, see
-[Self-registration](#self-registration-no-pre-provisioned-agent): one command
-registers the agent *and* creates the sandbox from just a user key.
+Define your version, unique sandbox name and workspace once in a Bash terminal:
 
 ```bash
-# 1. One-time host setup: install sbx and sign in.
-brew install docker/tap/sbx && sbx login
-
-# 2. Kit source allowlist — usually a no-op.
-#    Default kit.allowedSources is ["docker.io/"], which covers the Hub kit.
-#    Only needed if you pull the GHCR mirror instead — then MERGE
-#    ghcr.io/band-ai/ into your existing list (the setting replaces the list).
-# sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
-
-# 3. Create your workspace from the echo-agent starter, extracted from the
-#    matching release tarball (no repo checkout needed; same <X.Y.Z> as the
-#    kit tag below). See echo-agent/README.md for the workspace guide.
-mkdir -p ~/my-band-agent
-curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags/band-sdk-v<X.Y.Z>" \
-  | tar -xz --strip-components=4 -C ~/my-band-agent \
-      "band-sdk-python-band-sdk-v<X.Y.Z>/docker/band_python_kit/echo-agent"
-#    Then, in ~/my-band-agent:
-#    - set agent.id in band.yaml
-#    - provision your Band key: band.yaml defaults to proxy-managed, so run the
-#      `sbx secret set-custom` step from "Credential custody" below — NOT
-#      .band/secrets.env, which the proxy-managed launcher ignores. (The echo
-#      starter needs no LLM key.)
-
-# 4. Create the sandbox from the published kit.
-sbx create --name my-band-agent \
-  --kit docker.io/bandhq/band-python-kit:<X.Y.Z> \
-  band-python-kit ~/my-band-agent
-
-# 5. Attach to actually launch the agent — see "How the launch works" below
-#    for why this step is required, and for keeping it running unattended.
-sbx run --name my-band-agent
+read -r -p 'Released v3 SDK version (X.Y.Z): ' VERSION
+SANDBOX=my-band-echo
+WORKSPACE="$HOME/my-band-echo"
+WORKLOAD="docker.io/bandhq/band-python-kit:$VERSION"
+BAND_SECRET_HOST='**.band.ai'
+mkdir "$WORKSPACE"
+curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags/band-sdk-v$VERSION" \
+  | tar -xz --strip-components=4 -C "$WORKSPACE" \
+      "band-sdk-python-band-sdk-v$VERSION/docker/band_python_kit/echo-agent"
 ```
 
-Pin a concrete `X.Y.Z` for a frozen artifact, or ride `latest` / the major tag
-(e.g. `1`) to pick up CVE rebuilds when you re-create the sandbox (see
-[`RELEASING.md`](RELEASING.md) for the tag policy).
-
-Mention your agent in a Band room — it replies from inside the sandbox. To make
-the echo-agent starter your own — swap the echo adapter for a real framework
-adapter and set up credentials — see
-[`echo-agent/README.md`](echo-agent/README.md). The
-[`band-ai/add-band`](https://github.com/band-ai/add-band) catalog wraps all of
-the above into a single bootstrap command for a clean machine.
-
-### Staging vs. production
-
-The kit's defaults target production Band. To point an agent at a non-production
-deployment, override the endpoints in `band.yaml` (or via `BAND_REST_URL` /
-`BAND_WS_URL`) and grant that host per sandbox — never baked into the kit:
-
-```bash
-sbx policy allow network --sandbox my-band-agent <band-host>
-```
+Edit `$WORKSPACE/band.yaml`: replace `agent.id` with your registered agent id.
+The supplied production endpoints are `https://app.band.ai` and
+`wss://app.band.ai/api/v1/socket/websocket`. For another deployment, edit both
+endpoints and use its exact hostname as `BAND_SECRET_HOST`.
 
 ### Credential custody
 
-Two tiers — prefer the first.
+The host proxy keeps the real key and substitutes it in outbound headers; the
+VM receives the nonsecret `proxy-managed` placeholder. Secrets must exist
+**before creation** to inject their environment variable. Check the selected
+name first: if it has any secrets or an existing sandbox you do not own, choose
+a new name. `set-custom` can overwrite an existing secret; do not use it to
+adopt someone else's resources.
 
-**Injection tier — real keys never enter the VM.** A trusted host-side proxy
-holds the real keys and writes them onto outbound requests; the sandbox only ever
-sees a sentinel. Requires `sbx create --kit`.
+```bash
+sbx ls
+sbx secret ls --sandbox "$SANDBOX"
+read -r -s -p 'Band agent API key: ' BAND_API_KEY; echo
+printf '%s' "$BAND_API_KEY" | sbx secret set-custom \
+  --sandbox "$SANDBOX" --host "$BAND_SECRET_HOST" \
+  --env BAND_API_KEY --placeholder proxy-managed
+unset BAND_API_KEY
+sbx create --name "$SANDBOX" "$WORKLOAD" "$WORKSPACE"
+```
 
-- **LLM providers** are built-in `sbx` services — store the one your agent uses:
-  ```bash
-  sbx secret set -g anthropic        # or openai, google, groq, mistral, …
-  ```
-- **Band** is provisioned host-side. The `**.band.ai` wildcard follows whichever
-  Band deployment you point the agent at via `BAND_REST_URL` (prod `app.band.ai`,
-  staging, self-hosted, …) — the endpoint config is the control knob:
-  ```bash
-  export BAND_API_KEY=<your-band-key>   # keep the value out of shell history
-  sbx secret set-custom -g --host '**.band.ai' \
-    --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
-  ```
-  `--value` is visible in shell history / process args — pass it from an exported
-  variable as above (and clear history if the real value ever appears literally).
-  The proxy then supplies the real key on outbound requests to that host (verified:
-  the Band host presents an `O=Docker Sandboxes` MITM cert inside the sandbox). For
-  a non-`band.ai` (self-hosted) deployment, use its host with `--host`.
+The real key is passed on stdin, never on command arguments or in the mounted
+workspace. Keep shell tracing disabled when reading or transferring credentials.
+The baseline allows Band Cloud and PyPI. For a different deployment, grant its
+host before launching:
 
-**Env-file tier — laptop-equivalent, less secure.** The opt-in `.band/secrets.env`
-file puts plaintext keys in both your workspace and the sandbox VM
-(`credentials.acknowledgePlaintextInSandbox: true`); the launcher **warns at
-startup** when this tier is active. Treat the file as any local `.env`:
-git-ignored, `chmod 600`, rotated if leaked. Prefer the injection tier.
+```bash
+# Only for a deployment outside the baseline Band Cloud hosts:
+# sbx policy allow network --sandbox "$SANDBOX" your-band-host.example
+```
+
+Start exactly one foreground session. A host tmux session owns its PTY:
+
+```bash
+tmux new-session -s "$SANDBOX" "sbx run --name '$SANDBOX'"
+```
+
+In the Band UI, create a room (or select a room you own), add the registered
+agent, and send `hello sandbox` mentioning it. Expect `echo: hello sandbox`
+and a completed turn. The attached pane contains launcher output and any
+startup error. A running sandbox alone does not prove an agent replied.
+
+### Observe, restart and clean up
+
+Detach tmux with **Ctrl-b d**; that retains the owned PTY. Reattach from another
+terminal with `tmux attach -t "$SANDBOX"` (define the same variables there). Exiting or killing the pane ends
+its `sbx run` owner. Do not start a second `sbx run` just to view output.
+
+```bash
+sbx ls
+tmux capture-pane -p -t "$SANDBOX" -S -100
+sbx policy log "$SANDBOX"
+```
+
+Workspace code and lock changes are read at the next launcher start. For a
+restart, stop the sandbox, end the old tmux owner if it remains, then create
+one new owner. Do not assume `sbx stop` delivers SIGTERM or graceful teardown.
+
+```bash
+sbx stop "$SANDBOX"
+if tmux has-session -t "$SANDBOX" 2>/dev/null; then
+  tmux kill-session -t "$SANDBOX"
+fi
+tmux new-session -s "$SANDBOX" "sbx run --name '$SANDBOX'"
+```
+
+Send a fresh message and verify another completed echo. Workload changes
+require removal and recreation; workspace/dependency changes only need the
+restart above. When changing workload, preserve the owned scoped secret:
+stop and close the old PTY, `sbx rm "$SANDBOX"`, then repeat the positional
+create and tmux run commands with the selected workload.
+
+For final cleanup, attempt each owned resource independently, even if an earlier
+command fails. Record failures and retry them; do not claim cleanup succeeded
+until `sbx ls` and scoped secret listing confirm absence:
+
+```bash
+sbx stop "$SANDBOX"
+if tmux has-session -t "$SANDBOX" 2>/dev/null; then
+  tmux kill-session -t "$SANDBOX"
+fi
+sbx rm "$SANDBOX"
+sbx secret rm --placeholder proxy-managed --sandbox "$SANDBOX" -f
+sbx ls
+sbx secret ls --sandbox "$SANDBOX"
+```
+
+Removing the sandbox does not remove Band resources. In the Band UI, delete
+only the room and agent you created for this run; retain pre-existing identities.
+After interruption, inspect the sandbox, scoped secrets, tmux owner and UI
+resources by the recorded name/id before resuming or cleaning up. Keep those
+identifiers until all cleanup is confirmed.
 
 ### Self-registration (no pre-provisioned agent)
 
-`band-kit provision` (installed with `band-sdk`) skips the manual "register an
-agent, copy its id and key" step above: it registers the agent itself, on the
-host, with a **user** key, then wires the result into the injection tier —
-never the pre-provisioned-agent flow's env-var tier. The real agent key never
-enters the VM, the same custody guarantee as [Credential
-custody](#credential-custody)'s injection tier, because registration mints
-the key in an HTTP response body that only the host ever sees.
+Use the same starter and variables above, but leave `agent.id` as its placeholder
+and skip the manual agent-secret/create steps. Install the **matching** host SDK
+with `uv tool install "band-sdk==$VERSION"`; install host `uv` first using
+[its installation guide](https://docs.astral.sh/uv/getting-started/installation/). Supply an entitled Band user key:
 
 ```bash
-pip install band-sdk   # or: uv tool install band-sdk
-
-export BAND_API_KEY_USER=<your-user-key>   # prefer a register_only-scoped key
-band-kit provision \
-  --name my-band-agent \
-  --agent-name "My Agent" \
-  --description "A self-registered Band agent running in a Docker Sandbox." \
-  --workspace ~/my-band-agent \
-  --create --kit docker.io/bandhq/band-python-kit:<X.Y.Z>
+read -r -s -p 'Entitled Band user API key: ' BAND_API_KEY_USER; echo
+export BAND_API_KEY_USER
+band-kit provision --name "$SANDBOX" --agent-name 'My sandbox echo' \
+  --description 'Echo agent in a Docker Sandbox' --workspace "$WORKSPACE" \
+  --create --kit "$WORKLOAD" --host "$BAND_SECRET_HOST"
+unset BAND_API_KEY_USER
+tmux new-session -s "$SANDBOX" "sbx run --name '$SANDBOX'"
 ```
 
-This writes the new agent's id into `~/my-band-agent/band.yaml` (`agent.id`,
-non-secret), then runs the equivalent of the injection-tier command above —
-piped via stdin, never on argv or in shell history:
+For another deployment, export the matching `BAND_REST_URL` and `BAND_WS_URL`
+for host provisioning as well as editing `band.yaml`. The public Band `--kit`
+option accepts the v3 workload reference. Provision writes the agent id,
+stores its scoped secret through stdin and creates the sandbox; it does not
+start the foreground agent. A repeated provision reuses matching identity and
+secret and independently checks whether creation is needed. A mismatched
+workspace/name is refused. `plan_required`, auth and provisioning failures
+block this route; do not substitute an agent key for the user key.
+
+Record the created id from `band.yaml` immediately for recovery. If registration
+was interrupted before its id was returned, inspect the named agent in the
+Band UI before retrying: its one-time key may be unrecoverable. Follow the
+cleanup above, including the newly created Band agent and room.
+
+## Workspace and launch contract
+
+The [echo starter guide](echo-agent/README.md) describes configuration, locked
+dependencies and an optional Anthropic conversion. `uv sync --locked` runs in
+sandbox-owned storage outside the mount and the immutable SDK venv. Missing or
+stale locks fail visibly; update with `uv lock` on the host, then restart.
+
+The image declares `USER agent` (UID 1000) and directly runs the existing Band
+launcher. Docker Sandboxes supplies system proxy CA trust. `SSL_CERT_FILE` and
+`REQUESTS_CA_BUNDLE` select the complete system bundle for Python clients.
+The launcher discovers the mounted workspace, validates configuration,
+credentials and paths, optionally clones a repository, syncs locked dependencies,
+then execs the customer entrypoint. Signals actually delivered to that process
+reach customer code; sandbox stop is not a graceful-signal guarantee.
+
+The agent remains a foreground workload. Keep one owned real PTY for its
+lifetime. `sbx create` does not start it; backgrounding a piped `sbx run` is not
+a replacement for an owned PTY. Launcher diagnostics are phase-labelled and
+also use the configured runtime log directory. Never override sandbox-managed
+proxy variables.
+
+The opt-in `workspace-env-file` credential tier places plaintext keys in the
+mount and VM. Its guardrails and warning are documented in the starter guide;
+prefer proxy-managed credentials. Policy and agent instructions are defined
+once in the workload descriptor. Provider and source-control hosts require
+explicit per-sandbox grants, for example:
 
 ```bash
-sbx secret set-custom my-band-agent --host '**.band.ai' \
-  --env BAND_API_KEY --placeholder proxy-managed   # value piped via stdin
+sbx policy allow network --sandbox "$SANDBOX" api.anthropic.com
+sbx policy allow network --sandbox "$SANDBOX" github.com
 ```
 
-— and then runs `sbx create`. Pass `--no-create` to only register and inject,
-and create the sandbox yourself later. Either way, `sbx create` only boots the
-sandbox — as in the manual quickstart above, attach with
-`sbx run --name my-band-agent` (under a supervisor for unattended operation;
-see "How the launch works") to actually start the agent.
+## Develop the workload
 
-Idempotent, checked independently for registration and creation: re-running
-`provision` skips registration when the sandbox already has both a
-non-placeholder `agent.id` and the injected secret (no plan-cap headroom
-consumed), and separately skips `sbx create` only when a sandbox by that name
-already exists — so if `sbx create` itself failed on a prior run, re-running
-`provision --create` still creates it without registering a second agent.
-`sbx stop` / restart never re-registers either, since the host secret and
-`band.yaml` both persist. `--name` reused across unrelated workspaces is
-refused outright rather than silently overwriting the earlier sandbox's key:
-`sbx secret set-custom` is create-or-update, so a secret already present under
-`--name` with no matching local `agent.id` means the name collides with
-somebody else's sandbox, not a resumed run of this one.
-
-If registration itself times out, `provision` looks the agent up by name
-before giving up, so the error tells you whether the platform actually
-committed the write (in which case the minted key — shown exactly once — is
-already unrecoverable) instead of leaving you to guess whether a retry is
-safe.
-
-Two things this does **not** do, by design:
-
-- **Re-registering under a name that already exists.** The platform rejects
-  it (422); `provision` surfaces that error rather than guessing whether you
-  meant to adopt the existing agent or need a new name. That decision belongs
-  to Platform's stale-agent lifecycle work, not this CLI.
-- **Cleaning up after `sbx rm`.** Removing a sandbox has no teardown hook, and
-  `sbx rm` does **not** remove the scoped secret it was injected with — a
-  removed sandbox's key is still there in `sbx secret ls`. Both are manual
-  until Platform ships cleanup: deregister the orphaned agent yourself if
-  that matters to your plan's agent cap, and remove the leaked key with
-  `sbx secret rm <name> --host <host> -f`, or it sits in the host's secret
-  store indefinitely.
-
-## Your workspace
-
-Your workspace is a plain `uv` project plus `band.yaml`; the
-[`echo-agent/`](echo-agent/README.md) starter is a complete template with
-the file map and authoring guide.
-
-The launcher runs `uv sync --locked` with the image's pinned `uv` into a
-sandbox-owned environment (never inside your mounted workspace, never into
-the SDK's own venv), then executes your entrypoint with that environment's
-interpreter. A missing or stale `uv.lock` fails the launch with a clear
-error — update it with `uv lock` and recreate.
-
-### Configuration
-
-`band.yaml` is strict: unknown fields fail the launch. See
-`echo-agent/band.yaml` for the full annotated shape. Environment variables
-override the file:
-
-| Variable | Overrides |
-|---|---|
-| `BAND_AGENT_ID`, `BAND_API_KEY` | agent identity / key |
-| `BAND_REST_URL`, `BAND_WS_URL` | Band endpoints (default: production) |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | LLM backend credentials |
-| `BAND_KIT_CONFIG_PATH` | where to find `band.yaml` (every other path is configured inside it) |
-
-### Credentials
-
-See [Credential custody](#credential-custody) for the two tiers and the
-`sbx secret` commands. The env-file (fallback) tier's setup and accepted names
-live in [`echo-agent/README.md`](echo-agent/README.md#credentials) and its
-`secrets.env.example`; the launcher enforces that file's guardrails (gitignored,
-never Git-tracked, owner-only, no symlinks) and warns that it is the less-secure
-tier.
-
-## How the launch works
-
-The agent runs as the sandbox's attached foreground process
-(`sandbox.entrypoint`), not a background task: `sbx create` alone boots the
-sandbox but leaves it idle, and `sbx` auto-stops an idle, unattached sandbox
-within roughly a minute. Attaching — `sbx run --name <name>` — is what
-actually launches it, running the image entrypoint as root to install the
-sandbox's per-session proxy CA, dropping to the non-root `agent` user (uid
-1000), and handing off to the Band launcher, which:
-
-1. loads `band.yaml` and environment overrides (strict validation),
-2. optionally loads missing credentials from your opt-in env file,
-3. validates every path (no traversal, no symlink escapes, runtime storage
-   outside the workspace and SDK venv),
-4. optionally clones your project from Git into the project path (the
-   `repo:` section in `band.yaml` — see the annotated echo-agent starter;
-   existing checkouts are validated and reused, never re-cloned),
-5. syncs your locked dependencies into the sandbox-owned environment, and
-6. replaces itself with your entrypoint (`os.execve`) — signals like
-   `sbx stop`'s SIGTERM reach your code directly (the echo-agent starter
-   handles them with `band.runtime.shutdown.run_with_graceful_shutdown`).
-
-**Keeping the agent up** therefore needs a host-side process holding that
-attach open for as long as you want the agent running — a `systemd`/`launchd`
-unit or a `tmux`/`screen` session running `sbx run --name <name>`, not a bare
-`sbx create`. Automating the attach yourself (rather than watching a
-terminal) needs a real pty, not a plain backgrounded process piped to a file
-or `/dev/null` — that fails after about 30 seconds with `sbx` reporting
-`inspect exec: context deadline exceeded`. Python's stdlib `pty`
-module (`pty.openpty()` + `subprocess.Popen` wired to the child fd) is one
-way to do this; `tests/docker/toolkit/sbx_cli.py`'s `Sandbox.create` is a
-worked example.
-
-Troubleshooting: the attached session's own output is the launcher's output
-— redirect or log whatever wraps `sbx run` (a `systemd` unit's journal, a
-`tmux` pane's capture, etc.). Launcher diagnostics also land under your
-configured `runtime.logPath`, and `sbx policy log <sandbox>` shows every
-allowed and blocked network request. Launch errors name their failing phase
-(`[config]`, `[credentials]`, `[paths]`, `[repo]`, `[sync]`, ...) and never
-contain secret values.
-
-## Network access
-
-The kit's immutable baseline allows only Band Cloud and the two PyPI hosts
-needed for `uv sync --locked` on a fresh sandbox. Everything else is denied by
-the sandbox proxy, including LLM providers, source-control hosts, and custom
-APIs. Grant only the exact host an agent needs, scoped to that sandbox:
+From the repository root, follow the exact build and local validation commands
+in the [self-registration demo](../../examples/sandbox/self-registration/README.md).
+That repository tool wraps the built image with the canonical descriptor for
+local sbx consumption and owns the foreground PTY. It requires an entitled
+user key in repository-root `.env.test`:
 
 ```bash
-# Direct LLM providers
-sbx policy allow network --sandbox my-band-agent api.anthropic.com
-sbx policy allow network --sandbox my-band-agent api.openai.com
-
-# Clone a repository hosted on GitHub
-sbx policy allow network --sandbox my-band-agent github.com
-
-# Non-production or self-hosted Band
-sbx policy allow network --sandbox my-band-agent <band-host>
-```
-
-GitHub Copilot needs several hosts. Grant its documented minimal set only when
-the agent uses Copilot:
-
-```bash
-sbx policy allow network --sandbox my-band-agent \
-  "github.com,api.github.com,release-assets.githubusercontent.com,*.githubcopilot.com,*.individual.githubcopilot.com,*.business.githubcopilot.com,*.enterprise.githubcopilot.com"
-```
-
-If a service is still blocked, inspect its exact hostname and allow that host
-rather than widening the policy:
-
-```bash
-sbx policy log my-band-agent
-```
-
-For a host required during startup (for example, a configured repository
-clone), add the rule and start the sandbox again:
-
-```bash
-sbx stop my-band-agent
-sbx run --name my-band-agent
-```
-
-Do not set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` yourself: the sandbox
-runtime manages them, and overriding them bypasses the network policy.
-
-Kit changes apply only at creation (`--kit` on `sbx create`); to pick up a
-modified kit, remove and recreate the sandbox. Do not rely on post-create
-`sbx kit add`: it applies files and startup commands but silently skips the
-kit's network and credential configuration.
-
-## Developing the kit
-
-To iterate on the kit itself (not just adopt it), build the image locally and
-make it visible to the sandbox runtime — the sandbox VM cannot see host-local
-Docker images until they are loaded as a template:
-
-```bash
-# Build the image and load it into the sandbox runtime.
-docker build -f docker/band_python_kit/Dockerfile -t band-python-kit:local .
+uv sync --extra dev
+docker buildx build -f docker/band_python_kit/spec.yaml \
+  --target runtime --load -t band-python-kit:local .
 docker save band-python-kit:local | sbx template load /dev/stdin
-
-# Create a sandbox from the local kit directory (spec.yaml points at :local).
-sbx create --name my-band-agent \
-  --kit /path/to/band-sdk-python/docker/band_python_kit \
-  band-python-kit ~/my-band-agent
+uv run examples/sandbox/self-registration/demo.py --kit band-python-kit:local
 ```
 
-The in-repo `spec.yaml` keeps `sandbox.image: band-python-kit:local` so this
-local flow works unchanged; each published kit's spec is stamped at release
-time to pin **that registry's** image by digest (see
-[`RELEASING.md`](RELEASING.md)).
+Do not pass a host-local Docker image tag directly to `sbx create`: it is not
+a published workload reference. The demo's descriptor wrapper preserves v3
+metadata and uses `band-workload.yaml`; a local `spec.yaml` path can select the
+legacy decoder in this sbx baseline.
 
-Release engineering — how the image and kit artifact are dual-published to
-Docker Hub and GHCR, the tag policy, the supply-chain quarantine gate, and the
-CVE-rebuild cadence — is documented in [`RELEASING.md`](RELEASING.md).
+The canonical Dockerfile has a lean `runtime` stage, an optional `cli` stage
+for the meeting demo, and a default final stage derived from runtime. Both
+variants finish as agent and receive the same descriptor metadata. Use
+`--target cli` for the CLI variant; normal publication stays base-only.
+`--build-arg SDK_EXTRA=anthropic` can pre-bake one SDK extra; the customer's
+locked environment remains separate.
 
-## Image reference
-
-### Build variants
-
-The default build bakes the core Band SDK only. To pre-bake one framework
-extra into the image (your workspace venv is unaffected either way):
-
-```bash
-docker build -f docker/band_python_kit/Dockerfile \
-  --build-arg SDK_EXTRA=langgraph \
-  -t band-python-kit:langgraph .
-```
-
-`SDK_EXTRA` accepts any single extra from `pyproject.toml`'s
-`[project.optional-dependencies]`. One at a time — some extras are declared
-conflicting and resolve in separate lockfile forks, so a venv can only hold one
-of them (e.g. `crewai` versus `parlant`/`pydantic-ai`). Multi-arch builds work with
-`docker buildx build --platform linux/amd64,linux/arm64`.
-
-### Layout
-
-| Path / env var | What it is |
+| Path | Purpose |
 |---|---|
-| `$BAND_SDK_HOME` (`/opt/band`) | Root of the baked SDK install. Read-only to every user, including root, after build. |
-| `$BAND_SDK_PYTHON` (`/opt/band/venv/bin/python`) | Fixed interpreter for the Band SDK and launcher. **Not on `PATH`** — it can never shadow your project's own venv. Invoke the SDK only via this path. |
-| `$BAND_SDK_UV` (`/opt/band/bin/uv`) | The build's digest-pinned `uv`, used for the locked dependency sync. **Not on `PATH`**, read-only, never downloaded or upgraded at runtime. |
-| `agent` (uid 1000, `$HOME=/home/agent`) | The non-root user your agent runs as. |
+| `/opt/band/venv/bin/python` (`BAND_SDK_PYTHON`) | Immutable SDK/launcher interpreter, outside PATH |
+| `/opt/band/bin/uv` (`BAND_SDK_UV`) | Pinned locked-sync executable, outside PATH |
+| `/home/agent` | UID 1000 home and sandbox-owned runtime storage |
 
-### CA trust and privilege drop
-
-Docker Sandboxes generates a per-session proxy CA and passes it to the
-container as base64 in `PROXY_CA_CERT_B64`. The entrypoint decodes it into
-the system trust store (`update-ca-certificates` needs root, which is why
-the container starts as root) and then always drops to `agent` (uid 1000)
-via `setpriv` before executing anything else — nothing of yours ever runs
-as root. To verify the drop, inspect the process table (`docker top`, or
-`ps` inside the sandbox) rather than `docker exec ... whoami`: a fresh
-`exec` process defaults to root regardless of what PID 1 dropped to.
-
-`SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` are baked in pointing at the
-*whole* system bundle so `httpx` (which otherwise trusts only its vendored
-certifi bundle) sees the proxy CA too; `websockets` already defaults to
-`ssl.create_default_context()` and needs no extra wiring. Never override
-them to a narrower CA file — public TLS verification must keep working
-alongside the proxy.
-When `PROXY_CA_CERT_B64` is unset (e.g. a plain `docker run` outside a
-sandbox), the install step is skipped and standard TLS verification applies.
-
-### Running the image directly
+For direct Docker diagnostics, override the launcher entrypoint explicitly:
 
 ```bash
-docker run --rm band-python-kit:local \
-  bash -c '$BAND_SDK_PYTHON -c "import band; print(band.__version__)"'
+docker run --rm --entrypoint /opt/band/venv/bin/python band-python-kit:local \
+  -c 'import band; print(band.__version__)'
 ```
+
+See [RELEASING.md](RELEASING.md) for dual-registry workload publishing,
+immutable tags, first-release acceptance and rebuild eligibility. There is
+currently no Band kit entry in add-band or sbx-kits-contrib; catalog integration
+is outside this migration.

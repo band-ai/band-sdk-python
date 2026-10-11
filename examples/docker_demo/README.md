@@ -46,41 +46,55 @@ participant and can interject at any time by @mentioning an agent.
 | `conductor.py` | Host-side room driver that enforces the breaker |
 | `provision.py` | Register / tear down the three agents and the meeting room (Human API) |
 | `launch.sh` | One-command build / up / down; owns a `.demo/run` manifest |
-| `Dockerfile.cli` | PM + Dev kit image = base kit + the `claude` and `codex` CLIs |
+| `../../docker/band_python_kit/Dockerfile` | Shared `runtime`/`cli` stages built through the v3 descriptor |
 | `agents/{pm,dev,architect}/` | Per-agent sbx workspace (`main.py`, `band.yaml`, `pyproject.toml`, `uv.lock`, `prompt.md`) |
 
 ## Prerequisites
 
-- `sbx` ≥ 0.43.0, signed in (`sbx login`); Docker; `uv`.
+- `sbx` ≥ 0.47.0, signed in (`sbx login`); Docker; `uv`.
 - `tmux` (`brew install tmux` on macOS) — the launcher holds each agent's
   `sbx run` attachment in a live pane. Interactive macOS runs can use Terminal.app
   instead; headless runs require `tmux`.
-- A Band Enterprise plan for the Human API calls used to register agents and
-  drive the meeting. If the optional agent-list lookup is unavailable, the
-  launcher logs the error and continues registration without sweeping stale
-  demo agents. A name collision can still make registration fail.
-- Host keys: `BAND_API_KEY_USER` (a Band **user** key — the conductor and
-  presenter identity), `ANTHROPIC_API_KEY` (PM), `OPENAI_API_KEY` (Dev + Architect).
+- A Band Enterprise plan for registering agents and driving the meeting.
+- Put `BAND_API_KEY_USER`, `BAND_REST_URL` and `BAND_WS_URL` in repository-root
+  `.env.test`; this is the canonical Band identity/endpoints source.
+- `ANTHROPIC_API_KEY` (PM) and `OPENAI_API_KEY` (Developer + Architect) in
+  `.env.test`, the host environment or the optional demo settings file. These
+  agents incur provider inference cost. Entitlement/provider/quota failures
+  block live acceptance.
 
 ## Run
 
-```bash
-cd examples/docker_demo
-cp .demo.env.example .demo.env    # fill in keys + (optional) endpoints; auto-loaded
-
-./launch.sh build     # once: needs Docker + sbx only (no keys); builds + loads images
-./launch.sh up        # provisions agents, creates 3 sandboxes, runs the meeting
-./launch.sh down      # removes exactly what the last run recorded (also runs on exit)
-```
-
-Keys can live in `.demo.env` or the environment (`BAND_API_KEY_USER`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Non-production Band: set `BAND_REST_URL` /
-`BAND_WS_URL` (endpoints, host, and each `band.yaml` are derived from them). To load a
-different env file instead of `.demo.env`, point `DEMO_ENV_FILE` at it:
+From the repository root:
 
 ```bash
-DEMO_ENV_FILE=/path/to/.env ./launch.sh up
+uv sync --extra dev
+# Optional provider/presentation settings; do not copy Band keys here:
+cp examples/docker_demo/.demo.env.example examples/docker_demo/.demo.env
+examples/docker_demo/launch.sh build
+examples/docker_demo/launch.sh up
+examples/docker_demo/launch.sh down
+# Same owned tmux PTYs, with no interactive open floor:
+DEMO_HEADLESS=1 examples/docker_demo/launch.sh up
 ```
+
+`build` uses `docker buildx build -f docker/band_python_kit/spec.yaml` with
+`--target runtime` and `--target cli`. It loads both v3 workloads; PM/Developer
+use `band-python-kit-cli:local`, Architect uses `band-python-kit:local`. Both
+finish as `agent` (UID 1000); ordinary release publication uses only runtime.
+The build also writes local `band-workload.yaml` wrappers under `.demo/workloads/`
+from the canonical descriptor. They refer to the loaded image while retaining
+its capabilities; `up` passes those descriptor directories to sbx so its local
+build context does not need repository source files.
+
+`DEMO_ENV_FILE=/absolute/path/settings.env` selects provider/presentation
+settings. Its Band variables cannot replace repository-root `.env.test`; the
+launcher reloads that canonical file and exports its selection to provisioning
+and the conductor. Provider sentinels are scoped to their sandbox and stored
+via stdin **before** creation; the agents map `ANTHROPIC_PROXY_KEY` /
+`OPENAI_PROXY_KEY` to the provider variables their clients read. REST/WebSocket
+and provider egress is granted before creation. A pre-existing sandbox or
+scoped secret aborts before registration; resolve ownership before retrying.
 
 ### Watch it run
 
@@ -114,7 +128,7 @@ agents, then end it any of three ways, **each of which runs cleanup**:
 - go **idle** for `DEMO_OPEN_FLOOR_IDLE_S` (default 7 min);
 - press **Ctrl-C**.
 
-For an unattended run (CI / recording), set `DEMO_HEADLESS=1` on `up`: the meeting
+For a host-driven headless run (recording), set `DEMO_HEADLESS=1` on `up`: the meeting
 skips the open floor and closes on the verdict, so it never waits on a presenter.
 
 ### Tuning
@@ -136,7 +150,7 @@ touching code:
 ## Expected output
 
 1. `build` produces `band-python-kit:local` and `band-python-kit-cli:local` and
-   loads both as sbx templates.
+   loads both v3 workloads.
 2. `up` registers Maya/Sam/Jordan, grants global egress, then for each agent:
    injects the LLM + Band credentials host-side, creates the sandbox, and starts
    its **agent through an attached `sbx run` pane**.
@@ -151,7 +165,7 @@ touching code:
 With a sandbox up:
 
 ```bash
-sbx secret ls band-demo-pm                        # host holds the real keys
+sbx secret ls --sandbox band-demo-pm                        # host holds the real keys
 sbx exec band-demo-pm env | grep -iE 'API_KEY'    # in the VM: only placeholders
 ```
 
@@ -189,8 +203,19 @@ timestamps). All caps are env-tunable (see [Tuning](#tuning)).
 `./launch.sh down` removes only what the last run recorded (tmux session,
 sandboxes, scoped secrets, global egress rules, agents) — never an unrelated
 `band-demo-*` — and reports any resource it couldn't remove. Teardown also runs
-on `up` exit, so a normal run leaves a clean host. `build` is only needed once
-or after a kit change.
+on `up` exit. A complete cleanup reports success; any failure exits nonzero and
+keeps `.demo/run` and unresolved agent/room ids for `down` to retry. Do not remove
+these ledgers or overwrite `agent_config.yaml`. A crash may leave the owned tmux
+session running; `down` closes it before deleting resources. The next `up`
+refuses a remaining manifest or credential file.
+
+Detach a tmux view with Ctrl-b then d to retain the PTY. Exiting its pane stops
+that foreground attachment; do not open a second `sbx run` to inspect logs.
+Use `tmux capture-pane -p -t <printed-session>` and `sbx ls` for observation.
+Restart by running `down`, then `up`; build again when the workload changes.
+Each run stages workspaces, so dependency/source edits apply on the next `up`.
+Verify the expected meeting outcome and a clean re-run separately; successful
+build or command syntax does not prove a completed model conversation.
 
 ## Notes
 

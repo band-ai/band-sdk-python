@@ -27,7 +27,8 @@ project:
 #   index: false    # optional: write context index files under statePath
 
 # Credential custody. Default: proxy-managed — the real keys stay on the host
-# (provisioned with `sbx secret`; see the kit README) and the VM sees only a
+# (scoped `sbx secret set-custom --sandbox` before creation; see the kit
+# README) and the VM sees only a
 # sentinel. Nothing else to declare here.
 credentials:
   source: proxy-managed

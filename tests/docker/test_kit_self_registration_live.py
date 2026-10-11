@@ -22,6 +22,7 @@ Band deployment `.env.test` points at. Gated behind BOTH ``sandbox``
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import subprocess
 from collections.abc import AsyncIterator
@@ -29,16 +30,20 @@ from pathlib import Path
 
 import pytest
 
+from band.credentials import PROXY_MANAGED_API_KEY
+from band.docker.launcher.config import PLACEHOLDER_AGENT_ID
 from band.docker.provision import read_agent_id
 from band.docker.provision import run as provision_run
 from tests.docker.test_kit_proxy_managed_live import (
     _deployment_hosts,
     _prepare_workspace,
 )
+from tests.docker.toolkit.docker_cli import Image
 from tests.docker.toolkit.sbx_cli import (
     CREATE_TIMEOUT_S,
     Sandbox,
     allow_network_for_hosts,
+    local_workload,
     remove_custom_secret_command,
     sandbox_name,
     sbx_available,
@@ -63,11 +68,26 @@ pytestmark = [
 ]
 
 
+def scoped_secret_present(name: str) -> bool:
+    result = subprocess.run(
+        ["sbx", "secret", "ls", "--sandbox", name, "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return any(
+        secret["placeholder"] == PROXY_MANAGED_API_KEY
+        for secret in json.loads(result.stdout)["custom_secrets"]
+    )
+
+
 @pytest.fixture
 async def self_registered_sandbox(
     tmp_path: Path,
     resource_manager: ResourceManager,
     baseline_settings: BaselineSettings,
+    band_python_kit_image: Image,
 ) -> AsyncIterator[tuple[str, str, argparse.Namespace]]:
     """A live agent registered by `provision.run()` itself, running inside a
     proxy-managed sandbox `provision.run()` also injected the secret for.
@@ -77,10 +97,10 @@ async def self_registered_sandbox(
     idempotency guard, without spinning up a second sandbox.
     """
     if not sbx_available():
-        pytest.skip("sbx CLI not on PATH")
+        raise ValueError("sbx CLI not on PATH")
     user_key = baseline_settings.credentials.api_key_user
     if not user_key:
-        pytest.skip("BAND_API_KEY_USER is required")
+        raise ValueError("BAND_API_KEY_USER is required")
 
     workspace = _prepare_workspace(tmp_path, endpoints=baseline_settings.endpoints)
     name = sandbox_name(prefix="band-selfreg")
@@ -98,44 +118,65 @@ async def self_registered_sandbox(
         verbose=False,
     )
 
-    agent_id = await provision_run(args)
-    assert read_agent_id(workspace) == agent_id, (
-        "provision wrote a different agent.id than it returned"
-    )
-
-    room_id = await resource_manager.provision_room(participants=[agent_id])
+    agent_id: str | None = None
     try:
+        agent_id = await provision_run(args)
+        assert read_agent_id(workspace) == agent_id, (
+            "provision wrote a different agent.id than it returned"
+        )
+        room_id = await resource_manager.provision_room(participants=[agent_id])
         hosts = _deployment_hosts(baseline_settings.endpoints)
         with (
             allow_network_for_hosts(hosts, kit=KIT_DIR),
-            Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace),
+            local_workload(band_python_kit_image.tag) as workload,
+            Sandbox.create(name=name, kit=workload, workspace=workspace),
         ):
             yield agent_id, room_id, args
     finally:
-        # Not tracked via resource_manager.provision_agent (provision.run()
-        # registered it directly with the user key), so it needs its own reap.
-        await resource_manager.reap_agent(agent_id)
-        # Sandbox.create's own teardown only removes the sandbox (`sbx rm`) --
-        # the scoped custom secret provision.run() injected outlives that
-        # (verified live: a removed sandbox's `sbx secret ls` still lists it),
-        # so it needs its own cleanup too, or the real agent key is left
-        # sitting in the host's secret store indefinitely.
-        removal = subprocess.run(  # noqa: ASYNC221 -- fixture teardown; no concurrent tasks share this loop
-            remove_custom_secret_command(sandbox=name, host=args.host),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-        if removal.returncode != 0:
-            logger.warning(
-                "failed to remove the scoped Band secret for sandbox %s (exit %s); "
-                "remove it manually: sbx secret rm %s --host %s -f",
-                name,
-                removal.returncode,
-                name,
-                args.host,
+        failures: list[Exception] = []
+        # The CLI may persist the id before secret injection or creation fails.
+        known_agent_id = agent_id
+        if known_agent_id is None:
+            try:
+                known_agent_id = read_agent_id(workspace)
+            except Exception as error:
+                logger.exception("Could not recover agent id for sandbox %s", name)
+                error.add_note(f"Could not recover agent id for sandbox {name}")
+                failures.append(error)
+        if known_agent_id and known_agent_id != PLACEHOLDER_AGENT_ID:
+            try:
+                await resource_manager.reap_agent(known_agent_id)
+            except Exception as error:
+                logger.exception("Could not clean up agent %s", known_agent_id)
+                error.add_note(f"Cleanup incomplete for agent {known_agent_id}")
+                failures.append(error)
+        command = remove_custom_secret_command(sandbox=name)
+        try:
+            if scoped_secret_present(name):
+                removal = subprocess.run(  # noqa: ASYNC221 -- fixture teardown owns this loop
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=60,
+                )
+                if removal.returncode:
+                    raise RuntimeError(
+                        f"Scoped secret cleanup incomplete (exit {removal.returncode}); "
+                        f"retry: {' '.join(command)}"
+                    )
+                if scoped_secret_present(name):
+                    raise RuntimeError(
+                        f"Scoped secret still present; retry: {' '.join(command)}"
+                    )
+        except Exception as error:
+            logger.exception(
+                "Could not confirm scoped secret cleanup for sandbox %s", name
             )
+            error.add_note(f"Cleanup incomplete for scoped secret in sandbox {name}")
+            failures.append(error)
+        if failures:
+            raise ExceptionGroup("Self-registration cleanup incomplete", failures)
 
 
 @pytest.mark.asyncio(loop_scope="session")

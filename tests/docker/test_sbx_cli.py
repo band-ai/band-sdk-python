@@ -228,12 +228,49 @@ def test_stop_pty_process_escalates_to_sigkill_when_sigterm_is_ignored(
 def test_attached_run_holds_the_child_open_then_releases_it_on_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # attached_run always runs `[SBX, "run", "--name", name]`; substituting the
-    # interpreter for SBX exercises the real spawn/stop wiring without `sbx`.
-    monkeypatch.setattr(sbx_cli, "SBX", sys.executable)
+    children: list[tuple[subprocess.Popen[bytes], int]] = []
+
+    def spawn_owner(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
+        child = _spawn_pty_process(
+            [sys.executable, "-c", "import time; time.sleep(30)"]
+        )
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(sbx_cli, "_spawn_pty_process", spawn_owner)
     before = _open_fd_count()
-
-    with attached_run("unused-sandbox-name"):
-        pass
-
+    with attached_run("owned-sandbox"):
+        assert children[0][0].poll() is None
+    _assert_stopped_and_fd_closed(*children[0])
     assert _open_fd_count() == before
+
+
+@markers.requires_posix_pty
+@pytest.mark.parametrize("exit_code", [0, 3])
+def test_attached_run_rejects_a_premature_owner_exit(
+    monkeypatch: pytest.MonkeyPatch, exit_code: int
+) -> None:
+    children: list[subprocess.Popen[bytes]] = []
+
+    def spawn_owner(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
+        process, fd = _spawn_pty_process(
+            [sys.executable, "-c", f"raise SystemExit({exit_code})"]
+        )
+        children.append(process)
+        return process, fd
+
+    monkeypatch.setattr(sbx_cli, "_spawn_pty_process", spawn_owner)
+    with (
+        pytest.raises(RuntimeError, match=f"exited {exit_code}"),
+        attached_run("owned-sandbox"),
+    ):
+        children[0].wait(timeout=5)
+
+
+def test_secret_timeout_does_not_expose_command_or_captured_output() -> None:
+    secret = "band-timeout-secret"
+    argv = [sys.executable, "-c", "import time; time.sleep(5)", secret]
+    with pytest.raises(RuntimeError, match="timed out") as error:
+        run_redacting_secret(argv, secret=secret, timeout=1)
+    assert secret not in str(error.value)
+    assert "***" in str(error.value)

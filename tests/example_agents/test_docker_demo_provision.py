@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, get_args
+from unittest.mock import AsyncMock
 
 import pytest
 from band_rest import AsyncRestClient
@@ -97,3 +99,61 @@ def literal_values(alias: object) -> set[object]:
 def test_status_constants_are_values_the_client_declares() -> None:
     assert provision.FINISHED_JOB_STATUSES <= literal_values(BulkDeletionJobStatus)
     assert provision.DELETED_ITEM_STATUS in literal_values(BulkDeletionItemStatus)
+
+
+@pytest.fixture
+def provision_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(provision, "DEMO_DIR", tmp_path)
+    for name, filename in (
+        ("AGENT_IDS", "agent_ids.txt"),
+        ("ROOM_IDS", "room_ids.txt"),
+        ("CONFIG_PATH", "agent_config.yaml"),
+        ("AGENTS_ENV", "agents.env"),
+    ):
+        monkeypatch.setattr(provision, name, tmp_path / filename)
+    return tmp_path
+
+
+async def test_existing_credential_directory_blocks_registration(
+    provision_files: Path,
+) -> None:
+    provision.CONFIG_PATH.mkdir()
+    rest = AsyncMock()
+    with pytest.raises(ValueError, match="already exists"):
+        await provision.create(rest)
+    rest.human_api_agents.register_my_agent.assert_not_called()
+
+
+async def test_partial_registration_keeps_created_agent_in_cleanup_ledger(
+    provision_files: Path,
+) -> None:
+    rest = AsyncMock()
+    rest.human_api_agents.register_my_agent.side_effect = [
+        SimpleNamespace(
+            data=SimpleNamespace(
+                agent=SimpleNamespace(id="agent-1", name="Maya (PM)"),
+                credentials=SimpleNamespace(api_key="fixture-key"),
+            )
+        ),
+        RuntimeError("registration blocked"),
+    ]
+    with pytest.raises(RuntimeError, match="registration blocked"):
+        await provision.create(rest)
+    assert provision.AGENT_IDS.read_text().splitlines() == ["agent-1"]
+    assert not provision.CONFIG_PATH.exists()
+    rest.human_api_agents.delete_my_agent.assert_not_called()
+
+
+async def test_cleanup_continues_after_failed_agent_and_retains_only_unresolved(
+    provision_files: Path,
+) -> None:
+    provision.AGENT_IDS.write_text("agent-blocked\nagent-deleted\n")
+    rest = AsyncMock()
+    rest.human_api_agents.delete_my_agent.side_effect = [
+        RuntimeError("cleanup blocked"),
+        None,
+    ]
+    with pytest.raises(RuntimeError, match="Cleanup incomplete"):
+        await provision.delete(rest)
+    assert rest.human_api_agents.delete_my_agent.await_count == 2
+    assert provision.AGENT_IDS.read_text().splitlines() == ["agent-blocked"]

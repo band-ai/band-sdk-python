@@ -4,7 +4,7 @@
 # when — there is a real reason to: a pinned base image has a newer digest, the
 # published image has fixable HIGH/CRITICAL vulnerabilities, or a human forces
 # it. On a real rebuild it publishes an immutable `X.Y.Z-rN` tag, moves the
-# floating tags, republishes the kit artifact against the new image digest (all
+# floating workload tags (all
 # through the shared kit-publish.yml pipeline), and opens a PR bumping the
 # committed Dockerfile digest pins so the repo never lies about what `latest` is
 # built from. A no-change week publishes nothing.
@@ -40,8 +40,8 @@ concurrency:
   queue: max
 
 env:
-  IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
-  HUB_IMAGE_NAME: docker.io/bandhq/band-python-kit-image
+  IMAGE_NAME: ghcr.io/band-ai/band-python-kit
+  HUB_IMAGE_NAME: docker.io/bandhq/band-python-kit
   DOCKERFILE: docker/band_python_kit/Dockerfile
 
 jobs:
@@ -132,9 +132,50 @@ jobs:
 
       - name: Install ORAS
         uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2
+        with:
+          version: 1.3.0
+
+      - name: Install uv for source eligibility
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Require a v3 release source and completed floating rollout
+        id: eligibility
+        env:
+          RELEASE_TAG: ${{ steps.readver.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.readver.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --depth=1 origin "refs/tags/$RELEASE_TAG"
+          git show FETCH_HEAD:docker/band_python_kit/spec.yaml > released-spec.yaml
+          source_v3="$(uv run --no-project --with pyyaml python -c 'import yaml; s=yaml.safe_load(open("released-spec.yaml")); print(str(s.get("schemaVersion")) == "3" and s.get("kind") == "workload")')"
+          eligible=false
+          if [ "$source_v3" = True ]; then
+            state="$(python3 scripts/registry-ref-state.py "$IMAGE_NAME:latest")"
+            if [ "$state" = exists ]; then
+              set +e
+              python3 scripts/validate-workload.py "$IMAGE_NAME:latest" --schema-only --release-version "$RELEASE_VERSION"
+              schema_status=$?
+              set -e
+              case "$schema_status" in
+                0)
+                  python3 scripts/validate-workload.py "$IMAGE_NAME:latest"
+                  python3 scripts/validate-workload.py "$HUB_IMAGE_NAME:latest"
+                  [ "$(oras resolve "$IMAGE_NAME:latest")" = "$(oras resolve "$HUB_IMAGE_NAME:latest")" ]
+                  eligible=true
+                  ;;
+                3) ;; # Legacy floating tags mean the first v3 rollout is still held.
+                *) exit "$schema_status" ;;
+              esac
+            fi
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          if [ "$eligible" != true ]; then
+            echo "::notice::ineligible: released source and accepted floating workloads must both be v3"
+          fi
 
       - name: Resolve the currently published tag and the next -rN suffix
         id: tags
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
         env:
           VERSION: ${{ steps.readver.outputs.version }}
         run: |
@@ -192,6 +233,7 @@ jobs:
 
       - name: Check whether the current tag is pullable
         id: published
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
         run: |
           # First scheduled run can predate the first publish; that is a normal
           # skip, distinct from a scan failure.
@@ -262,6 +304,10 @@ jobs:
           if [ "$published" != "true" ]; then
             rebuild="false"
             reason="skip: ${VERSION:-version} not yet published — initial publish belongs to the release workflow"
+          fi
+          if [ "${{ steps.eligibility.outputs.eligible }}" != true ]; then
+            rebuild=false
+            reason="ineligible: v3 release source and accepted floating rollout required"
           fi
           [ -n "$reason" ] || reason="no-change"
           echo "rebuild=${rebuild}" >> "$GITHUB_OUTPUT"

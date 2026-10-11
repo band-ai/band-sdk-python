@@ -1,50 +1,29 @@
-"""Self-registration demo: `band-kit provision`, end to end.
+"""Repository validation tool for self-registration with a v3 sbx workload.
 
-Demonstrates the self-registration flow with no pre-provisioned Band
-agent: registers a fresh agent on the host with only a user key, creates a
-real Docker Sandbox for it, attaches to actually launch the agent (the
-kit's `sandbox.entrypoint` only runs once something attaches — `sbx create`
-alone leaves it idle), sends it a message, checks the echo reply, then tears
-every provisioned resource back down.
+Run from the repository root with its dev environment and canonical .env.test:
+    uv run examples/sandbox/self-registration/demo.py --kit band-python-kit:local
 
-Like ``examples/sandbox/staging-smoke/probe.py``, this is not a regular
-customer-facing example: it drives a real ``sbx`` sandbox and needs a
-nested-virtualization-capable host, so it runs from a repo checkout against
-this repo's own dev venv (reusing the E2E baseline toolkit for room/message
-plumbing) rather than as a standalone PEP 723 script. Not run in CI.
-
-Prerequisites:
-    - Docker Sandboxes (`sbx`) installed and signed in (`sbx login`)
-    - The band-python-kit image available to the sandbox runtime: either a
-      published tag, or built + loaded locally (see the kit README's
-      "Developing the kit" section)
-    - `.env.test` at the repo root with BAND_API_KEY_USER (+ BAND_REST_URL /
-      BAND_WS_URL for a non-production deployment) — same convention every
-      other E2E/live tool in this repo uses
-
-Run with (from the repo root, dev venv):
-    uv run examples/sandbox/self-registration/demo.py
-    uv run examples/sandbox/self-registration/demo.py --kit /path/to/docker/band_python_kit
-
-Cleanup runs automatically (success or failure) via try/finally. If the
-process is killed outright (SIGKILL, host crash) that finally block never
-runs, leaving an orphaned sandbox/secret/agent behind under the random name
-printed in the "Run name" log line -- recover with:
-    uv run examples/sandbox/self-registration/demo.py --cleanup <that-name>
-
-The recovery agent lookup uses the Enterprise Human API. If it fails, the
-sandbox and secret are still removed; remove any orphaned agent in the Band UI.
+The owned PTY starts the foreground workload command. Known resource ids are
+persisted under .runs before later steps can fail; interrupted runs recover via
+    uv run examples/sandbox/self-registration/demo.py --cleanup <run-name>
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
+import re
 import subprocess
 import sys
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
+
+from band_rest.core.api_error import ApiError
+from dotenv import dotenv_values, load_dotenv
+from httpx import HTTPStatusError
 
 # tests.* is dev-only source, not part of the published band-sdk package, so
 # this (like examples/sandbox/staging-smoke/probe.py) runs from a repo
@@ -55,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from pydantic import ValidationError
 
 from band import LogSettings, LogStream
-from band.docker.provision import read_agent_id
+from band.docker.provision import DEFAULT_BAND_HOST, read_agent_id
 from tests.docker.test_kit_proxy_managed_live import (
     _deployment_hosts,
     _prepare_workspace,
@@ -63,6 +42,7 @@ from tests.docker.test_kit_proxy_managed_live import (
 from tests.docker.toolkit.sbx_cli import (
     allow_network_for_hosts,
     attached_run,
+    local_workload,
     remove_custom_secret_command,
     sandbox_name,
 )
@@ -70,20 +50,22 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import Replies, reply_capture
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager, user_rest_client
 from tests.e2e.baseline.toolkit.ws import user_ws_observer
-from tests.paths import KIT_DIR
+from tests.paths import ENV_TEST_FILE, EXAMPLES_ROOT, KIT_DIR
 
 logger = logging.getLogger(__name__)
 
 AGENT_DESCRIPTION = "examples/sandbox/self-registration demo agent."
-BAND_HOST_PATTERN = "**.band.ai"
+BAND_HOST_PATTERN = DEFAULT_BAND_HOST
+LEDGER_DIR = EXAMPLES_ROOT / "sandbox" / "self-registration" / ".runs"
+DEFAULT_WORKLOAD = "band-python-kit:local"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--kit",
-        default=str(KIT_DIR),
-        help=f"Kit reference for `sbx create --kit` (default: local checkout, {KIT_DIR})",
+        default=DEFAULT_WORKLOAD,
+        help=f"v3 workload reference (default: {DEFAULT_WORKLOAD})",
     )
     parser.add_argument(
         "--cleanup",
@@ -100,9 +82,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _require_settings() -> BaselineSettings:
+    load_dotenv(ENV_TEST_FILE, override=True)
     settings = BaselineSettings()
+    values = dotenv_values(ENV_TEST_FILE)
+    settings.credentials = settings.credentials.model_copy(
+        update={"api_key_user": values.get("BAND_API_KEY_USER") or ""}
+    )
+    settings.endpoints = settings.endpoints.model_copy(
+        update={
+            "rest_url": values.get("BAND_REST_URL")
+            or type(settings.endpoints).model_fields["rest_url"].default,
+            "ws_url": values.get("BAND_WS_URL")
+            or type(settings.endpoints).model_fields["ws_url"].default,
+        }
+    )
     if not settings.credentials.api_key_user:
-        raise SystemExit("BAND_API_KEY_USER is required (see .env.test)")
+        raise ValueError("BAND_API_KEY_USER is required (see .env.test)")
     return settings
 
 
@@ -128,6 +123,8 @@ def _band_kit_provision(
         AGENT_DESCRIPTION,
         "--workspace",
         str(workspace),
+        "--rest-url",
+        _require_settings().endpoints.rest_url,
     ]
     if agent_name:
         argv += ["--agent-name", agent_name]
@@ -168,55 +165,152 @@ async def _ping_and_await_echo(
         return await capture.wait_for_reply(mid, agent_id)
 
 
-def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> None:
-    """`sbx rm` + `sbx secret rm` for `name` -- shared by the happy-path
-    finally block and standalone `--cleanup`, so the two can't drift."""
-    subprocess.run(
-        ["sbx", "rm", "-f", name], capture_output=True, text=True, check=False
+def ledger_path(name: str) -> Path:
+    if not re.fullmatch(r"band-selfreg-demo-[A-Za-z0-9-]+", name):
+        raise ValueError("Cleanup requires the printed band-selfreg-demo run name")
+    return LEDGER_DIR / name
+
+
+def record_resource(name: str, kind: str, resource_id: str) -> None:
+    ledger = ledger_path(name)
+    ledger.mkdir(parents=True, exist_ok=True)
+    with (ledger / kind).open("a", encoding="utf-8") as records:
+        records.write(f"{resource_id}\n")
+
+
+def recorded_resources(name: str, kind: str) -> list[str]:
+    path = ledger_path(name) / kind
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
+    failed = False
+    probes = (
+        (["sbx", "ls", "-q"], ["sbx", "rm", "-f", name]),
+        (
+            ["sbx", "secret", "ls", "--sandbox", name, "--json"],
+            remove_custom_secret_command(sandbox=name),
+        ),
     )
-    subprocess.run(
-        remove_custom_secret_command(sandbox=name, host=host),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    for probe, removal in probes:
+        try:
+            result = subprocess.run(
+                probe, capture_output=True, text=True, check=False, timeout=60
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.exception("Could not inspect cleanup state: %s", " ".join(probe))
+            failed = True
+            continue
+        if result.returncode:
+            logger.error("Could not inspect cleanup state: %s", " ".join(probe))
+            failed = True
+            continue
+        if probe[1] == "ls":
+            present = name in result.stdout.splitlines()
+        else:
+            try:
+                secrets = json.loads(result.stdout)["custom_secrets"]
+                present = any(host in secret["targets"] for secret in secrets)
+            except (ValueError, KeyError, TypeError):
+                logger.exception("Invalid secret listing; retaining recovery ledger")
+                failed = True
+                continue
+        if present:
+            try:
+                removed = subprocess.run(
+                    removal, capture_output=True, text=True, check=False, timeout=60
+                )
+            except (OSError, subprocess.SubprocessError):
+                logger.exception("Cleanup command unavailable: %s", " ".join(removal))
+                failed = True
+                continue
+            if removed.returncode:
+                logger.error(
+                    "Cleanup command failed (exit %s): %s",
+                    removed.returncode,
+                    " ".join(removal),
+                )
+                failed = True
+    return not failed
 
 
 async def cleanup_by_name(name: str) -> None:
-    """Standalone recovery for a run whose finally block never got to run
-    (e.g. the process was killed). Removes the sandbox and its scoped secret,
-    and any agent registered under this run's display name if lookup succeeds.
-
-    Cannot recover the room: unlike the agent, it carries no name this demo
-    set, so there is nothing to search by. It's a harmless orphan (no plan
-    cap, no ongoing cost) -- delete it by hand from the Band UI if it matters.
-    """
-    settings = _require_settings()
+    record_resource(name, "sandbox", name)
+    try:
+        failed = not _teardown_sbx(name)
+    except (OSError, subprocess.SubprocessError):
+        logger.exception("Sandbox cleanup unavailable; continuing platform cleanup")
+        failed = True
+    try:
+        settings = _require_settings()
+    except ValueError as error:
+        raise RuntimeError(
+            f"Platform cleanup blocked; ledger retained at {ledger_path(name)}. Retry --cleanup {name} after restoring .env.test"
+        ) from error
     client = user_rest_client(settings)
     resource_manager = ResourceManager(
         user_client=client, settings=settings, run_id=name
     )
-
-    try:
-        agents = await client.human_api_agents.list_my_agents(page=1, page_size=100)
-    except ValidationError:
-        logger.exception(
-            "Invalid agent listing; continuing sandbox cleanup. Remove any orphaned agent manually"
+    agent_ids = recorded_resources(name, "agents")
+    if not agent_ids:
+        try:
+            response = await client.human_api_agents.list_my_agents(
+                name=f"Self-registration demo ({name})", page=1, page_size=100
+            )
+        except ValidationError:
+            logger.exception("Invalid agent listing; continuing sandbox cleanup")
+            failed = True
+        except Exception:
+            logger.exception("Could not list agents; continuing sandbox cleanup")
+            failed = True
+        else:
+            for agent in response.data or []:
+                if agent.name == f"Self-registration demo ({name})":
+                    record_resource(name, "agents", agent.id)
+                    agent_ids.append(agent.id)
+    for kind, ids, reap in (
+        ("rooms", recorded_resources(name, "rooms"), resource_manager.reap_room),
+        ("agents", agent_ids, resource_manager.reap_agent),
+    ):
+        unresolved: list[str] = []
+        for resource_id in ids:
+            try:
+                await reap(resource_id)
+            except (ApiError, HTTPStatusError) as error:
+                status = (
+                    error.status_code
+                    if isinstance(error, ApiError)
+                    else error.response.status_code
+                )
+                if status != 404:
+                    logger.exception("Could not remove %s %s", kind, resource_id)
+                    unresolved.append(resource_id)
+            except ValidationError:
+                logger.exception(
+                    "Invalid cleanup response for %s %s", kind, resource_id
+                )
+                unresolved.append(resource_id)
+            except Exception:
+                logger.exception("Could not remove %s %s", kind, resource_id)
+                unresolved.append(resource_id)
+        path = ledger_path(name) / kind
+        if unresolved:
+            path.write_text("\n".join(unresolved) + "\n", encoding="utf-8")
+            failed = True
+        else:
+            path.unlink(missing_ok=True)
+    if failed:
+        raise RuntimeError(
+            f"Cleanup incomplete; ledger retained at {ledger_path(name)}. Retry: uv run examples/sandbox/self-registration/demo.py --cleanup {name}"
         )
-    except Exception:
-        logger.exception(
-            "Could not list agents; continuing sandbox cleanup. Remove any orphaned agent manually"
-        )
-    else:
-        matches = [a for a in (agents.data or []) if name in (a.name or "")]
-        for agent in matches:
-            logger.info("Deleting orphaned agent %s (%s)", agent.id, agent.name)
-            await resource_manager.reap_agent(agent.id)
-        if not matches:
-            logger.info("No registered agent found matching %r", name)
-
-    _teardown_sbx(name)
-    logger.info("Sandbox and secret cleanup complete for %s", name)
+    ledger = ledger_path(name)
+    if ledger.exists():
+        for record in ledger.iterdir():
+            record.unlink()
+        ledger.rmdir()
+    logger.info(
+        "Cleanup complete: sandbox, scoped secret and recorded platform resources removed"
+    )
 
 
 async def run(kit: str) -> None:
@@ -224,6 +318,7 @@ async def run(kit: str) -> None:
     client = user_rest_client(settings)
 
     name = sandbox_name(prefix="band-selfreg-demo")
+    record_resource(name, "sandbox", name)
     resource_manager = ResourceManager(
         user_client=client, settings=settings, run_id=name
     )
@@ -236,11 +331,17 @@ async def run(kit: str) -> None:
     room_id: str | None = None
     agent_id: str | None = None
     try:
-        with tempfile.TemporaryDirectory(prefix="band-selfreg-demo-") as tmp_dir:
+        workload_context = (
+            local_workload(kit) if kit == DEFAULT_WORKLOAD else nullcontext(kit)
+        )
+        with (
+            tempfile.TemporaryDirectory(prefix="band-selfreg-demo-") as tmp_dir,
+            workload_context as workload,
+        ):
             workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
             hosts = _deployment_hosts(settings.endpoints)
 
-            with allow_network_for_hosts(hosts, kit=kit):
+            with allow_network_for_hosts(hosts, kit=KIT_DIR):
                 logger.info(
                     "Step 1/5: band-kit provision --create (registers + creates the sandbox)"
                 )
@@ -248,21 +349,24 @@ async def run(kit: str) -> None:
                     name=name,
                     workspace=workspace,
                     agent_name=agent_name,
-                    kit=kit,
+                    kit=str(workload),
                     create=True,
                 )
+                record_resource(name, "agents", agent_id)
                 assert read_agent_id(workspace) == agent_id
                 logger.info("Registered agent: %s", agent_id)
 
                 logger.info(
                     "Step 2/5: attaching to launch the agent "
-                    "(sandbox.entrypoint only runs once something attaches)"
+                    "(the workload command runs under its owned PTY)"
                 )
                 with attached_run(name):
                     logger.info("Step 3/5: creating room and adding the agent")
                     room_id = await resource_manager.provision_room(
-                        participants=[agent_id]
+                        title=f"Self-registration demo ({name})"
                     )
+                    record_resource(name, "rooms", room_id)
+                    await resource_manager.user_ops.add_participant(room_id, agent_id)
 
                     logger.info(
                         "Step 4/5: sending a room message and awaiting the echo reply"
@@ -290,12 +394,7 @@ async def run(kit: str) -> None:
         logger.info("Success: agent %s self-registered and round-tripped.", agent_id)
     finally:
         logger.info("Cleaning up...")
-        _teardown_sbx(name)
-        if room_id:
-            await resource_manager.reap_room(room_id)
-        if agent_id:
-            await resource_manager.reap_agent(agent_id)
-        logger.info("Cleanup complete: sandbox, secret, room, and agent all removed")
+        await cleanup_by_name(name)
 
 
 def main() -> None:
@@ -310,7 +409,7 @@ def main() -> None:
     settings.for_application().configure()
     try:
         asyncio.run(cleanup_by_name(args.cleanup) if args.cleanup else run(args.kit))
-    except (RuntimeError, SystemExit) as e:
+    except (RuntimeError, ValueError, SystemExit) as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
 

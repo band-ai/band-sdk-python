@@ -29,6 +29,7 @@ from typing import Final
 
 import yaml
 from band_rest import AsyncRestClient
+from band_rest.core.api_error import ApiError
 from band_rest.types import (
     AgentRegisterRequest,
     BulkDeletionItemStatus,
@@ -101,35 +102,18 @@ def make_client(settings: ProvisionSettings) -> AsyncRestClient:
     )
 
 
-async def sweep_stale(client: AsyncRestClient, spec: AgentSpec) -> None:
-    """Delete a prior demo agent of this name when listing is available.
-
-    Scoped to demo-owned agents via DEMO_MARKER so a user's real agent that
-    happens to share the display name is never touched.
-    """
-    try:
-        existing = await client.human_api_agents.list_my_agents(name=spec.name)
-    except ValidationError:
-        logger.exception("Invalid agent listing; continuing without stale-agent sweep")
-        return
-    except Exception:
-        logger.exception("Could not list agents; continuing without stale-agent sweep")
-        return
-    for old in existing.data:
-        if old.name == spec.name and (old.description or "").startswith(DEMO_MARKER):
-            await client.human_api_agents.delete_my_agent(old.id, force=True)
-            logger.info("Removed stale demo agent %s (%s)", spec.name, old.id)
-
-
 async def create(client: AsyncRestClient) -> None:
+    for artifact in (CONFIG_PATH, AGENTS_ENV, AGENT_IDS, ROOM_IDS):
+        if artifact.exists():
+            raise ValueError(
+                f"{artifact} already exists; run launch.sh down before provisioning"
+            )
     DEMO_DIR.mkdir(exist_ok=True)
     keyed_config: dict[str, dict[str, str]] = {}
     env_lines: list[str] = []
-    ids: list[str] = []
 
     try:
         for spec in SPECS:
-            await sweep_stale(client, spec)
             resp = await client.human_api_agents.register_my_agent(
                 agent=AgentRegisterRequest(
                     name=spec.name, description=f"{DEMO_MARKER} {spec.description}"
@@ -141,10 +125,10 @@ async def create(client: AsyncRestClient) -> None:
                 "Registered %s (%s) id=%s", spec.name, spec.config_key, agent.id
             )
 
-            ids.append(agent.id)
             # Persist the id as each agent is created so a mid-loop failure still
             # leaves a record for teardown (no leaked agents).
-            AGENT_IDS.write_text("\n".join(ids) + "\n", encoding="utf-8")
+            with AGENT_IDS.open("a", encoding="utf-8") as ledger:
+                ledger.write(f"{agent.id}\n")
 
             keyed_config[spec.config_key] = {"agent_id": agent.id, "api_key": api_key}
             # shlex.quote so a display name with spaces/parens ("Maya (PM)")
@@ -155,11 +139,9 @@ async def create(client: AsyncRestClient) -> None:
                 f"{spec.env_prefix}_NAME={shlex.quote(agent.name)}",
             ]
     except Exception:
-        # Roll back everything created so far so a partial failure leaks nothing.
-        for agent_id in ids:
-            await client.human_api_agents.delete_my_agent(agent_id, force=True)
-        AGENT_IDS.unlink(missing_ok=True)
-        logger.error("Provisioning failed; rolled back %d created agent(s)", len(ids))
+        logger.exception(
+            "Provisioning failed; created ids remain in %s for cleanup", AGENT_IDS
+        )
         raise
 
     CONFIG_PATH.write_text(
@@ -187,8 +169,12 @@ async def delete_rooms(client: AsyncRestClient) -> None:
         while job.status not in FINISHED_JOB_STATUSES:
             await asyncio.sleep(ROOM_DELETION_POLL_S)
             job = (await deletions.show_my_bulk_deletion(job.id)).data
-    left = [item.id for item in job.results if item.status != DELETED_ITEM_STATUS]
+    results = {item.id: item.status for item in job.results}
+    left = [
+        room_id for room_id in room_ids if results.get(room_id) != DELETED_ITEM_STATUS
+    ]
     if left:
+        ROOM_IDS.write_text("\n".join(left) + "\n", encoding="utf-8")
         raise RuntimeError(f"Could not delete rooms {left}; rerun to retry")
     logger.info("Deleted rooms %s", ", ".join(room_ids))
     ROOM_IDS.unlink()
@@ -198,9 +184,25 @@ async def delete(client: AsyncRestClient) -> None:
     if not AGENT_IDS.exists():
         logger.info("No %s — nothing to delete", AGENT_IDS)
         return
+    unresolved: list[str] = []
     for agent_id in AGENT_IDS.read_text(encoding="utf-8").split():
-        await client.human_api_agents.delete_my_agent(agent_id, force=True)
-        logger.info("Deleted agent %s", agent_id)
+        try:
+            await client.human_api_agents.delete_my_agent(agent_id, force=True)
+        except ApiError as error:
+            if error.status_code != 404:
+                logger.exception("Could not delete agent %s", agent_id)
+                unresolved.append(agent_id)
+        except ValidationError:
+            logger.exception("Invalid deletion response for agent %s", agent_id)
+            unresolved.append(agent_id)
+        except Exception:
+            logger.exception("Could not delete agent %s", agent_id)
+            unresolved.append(agent_id)
+        else:
+            logger.info("Deleted agent %s", agent_id)
+    if unresolved:
+        AGENT_IDS.write_text("\n".join(unresolved) + "\n", encoding="utf-8")
+        raise RuntimeError(f"Cleanup incomplete; retry ids in {AGENT_IDS}")
     for artifact in (AGENT_IDS, AGENTS_ENV, CONFIG_PATH):
         artifact.unlink(missing_ok=True)
 

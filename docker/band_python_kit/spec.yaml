@@ -1,69 +1,29 @@
-# schemaVersion "2" is Docker Sandboxes' current kit-spec contract (the
-# fields below), enforced by `sbx` v0.42.1+; the OCI v2 kit artifact format
-# (tar+gzip layer, spec in the manifest config blob) is the same packaging
-# `sbx kit push` has used since v0.35.0.
-schemaVersion: "2"
-kind: sandbox
-name: band-python-kit
+# syntax=docker/sandbox-kit:3@sha256:e6a397771e865625047cf84256a914c7974b3e749d858259b5bc9c653ddb6f0d
+schemaVersion: "3"
+kind: workload
 displayName: Band Python Agent
-description: Run a workspace Python agent on Band inside a Docker Sandbox.
+description: Run a locked Python agent workspace on Band inside a Docker Sandbox.
+sourceUrl: https://github.com/band-ai/band-sdk-python
+licenses: [MIT]
+dockerfile: Dockerfile
 
-sandbox:
-  image: band-python-kit:local
-  # A self-contained argv, not just the launcher: `sbx run` execs this
-  # directly, bypassing the image's own Dockerfile ENTRYPOINT, so the chain
-  # must still open with band-entrypoint.sh (proxy-CA install as root, then a
-  # setpriv drop to uid 1000) before it reaches the launcher.
-  #
-  # This only runs once something attaches (`sbx run --name <name>`) — `sbx
-  # create` alone leaves the sandbox idle. `sbx` v0.43.0 auto-stops an idle,
-  # unattached sandbox within ~60-90s regardless of what's running inside it —
-  # a backgrounded launcher does not count as activity — so keeping this
-  # agent up requires a host-side process holding that attach open with a
-  # real pty (e.g. a systemd/launchd unit or tmux session running `sbx run`)
-  # — see the kit README's "How the launch works" section.
-  entrypoint:
-    - /usr/local/bin/band-entrypoint.sh
-    - /opt/band/venv/bin/python
-    - -m
-    - band.docker.launcher
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - app.band.ai
+          - pypi.org
+          - files.pythonhosted.org
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      content: |
+        This workspace contains a Python agent launched by the Band Sandbox kit.
+        Agent configuration is in band.yaml.
+        Dependency changes must update both pyproject.toml and uv.lock.
+        Add network access only for services this agent actually uses.
+        Never print or commit configured credentials.
 
-agentInstructions:
-  filename: AGENTS.md
-  content: |
-    This workspace contains a Python agent launched by the Band Sandbox kit.
-    Agent configuration is in band.yaml.
-    Dependency changes must update both pyproject.toml and uv.lock.
-    Add network access only for the LLM provider, repository host, or service
-    this agent actually uses; see the kit README's "Network access" section.
-    Never print or commit configured credentials.
-
-# The immutable baseline: Band Cloud and locked dependency sync. `uv sync
-# --locked` still downloads the already-selected package artifacts, so both
-# PyPI hosts are needed on a fresh sandbox. LLM providers, source hosts, and
-# non-production Band deployments are opt-in per sandbox with
-# `sbx policy allow network --sandbox <name> <host>`; see the kit README.
-permissions:
-  network:
-    allow:
-      - app.band.ai
-      - pypi.org
-      - files.pythonhosted.org
-
-# Credential injection is NOT declared here — it is provisioned host-side, per
-# deployment, so the operator controls which Band host is targeted (prod
-# `app.band.ai`, staging, self-hosted, …) rather than the
-# kit baking one in:
-#
-#   sbx secret set-custom -g --host '**.band.ai' \
-#     --env BAND_API_KEY --placeholder proxy-managed --value <band-key>
-#
-# The VM then holds only the sentinel; the proxy supplies the real key on the
-# wire (verified: the Band host presents an "O=Docker Sandboxes" MITM cert). A
-# `**.band.ai` wildcard follows whichever Band deployment `BAND_REST_URL` points
-# at. LLM provider keys are built-in sbx services — `sbx secret set -g <provider>`
-# (anthropic, openai, …). See the README "Credential custody" section.
-#
-# A kit-declared `credentials[].apiKey.inject[]` block crashes `sbx create` on
-# sbx 0.35.0 despite passing `sbx kit validate` (tracked upstream); host-side
-# `set-custom` is the working, controllable path.
+# Credentials are scoped host-side before creation; see README.md.
+# Keep provider and deployment-specific hosts out of the baseline policy.

@@ -1,6 +1,6 @@
 """Never-in-VM proof: proxy-managed custody keeps the real Band key off the sandbox.
 
-Under proxy-managed custody (`sbx create --kit` + host-side `sbx secret
+Under proxy-managed custody (`sbx create WORKLOAD WORKSPACE` + host-side `sbx secret
 set-custom`), with only the sentinel in the VM, this checks:
 
 1. **injection path** — the Band host's cert, *through the sandbox proxy*, is the
@@ -21,8 +21,8 @@ target is granted per run via `sbx policy allow network`. Gated behind BOTH
 ``sandbox`` (SANDBOX_TESTS_ENABLED=true) and ``e2e`` (E2E_TESTS_ENABLED=true);
 skipped on every ordinary/CI run.
 
-Status: all three checks are implemented against a self-provisioned secret;
-running them live against staging is the remaining step.
+Completed turns, sustained PTY ownership and a controlled restart are checked
+against a self-provisioned identity.
 """
 
 from __future__ import annotations
@@ -31,12 +31,14 @@ import shutil
 from collections.abc import AsyncIterator, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from time import monotonic
 from urllib.parse import urlsplit
 
 import pytest
 import yaml
 
 from band.credentials import PROXY_MANAGED_API_KEY
+from tests.docker.toolkit.docker_cli import Image
 from tests.docker.toolkit.sbx_cli import (
     CREATE_TIMEOUT_S,
     PROXY_CA_MARKER,
@@ -44,6 +46,7 @@ from tests.docker.toolkit.sbx_cli import (
     allow_network,
     custom_secret,
     kit_baseline_hosts,
+    local_workload,
     sandbox_name,
     sbx_available,
 )
@@ -69,10 +72,10 @@ pytestmark = [
 
 
 @pytest.fixture
-def band_host() -> str:
+def band_host(baseline_settings: BaselineSettings) -> str:
     """The Band host the agent is pointed at (from settings) — the injection and
     absence checks both target exactly this host."""
-    return urlsplit(BaselineSettings().endpoints.rest_url).hostname or "app.band.ai"
+    return urlsplit(baseline_settings.endpoints.rest_url).hostname or "app.band.ai"
 
 
 def _deployment_hosts(endpoints: BandEndpoints) -> list[str]:
@@ -88,7 +91,12 @@ def _deployment_hosts(endpoints: BandEndpoints) -> list[str]:
 
 @contextmanager
 def proxy_managed_sandbox(
-    *, workspace: Path, band_key: str, endpoints: BandEndpoints
+    *,
+    workspace: Path,
+    band_key: str,
+    endpoints: BandEndpoints,
+    image: Image,
+    attached: bool = True,
 ) -> Iterator[Sandbox]:
     """A proxy-managed sandbox wired to reach ``endpoints``, torn down on exit.
 
@@ -114,13 +122,19 @@ def proxy_managed_sandbox(
                 placeholder=PROXY_MANAGED_API_KEY,
             )
         )
+        kit = stack.enter_context(local_workload(image.tag))
         yield stack.enter_context(
-            Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace)
+            Sandbox.create(name=name, kit=kit, workspace=workspace, attached=attached)
         )
 
 
 @pytest.fixture
-def provisioned_sandbox(tmp_path: Path) -> Iterator[tuple[Sandbox, str]]:
+def provisioned_sandbox(
+    tmp_path: Path,
+    band_python_kit_image: Image,
+    baseline_settings: BaselineSettings,
+    request: pytest.FixtureRequest,
+) -> Iterator[tuple[Sandbox, str]]:
     """A sandbox under proxy-managed custody, plus the real key it was given.
 
     The fixture provisions the injection **itself** with the real Band key, so
@@ -133,15 +147,19 @@ def provisioned_sandbox(tmp_path: Path) -> Iterator[tuple[Sandbox, str]]:
     Yields ``(sandbox, real_key)``.
     """
     if not sbx_available():
-        pytest.skip("sbx CLI not on PATH")
-    settings = BaselineSettings()
+        pytest.fail("live acceptance blocked: sbx CLI not on PATH")
+    settings = baseline_settings
     real_key = settings.credentials.api_key_user
     if not real_key or real_key == PROXY_MANAGED_API_KEY:
-        pytest.skip("a real Band key (BAND_API_KEY_USER) is required")
+        pytest.fail("live acceptance blocked: real BAND_API_KEY_USER is required")
 
     workspace = _prepare_workspace(tmp_path, endpoints=settings.endpoints)
     with proxy_managed_sandbox(
-        workspace=workspace, band_key=real_key, endpoints=settings.endpoints
+        workspace=workspace,
+        band_key=real_key,
+        endpoints=settings.endpoints,
+        image=band_python_kit_image,
+        attached=getattr(request, "param", True),
     ) as sandbox:
         yield sandbox, real_key
 
@@ -160,6 +178,23 @@ def test_band_host_rides_the_injection_path(
     assert "cert-probe-error" not in cert, cert
     assert "issuer:" in cert, cert
     assert PROXY_CA_MARKER in cert, cert
+
+
+@pytest.mark.parametrize("provisioned_sandbox", [False], indirect=True)
+def test_workload_identity_and_network_policy(
+    provisioned_sandbox: tuple[Sandbox, str],
+) -> None:
+    """Before foreground startup, VM exec uses agent and enforces declared hosts."""
+    sandbox, _ = provisioned_sandbox
+    assert sandbox.exec("id -u") == "1000"
+    assert (
+        sandbox.exec("curl -sS -o /dev/null -w '%{http_code}' https://pypi.org/simple/")
+        == "200"
+    )
+    assert (
+        sandbox.exec("curl -sS -o /dev/null -w '%{http_code}' https://example.com")
+        == "403"
+    )
 
 
 def test_real_band_key_never_enters_the_vm(
@@ -220,7 +255,8 @@ async def round_trip_sandbox(
     tmp_path: Path,
     resource_manager: ResourceManager,
     baseline_settings: BaselineSettings,
-) -> AsyncIterator[tuple[ProvisionedAgent, str]]:
+    band_python_kit_image: Image,
+) -> AsyncIterator[tuple[ProvisionedAgent, str, Sandbox]]:
     """A live echo agent inside a proxy-managed sandbox, plus its room.
 
     Provisions a real agent, bakes its id + the settings endpoints into a
@@ -231,7 +267,7 @@ async def round_trip_sandbox(
     wire. Yields ``(agent, room_id)`` to drive one turn against.
     """
     if not sbx_available():
-        pytest.skip("sbx CLI not on PATH")
+        pytest.fail("live acceptance blocked: sbx CLI not on PATH")
 
     agent = await resource_manager.provision_agent("nevervm-roundtrip")
     room_id = await resource_manager.provision_room(participants=[agent.id])
@@ -242,32 +278,47 @@ async def round_trip_sandbox(
         workspace=workspace,
         band_key=agent.api_key,
         endpoints=baseline_settings.endpoints,
-    ):
-        yield agent, room_id
+        image=band_python_kit_image,
+        attached=False,
+    ) as sandbox:
+        yield agent, room_id, sandbox
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_agent_connects_and_round_trips_under_injection(
-    round_trip_sandbox: tuple[ProvisionedAgent, str],
+async def test_owned_session_sustains_completed_turns_and_restarts(
+    round_trip_sandbox: tuple[ProvisionedAgent, str, Sandbox],
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """The agent connects (REST + WS) and round-trips a room message — the only
-    check that proves the proxy injected a *working* key (authentication), not
-    just that the injection path is present.
+    """Completed turns survive the idle window under one owner and a restart."""
+    agent, room_id, sandbox = round_trip_sandbox
 
-    With only the sentinel in its VM env, a reply can come back solely because
-    the proxy replaced that sentinel with a real, valid key on both legs — REST
-    (``X-API-Key``) and the WS upgrade (the platform prefers the injected
-    ``x-api-key`` header over the sentinel-carrying query).
-    """
-    agent, room_id = round_trip_sandbox
+    async def completed_echo(message: str) -> None:
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id, message, mention_id=agent.id, mention_name=agent.name
+            )
+            replies = await capture.wait_for_reply(mid, agent.id)
+        replies.assert_contains_any(["echo:"])
+        replies.assert_contains_any([message])
 
-    async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
-            room_id, "ping", mention_id=agent.id, mention_name=agent.name
+    with sandbox.owned_run():
+        assert sandbox.exec("id -u") == "1000"
+        assert (
+            sandbox.exec(
+                "curl -sS -o /dev/null -w '%{http_code}' https://pypi.org/simple/"
+            )
+            == "200"
         )
-        replies = await capture.wait_for_reply(mid, agent.id)
-
-    replies.assert_contains_any(["echo:"])
-    replies.assert_contains_any(["ping"])
+        assert (
+            sandbox.exec("curl -sS -o /dev/null -w '%{http_code}' https://example.com")
+            == "403"
+        )
+        deadline = monotonic() + 100
+        turn = 0
+        while monotonic() < deadline:
+            turn += 1
+            await completed_echo(f"owned-session-{turn}")
+    sandbox.stop()
+    with sandbox.owned_run():
+        await completed_echo("after-restart")

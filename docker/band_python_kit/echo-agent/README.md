@@ -1,110 +1,156 @@
 # Echo-agent starter workspace
 
-A complete, runnable starter workspace for the
-[Band Python kit](../README.md): an echo agent you can copy and grow into a
-real one. Getting the published kit and creating the sandbox is the kit
-README's quickstart; this page covers the workspace itself.
+A complete `uv` workspace for the [Band Python workload](../README.md).
+Follow its [published echo quickstart](../README.md#published-echo-quickstart)
+for ordered host setup, scoped credentials, creation, one owned PTY, a visible
+echo reply and cleanup. The echo agent needs no LLM key or paid inference.
 
-## Files
+## Files and identity
 
-| File | What it is |
+| File | Purpose |
 |---|---|
-| `band.yaml` | Agent identity, endpoints, credentials opt-in, runtime paths — annotated, strict (unknown fields fail the launch) |
-| `main.py` | The entrypoint the launcher execs — here an echo agent with graceful shutdown |
-| `pyproject.toml` + `uv.lock` | A plain `uv` project. The committed lock is required — the launcher never resolves at startup |
-| `secrets.env.example` | Template for the opt-in credential file |
-| `.gitignore` | Keeps `.band/` (secrets) and stray venvs out of Git |
+| `band.yaml` | Schema 1 identity, endpoints, credential mode and runtime paths |
+| `main.py` | Echo adapter and shutdown handling for delivered signals |
+| `pyproject.toml`, `uv.lock` | Customer dependencies; the committed lock is required |
+| `secrets.env.example` | Optional plaintext credential template |
+| `.gitignore` | Keeps `.band/` and virtualenvs out of Git |
 
-## Set your identity
-
-Put your registered agent's id in `band.yaml` (`agent.id`), or export
-`BAND_AGENT_ID`. Endpoints default to production; the annotated `band.yaml`
-shows how to target another Band deployment.
-
-No agent registered yet? `band-kit provision` registers one and fills
-`agent.id` for you — see the kit README's
-[Self-registration](../README.md#self-registration-no-pre-provisioned-agent).
+Set `agent.id` in `band.yaml` to a registered agent id. The optional
+[host provisioning route](../README.md#self-registration-no-pre-provisioned-agent)
+can register an agent and fill this field using an entitled user key.
+Unknown configuration fields fail startup. The mounted workspace can be at
+any host path; do not replace the sandbox-owned runtime paths with mount paths.
 
 ## Credentials
 
-**Preferred — proxy-managed (real keys never enter the VM).** `band.yaml`
-ships with `credentials.source: proxy-managed`. Store your keys on the host and
-a trusted proxy injects them; the sandbox sees only a sentinel. See the kit
-README's [Credential custody](../README.md#credential-custody):
+The default `credentials.source: proxy-managed` uses a host-side secret and a
+nonsecret sentinel in the VM. Follow the canonical
+[credential custody instructions](../README.md#credential-custody), including
+stdin transfer, unique ownership and secret-before-create ordering. No global
+provider binding is assumed for this v3 workload.
 
-```bash
-# LLM provider (built-in sbx services — pick the one your agent uses):
-sbx secret set -g anthropic          # or openai, google, groq, mistral, …
-# Band key (wildcard follows whichever Band host BAND_REST_URL points at).
-# Pass --value from an exported var so the key isn't a literal in shell history:
-export BAND_API_KEY=<your-band-key>
-sbx secret set-custom -g --host '**.band.ai' \
-  --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
-```
-
-**Fallback — plaintext env file (laptop-equivalent, less secure).** The keys
-live in both your workspace and the sandbox VM, and the launcher **warns at
-startup**. To opt in, switch `band.yaml`'s `credentials` block to the
-`workspace-env-file` source (shown there), then:
+For the opt-in plaintext fallback, change the credential block as annotated
+in `band.yaml`, then create the file:
 
 ```bash
 mkdir -p .band
 cp secrets.env.example .band/secrets.env
-chmod 600 .band/secrets.env    # the launcher rejects wider permissions
+chmod 600 .band/secrets.env
 ```
 
-Only the documented names in the template are accepted; the launcher enforces
-the guardrails (gitignored, never Git-tracked, owner-only, no symlinks). Values
-already in the environment win; the file only fills gaps. Never commit `.band/`.
+This puts real keys in the workspace and VM and produces a launcher warning.
+The launcher requires the file to be gitignored, never Git-tracked, owner-only
+and not a symlink. Only documented names are accepted; existing environment
+values win. Never commit `.band/`.
 
-## Make it yours
+## Optional Anthropic conversion
 
-`main.py`'s `EchoAdapter` echoes every message. Swap it for any
-`band.adapters.*` framework adapter (LangGraph, Anthropic, CrewAI, ...), add
-the matching `band-sdk` extra to `pyproject.toml`, and refresh the lock with
-`uv lock`.
+This route uses paid provider inference and needs your own Anthropic API key
+and `uv` installed on the host to update the customer lock.
+It is an acceptance recipe: verify a completed model reply before considering
+it successful. Missing provider credentials, entitlement or quota block that
+check. Keep the same `VERSION`, `SANDBOX`, `WORKSPACE`, `WORKLOAD` and
+`BAND_SECRET_HOST` variables from the quickstart.
 
-The whole change is three files. For Anthropic:
+Stop the sandbox and close its old owned PTY as documented in the quickstart.
+In `$WORKSPACE/pyproject.toml`, change only the SDK extra; retain the actual
+starter SDK floor and settings requirement:
 
 ```diff
- # pyproject.toml — add the framework extra
--dependencies = ["band-sdk>=1.1.0", "pydantic-settings>=2.0.0"]
-+dependencies = ["band-sdk[anthropic]>=1.1.0", "pydantic-settings>=2.0.0"]
+-dependencies = ["band-sdk>=1.4.2", "pydantic-settings>=2.15.0"]
++dependencies = ["band-sdk[anthropic]>=1.4.2", "pydantic-settings>=2.15.0"]
 ```
 
-```diff
- # main.py — swap the adapter (the EchoAdapter class and its imports can go)
--from band.core.simple_adapter import SimpleAdapter
-+from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
- ...
-     agent = Agent.create(
--        adapter=EchoAdapter(),
-+        adapter=AnthropicAdapter(
-+            AnthropicAdapterConfig(system_prompt="You are a helpful Band agent.")
-+        ),
+Replace `main.py` with the complete application below. `custom_section` retains
+the adapter's rendered Band instructions; an explicit `system_prompt` would
+replace them. The settings, identity/endpoints and graceful handling of delivered
+signals remain part of the application:
+
+```python notest
+from __future__ import annotations
+
+import asyncio
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band import Agent
+from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
+from band.runtime.shutdown import run_with_graceful_shutdown
+
+
+class AgentSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="BAND_",
+        extra="ignore",
+        case_sensitive=False,
+        env_ignore_empty=True,
+    )
+    agent_id: str
+    api_key: str
+    ws_url: str
+    rest_url: str
+
+
+async def main() -> None:
+    settings = AgentSettings()
+    agent = Agent.create(
+        adapter=AnthropicAdapter(
+            AnthropicAdapterConfig(custom_section="Reply briefly and clearly.")
+        ),
+        agent_id=settings.agent_id,
+        api_key=settings.api_key,
+        ws_url=settings.ws_url,
+        rest_url=settings.rest_url,
+    )
+    await run_with_graceful_shutdown(agent)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
+
+Refresh the actual customer lock on the host. Remove the stopped sandbox but
+retain its owned Band secret. Store the provider secret **before recreating**
+so `ANTHROPIC_API_KEY` is available at launch. The `sk-ant-` placeholder is a
+nonsecret provider-compatible sentinel, not a real key:
 
 ```bash
-# provide the backend key the adapter reads (proxy-managed — never in the VM)
-sbx secret set -g anthropic
+(cd "$WORKSPACE" && uv lock)
+sbx rm "$SANDBOX"
+sbx secret ls --sandbox "$SANDBOX"
+# Refuse an existing Anthropic secret unless it belongs to this run.
+read -r -s -p 'Anthropic API key: ' ANTHROPIC_API_KEY; echo
+printf '%s' "$ANTHROPIC_API_KEY" | sbx secret set-custom \
+  --sandbox "$SANDBOX" --host api.anthropic.com \
+  --env ANTHROPIC_API_KEY --placeholder sk-ant-proxy-managed
+unset ANTHROPIC_API_KEY
+sbx create --name "$SANDBOX" "$WORKLOAD" "$WORKSPACE"
+sbx policy allow network --sandbox "$SANDBOX" api.anthropic.com
+# Reapply any custom Band deployment host grant before starting.
+tmux new-session -s "$SANDBOX" "sbx run --name '$SANDBOX'"
 ```
 
-Then `uv lock` and restart the sandbox. Every framework follows the same
-shape: the extra in `pyproject.toml`, the adapter in `main.py`, and its
-provider key stored with `sbx secret set -g <provider>` (or, on the fallback
-tier, in `.band/secrets.env`).
+Watch the owned pane for successful locked dependency sync and startup. In the
+Band room mention the agent with `Explain what a Docker sandbox does in one
+sentence.` Verify a completed turn and a model-generated answer rather than
+an `echo:` response. Inspect `sbx policy log "$SANDBOX"` if startup or provider
+calls fail; do not widen the policy to all hosts.
 
-Workspace edits apply live (the workspace is a mount); dependency changes
-take effect at the next sandbox restart, when the launcher re-syncs the
-lock. Kit-level changes need a recreate — see the
-[kit README](../README.md#network-access).
+Cleanup the provider secret independently, in addition to the quickstart's
+sandbox, Band secret and owned UI resources:
+
+```bash
+sbx secret rm --placeholder sk-ant-proxy-managed --sandbox "$SANDBOX" -f
+sbx secret ls --sandbox "$SANDBOX"
+```
+
+Workspace and dependency edits require a launcher restart; changes to the
+workload or injected secret environment require removal and recreation.
 
 ## Start from a repository
 
-Instead of shipping the project in the workspace, the launcher can clone
-it at startup: keep only `band.yaml` (and `.band/secrets.env`) at the
-workspace root, set `project.path` to a subdirectory (e.g. `app`), and
-uncomment the annotated `repo:` block in `band.yaml` with your HTTPS
-repository URL. The clone must contain the usual project shape
-(`main.py`, `pyproject.toml`, committed `uv.lock`). On restart the
-existing checkout is validated and reused, never re-cloned.
+The launcher can clone a project at startup. Keep `band.yaml` at the workspace
+root, set `project.path` to a subdirectory such as `app`, and uncomment its
+annotated HTTPS `repo` block. The clone must contain `main.py`,
+`pyproject.toml` and committed `uv.lock`. Grant the repository host before
+launch. On restart, the existing checkout is validated and reused.

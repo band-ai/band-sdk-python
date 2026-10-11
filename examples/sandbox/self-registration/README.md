@@ -1,59 +1,58 @@
-# Self-registration demo
+# Self-registration validation demo
 
-Runs the self-registration flow end to end against a real Band
-deployment: no pre-provisioned agent, no manually copied id/key. One script
-proves the whole chain — `band-kit provision` registers a fresh agent on the
-host, boots it into a real Docker Sandbox, a room message round-trips through
-it, and a repeat `provision` call proves it never duplicates the
-registration. Everything it creates is torn down again before it exits.
+This repository development tool registers a fresh agent, creates a v3 workload
+sandbox, owns one foreground PTY, checks a completed `echo:` reply and repeats
+provisioning to verify that it returns the same agent id. It uses the baseline
+E2E toolkit; it is not part of the customer starter or installed SDK.
 
-This is a dev/validation tool, not a customer-facing example — like
-[`../staging-smoke/`](../staging-smoke/), it drives a real `sbx` sandbox and
-needs a nested-virtualization-capable host, so it isn't run in CI.
+Run on a supported Docker Sandboxes host with `sbx` 0.47.0 or newer, Docker,
+Buildx and `uv`. Sign in with `sbx login`; initialize policy if needed with
+`sbx policy init balanced`. An entitled Band user key is required. Put
+`BAND_API_KEY_USER`, `BAND_REST_URL` and `BAND_WS_URL` in repository-root
+`.env.test`. The script loads this file over inherited Band variables. An
+entitlement/provisioning failure blocks validation and may also block remote
+cleanup; it is not a successful smoke test.
 
-## Prerequisites
-
-- [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`) installed
-  and signed in: `sbx login`
-- The `band-python-kit` image available to the sandbox runtime — either a
-  published tag, or built and loaded locally (see the [kit README's
-  "Developing the kit"](../../../docker/band_python_kit/README.md#developing-the-kit))
-- `.env.test` at the repo root with `BAND_API_KEY_USER` (plus
-  `BAND_REST_URL`/`BAND_WS_URL` for a non-production deployment) — the same
-  convention every other E2E/live tool in this repo uses
-- A Band Enterprise plan for the Human API calls used by this demo
-- This repo's dev venv (`uv sync --extra dev`) — `demo.py` reuses the E2E
-  baseline toolkit, which isn't part of the published `band-sdk` package
-
-## Run it
+From the repository root:
 
 ```bash
-# Against the local kit checkout (default):
-uv run examples/sandbox/self-registration/demo.py
+uv sync --extra dev
+# Build the local v3 workload, including its descriptor metadata:
+docker buildx build -f docker/band_python_kit/spec.yaml --target runtime \
+  --load -t band-python-kit:local .
+docker save band-python-kit:local | sbx template load /dev/stdin
+uv run examples/sandbox/self-registration/demo.py --kit band-python-kit:local
+```
 
-# Against a published kit tag instead:
+After the first v3 SDK release has passed registry acceptance, choose its
+immutable version once and run the same scenario against the published workload:
+
+```bash
+SDK_VERSION=<released-v3-SDK-version>
 uv run examples/sandbox/self-registration/demo.py \
-  --kit docker.io/bandhq/band-python-kit:<X.Y.Z>
+  --kit "docker.io/bandhq/band-python-kit:$SDK_VERSION"
 ```
 
-Prints each step as it happens, then `Success: agent <id> ...` on completion.
-Cleanup (sandbox, injected secret, room, agent) runs automatically whether
-the run succeeds or fails.
+Expect a `Run name: band-selfreg-demo-...` log, a reply containing `echo:`,
+`Confirmed idempotent`, then confirmed cleanup. `sbx create` alone does not run
+the agent; the script retains one attached `sbx run` PTY throughout the scenario.
 
-## Recovering from an interrupted run
+## Cleanup and interrupted-run recovery
 
-The automatic cleanup is a `try`/`finally` — it doesn't run if the process is
-killed outright (SIGKILL, host crash). That leaves an orphaned
-sandbox/secret/agent behind under the random name the run printed
-(`Run name: band-selfreg-demo-...`). Recover with:
+The script records the run name and each known agent/room id immediately in
+`examples/sandbox/self-registration/.runs/<run-name>/`. Cleanup attempts local
+sandbox/secrets, rooms and agents independently. A failed cleanup returns a
+nonzero exit code, retains unresolved ids and prints this recovery command:
 
 ```bash
-uv run examples/sandbox/self-registration/demo.py --cleanup band-selfreg-demo-<the-name>
+uv run examples/sandbox/self-registration/demo.py \
+  --cleanup band-selfreg-demo-<printed-suffix>
 ```
 
-This removes the sandbox and its scoped secret, then looks up and deletes any
-agent registered under that run's display name. Agent listing uses the
-Enterprise Human API. If the lookup fails, the script logs the error and still
-removes the sandbox and secret; delete any orphaned agent from the Band UI.
-It cannot recover the room (nothing to search it by) — that's a harmless
-orphan with no plan-cap cost; delete it from the Band UI if it matters.
+Use it after interruption or a host crash, once credentials/access are restored.
+It also looks up the exact run display name if provisioning was interrupted
+before the agent id was returned. Keep the ledger until cleanup succeeds. For
+older runs without a room ledger, inspect and remove their room manually in the
+Band UI. Removing a sandbox does not delete its host secret or Band resources.
+Never remove a pre-existing agent or room merely because it appeared in a failed
+validation run.

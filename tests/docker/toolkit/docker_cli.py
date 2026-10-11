@@ -9,17 +9,23 @@ against any other image in docker/ can reuse Image/Container as-is.
 
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
+import tarfile
+import tempfile
+import tomllib
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from tests.loaders import load_script_module
 from tests.paths import KIT_DIR, REPO_ROOT
 
-BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "Dockerfile"
+BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "spec.yaml"
 
 # Image.build()'s own subprocess timeout, and the ceiling any test using it
 # needs to add into its own @pytest.mark.timeout on top of the rest of its
@@ -46,10 +52,22 @@ class Image:
         *,
         build_args: dict[str, str] | None = None,
         tag_prefix: str = "pytest-docker",
+        target: str | None = None,
     ) -> Iterator[Image]:
         """Build ``dockerfile`` against the repo root; yield the image, then remove it."""
         tag = f"{tag_prefix}:{uuid.uuid4().hex[:12]}"
-        command = ["docker", "build", "-f", str(dockerfile), "-t", tag]
+        command = [
+            "docker",
+            "buildx",
+            "build",
+            "--load",
+            "-f",
+            str(dockerfile),
+            "-t",
+            tag,
+        ]
+        if target:
+            command += ["--target", target]
         for key, value in (build_args or {}).items():
             command += ["--build-arg", f"{key}={value}"]
         command.append(str(REPO_ROOT))
@@ -62,6 +80,97 @@ class Image:
             subprocess.run(
                 ["docker", "rmi", "-f", tag], capture_output=True, check=False
             )
+
+
+@dataclass(frozen=True)
+class OciLayout:
+    """Multi-platform Buildx export, kept separate from loaded Docker images."""
+
+    directory: Path
+    tag: str
+    version: str
+    revision: str
+
+    @classmethod
+    @contextmanager
+    def build(cls, *, target: str | None = None) -> Iterator[OciLayout]:
+        with tempfile.TemporaryDirectory(prefix="band-workload-") as temporary:
+            destination = Path(temporary)
+            archive = destination / "workload.tar"
+            project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+            version = project["project"]["version"]
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            command = [
+                "docker",
+                "buildx",
+                "build",
+                "--platform",
+                "linux/amd64,linux/arm64",
+                "--provenance=mode=max",
+                "--sbom=true",
+                "--label",
+                f"org.opencontainers.image.version={version}",
+                "--label",
+                f"org.opencontainers.image.revision={revision}",
+                "-f",
+                str(BAND_PYTHON_KIT_DOCKERFILE),
+                "-t",
+                "band-workload:validation",
+                "--output",
+                f"type=oci,dest={archive}",
+            ]
+            if target:
+                command += ["--target", target]
+            command.append(str(REPO_ROOT))
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=BUILD_TIMEOUT_S,
+            )
+            layout = destination / "layout"
+            layout.mkdir()
+            with tarfile.open(archive) as contents:
+                contents.extractall(layout, filter="data")
+            yield cls(layout, "validation", version, revision)
+
+    def fetch(self, command: list[str]) -> dict[str, Any]:
+        """Adapt registry inspection to the same content-addressed local graph."""
+        reference = command[-1]
+        if "@" in reference:
+            algorithm, digest = reference.split("@", 1)[1].split(":", 1)
+            return json.loads(
+                (self.directory / "blobs" / algorithm / digest).read_text()
+            )
+        index = json.loads((self.directory / "index.json").read_text())
+        descriptor = index["manifests"][0]
+        algorithm, digest = descriptor["digest"].split(":", 1)
+        return json.loads((self.directory / "blobs" / algorithm / digest).read_text())
+
+    def validate(self, *, tck: Path) -> None:
+        validator = load_script_module(
+            "scripts/validate-workload.py", "workload_validator"
+        )
+        validator.validate_workload(
+            "band-workload:validation",
+            fetch=self.fetch,
+            version=self.version,
+            revision=self.revision,
+        )
+        subprocess.run(
+            [str(tck), "validate", "--layout", str(self.directory), self.tag],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
 
 
 @dataclass(frozen=True)
@@ -84,6 +193,7 @@ class Container:
         name_prefix: str = "pytest-docker",
         env: dict[str, str] | None = None,
         command: list[str] | None = None,
+        entrypoint: str | None = "bash",
         keep_alive_seconds: int = 300,
     ) -> Iterator[Container]:
         """Start ``image`` detached; yield the container, then remove it."""
@@ -92,8 +202,10 @@ class Container:
         run_command = ["docker", "run", "-d", "--name", name]
         for key, value in (env or {}).items():
             run_command += ["-e", f"{key}={value}"]
+        if entrypoint is not None:
+            run_command += ["--entrypoint", entrypoint]
         run_command.append(tag)
-        run_command += command or ["bash", "-c", f"sleep {keep_alive_seconds}"]
+        run_command += command or ["-c", f"sleep {keep_alive_seconds}"]
         subprocess.run(
             run_command, capture_output=True, text=True, check=True, timeout=30
         )
@@ -107,9 +219,8 @@ class Container:
     def exec(self, command: str, *, user: str | None = None, timeout: int = 60) -> str:
         """Run ``command`` via ``bash -c`` inside the container; return stripped stdout.
 
-        A fresh ``docker exec`` defaults to root regardless of what user the
-        container's entrypoint dropped its own PID 1 process to, so pass
-        ``user`` explicitly (e.g. ``"agent"``) to match that.
+        By default Docker uses the image's configured user. Pass ``user``
+        explicitly only when the diagnostic needs another identity.
         """
         docker_command = ["docker", "exec"]
         if user is not None:

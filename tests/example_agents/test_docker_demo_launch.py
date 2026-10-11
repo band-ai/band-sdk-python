@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -128,3 +130,214 @@ cleanup""",
             capture_output=True,
             check=False,
         )
+
+
+@pytest.fixture
+def demo_shell(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
+    if os.name != "posix":
+        pytest.skip("The demo uses a POSIX shell and executable script peers")
+    repo = tmp_path / "repo"
+    demo = repo / "examples" / "docker_demo"
+    demo.mkdir(parents=True)
+    script = demo / "launch.sh"
+    shutil.copyfile(EXAMPLES_ROOT / "docker_demo" / "launch.sh", script)
+    (repo / ".env.test").write_text(
+        "BAND_API_KEY_USER=canonical-user\nBAND_REST_URL=https://canonical.band.test\nBAND_WS_URL=wss://canonical.band.test/socket\n"
+    )
+    settings = demo / "settings.env"
+    settings.write_text(
+        "BAND_API_KEY_USER=wrong-user\nBAND_REST_URL=https://wrong.test\nOPENAI_API_KEY=demo-provider\n"
+    )
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    events = tmp_path / "events.jsonl"
+    shim = binary / "sbx"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        + r"""import json, os, sys
+args = sys.argv[1:]
+value = sys.stdin.read() if args[:2] == ['secret', 'set-custom'] else None
+with open(os.environ['DEMO_EVENTS'], 'a') as events:
+    events.write(json.dumps({'args': args, 'input': value}) + '\n')
+if args[0] == 'ls' and os.environ.get('DEMO_DISCOVERY_ERROR'):
+    sys.exit(42)
+if args[0] == os.environ.get('DEMO_MUTATION_FAIL') or '-'.join(args[:2]) == os.environ.get('DEMO_MUTATION_FAIL'):
+    sys.exit(42)
+if args[:2] == ['policy', 'check']:
+    if os.environ.get('DEMO_POLICY_ERROR'):
+        sys.exit(42)
+    print(json.dumps({'allowed': False}))
+    sys.exit(1)
+if args[:2] == ['policy', 'ls']:
+    if os.environ.get('DEMO_POLICY_ERROR'):
+        sys.exit(42)
+    host = os.environ.get('DEMO_POLICY_RESOURCE')
+    print(json.dumps({'rules': [{'scope': 'global', 'resources': [host]}] if host else []}))
+if args[:2] == ['secret', 'ls'] and os.environ.get('DEMO_COLLISION'):
+    print('existing-secret')
+"""
+    )
+    shim.chmod(0o755)
+    uv = binary / "uv"
+    uv.write_text(
+        f'#!/bin/sh\nif [ "$2" != --no-project ]; then exit 0; fi\nshift 3\nexec {shlex.quote(sys.executable)} "$@"\n'
+    )
+    uv.chmod(0o755)
+    env = os.environ | {
+        "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
+        "DEMO_EVENTS": str(events),
+        "DEMO_ENV_FILE": str(settings),
+    }
+    return script, env, events
+
+
+def shell(
+    script: Path, env: dict[str, str], command: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", 'source "$1"\n' + command, "bash", str(script)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+def test_demo_band_identity_always_comes_from_repo_env(
+    demo_shell: tuple[Path, dict[str, str], Path],
+) -> None:
+    script, env, _ = demo_shell
+    result = shell(
+        script,
+        env,
+        'printf "%s %s %s" "$BAND_API_KEY_USER" "$BAND_REST_URL" "$OPENAI_API_KEY"',
+    )
+    assert result.returncode == 0
+    assert result.stdout == "canonical-user https://canonical.band.test demo-provider"
+
+
+def test_demo_refuses_unowned_scoped_secret_before_provision(
+    demo_shell: tuple[Path, dict[str, str], Path],
+) -> None:
+    script, env, events = demo_shell
+    result = shell(
+        script, env | {"DEMO_COLLISION": "1"}, "assert_names_free\nprovision"
+    )
+    assert result.returncode != 0
+    assert "unowned scoped secrets" in result.stderr
+    calls = [json.loads(line)["args"] for line in events.read_text().splitlines()]
+    assert all(call[:2] != ["secret", "rm"] for call in calls)
+    assert all(call[:2] != ["secret", "set-custom"] for call in calls)
+
+
+def test_demo_sends_secret_stdin_before_positional_workload_create(
+    demo_shell: tuple[Path, dict[str, str], Path],
+) -> None:
+    script, env, events = demo_shell
+    workspace = script.parent / "agents" / "dev"
+    workspace.mkdir(parents=True)
+    (workspace / "band.yaml").write_text(
+        "agent:\n  id: placeholder\n  restUrl: https://example.test\n  wsUrl: wss://example.test/socket\n"
+    )
+    result = shell(
+        script,
+        env,
+        """mkdir -p "$RUN_DIR"
+DEMO_DEV_ID=agent-123
+DEMO_DEV_APIKEY=agent-nonsecret-fixture
+attach_one() { :; }
+launch_one dev agents/dev band-demo-dev band-python-kit-cli:local openai""",
+    )
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in events.read_text().splitlines()]
+    assert [call["args"][0] for call in calls] == ["secret", "secret", "create"]
+    assert [call["input"] for call in calls[:2]] == [
+        "demo-provider",
+        "agent-nonsecret-fixture",
+    ]
+    assert calls[2]["args"][:4] == [
+        "create",
+        "--name",
+        "band-demo-dev",
+        "band-python-kit-cli:local",
+    ]
+    assert all("--value" not in call["args"] for call in calls)
+
+
+def test_demo_discovery_failure_blocks_provision(
+    demo_shell: tuple[Path, dict[str, str], Path],
+) -> None:
+    script, env, events = demo_shell
+    result = shell(
+        script, env | {"DEMO_DISCOVERY_ERROR": "1"}, "assert_names_free\nprovision"
+    )
+    assert result.returncode != 0
+    assert "could not inspect existing sandboxes" in result.stderr
+    assert [
+        json.loads(line)["args"][0] for line in events.read_text().splitlines()
+    ] == ["ls"]
+
+
+@pytest.mark.parametrize(
+    "mutation,ledger,resource",
+    [
+        ("secret-set-custom", "secrets", "sk-band-demo"),
+        ("create", "sandboxes", "band-demo-dev"),
+    ],
+)
+def test_demo_persists_cleanup_intent_before_failed_mutation(
+    demo_shell: tuple[Path, dict[str, str], Path],
+    mutation: str,
+    ledger: str,
+    resource: str,
+) -> None:
+    script, env, _ = demo_shell
+    workspace = script.parent / "agents" / "dev"
+    workspace.mkdir(parents=True)
+    (workspace / "band.yaml").write_text(
+        "agent:\n  id: placeholder\n  restUrl: https://example.test\n  wsUrl: wss://example.test/socket\n"
+    )
+    result = shell(
+        script,
+        env | {"DEMO_MUTATION_FAIL": mutation},
+        """mkdir -p "$RUN_DIR"
+assert_names_free
+DEMO_DEV_ID=agent-123
+DEMO_DEV_APIKEY=agent-nonsecret-fixture
+attach_one() { :; }
+launch_one dev agents/dev band-demo-dev band-python-kit-cli:local openai""",
+    )
+    assert result.returncode != 0
+    assert resource in (script.parent / ".demo" / "run" / ledger).read_text()
+
+
+def test_demo_persists_policy_intent_before_failed_allow(
+    demo_shell: tuple[Path, dict[str, str], Path],
+) -> None:
+    script, env, _ = demo_shell
+    # Check is a confirmed denial; the allow operation fails after its request.
+    result = shell(
+        script,
+        env | {"DEMO_MUTATION_FAIL": "policy-allow"},
+        'mkdir -p "$RUN_DIR"\nallow_global demo.band.test',
+    )
+    assert result.returncode != 0
+    assert (script.parent / ".demo" / "run" / "policy").read_text().splitlines() == [
+        "demo.band.test"
+    ]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_demo_policy_cleanup_requires_confirmed_absence(
+    demo_shell: tuple[Path, dict[str, str], Path], failure: bool
+) -> None:
+    script, env, _ = demo_shell
+    run = script.parent / ".demo" / "run"
+    run.mkdir(parents=True)
+    (run / "policy").write_text("demo.band.test\n")
+    result = shell(
+        script, env | ({"DEMO_POLICY_ERROR": "1"} if failure else {}), "cleanup"
+    )
+    assert (result.returncode != 0) is failure
+    assert run.exists() is failure

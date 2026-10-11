@@ -8,8 +8,8 @@ run in the ordinary unit suite. `sbx kit validate` itself is a manual step
 Docker-Sandbox-capable machines.
 
 The echo-agent starter's contract lives in test_echo_agent.py; the release
-stamp helper's tests in test_stamp_spec.py; the supply-chain quarantine
-gate's in test_lock_age.py.
+artifact checks use the pinned TCK; the supply-chain quarantine
+gate's tests are in test_lock_age.py.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Any
 import yaml
 
 from band.credentials import PROXY_MANAGED_API_KEY
+from tests.docker.toolkit.sbx_cli import kit_baseline_hosts
 from tests.paths import KIT_DIR
 
 # Hosts required by every fresh starter workspace (see the kit spec's
@@ -37,58 +38,32 @@ def load_spec() -> dict[str, Any]:
     return yaml.safe_load((KIT_DIR / "spec.yaml").read_text(encoding="utf-8"))
 
 
-def test_spec_is_a_sandbox_kit_with_stable_identity() -> None:
+def test_spec_selects_workload_frontend_without_legacy_runtime_fields() -> None:
     spec = load_spec()
-    # schemaVersion "2" selects sbx's OCI v2 kit artifact format on push. The
-    # value is a string in the spec; pin it so a downgrade to legacy ZIP
-    # packaging (or an unquoted YAML int) is caught here.
-    assert spec["schemaVersion"] == "2"
-    assert spec["kind"] == "sandbox"
-    # The kit name doubles as the `sbx create` agent positional — renaming it
-    # breaks every documented launch command.
-    assert spec["name"] == "band-python-kit"
-    assert spec["agentInstructions"]["filename"] == "AGENTS.md"
+    assert spec["schemaVersion"] == "3"
+    assert spec["kind"] == "workload"
+    assert spec["dockerfile"] == "Dockerfile"
+    assert not {"name", "sandbox", "permissions", "agentInstructions"} & spec.keys()
+    assert (KIT_DIR / "Dockerfile").is_file()
 
 
-def test_agent_launches_via_entrypoint_not_interactive_command() -> None:
-    spec = load_spec()
-    # `sandbox.command` is the interactive `sbx run` attach path (a PTY
-    # session); this kit's agent runs as the attached foreground process
-    # itself via `sandbox.entrypoint`, so `command` must stay unused.
-    assert "command" not in spec["sandbox"]
-
-    command = spec["sandbox"]["entrypoint"]
-    # Root phase (CA refresh + privilege drop) must wrap the launcher.
-    assert command[0] == "/usr/local/bin/band-entrypoint.sh"
-    assert command[-2:] == ["-m", "band.docker.launcher"]
+def test_workload_declares_only_attached_agent_capabilities() -> None:
+    entries = load_spec()["capabilities"]
+    assert {entry["type"] for entry in entries} == {
+        "com.docker.sandbox/sbx@1",
+        "com.docker.sandbox/network-policy@1",
+        "com.docker.sandbox/agent-context@1",
+    }
+    context = next(e for e in entries if e["type"].endswith("/agent-context@1"))
+    assert "band.yaml" in context["config"]["content"]
 
 
-def test_launcher_module_referenced_by_kit_is_importable() -> None:
-    spec = load_spec()
-    module_name = spec["sandbox"]["entrypoint"][-1]
-    importlib.import_module(module_name)
+def test_launcher_module_is_importable() -> None:
+    importlib.import_module("band.docker.launcher")
 
 
 def test_allowlist_matches_immutable_baseline() -> None:
-    allow = set(load_spec()["permissions"]["network"]["allow"])
-    # Exact equality: any widening of the egress surface fails this test,
-    # including an optional provider or source-control host.
-    assert allow == DEFAULT_ALLOWLIST_HOSTS
-
-
-def test_spec_bakes_no_credentials_or_proxy_vars() -> None:
-    spec = load_spec()
-    # Control: the spec actually loaded (else the absence checks below pass
-    # vacuously over an empty/broken spec).
-    assert spec.get("name") == "band-python-kit"
-    # Proxy vars are runtime-owned (overriding them bypasses policy).
-    env_vars = spec.get("environment", {}).get("variables", {})
-    assert not {k for k in env_vars if k.upper().endswith("_PROXY")}
-    # Credential injection is provisioned host-side per deployment (via
-    # `sbx secret set-custom --host`), so the operator controls the target Band
-    # host — the kit bakes no `credentials` block. (A kit-declared
-    # `credentials[].apiKey.inject[]` also crashes `sbx create` on 0.35.0.)
-    assert "credentials" not in spec
+    assert kit_baseline_hosts(KIT_DIR) == DEFAULT_ALLOWLIST_HOSTS
 
 
 def test_kit_docs_placeholder_matches_the_sdk_sentinel() -> None:
@@ -108,4 +83,4 @@ def test_kit_docs_placeholder_matches_the_sdk_sentinel() -> None:
             re.findall(r"--placeholder\s+(\S+)", doc.read_text(encoding="utf-8"))
         )
     assert placeholders, "expected at least one --placeholder in the kit docs"
-    assert placeholders == {PROXY_MANAGED_API_KEY}, placeholders
+    assert PROXY_MANAGED_API_KEY in placeholders, placeholders

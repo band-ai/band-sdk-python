@@ -44,6 +44,14 @@ def build_persona() -> str:
     return f"{persona}\n\n{CONVERSATION_DISCIPLINE}"
 
 
+class ProviderCredentials(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+    openai_proxy_key: str = ""
+    openai_api_key: str = ""
+
+
 def expose_llm_key() -> None:
     """Copy the sbx-injected placeholder into OPENAI_API_KEY for litellm/crewai.
 
@@ -51,7 +59,7 @@ def expose_llm_key() -> None:
     the launcher injects the placeholder under OPENAI_PROXY_KEY; the real key stays
     on the host and the proxy swaps the placeholder on the wire.
     """
-    if proxy := os.environ.get("OPENAI_PROXY_KEY"):
+    if proxy := ProviderCredentials().openai_proxy_key:
         os.environ["OPENAI_API_KEY"] = proxy
 
 

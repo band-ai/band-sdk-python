@@ -2,9 +2,9 @@
 
 Boots a customer's Python workspace as a Band agent inside a
 [`band-python-kit`](../../../../docker/band_python_kit/README.md) Docker
-Sandbox. The kit's startup command runs it headlessly on every sandbox
-start — after the base image entrypoint has installed the proxy CA and
-dropped to the non-root agent user:
+Sandbox. The v3 workload declares `USER agent` (UID 1000) and directly
+runs the launcher when one owned foreground `sbx run` session attaches.
+Docker Sandboxes supplies the system proxy CA trust:
 
 ```bash
 $BAND_SDK_PYTHON -m band.docker.launcher
@@ -38,7 +38,8 @@ for the authoring guide); the SDK imports nothing from it.
    launch — resolution never happens at startup.
 6. **`run`** — assemble the above into a `ResolvedLaunch`, then
    `os.execve` the customer entrypoint with the customer venv's
-   interpreter, so signals reach customer code directly.
+   interpreter, so signals actually delivered reach customer code directly.
+   `sbx stop` is not a guarantee of SIGTERM or graceful shutdown.
 
 Every failure is a `LaunchError` naming its phase, e.g.
 `[credentials] credentials file must be gitignored: …`. No error, log

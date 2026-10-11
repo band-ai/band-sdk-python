@@ -45,6 +45,14 @@ def build_persona() -> str:
     return f"{persona}\n\n{CONVERSATION_DISCIPLINE}"
 
 
+class ProviderCredentials(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+    openai_proxy_key: str = ""
+    openai_api_key: str = ""
+
+
 def expose_llm_key() -> None:
     """Copy the sbx-injected placeholder into the var the codex CLI reads.
 
@@ -52,7 +60,7 @@ def expose_llm_key() -> None:
     so the launcher injects the placeholder under OPENAI_PROXY_KEY; the real key
     stays on the host and the proxy swaps the placeholder on the wire.
     """
-    if proxy := os.environ.get("OPENAI_PROXY_KEY"):
+    if proxy := ProviderCredentials().openai_proxy_key:
         os.environ["OPENAI_API_KEY"] = proxy
 
 
@@ -60,7 +68,7 @@ def login_codex() -> None:
     """`codex app-server` authenticates from a stored login, not OPENAI_API_KEY —
     so log in with the placeholder key (the proxy swaps it for the real one on
     the wire). Without this, codex requests go out with no auth header (401)."""
-    key = os.environ.get("OPENAI_API_KEY")
+    key = ProviderCredentials().openai_api_key
     if not key:
         return
     result = subprocess.run(

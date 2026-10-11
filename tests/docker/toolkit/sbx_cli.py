@@ -1,14 +1,14 @@
 """Thin `sbx`-CLI seam for the never-in-VM sandbox E2E.
 
 Mirrors :class:`tests.docker.toolkit.docker_cli.Container`, but drives the
-**sandbox** flow — `sbx create --kit` / `sbx exec` / `sbx rm` — so requests ride
+**sandbox** flow — `sbx create` / `sbx exec` / `sbx rm` — so requests ride
 the host-side proxy that injects the real credentials. That is what a bare
 `docker run` cannot exercise, and what the never-in-VM proof needs.
 
 The sandbox-driving methods need a Docker-Sandbox-capable host with the `sbx`
 CLI, and run only under the ``sandbox``-marked proof
 (``SANDBOX_TESTS_ENABLED=true``). The module itself imports cleanly (stdlib +
-yaml), so its pure helpers are unit-tested in CI: the agent-name derivation and
+yaml), so its pure helpers are unit-tested in CI: scoped secret commands and
 the absence-search command in ``tests/docker/test_nevervm_contracts.py``, and
 the proxy cert probe and the pty-attached process lifecycle in
 ``tests/docker/test_sbx_cli.py``.
@@ -16,11 +16,14 @@ the proxy cert probe and the pty-attached process lifecycle in
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shlex
 import shutil
 import subprocess
+import tempfile
+import threading
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
@@ -30,7 +33,9 @@ from typing import Any
 
 import yaml
 
+from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.sbx_process import run_sbx_subprocess
+from tests.paths import KIT_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +58,7 @@ PROXY_CA_MARKER = "Docker Sandboxes"
 
 # Read the TLS peer cert the sandbox sees for a host *through* HTTPS_PROXY, so an
 # injected (MITM) connection reveals the Docker Sandboxes CA in its issuer. Uses
-# only the stdlib (the kit image has Python but no curl). Host is argv[1].
+# only the stdlib (the kit image has Python). Host is argv[1].
 _CERT_PROBE = r"""
 import os, ssl, socket, sys
 from urllib.parse import urlsplit
@@ -91,26 +96,35 @@ def _kit_spec(kit: Path | str) -> dict[str, Any]:
     return yaml.safe_load((Path(kit) / "spec.yaml").read_text(encoding="utf-8"))
 
 
-def kit_agent_name(kit: Path | str) -> str:
-    """The agent name a sandbox kit declares (its ``spec.yaml`` ``name``).
-
-    A sandbox (agent) kit is invoked as ``sbx create --kit <kit> <name>`` — the
-    name is the kit's own, not a generic ``shell`` agent (sbx rejects that combo).
-    """
-    return _kit_spec(kit)["name"]
-
-
 def kit_baseline_hosts(kit: Path | str) -> frozenset[str]:
-    """The hosts the kit reaches out of the box (``permissions.network.allow``).
+    """The descriptor's runtime network policy, shared by every workload build."""
+    capabilities = _kit_spec(kit)["capabilities"]
+    network = next(
+        entry
+        for entry in capabilities
+        if entry["type"] == "com.docker.sandbox/network-policy@1"
+    )
+    return frozenset(network["config"]["runtime"]["allow"])
 
-    The sandbox proxy denies every other host by default, so a Band deployment
-    outside this set (any non-prod target) needs an explicit ``allow_network``
-    before the agent can connect. Read from the kit's own spec so the two never
-    drift.
+
+@contextmanager
+def local_workload(image: str) -> Iterator[Path]:
+    """Wrap a loaded workload in the canonical declarations for local sbx use.
+
+    sbx builds local descriptors with their directory as context; the SDK
+    recipe needs repository-root inputs and is built with Buildx first.
     """
-    permissions = _kit_spec(kit).get("permissions") or {}
-    network = permissions.get("network") or {}
-    return frozenset(network.get("allow") or [])
+    with tempfile.TemporaryDirectory(prefix="band-workload-") as temporary:
+        directory = Path(temporary)
+        descriptor = _kit_spec(KIT_DIR)
+        descriptor.pop("dockerfile")
+        descriptor["build"] = f"FROM {image}\n"
+        syntax = (KIT_DIR / "spec.yaml").read_text().splitlines()[0]
+        (directory / "band-workload.yaml").write_text(
+            syntax + "\n" + yaml.safe_dump(descriptor, sort_keys=False),
+            encoding="utf-8",
+        )
+        yield directory
 
 
 def files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
@@ -132,16 +146,27 @@ def files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
 
 
 def set_custom_secret_command(
-    *, sandbox: str, host: str, env: str, value: str, placeholder: str
+    *, sandbox: str, host: str, env: str, placeholder: str
 ) -> list[str]:
     """`sbx secret set-custom` argv, scoped to one sandbox (never global ``-g``)."""
-    return [SBX, "secret", "set-custom", sandbox, "--host", host,
-            "--env", env, "--placeholder", placeholder, "--value", value]  # fmt: skip
+    return [SBX, "secret", "set-custom", "--sandbox", sandbox, "--host", host,
+            "--env", env, "--placeholder", placeholder]  # fmt: skip
 
 
-def remove_custom_secret_command(*, sandbox: str, host: str) -> list[str]:
+def remove_custom_secret_command(
+    *, sandbox: str, placeholder: str = PROXY_MANAGED_API_KEY
+) -> list[str]:
     """`sbx secret rm` argv for the scoped secret; ``-f`` skips the prompt."""
-    return [SBX, "secret", "rm", sandbox, "--host", host, "-f"]
+    return [
+        SBX,
+        "secret",
+        "rm",
+        "--placeholder",
+        placeholder,
+        "--sandbox",
+        sandbox,
+        "-f",
+    ]
 
 
 def run_redacting_secret(argv: list[str], *, secret: str, timeout: int = 60) -> str:
@@ -161,57 +186,42 @@ def run_redacting_secret(argv: list[str], *, secret: str, timeout: int = 60) -> 
 def custom_secret(
     *, sandbox: str, host: str, env: str, value: str, placeholder: str
 ) -> Iterator[None]:
-    """Inject ``value`` for ``host`` scoped to ``sandbox``, then remove it.
-
-    Scoped to the one sandbox on purpose — never global (``-g``). The kit README
-    registers the Band key globally for real use, so a global test secret would
-    *overwrite and then delete* the operator's own ``**.band.ai`` credential and
-    disrupt their running sandboxes. The secret is set before ``sbx create`` so
-    the placeholder is baked into the VM's ``env`` at startup (a scoped set for a
-    not-yet-created sandbox persists and returns cleanly — verified against sbx
-    0.35.0).
-
-    The test provisions the secret itself, so the value it later asserts-absent
-    is exactly the one the proxy would inject — closing the gap where a test
-    checks a *different* key than the one actually stored.
-    """
-    run_redacting_secret(
+    """Store a scoped secret on stdin before create, then independently remove it."""
+    run_sbx_subprocess(
         set_custom_secret_command(
-            sandbox=sandbox, host=host, env=env, value=value, placeholder=placeholder
+            sandbox=sandbox, host=host, env=env, placeholder=placeholder
         ),
-        secret=value,
+        input=value,
+        redact=value,
+        timeout=60,
     )
     try:
         yield
     finally:
         removal = subprocess.run(
-            remove_custom_secret_command(sandbox=sandbox, host=host),
+            remove_custom_secret_command(sandbox=sandbox, placeholder=placeholder),
             capture_output=True, text=True, check=False, timeout=60,
         )  # fmt: skip
         if removal.returncode != 0:
-            # A failed removal leaves the real key in sbx's secret store (scoped
-            # to a torn-down sandbox, so never applied — but still stored). Don't
-            # raise from teardown; surface it so the operator can clean up.
-            logger.warning(
-                "failed to remove the scoped Band secret for sandbox %s (exit %s); "
-                "remove it manually: sbx secret rm %s --host %s -f",
-                sandbox,
-                removal.returncode,
-                sandbox,
-                host,
+            raise RuntimeError(
+                f"scoped secret cleanup incomplete: sbx secret rm --placeholder {shlex.quote(placeholder)} "
+                f"--sandbox {shlex.quote(sandbox)} -f"
             )
 
 
 def _network_allowed(host: str) -> bool:
     """Whether the global policy already permits ``host`` (read-only check)."""
     probe = subprocess.run(
-        [SBX, "policy", "check", "network", host],
+        [SBX, "policy", "check", "network", host, "--json"],
         capture_output=True,
         text=True,
         check=False,
         timeout=60,
     )
-    return probe.returncode == 0
+    allowed = json.loads(probe.stdout)["allowed"]
+    if not isinstance(allowed, bool) or probe.returncode != (0 if allowed else 1):
+        raise RuntimeError(f"could not inspect network policy for {host}")
+    return allowed
 
 
 @contextmanager
@@ -244,17 +254,8 @@ def allow_network(host: str) -> Iterator[None]:
             timeout=60,
         )
         if removal.returncode != 0:
-            # This is a *global* rule (sbx can't scope it before create), so a
-            # failed removal (e.g. an expired session) leaves it in force for the
-            # non-prod host. Don't raise from teardown; surface it so the operator
-            # can revoke it. (`rm --resource` matches the bare host sbx stores, so
-            # a mismatch is not the failure mode — a lost session is.)
-            logger.warning(
-                "failed to remove the global network allow rule for %s (exit %s); "
-                "remove it manually: sbx policy rm network --resource %s",
-                host,
-                removal.returncode,
-                host,
+            raise RuntimeError(
+                f"network cleanup incomplete: sbx policy rm network --resource {shlex.quote(host)}"
             )
 
 
@@ -341,7 +342,7 @@ def _stop_pty_process(process: subprocess.Popen[bytes], controller_fd: int) -> N
 def attached_run(name: str) -> Iterator[None]:
     """Hold `sbx run --name <name>` attached to a real pty for the block.
 
-    The kit's agent runs on `sandbox.entrypoint`, which only launches once
+    The kit's agent runs on `image entrypoint`, which only launches once
     something attaches — `sbx create` alone leaves the sandbox idle, and `sbx`
     v0.43.0 auto-stops an idle, unattached sandbox within ~60-90s regardless of
     what's running inside it. Both `Sandbox.create` and any caller that drives
@@ -349,10 +350,28 @@ def attached_run(name: str) -> Iterator[None]:
     hold this open the same way.
     """
     process, controller_fd = _spawn_pty_process([SBX, "run", "--name", name])
+
+    def drain_output() -> None:
+        while True:
+            try:
+                output = os.read(controller_fd, 65536)
+            except OSError:
+                return
+            if not output:
+                return
+            logger.debug(
+                "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
+            )
+
+    reader = threading.Thread(target=drain_output, daemon=True)
+    reader.start()
     try:
         yield
+        if process.poll() is not None:
+            raise RuntimeError(f"owned sbx run for {name} exited {process.returncode}")
     finally:
         _stop_pty_process(process, controller_fd)
+        reader.join(timeout=ATTACH_STOP_TIMEOUT_S)
 
 
 NAME_PREFIX = "band-nevervm"
@@ -385,24 +404,12 @@ class Sandbox:
         kit: Path | str,
         workspace: Path | str,
         name: str | None = None,
-        agent: str | None = None,
+        attached: bool = True,
     ) -> Iterator[Sandbox]:
-        """`sbx create --kit <kit> <agent> <workspace>`, then hold an attached
-        `sbx run` open for the kit's `sandbox.entrypoint` to actually launch;
-        yield it, then remove.
-
-        Pass ``name`` when it was allocated up front (so a scoped secret could be
-        provisioned before creation); otherwise a unique one is generated. For an
-        agent (sandbox) kit the agent name is the kit's own name — a plain
-        ``shell`` agent can't be combined with one — so it defaults to the name
-        the kit's ``spec.yaml`` declares. Injection config only applies when the
-        kit rides ``sbx create --kit`` (not ``sbx kit add``), so the never-in-VM
-        proof must create this way.
-        """
-        agent = agent or kit_agent_name(kit)
+        """Create a positional workload, own its foreground PTY, then remove it."""
         name = name or sandbox_name()
         subprocess.run(
-            [SBX, "create", "--name", name, "--kit", str(kit), agent, str(workspace)],
+            [SBX, "create", "--name", name, str(kit), str(workspace)],
             capture_output=True,
             text=True,
             check=True,
@@ -412,16 +419,25 @@ class Sandbox:
         # exception from here on (including one raised while entering
         # attached_run) — otherwise the created sandbox is orphaned.
         try:
-            with attached_run(name):
+            with ExitStack() as stack:
+                if attached:
+                    stack.enter_context(attached_run(name))
                 yield cls(name)
         finally:
-            subprocess.run(
+            run_sbx_subprocess(
                 [SBX, "rm", "-f", name],
-                capture_output=True,
-                text=True,
-                check=False,
                 timeout=60,
             )
+
+    @contextmanager
+    def owned_run(self) -> Iterator[None]:
+        """Own one foreground session, including its exit status."""
+        with attached_run(self.name):
+            yield
+
+    def stop(self) -> None:
+        """Stop the workload before starting a new foreground owner."""
+        run_sbx_subprocess([SBX, "stop", self.name], timeout=60)
 
     def exec(
         self, command: str, *, timeout: int = EXEC_TIMEOUT_S, redact: str | None = None
@@ -475,7 +491,7 @@ class Sandbox:
         """The TLS cert subject+issuer the sandbox sees for ``host`` — **through
         the sandbox proxy**.
 
-        Uses Python (always in a Python kit; the kit image ships no ``curl``) to
+        Uses Python (always in a Python kit; the kit image ships Python) to
         open the connection via ``HTTPS_PROXY``, so it sees the injection MITM
         cert. Connecting *directly* would bypass the proxy and show the real
         upstream cert — hiding the injection. Under injection the output contains

@@ -32,7 +32,6 @@ import argparse
 import asyncio
 import json
 import logging
-import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -74,10 +73,6 @@ SBX_CREATE_TIMEOUT_S: Final[int] = 600
 # (see _describe_registration_timeout); independent of --timeout since this
 # is a plain read, not the write whose outcome is in question.
 TIMEOUT_RECOVERY_CHECK_S: Final[int] = 30
-
-# The published kit's own name (docker/band_python_kit/spec.yaml `name`), not a
-# per-workspace choice — every sandbox this CLI creates rides that one kit.
-KIT_AGENT_NAME = "band-python-kit"
 
 SBX = "sbx"
 
@@ -164,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument(
         "--kit",
         default=None,
-        help="Kit reference for `sbx create --kit` (required unless --no-create).",
+        help="Workload image reference for `sbx create` (required unless --no-create).",
     )
     provision.add_argument(
         "--timeout",
@@ -291,45 +286,24 @@ def write_agent_id(workspace: Path, agent_id: str) -> None:
         )
 
 
-def _table_targets(ls_output: str) -> set[str]:
-    """The TARGETS column of an `sbx secret ls` custom-secrets table.
-
-    There is no `--json` output for `sbx secret ls` (verified against v0.35.0),
-    so this parses the human-readable table; reading the header locates the
-    column instead of hardcoding its position, so column reordering can't
-    silently break the check.
-    """
-    lines = ls_output.splitlines()
-    header_idx = next(
-        (i for i, line in enumerate(lines) if line.split()[:1] == ["SCOPE"]), None
-    )
-    if header_idx is None:
-        return set()
-    header_cols = re.split(r"\s{2,}", lines[header_idx].strip())
-    if "TARGETS" not in header_cols:
-        return set()
-    targets_idx = header_cols.index("TARGETS")
-    targets = set()
-    for line in lines[header_idx + 1 :]:
-        cols = re.split(r"\s{2,}", line.strip())
-        if len(cols) > targets_idx:
-            targets.add(cols[targets_idx])
-    return targets
-
-
 def sandbox_has_band_secret(name: str, host: str) -> bool:
-    """Whether `name`'s own scope already has a custom secret for `host`."""
+    """Whether this sandbox scope has a custom secret targeting ``host``."""
     result = run_sbx_subprocess(
-        [SBX, "secret", "ls", name], timeout=SBX_SECRET_TIMEOUT_S
+        [SBX, "secret", "ls", "--sandbox", name, "--json"],
+        timeout=SBX_SECRET_TIMEOUT_S,
     )
-    return host in _table_targets(result.stdout)
+    data = json.loads(result.stdout)
+    return any(
+        entry["scope"] == name and host in entry["targets"]
+        for entry in data["custom_secrets"]
+    )
 
 
 def inject_agent_key(*, name: str, host: str, agent_key: str) -> None:
     """`sbx secret set-custom`, scoped to `name`, with the key on stdin only.
 
     The key never touches argv/history: `--value`/`--token` are omitted, so
-    `set-custom` reads it from stdin (verified against v0.35.0). The
+    `set-custom` reads it from stdin (verified against v0.47.0). The
     placeholder is pinned to `band.credentials.PROXY_MANAGED_API_KEY`, the
     sentinel `require_sentinel_under_proxy_managed` requires in the VM.
     """
@@ -337,6 +311,7 @@ def inject_agent_key(*, name: str, host: str, agent_key: str) -> None:
         SBX,
         "secret",
         "set-custom",
+        "--sandbox",
         name,
         "--host",
         host,
@@ -364,9 +339,9 @@ def sandbox_exists(name: str) -> bool:
 
 
 def create_sandbox(*, name: str, kit: str, workspace: Path) -> None:
-    """`sbx create --name <name> --kit <kit> band-python-kit <workspace>`."""
+    """Create the workload with its mounted customer workspace."""
     run_sbx_subprocess(
-        [SBX, "create", "--name", name, "--kit", kit, KIT_AGENT_NAME, str(workspace)],
+        [SBX, "create", "--name", name, kit, str(workspace)],
         timeout=SBX_CREATE_TIMEOUT_S,
     )
 
@@ -583,11 +558,10 @@ async def _ensure_agent_registered(
         logger.error(
             "Registered agent %s but failed to persist its key locally", agent_id
         )
-        sys.stderr.write(
-            f"\nCRITICAL: agent {agent_id} was registered but its key could not "
-            "be stored. The platform shows this key exactly once and it cannot "
-            "be retrieved again — store it now or the agent is orphaned:\n\n"
-            f"  {agent_key}\n\n"
+        logger.error(
+            "Agent %s requires recovery: delete the registered agent and retry "
+            "with a new name; its one-time key cannot be retrieved",
+            agent_id,
         )
         raise
 
