@@ -8,6 +8,7 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -28,6 +29,8 @@ from band_rest import (
 from band_rest.core.api_error import ApiError
 
 from band.core.types import MessageType
+
+logger = logging.getLogger(__name__)
 
 
 class UserOps:
@@ -254,7 +257,15 @@ class UserOps:
         The generated Human API has not exposed control operations yet, so this
         follows the same authenticated raw-REST boundary as :meth:`delete_room`.
         """
-        await self._post_control(f"/api/v1/me/chats/{room_id}/agents/stop")
+        response = await self._post_control(f"/api/v1/me/chats/{room_id}/agents/stop")
+        logger.warning(
+            "STOP room=%s status=%s result=%s build=%s request=%s",
+            room_id,
+            response.status_code,
+            response.json(),
+            response.headers.get("x-build-commit"),
+            response.headers.get("x-request-id"),
+        )
 
     async def play_agent(self, room_id: str) -> str:
         """Resume agents in a user-owned room through the control endpoint.
@@ -264,6 +275,29 @@ class UserOps:
         """
         response = await self._post_control(f"/api/v1/me/chats/{room_id}/agents/play")
         return response.text
+
+    async def observe_agent_executions(self, agent_id: str) -> None:
+        response = await self._control_request(
+            "GET", f"/api/v1/me/agents/{agent_id}/executions"
+        )
+        executions = response.json().get("data", [])
+        logger.warning(
+            "execution state agent=%s states=%s",
+            agent_id,
+            [
+                {
+                    key: execution.get(key)
+                    for key in (
+                        "id",
+                        "agent_id",
+                        "chat_room_id",
+                        "status",
+                        "stopped_at",
+                    )
+                }
+                for execution in executions
+            ],
+        )
 
     async def interrupt_active_agent_execution(self, agent_id: str) -> None:
         """Interrupt one active execution of a user-owned agent.

@@ -13,6 +13,7 @@ from band.client.streaming import (
     ControlMode,
     MessageCreatedPayload,
 )
+from band.client.streaming.client import WebSocketClient
 from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
@@ -165,6 +166,14 @@ class ControlLink(BandLink):
     control: ControlRuntime
     control_room_id: str
 
+    async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
+        await super()._join_agent_control_channel(ws)
+        logger.warning(
+            "control channel joined agent=%s room=%s",
+            self.agent_id,
+            self.control_room_id,
+        )
+
     async def _on_message_created(
         self, room_id: str, payload: MessageCreatedPayload
     ) -> None:
@@ -228,6 +237,7 @@ async def running_control_runtime(
         )
 
         async def record_control(payload: AgentControlPayload) -> None:
+            logger.warning("typed control=%s", payload.model_dump())
             control.received_control_modes.append(payload.mode)
             control.control_received.set()
             if payload.mode in forwarded_control_modes:

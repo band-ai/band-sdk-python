@@ -208,6 +208,7 @@ async def test_known_stop_recovers_without_play_push(
             mid, agent.id, until={DeliveryStatus.PROCESSING}
         )
         await user_ops.stop_agent(room_id)
+        await user_ops.observe_agent_executions(agent.id)
         await control.wait_for_cancellation(deadline_s=timeout)
         assert ControlMode.STOP in control.received_control_modes
         assert control.completed_message_ids == []
