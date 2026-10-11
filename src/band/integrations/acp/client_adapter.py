@@ -33,7 +33,7 @@ from acp.schema import (
     SseMcpServer,
 )
 from band_sdk_core import AgentFailure
-from pydantic import PositiveFloat, field_validator, model_validator
+from pydantic import Field, PositiveFloat, field_validator, model_validator
 from typing_extensions import TypeVar, Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
@@ -47,6 +47,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -307,7 +308,13 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         reasoning_effort: Reasoning effort selected the same way.
     """
 
+    retention_unavailable_reason: ClassVar[str] = (
+        "ACP end_turn and loadSession do not establish whole-session inactivity "
+        "or non-cancelling shutdown"
+    )
+
     command: tuple[str, ...]
+    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
     env: dict[str, str] | None = None
     cwd: str | None = None
     mcp_servers: tuple[SessionMcpServer, ...] = ()
@@ -318,6 +325,16 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
     model: str | None = None
     reasoning_effort: str | None = None
+
+    @field_validator("retention")
+    @classmethod
+    def _require_safe_retention(
+        cls, retention: RoomRetentionConfig
+    ) -> RoomRetentionConfig:
+        return require_disabled_retention(
+            retention,
+            reason=f"Idle retention is unavailable: {cls.retention_unavailable_reason}.",
+        )
 
     @model_validator(mode="before")
     @classmethod

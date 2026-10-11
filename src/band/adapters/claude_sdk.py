@@ -89,6 +89,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
@@ -351,6 +352,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     model: str | None = None
     fallback_model: str | None = None
+    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
     custom_section: str | None = None
     max_thinking_tokens: PositiveInt | None = None
     effort: EffortLevel | None = None
@@ -361,6 +363,20 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     send_message_dedup_ttl_seconds: NonNegativeFloat = DEFAULT_DEDUP_TTL_SECONDS
     cli: ClaudeCLIOptions = Field(default_factory=ClaudeCLIOptions)
     approvals: ClaudeApprovalOptions | None = None
+
+    @field_validator("retention")
+    @classmethod
+    def _require_safe_retention(
+        cls, retention: RoomRetentionConfig
+    ) -> RoomRetentionConfig:
+        return require_disabled_retention(
+            retention,
+            reason=(
+                "Claude idle retention is unavailable: native idle and background-task "
+                "inventories do not account for asynchronous managed hooks; disconnect "
+                "can cancel that work."
+            ),
+        )
 
     @model_validator(mode="after")
     def _check_approvals_can_decide(self) -> Self:
