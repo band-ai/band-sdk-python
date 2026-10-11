@@ -29,6 +29,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
+from tests.adapters.dispatch import deliver_event
 
 
 def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessage:
@@ -278,13 +279,14 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
     await adapter.on_started("Codex Agent", "Integration test agent")
 
     first_turn = asyncio.create_task(
-        adapter.on_event(
+        deliver_event(
+            adapter,
             _agent_input(
                 "run protected command",
                 tools,
                 room_id="room-1",
                 is_session_bootstrap=True,
-            )
+            ),
         )
     )
 
@@ -296,13 +298,14 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
     else:
         pytest.fail("Approval notification not sent within timeout")
 
-    await adapter.on_event(
+    await deliver_event(
+        adapter,
         _agent_input(
             "/approve ap-1",
             tools,
             room_id="room-1",
             is_session_bootstrap=False,
-        )
+        ),
     )
     await asyncio.wait_for(first_turn, timeout=2.0)
     # on_event returned once the room was asked; the turn itself runs on.

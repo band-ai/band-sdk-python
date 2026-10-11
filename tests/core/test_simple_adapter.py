@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.logging_config import TRACE_CONTEXT
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, failure_reports
 from tests.logsupport import fake_traceparent
 
 
@@ -399,3 +399,15 @@ class TestMultipleEvents:
         assert adapter.calls[0]["msg"].content == "First"
         assert adapter.calls[1]["msg"].content == "Second"
         assert adapter.calls[2]["msg"].content == "Third"
+
+
+async def test_unaccepted_input_is_not_judged_or_reported() -> None:
+    class OccupiedAdapter(RecordingAdapter):
+        async def on_message(self, *args: Any, **kwargs: Any) -> None:
+            raise InputNotAccepted("occupied")
+
+    inp = make_agent_input()
+    with pytest.raises(InputNotAccepted):
+        await OccupiedAdapter().on_event(inp)
+    assert not inp.tools.turn.judged
+    assert failure_reports(inp.tools) == []

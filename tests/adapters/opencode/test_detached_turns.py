@@ -7,9 +7,14 @@ finishes it.
 
 from __future__ import annotations
 
+import pytest
+
 from band.adapters.opencode import OpencodeAdapter
+from band.core.exceptions import InputNotAccepted
+from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
+from tests.adapters.dispatch import deliver_event
 from tests.adapters.opencode.helpers import (
     BandMCPCalls,
     FakeOpencodeClient,
@@ -39,12 +44,13 @@ def parked_turn_client(*, after_approval: list[ServerStep]) -> FakeOpencodeClien
 async def park_turn(adapter: OpencodeAdapter, tools: FakeAgentTools) -> None:
     """Run a turn's ``on_event`` until the permission ask releases it."""
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_event(agent_input("run it", tools))
+    await deliver_event(adapter, agent_input("run it", tools))
 
 
 async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
     approver_tools = FakeAgentTools()
-    await adapter.on_event(agent_input(f"approve {PERMISSION_ID}", approver_tools))
+    control = agent_input(f"approve {PERMISSION_ID}", approver_tools)
+    assert await adapter.try_handle_control(control.msg, control.tools)
     return approver_tools
 
 
@@ -65,11 +71,10 @@ async def test_a_detached_turn_that_ends_with_nothing_is_reported_once(
     assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
 
-async def test_a_busy_message_during_a_detached_turn_is_settled(
+async def test_a_busy_message_during_a_detached_turn_stays_unaccepted(
     make_adapter, tools, mcp_backend: BandMCPCalls
 ) -> None:
-    """The busy message's own turn is settled, and the detached turn's band
-    tool calls still resolve to the detached turn's tools."""
+    """Unaccepted work leaves the detached turn's tool ownership intact."""
     adapter = make_adapter(
         parked_turn_client(
             after_approval=[
@@ -83,12 +88,14 @@ async def test_a_busy_message_during_a_detached_turn_is_settled(
     busy_tools = FakeAgentTools()
 
     await park_turn(adapter, tools)
-    await adapter.on_event(agent_input("are you done?", busy_tools))
+    with pytest.raises(InputNotAccepted):
+        await deliver_event(adapter, agent_input("are you done?", busy_tools))
     await approve(adapter)
     await wait_for(lambda: tools.turn.replied)
     await adapter.on_cleanup("room-1")
 
-    assert busy_tools.turn.complete
+    assert not busy_tools.turn.complete
+    assert failure_reports(busy_tools) == []
     assert busy_tools.messages_sent == []
     assert tools.messages_sent[-1]["content"] == "Done."
     assert failure_reports(tools) == []
@@ -103,6 +110,33 @@ async def test_a_detached_turn_cancelled_by_cleanup_posts_nothing(
     await adapter.on_cleanup("room-1")
 
     assert failure_reports(tools) == []
+
+
+async def test_model_delivery_does_not_reclassify_a_newly_pending_question(
+    make_adapter, tools
+) -> None:
+    client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_question("sess-1", "q-1", "Which word?")]]
+    )
+    adapter = make_adapter(client)
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await deliver_event(adapter, agent_input("ask me which word", tools))
+    incoming = agent_input("new ordinary work", FakeAgentTools())
+
+    with pytest.raises(InputNotAccepted):
+        await adapter.on_message(
+            incoming.msg,
+            incoming.tools,
+            OpencodeSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id=incoming.room_id,
+        )
+
+    assert client.question_replies == []
+    assert not incoming.tools.turn.complete
+    await adapter.on_cleanup("room-1")
 
 
 async def test_a_rejected_question_hands_the_turn_back_to_the_model(
@@ -124,9 +158,9 @@ async def test_a_rejected_question_hands_the_turn_back_to_the_model(
         )
     )
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_event(agent_input("ask me which word", tools))
+    await deliver_event(adapter, agent_input("ask me which word", tools))
 
-    await adapter.on_event(agent_input("reject", FakeAgentTools()))
+    await deliver_event(adapter, agent_input("reject", FakeAgentTools()))
     await wait_for(lambda: tools.turn.replied)
     await adapter.on_cleanup("room-1")
 

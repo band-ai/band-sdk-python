@@ -111,3 +111,11 @@ with pytest.raises(ValueError, match="wait_timeout_s must be less than"):
 
 A config is plain data, so a host can load it from YAML or JSON with
 `ClaudeSDKAdapterConfig.model_validate(data)`.
+
+An ordinary input arriving while accepted work owns the session remains
+outstanding. Approval and status commands stay reachable through the shared
+control hook under the existing sender and token checks. The active turn keeps
+its original tools; handling a control never rebinds them to the new message.
+Only a local rejection before `query()` qualifies as `InputNotAccepted`:
+transport errors and timeouts do not establish that Claude rejected the input.
+The shared room scheduler owns later attempts.

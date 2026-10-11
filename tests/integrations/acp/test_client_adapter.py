@@ -1689,7 +1689,6 @@ class TestACPClientAdapterStop:
         adapter._room_to_session[_MOCK_ROOM] = RoomSession("session-123", band_url=None)
         adapter._room_tools[_MOCK_ROOM] = MagicMock()
         backend = await hold_backend(adapter._mcp)
-        adapter._bootstrapped_sessions.add("session-123")
 
         await adapter.stop()
 
@@ -1701,7 +1700,6 @@ class TestACPClientAdapterStop:
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._mcp.current is None
-        assert adapter._bootstrapped_sessions == set()
 
     @pytest.mark.asyncio
     async def test_stop_no_connection(self) -> None:
