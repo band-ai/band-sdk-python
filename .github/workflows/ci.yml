@@ -95,6 +95,12 @@ jobs:
     - name: Collect baseline E2E in the core environment
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
+    - name: Prepare Windows shell wait diagnostics
+      if: matrix.os == 'windows-latest'
+      run: |
+        dotnet publish .github/scripts/shellwaits/ShellWaits.csproj -c Release -r win-x64 --self-contained false -o artifacts/shell-waits
+        uv run python -c "import subprocess; subprocess.run(['artifacts/shell-waits/ShellWaits.exe', '--self-test'], check=True, timeout=15)"
+
     - name: Run tests
       run: uv run --all-packages pytest
 
