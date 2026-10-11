@@ -82,6 +82,7 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -761,6 +762,29 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
         }
 
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        if self.config.approvals is None:
+            return False
+        command = self._extract_command(msg.content)
+        if command is None:
+            return False
+        cmd, args = command
+        sender = {"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}
+        if cmd in _APPROVAL_CMDS:
+            await self._handle_approval_command(
+                tools=tools, room_id=msg.room_id, command=cmd, args=args, sender=sender
+            )
+        elif cmd == ClaudeSDKCommand.STATUS:
+            await self._handle_status_command(
+                tools=tools, room_id=msg.room_id, sender=sender
+            )
+        else:
+            return False
+        tools.turn.settle()
+        return True
+
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
         self,
@@ -787,52 +811,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Approval flow: track notify target and intercept local commands
+        running_turn = self._turn_tasks.get(room_id)
+        if running_turn is not None and not running_turn.done():
+            raise InputNotAccepted("The room already has an active Claude turn")
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
                 "id": msg.sender_id,
                 "name": msg.sender_name or msg.sender_type,
             }
-            command = self._extract_command(msg.content)
-            if command is not None:
-                cmd, args = command
-                sender = self._room_last_sender[room_id]
-                if cmd in _APPROVAL_CMDS:
-                    await self._handle_approval_command(
-                        tools=tools,
-                        room_id=room_id,
-                        command=cmd,
-                        args=args,
-                        sender=sender,
-                    )
-                    tools.turn.settle()
-                    return
-                elif cmd == ClaudeSDKCommand.STATUS:
-                    await self._handle_status_command(
-                        tools=tools,
-                        room_id=room_id,
-                        sender=sender,
-                    )
-                    tools.turn.settle()
-                    return
 
-        # A prior turn's background task (see _run_turn) may still be running
-        # this room's ClaudeSDKClient -- most commonly while it's parked on a
-        # manual approval. A second concurrent client.query() on the same
-        # session is unsafe, so refuse rather than race it (mirrors
-        # OpencodeAdapter's own "still processing" guard).
-        running_turn = self._turn_tasks.get(room_id)
-        if running_turn is not None and not running_turn.done():
-            await tools.send_notice(
-                "Still processing the previous request in this room.",
-                mentions=[msg.sender_id] if msg.sender_id else None,
-            )
-            tools.turn.settle()
-            return
-
-        # Bound only once this message runs a turn: a command or busy message
-        # must not take over the in-flight turn's tools, which its approval
-        # prompts and MCP tool calls still post through.
+        # The running turn's approvals and MCP calls keep their original tools.
         self._room_tools[room_id] = tools
         await self._bind_mcp_tools(room_id, tools)
         await self._mcp.ensure()

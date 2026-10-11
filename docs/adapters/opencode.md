@@ -38,6 +38,13 @@ while the human decides), so the adapter judges that turn itself when OpenCode
 finishes it: a turn that ends without a reply then posts one missing-reply
 failure. A turn cancelled by cleanup or an interrupt posts nothing.
 
+New ordinary work remains outstanding while the session is occupied. Approval,
+status and question replies remain reachable through the shared control hook;
+free text while a question is pending keeps its existing question-answer
+meaning. Controls use their own delivery tools, while the active OpenCode turn
+retains its original tools. The room scheduler retries rejected ordinary work
+in order after the session becomes available.
+
 `variant` is an opaque, provider- and model-specific name the running server
 owns: it may select reasoning effort or be a custom provider setting, so read
 the server's model catalog rather than assuming `"high"` exists. The model
