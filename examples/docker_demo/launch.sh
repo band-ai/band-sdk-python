@@ -41,6 +41,7 @@ BAND_HOSTS=("$BAND_NET_HOST")
 # Workload references built from the same descriptor, with different targets.
 BASE_IMAGE="band-python-kit:local"       # Architect (crewai: pure-Python via uv.lock)
 CLI_IMAGE="band-python-kit-cli:local"    # PM + Dev (adds the claude + codex CLIs)
+BAND_PLACEHOLDER=proxy-managed
 
 # role | workspace | sbx name | kit image | LLM provider
 ROLES=(
@@ -112,19 +113,14 @@ build() {
   docker save "$CLI_IMAGE" | sbx template load /dev/stdin
   # Local sbx builds use descriptor-directory context, so wrap the loaded
   # workload while retaining the canonical metadata, policy and instructions.
-  uv run --project "$ROOT" python - "$KIT_DIR/spec.yaml" "$HERE/.demo/workloads" "$BASE_IMAGE" "$CLI_IMAGE" <<'PYWORKLOAD'
+  uv run --project "$ROOT" python - "$ROOT" "$HERE/.demo/workloads" "$BASE_IMAGE" "$CLI_IMAGE" <<'PYWORKLOAD'
 import sys
 from pathlib import Path
-import yaml
-source, destination, runtime, cli = sys.argv[1:]
-text = Path(source).read_text()
-descriptor = yaml.safe_load(text)
-descriptor.pop("dockerfile")
+sys.path.insert(0, sys.argv[1])
+from tests.docker.toolkit.sbx_cli import write_local_workload
+_, destination, runtime, cli = sys.argv[1:]
 for stage, image in (("runtime", runtime), ("cli", cli)):
-    directory = Path(destination) / stage
-    directory.mkdir(parents=True, exist_ok=True)
-    descriptor["build"] = f"FROM {image}\n"
-    (directory / "band-workload.yaml").write_text(text.splitlines()[0] + "\n" + yaml.safe_dump(descriptor, sort_keys=False))
+    write_local_workload(image, Path(destination) / stage)
 PYWORKLOAD
 }
 
@@ -238,8 +234,8 @@ launch_one() {
   [ "$BAND_SECRET_HOST" != "$BAND_NET_HOST" ] && secret_hosts=("$BAND_SECRET_HOST")
   local host_args=() h
   for h in "${secret_hosts[@]}"; do host_args+=(--host "$h"); done
-  record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "proxy-managed")"
-  printf '%s' "$agent_key" | sbx secret set-custom --sandbox "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed >/dev/null
+  record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$BAND_PLACEHOLDER")"
+  printf '%s' "$agent_key" | sbx secret set-custom --sandbox "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder "$BAND_PLACEHOLDER" >/dev/null
 
   record "$MF_SANDBOXES" "$name"
   sbx create --name "$name" "$image" "$stage"
@@ -393,6 +389,7 @@ up() {
     echo "ERROR: previous demo manifest exists — run './launch.sh down' first" >&2
     exit 1
   fi
+  ( cd "$HERE" && uv run provision.py check )
   mkdir -p "$RUN_DIR/workspaces"
   # Arm cleanup BEFORE the first mutation so any partial failure is reaped. INT/TERM
   # (Ctrl-C) convert to a normal exit so the single EXIT trap tears down cleanly —

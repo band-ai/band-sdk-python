@@ -274,3 +274,52 @@ def test_secret_timeout_does_not_expose_command_or_captured_output() -> None:
         run_redacting_secret(argv, secret=secret, timeout=1)
     assert secret not in str(error.value)
     assert "***" in str(error.value)
+
+
+@markers.requires_posix_pty
+def test_owned_session_waits_for_reader_before_releasing_its_pty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logging_entered = threading.Event()
+    release_logging = threading.Event()
+    end_body = threading.Event()
+    owner_done = threading.Event()
+    errors: list[BaseException] = []
+
+    def spawn_owner(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
+        return _spawn_pty_process(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('ready', flush=True); time.sleep(30)",
+            ]
+        )
+
+    def delayed_logging(*args: object) -> None:
+        logging_entered.set()
+        assert release_logging.wait(5)
+
+    def own_session() -> None:
+        try:
+            with attached_run("owned-sandbox"):
+                assert end_body.wait(5)
+        except BaseException as error:  # noqa: BLE001 - propagate worker failures to the owner
+            errors.append(error)
+        finally:
+            owner_done.set()
+
+    monkeypatch.setattr(sbx_cli, "_spawn_pty_process", spawn_owner)
+    monkeypatch.setattr(sbx_cli.logger, "debug", delayed_logging)
+    monkeypatch.setattr(sbx_cli, "ATTACH_STOP_TIMEOUT_S", 0.01)
+    owner = threading.Thread(target=own_session)
+    owner.start()
+    try:
+        assert logging_entered.wait(5)
+        end_body.set()
+        assert not owner_done.wait(0.2), "PTY released while reader was active"
+    finally:
+        end_body.set()
+        release_logging.set()
+        owner.join(timeout=5)
+    assert not owner.is_alive()
+    assert errors == []

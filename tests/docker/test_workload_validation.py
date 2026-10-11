@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any
 
 import pytest
@@ -172,3 +173,28 @@ def test_legacy_floating_artifact_is_ineligible(
         lambda command: {"artifactType": "application/vnd.docker.sandbox.kit.v2"},
     )
     assert not validator.is_v3_workload("registry.example/workload:latest")
+
+
+@pytest.mark.parametrize(
+    "reference,repository",
+    [
+        ("registry.example/workload:1.5.0", "registry.example/workload"),
+        ("registry.example/workload@sha256:abc", "registry.example/workload"),
+        ("localhost:5000/workload:1.5.0", "localhost:5000/workload"),
+        ("localhost:5000/workload@sha256:abc", "localhost:5000/workload"),
+    ],
+)
+def test_child_references_preserve_the_registry(
+    reference: str, repository: str
+) -> None:
+    assert validator.repository_name(reference) == repository
+
+
+def test_registry_failure_preserves_the_cli_diagnostic() -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.write('manifest unknown for candidate'); sys.exit(3)",
+    ]
+    with pytest.raises(RuntimeError, match="manifest unknown for candidate"):
+        validator.fetch_json(command)

@@ -16,13 +16,25 @@ PLATFORMS = {("linux", "amd64"), ("linux", "arm64")}
 
 
 def fetch_json(command: list[str]) -> dict[str, Any]:
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or "no diagnostic output").strip()
+        raise RuntimeError(f"{' '.join(command)} failed: {detail}") from None
     return json.loads(result.stdout)
+
+
+def repository_name(reference: str) -> str:
+    """Remove a tag or digest while retaining registry ports."""
+    repository = reference.partition("@")[0]
+    if ":" in repository.rsplit("/", 1)[-1]:
+        return repository.rsplit(":", 1)[0]
+    return repository
 
 
 def is_v3_workload(reference: str, *, release_version: str | None = None) -> bool:
     """Classify legacy metadata without hiding registry access failures."""
-    repository = reference.split("@")[0].rsplit(":", 1)[0]
+    repository = repository_name(reference)
     root = fetch_json(["oras", "manifest", "fetch", reference])
     if root.get("artifactType"):
         return False
@@ -38,7 +50,6 @@ def is_v3_workload(reference: str, *, release_version: str | None = None) -> boo
         )
         if child is None:
             return False
-        repository = reference.split("@")[0].rsplit(":", 1)[0]
         manifest = fetch_json(
             ["oras", "manifest", "fetch", f"{repository}@{child['digest']}"]
         )
@@ -76,7 +87,7 @@ def validate_workload(
     root = fetch(["oras", "manifest", "fetch", reference])
     if root.get("artifactType") or not root.get("manifests"):
         raise ValueError("expected a multi-platform workload index")
-    repository = reference.split("@")[0].rsplit(":", 1)[0]
+    repository = repository_name(reference)
     platforms: set[tuple[str, str]] = set()
     descriptors: list[dict[str, Any]] = []
     attestations: dict[str, set[str]] = {}

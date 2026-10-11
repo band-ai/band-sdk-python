@@ -91,11 +91,21 @@ class AgentSettings(BaseSettings):
     rest_url: str
 
 
+class ProviderSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+    anthropic_proxy_key: str
+
+
 async def main() -> None:
     settings = AgentSettings()
     agent = Agent.create(
         adapter=AnthropicAdapter(
-            AnthropicAdapterConfig(custom_section="Reply briefly and clearly.")
+            AnthropicAdapterConfig(
+                provider_key=ProviderSettings().anthropic_proxy_key,
+                custom_section="Reply briefly and clearly.",
+            )
         ),
         agent_id=settings.agent_id,
         api_key=settings.api_key,
@@ -111,7 +121,9 @@ if __name__ == "__main__":
 
 Refresh the actual customer lock on the host. Remove the stopped sandbox but
 retain its owned Band secret. Store the provider secret **before recreating**
-so `ANTHROPIC_API_KEY` is available at launch. The `sk-ant-` placeholder is a
+so `ANTHROPIC_PROXY_KEY` is available at launch. sbx reserves
+`ANTHROPIC_API_KEY`; the application reads the nonreserved variable and passes
+its sentinel explicitly as the adapter's `provider_key`. The `sk-ant-` placeholder is a
 nonsecret provider-compatible sentinel, not a real key:
 
 ```bash
@@ -122,7 +134,7 @@ sbx secret ls --sandbox "$SANDBOX"
 read -r -s -p 'Anthropic API key: ' ANTHROPIC_API_KEY; echo
 printf '%s' "$ANTHROPIC_API_KEY" | sbx secret set-custom \
   --sandbox "$SANDBOX" --host api.anthropic.com \
-  --env ANTHROPIC_API_KEY --placeholder sk-ant-proxy-managed
+  --env ANTHROPIC_PROXY_KEY --placeholder sk-ant-proxy-managed
 unset ANTHROPIC_API_KEY
 sbx create --name "$SANDBOX" "$WORKLOAD" "$WORKSPACE"
 sbx policy allow network --sandbox "$SANDBOX" api.anthropic.com

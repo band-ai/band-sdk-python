@@ -193,6 +193,7 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
         ),
     )
     for probe, removal in probes:
+        resource = "sandbox" if probe[1] == "ls" else "scoped secret"
         try:
             result = subprocess.run(
                 probe, capture_output=True, text=True, check=False, timeout=60
@@ -221,14 +222,15 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
                     removal, capture_output=True, text=True, check=False, timeout=60
                 )
             except (OSError, subprocess.SubprocessError):
-                logger.exception("Cleanup command unavailable: %s", " ".join(removal))
+                logger.exception("Could not remove %s for run %s", resource, name)
                 failed = True
                 continue
             if removed.returncode:
                 logger.error(
-                    "Cleanup command failed (exit %s): %s",
+                    "Could not remove %s for run %s (exit %s)",
+                    resource,
+                    name,
                     removed.returncode,
-                    " ".join(removal),
                 )
                 failed = True
     return not failed
@@ -252,7 +254,8 @@ async def cleanup_by_name(name: str) -> None:
         user_client=client, settings=settings, run_id=name
     )
     agent_ids = recorded_resources(name, "agents")
-    if not agent_ids:
+    registration_known = (ledger_path(name) / "agents").exists()
+    if not registration_known:
         try:
             response = await client.human_api_agents.list_my_agents(
                 name=f"Self-registration demo ({name})", page=1, page_size=100
@@ -264,6 +267,7 @@ async def cleanup_by_name(name: str) -> None:
             logger.exception("Could not list agents; continuing sandbox cleanup")
             failed = True
         else:
+            registration_known = True
             for agent in response.data or []:
                 if agent.name == f"Self-registration demo ({name})":
                     record_resource(name, "agents", agent.id)
@@ -294,11 +298,13 @@ async def cleanup_by_name(name: str) -> None:
                 logger.exception("Could not remove %s %s", kind, resource_id)
                 unresolved.append(resource_id)
         path = ledger_path(name) / kind
+        if kind == "agents" and not registration_known:
+            continue
         if unresolved:
             path.write_text("\n".join(unresolved) + "\n", encoding="utf-8")
             failed = True
         else:
-            path.unlink(missing_ok=True)
+            path.write_text("", encoding="utf-8")
     if failed:
         raise RuntimeError(
             f"Cleanup incomplete; ledger retained at {ledger_path(name)}. Retry: uv run examples/sandbox/self-registration/demo.py --cleanup {name}"

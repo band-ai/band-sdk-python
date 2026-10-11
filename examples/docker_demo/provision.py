@@ -102,12 +102,16 @@ def make_client(settings: ProvisionSettings) -> AsyncRestClient:
     )
 
 
-async def create(client: AsyncRestClient) -> None:
+def require_fresh_run() -> None:
     for artifact in (CONFIG_PATH, AGENTS_ENV, AGENT_IDS, ROOM_IDS):
         if artifact.exists():
             raise ValueError(
                 f"{artifact} already exists; run launch.sh down before provisioning"
             )
+
+
+async def create(client: AsyncRestClient) -> None:
+    require_fresh_run()
     DEMO_DIR.mkdir(exist_ok=True)
     keyed_config: dict[str, dict[str, str]] = {}
     env_lines: list[str] = []
@@ -209,6 +213,9 @@ async def delete(client: AsyncRestClient) -> None:
 
 async def main() -> None:
     LogSettings().for_application().configure()
+    if len(sys.argv) > 1 and sys.argv[1] == "check":
+        require_fresh_run()
+        return
     settings = ProvisionSettings()
     client = make_client(settings)
     if len(sys.argv) > 1 and sys.argv[1] == "delete":

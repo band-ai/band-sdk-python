@@ -163,3 +163,54 @@ async def test_self_registration_recovery_accepts_confirmed_absence(
     await self_registration.cleanup_by_name(name)
 
     assert not (tmp_path / name).exists()
+
+
+async def test_self_registration_retries_only_unresolved_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = "band-selfreg-demo-retry"
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(self_registration, "_require_settings", Mock())
+    client = AsyncMock()
+    client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
+    monkeypatch.setattr(
+        self_registration, "user_rest_client", Mock(return_value=client)
+    )
+    manager = SimpleNamespace(
+        reap_room=AsyncMock(side_effect=[RuntimeError("room blocked"), None]),
+        reap_agent=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        self_registration, "ResourceManager", Mock(return_value=manager)
+    )
+    monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    self_registration.record_resource(name, "rooms", "room-1")
+    self_registration.record_resource(name, "agents", "agent-1")
+
+    with pytest.raises(RuntimeError, match="Cleanup incomplete"):
+        await self_registration.cleanup_by_name(name)
+    await self_registration.cleanup_by_name(name)
+
+    manager.reap_agent.assert_awaited_once_with("agent-1")
+    assert manager.reap_room.await_count == 2
+    client.human_api_agents.list_my_agents.assert_not_awaited()
+    assert not self_registration.ledger_path(name).exists()
+
+
+async def test_failed_discovery_remains_unknown_on_cleanup_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = "band-selfreg-demo-unknown"
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(self_registration, "_require_settings", Mock())
+    client = AsyncMock()
+    client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
+    monkeypatch.setattr(
+        self_registration, "user_rest_client", Mock(return_value=client)
+    )
+    monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="Cleanup incomplete"):
+            await self_registration.cleanup_by_name(name)
+    assert client.human_api_agents.list_my_agents.await_count == 2
+    assert not (self_registration.ledger_path(name) / "agents").exists()

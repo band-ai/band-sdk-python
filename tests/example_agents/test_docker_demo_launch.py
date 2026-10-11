@@ -341,3 +341,55 @@ def test_demo_policy_cleanup_requires_confirmed_absence(
     )
     assert (result.returncode != 0) is failure
     assert run.exists() is failure
+
+
+def test_refused_startup_preserves_prior_provisioned_resources(
+    demo_shell: tuple[Path, dict[str, str], Path],
+) -> None:
+    script, env, events = demo_shell
+    demo = script.parent
+    shutil.copyfile(
+        EXAMPLES_ROOT / "docker_demo" / "provision.py", demo / "provision.py"
+    )
+    artifacts = {
+        demo / ".demo" / "agent_ids.txt": "prior-agent\n",
+        demo / ".demo" / "agents.env": "prior credentials\n",
+        demo / "agent_config.yaml": "prior config\n",
+    }
+    for artifact, content in artifacts.items():
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(content)
+    for stage in ("runtime", "cli"):
+        descriptor = demo / ".demo" / "workloads" / stage / "band-workload.yaml"
+        descriptor.parent.mkdir(parents=True)
+        descriptor.touch()
+    binary = Path(env["PATH"].split(os.pathsep)[0]) / "uv"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        + r"""import asyncio, importlib.util, os, sys
+from pathlib import Path
+from types import SimpleNamespace
+spec = importlib.util.spec_from_file_location('demo_provision', 'provision.py')
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+async def delete_agent(agent_id, **kwargs):
+    with open(os.environ['DEMO_EVENTS'], 'a') as events:
+        events.write(agent_id + '\n')
+module.make_client = lambda settings: SimpleNamespace(
+    human_api_agents=SimpleNamespace(delete_my_agent=delete_agent))
+sys.argv = sys.argv[2:]
+asyncio.run(module.main())
+"""
+    )
+    result = shell(
+        script,
+        env,
+        "check_tools() { :; }\ncheck_keys() { :; }\n"
+        "check_attach_tool() { :; }\nassert_names_free() { :; }\nup",
+    )
+    assert result.returncode != 0
+    assert "already exists" in result.stderr
+    assert {path: path.read_text() for path in artifacts} == artifacts
+    assert not events.exists()
+    assert not (demo / ".demo" / "run").exists()

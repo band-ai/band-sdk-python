@@ -16,12 +16,20 @@ from __future__ import annotations
 
 import importlib
 import re
+from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import yaml
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from band.credentials import PROXY_MANAGED_API_KEY
+from band.integrations.uvicorn_server import ManagedUvicornServer
 from tests.docker.toolkit.sbx_cli import kit_baseline_hosts
+from tests.lifecycle import running
 from tests.paths import KIT_DIR
 
 # Hosts required by every fresh starter workspace (see the kit spec's
@@ -84,3 +92,69 @@ def test_kit_docs_placeholder_matches_the_sdk_sentinel() -> None:
         )
     assert placeholders, "expected at least one --placeholder in the kit docs"
     assert PROXY_MANAGED_API_KEY in placeholders, placeholders
+
+
+async def test_written_anthropic_conversion_authenticates_with_custom_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guide = KIT_DIR / "echo-agent" / "README.md"
+    source = re.search(r"```python notest\n(.*?)\n```", guide.read_text(), re.DOTALL)
+    assert source is not None
+    namespace: dict[str, Any] = {"__name__": "documented_example"}
+    # Execute the trusted repository example so the documented application is tested.
+    exec(compile(source.group(1), str(guide), "exec"), namespace)  # noqa: S102
+    sentinel = "sk-ant-custom-sentinel"
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_PROXY_KEY", sentinel)
+    for key, value in {
+        "BAND_AGENT_ID": "documented-agent",
+        "BAND_API_KEY": PROXY_MANAGED_API_KEY,
+        "BAND_WS_URL": "wss://band.test/socket",
+        "BAND_REST_URL": "https://band.test",
+    }.items():
+        monkeypatch.setenv(key, value)
+    observed_keys: list[str] = []
+
+    async def provider(request: Request) -> JSONResponse:
+        observed_keys.append(request.headers["x-api-key"])
+        return JSONResponse(
+            {
+                "id": "message-probe",
+                "type": "message",
+                "role": "assistant",
+                "model": "probe-model",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        )
+
+    server = ManagedUvicornServer(
+        Starlette(routes=[Route("/v1/messages", provider, methods=["POST"])]),
+        host="127.0.0.1",
+        port=0,
+    )
+
+    async def provider_probe(agent: Any) -> None:
+        adapter = agent.adapter
+        try:
+            await adapter.client.messages.create(
+                model=adapter.config.model,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "probe"}],
+            )
+        finally:
+            await adapter.client.close()
+
+    # Replace the live Band boundary; keep the documented adapter and real HTTP client.
+    namespace["Agent"] = SimpleNamespace(
+        create=lambda **kwargs: SimpleNamespace(**kwargs)
+    )
+    namespace["run_with_graceful_shutdown"] = provider_probe
+    async with running(server):
+        monkeypatch.setenv(
+            "ANTHROPIC_BASE_URL", f"http://127.0.0.1:{server.bound_port}"
+        )
+        await namespace["main"]()
+    assert observed_keys == [sentinel]

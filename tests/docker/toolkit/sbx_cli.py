@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import select
 import shlex
 import shutil
 import subprocess
@@ -48,6 +49,7 @@ EXEC_TIMEOUT_S = 120
 # once after `terminate()` before escalating to `kill()`, and again after
 # `kill()` before giving up and logging it as still alive.
 ATTACH_STOP_TIMEOUT_S = 10
+ATTACH_READ_POLL_S = 0.1
 
 # The issuer a credential-injected (MITM) TLS connection presents inside a
 # sandbox — the never-in-VM proof asserts the Band host's cert shows this,
@@ -115,16 +117,21 @@ def local_workload(image: str) -> Iterator[Path]:
     recipe needs repository-root inputs and is built with Buildx first.
     """
     with tempfile.TemporaryDirectory(prefix="band-workload-") as temporary:
-        directory = Path(temporary)
-        descriptor = _kit_spec(KIT_DIR)
-        descriptor.pop("dockerfile")
-        descriptor["build"] = f"FROM {image}\n"
-        syntax = (KIT_DIR / "spec.yaml").read_text().splitlines()[0]
-        (directory / "band-workload.yaml").write_text(
-            syntax + "\n" + yaml.safe_dump(descriptor, sort_keys=False),
-            encoding="utf-8",
-        )
-        yield directory
+        yield write_local_workload(image, Path(temporary))
+
+
+def write_local_workload(image: str, directory: Path) -> Path:
+    """Wrap a loaded image with the canonical workload declarations."""
+    descriptor = _kit_spec(KIT_DIR)
+    descriptor.pop("dockerfile")
+    descriptor["build"] = f"FROM {image}\n"
+    syntax = (KIT_DIR / "spec.yaml").read_text().splitlines()[0]
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "band-workload.yaml").write_text(
+        syntax + "\n" + yaml.safe_dump(descriptor, sort_keys=False),
+        encoding="utf-8",
+    )
+    return directory
 
 
 def files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
@@ -350,10 +357,18 @@ def attached_run(name: str) -> Iterator[None]:
     hold this open the same way.
     """
     process, controller_fd = _spawn_pty_process([SBX, "run", "--name", name])
+    stopping = threading.Event()
 
     def drain_output() -> None:
-        while True:
+        while not stopping.is_set():
             try:
+                readable, _, _ = select.select(
+                    [controller_fd], [], [], ATTACH_READ_POLL_S
+                )
+                if stopping.is_set():
+                    return
+                if not readable:
+                    continue
                 output = os.read(controller_fd, 65536)
             except OSError:
                 return
@@ -370,8 +385,9 @@ def attached_run(name: str) -> Iterator[None]:
         if process.poll() is not None:
             raise RuntimeError(f"owned sbx run for {name} exited {process.returncode}")
     finally:
+        stopping.set()
+        reader.join()
         _stop_pty_process(process, controller_fd)
-        reader.join(timeout=ATTACH_STOP_TIMEOUT_S)
 
 
 NAME_PREFIX = "band-nevervm"
