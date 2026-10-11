@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
 _REDACTED = "[REDACTED]"
@@ -43,8 +44,10 @@ _CREDENTIAL_FIELD_RE = re.compile(
 _KEY_SEPARATOR_RE = re.compile(_SEPARATOR)
 
 
-def redact_credentials(text: str) -> str:
-    """Redact credential-shaped substrings in a message."""
+def redact_credentials(text: str, *, known_values: Iterable[str] = ()) -> str:
+    """Redact configured secrets and credential-shaped substrings in a message."""
+    for value in sorted(set(known_values) - {""}, key=len, reverse=True):
+        text = text.replace(value, _REDACTED)
     redacted = _AUTH_SCHEME_VALUE_RE.sub(
         lambda match: f"{match.group(1)} {_REDACTED}", text
     )

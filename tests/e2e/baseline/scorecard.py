@@ -187,7 +187,7 @@ class ScorecardCollector:
         self._path = Path(path)
         self._outcomes: dict[tuple[str, str], ScorecardRow] = {}
         self._na: dict[tuple[str, str], ScorecardRow] = {}
-        self._credentials = sorted(set(credentials) - {""}, key=len, reverse=True)
+        self._credentials = tuple(credentials)
 
     @property
     def diagnostics_path(self) -> Path:
@@ -205,9 +205,7 @@ class ScorecardCollector:
                 *(f"{name}\n{content}" for name, content in report.sections),
             ]
         )
-        for credential in self._credentials:
-            detail = detail.replace(credential, "[REDACTED]")
-        detail = redact_credentials(detail)
+        detail = redact_credentials(detail, known_values=self._credentials)
         record = {
             "nodeid": report.nodeid,
             "phase": report.when,

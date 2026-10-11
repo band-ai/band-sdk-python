@@ -6,6 +6,17 @@ import pytest
 
 from band.core.redaction import redact_credentials, redact_credentials_deep
 
+
+def test_known_credentials_hide_unlabelled_values_and_overlapping_prefixes() -> None:
+    assert (
+        redact_credentials(
+            "rejected opaque-key-long and opaque-key; provider unavailable",
+            known_values=["", "opaque-key", "opaque-key-long"],
+        )
+        == "rejected [REDACTED] and [REDACTED]; provider unavailable"
+    )
+
+
 REDACTION_CASES = [
     pytest.param(
         "Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/x, "
