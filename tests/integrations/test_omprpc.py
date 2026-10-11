@@ -180,12 +180,12 @@ async def process_gate() -> AsyncIterator[ProcessGate]:
         yield gate
     finally:
         server.close()
-        await server.wait_closed()
         for writer in gate.writers:
             writer.close()
         await asyncio.gather(
             *(writer.wait_closed() for writer in gate.writers), return_exceptions=True
         )
+        await server.wait_closed()
         await asyncio.to_thread(kill_gate_processes, gate.processes)
 
 
@@ -661,16 +661,23 @@ async def test_cancelled_cleanup_reaps_descendants_but_not_unrelated_processes(
     cancellations: list[asyncio.TimerHandle] = []
     try:
         sibling = await process_gate.connection()
-        assert sibling.receipt.pid == unrelated.pid
+        unrelated_process = await asyncio.to_thread(psutil.Process, unrelated.pid)
+        # Windows virtualenv launchers may remain between the parent and Python.
+        assert sibling.process == unrelated_process or unrelated_process in (
+            await asyncio.to_thread(sibling.process.parents)
+        )
         starting = asyncio.create_task(client.start())
         descendants = [await process_gate.connection(), await process_gate.connection()]
         root = client._proc
         assert root is not None
-        child = next(
-            process for process in descendants if process.receipt.parent_pid == root.pid
-        )
-        assert any(
-            process.receipt.parent_pid == child.receipt.pid for process in descendants
+        root_process = await asyncio.to_thread(psutil.Process, root.pid)
+        ancestors = [
+            await asyncio.to_thread(process.process.parents) for process in descendants
+        ]
+        assert all(root_process in parents for parents in ancestors)
+        assert (
+            descendants[0].process in ancestors[1]
+            or descendants[1].process in ancestors[0]
         )
         if interruption == "startup":
             closing = starting

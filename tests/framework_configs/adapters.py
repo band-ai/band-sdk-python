@@ -38,7 +38,6 @@ from band.adapters.copilot_sdk import (
 from band.adapters.crewai import CrewAIAdapter, CrewAIAdapterConfig
 from band.adapters.crewai_flow import CrewAIFlowAdapter, CrewAIFlowAdapterConfig
 from band.adapters.google_adk import GoogleADKAdapter, GoogleADKAdapterConfig
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.core.types import ALL_CAPABILITIES, AdapterFeatures
@@ -340,6 +339,10 @@ def _parlant_factory(**kw: Any) -> Any:
 
 
 async def _omp_advertised_arg_text() -> dict[str, dict[str, str | None]]:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra may be absent in other framework lanes
+        OmpAdapter,
+    )
+
     adapter = OmpAdapter(capabilities=ALL_CAPABILITIES)
     advertised: dict[str, dict[str, str | None]] = {}
     for tool in adapter._host_tools():
@@ -358,6 +361,11 @@ async def _omp_advertised_arg_text() -> dict[str, dict[str, str | None]]:
 
 
 def _build_omp_config() -> AdapterConfig:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra may be absent in other framework lanes
+        OmpAdapter,
+        OmpAdapterConfig,
+    )
+
     custom = OmpAdapterConfig(
         model="openai/conformance",
         reasoning_effort="high",
