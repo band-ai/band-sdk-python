@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 import httpx2
 import pytest
+import pytest_asyncio
 from anthropic import AsyncAnthropic
 
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
@@ -35,6 +35,14 @@ def tool(name: BandTool, arguments: dict[str, Any], call_id: str) -> dict[str, A
     return {"type": "tool_use", "name": name, "input": arguments, "id": call_id}
 
 
+def decline(**arguments: Any) -> dict[str, Any]:
+    return tool(BandTool.NO_REPLY, arguments, "decline")
+
+
+def participants() -> dict[str, Any]:
+    return tool(BandTool.GET_PARTICIPANTS, {}, "read")
+
+
 def reply(content: str) -> dict[str, Any]:
     return tool(
         BandTool.SEND_MESSAGE, {"content": content, "mentions": ["user"]}, "reply"
@@ -54,43 +62,75 @@ def response(*tools: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class ToolResult:
+    call_id: str
+    content: str
+    is_error: bool = False
+
+
 @dataclass
 class NativePeer:
-    responses: list[dict[str, Any]]
+    responses: list[dict[str, Any]] = field(default_factory=list)
     requests: list[dict[str, Any]] = field(default_factory=list)
+
+    def responds_with(self, *responses: dict[str, Any]) -> None:
+        self.responses.extend(responses)
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(json.loads(request.content))
         assert self.responses, "adapter made an unnecessary provider request"
         return httpx2.Response(200, json=self.responses.pop(0))
 
-    def tool_results(self, request_index: int) -> list[dict[str, Any]]:
+    def tool_results(self, request_index: int) -> list[ToolResult]:
         return [
-            part
+            ToolResult(part["tool_use_id"], part["content"], part["is_error"])
             for message in self.requests[request_index]["messages"]
             if isinstance(message["content"], list)
             for part in message["content"]
             if part["type"] == "tool_result"
         ]
 
-    def result_pairs(self, request_index: int) -> list[tuple[str, str]]:
-        return [
-            (part["tool_use_id"], part["content"])
-            for part in self.tool_results(request_index)
-        ]
-
     def failed_tools(self, request_index: int) -> list[str]:
         return [
-            part["tool_use_id"]
-            for part in self.tool_results(request_index)
-            if part["is_error"]
+            result.call_id
+            for result in self.tool_results(request_index)
+            if result.is_error
         ]
 
 
-@asynccontextmanager
-async def native_adapter(
-    peer: NativePeer,
-) -> AsyncIterator[AnthropicAdapter]:
+@dataclass
+class NativeTurn:
+    adapter: AnthropicAdapter
+    peer: NativePeer
+    message: PlatformMessage
+
+    async def run(
+        self,
+        tools: NativeTools | None = None,
+        *,
+        message: PlatformMessage | None = None,
+        bootstrap: bool = True,
+    ) -> NativeTools:
+        tools = tools if tools is not None else NativeTools()
+        message = message if message is not None else self.message
+        await self.adapter.run_judged_turn(
+            msg=message,
+            tools=tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=bootstrap,
+            room_id=message.room_id,
+        )
+        return tools
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def native_turn(
+    sample_platform_message: PlatformMessage,
+) -> AsyncIterator[NativeTurn]:
+    peer = NativePeer()
     adapter = AnthropicAdapter(
         AnthropicAdapterConfig(provider_key="fixture"),
         emit={Emit.TOOL_CALLS, Emit.USAGE},
@@ -103,25 +143,7 @@ async def native_adapter(
     ) as client:
         adapter.client = client
         await adapter.on_started("Fixture", "Native tool-loop test")
-        yield adapter
-
-
-async def run_turn(
-    adapter: AnthropicAdapter,
-    message: PlatformMessage,
-    tools: FakeAgentTools,
-    *,
-    bootstrap: bool = True,
-) -> None:
-    await adapter.run_judged_turn(
-        msg=message,
-        tools=tools,
-        history=[],
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=bootstrap,
-        room_id=message.room_id,
-    )
+        yield NativeTurn(adapter, peer, sample_platform_message)
 
 
 def result_names(tools: FakeAgentTools) -> list[str]:
@@ -133,12 +155,11 @@ def result_names(tools: FakeAgentTools) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_successful_decline_finishes_without_another_provider_request(
-    sample_platform_message: PlatformMessage,
+    native_turn: NativeTurn,
 ) -> None:
-    peer = NativePeer([response(tool(BandTool.NO_REPLY, {"reason": "FYI"}, "decline"))])
-    tools = NativeTools()
-    async with native_adapter(peer) as adapter:
-        await run_turn(adapter, sample_platform_message, tools)
+    peer = native_turn.peer
+    peer.responds_with(response(decline(reason="FYI")))
+    tools = await native_turn.run()
 
     assert len(peer.requests) == 1
     assert tools.turn.complete
@@ -177,18 +198,15 @@ class RejectedDeclineTools(NativeTools):
 )
 @pytest.mark.asyncio
 async def test_failed_decline_allows_a_later_reply(
-    rejection: Any, sample_platform_message: PlatformMessage
+    rejection: Any, native_turn: NativeTurn
 ) -> None:
-    peer = NativePeer(
-        [
-            response(tool(BandTool.NO_REPLY, {}, "decline")),
-            response(reply("recovered")),
-            response(),
-        ]
+    peer = native_turn.peer
+    peer.responds_with(
+        response(decline()),
+        response(reply("recovered")),
+        response(),
     )
-    tools = RejectedDeclineTools(rejection)
-    async with native_adapter(peer) as adapter:
-        await run_turn(adapter, sample_platform_message, tools)
+    tools = await native_turn.run(RejectedDeclineTools(rejection))
 
     assert len(peer.requests) == 3
     assert tools.chat == ["recovered"]
@@ -199,21 +217,19 @@ async def test_failed_decline_allows_a_later_reply(
 
 @pytest.mark.asyncio
 async def test_invalid_decline_arguments_do_not_end_the_turn(
-    sample_platform_message: PlatformMessage,
+    native_turn: NativeTurn,
 ) -> None:
-    peer = NativePeer(
-        [
-            response(tool(BandTool.NO_REPLY, {"reason": 42}, "decline")),
-            response(reply("recovered")),
-            response(),
-        ]
+    peer = native_turn.peer
+    peer.responds_with(
+        response(decline(reason=42)),
+        response(reply("recovered")),
+        response(),
     )
-    tools = NativeTools()
-    async with native_adapter(peer) as adapter:
-        await run_turn(adapter, sample_platform_message, tools)
+    tools = await native_turn.run()
 
     assert len(peer.requests) == 3
-    assert peer.result_pairs(1)[0][1].startswith("Invalid arguments for")
+    (rejected,) = peer.tool_results(1)
+    assert rejected.content.startswith("Invalid arguments for")
     assert peer.failed_tools(1) == ["decline"]
     assert tools.chat == ["recovered"]
     assert reported_failures(tools) == []
@@ -221,33 +237,28 @@ async def test_invalid_decline_arguments_do_not_end_the_turn(
 
 @pytest.mark.asyncio
 async def test_decline_preserves_batch_results_and_replay_on_the_next_turn(
-    sample_platform_message: PlatformMessage,
+    native_turn: NativeTurn,
 ) -> None:
-    peer = NativePeer(
-        [
-            response(
-                tool(BandTool.NO_REPLY, {}, "decline"),
-                tool(BandTool.GET_PARTICIPANTS, {}, "read"),
-            ),
-            response(reply("new turn")),
-            response(),
-        ]
+    peer = native_turn.peer
+    peer.responds_with(
+        response(
+            decline(),
+            participants(),
+        ),
+        response(reply("new turn")),
+        response(),
     )
-    first_tools, next_tools = NativeTools(), NativeTools()
-    async with native_adapter(peer) as adapter:
-        await run_turn(adapter, sample_platform_message, first_tools)
-        assert len(peer.requests) == 1
-        await run_turn(
-            adapter,
-            replace(sample_platform_message, id="next", content="Please reply"),
-            next_tools,
-            bootstrap=False,
-        )
+    first_tools = await native_turn.run()
+    assert len(peer.requests) == 1
+    next_tools = await native_turn.run(
+        message=replace(native_turn.message, id="next", content="Please reply"),
+        bootstrap=False,
+    )
 
     assert result_names(first_tools) == [BandTool.NO_REPLY, BandTool.GET_PARTICIPANTS]
-    assert peer.result_pairs(1) == [
-        ("decline", '{"status": "no_reply"}'),
-        ("read", "[]"),
+    assert peer.tool_results(1) == [
+        ToolResult("decline", '{"status": "no_reply"}'),
+        ToolResult("read", "[]"),
     ]
     assert len(peer.requests) == 3
     assert next_tools.chat == ["new turn"]
@@ -257,18 +268,15 @@ async def test_decline_preserves_batch_results_and_replay_on_the_next_turn(
 
 @pytest.mark.asyncio
 async def test_successful_reply_and_reads_keep_the_native_loop_running(
-    sample_platform_message: PlatformMessage,
+    native_turn: NativeTurn,
 ) -> None:
-    peer = NativePeer(
-        [
-            response(reply("progress")),
-            response(tool(BandTool.GET_PARTICIPANTS, {}, "read")),
-            response(),
-        ]
+    peer = native_turn.peer
+    peer.responds_with(
+        response(reply("progress")),
+        response(participants()),
+        response(),
     )
-    tools = NativeTools()
-    async with native_adapter(peer) as adapter:
-        await run_turn(adapter, sample_platform_message, tools)
+    tools = await native_turn.run()
 
     assert len(peer.requests) == 3
     assert result_names(tools) == [BandTool.SEND_MESSAGE, BandTool.GET_PARTICIPANTS]
@@ -277,19 +285,16 @@ async def test_successful_reply_and_reads_keep_the_native_loop_running(
 
 @pytest.mark.asyncio
 async def test_decline_keeps_effects_already_requested_in_the_same_batch(
-    sample_platform_message: PlatformMessage,
+    native_turn: NativeTurn,
 ) -> None:
-    peer = NativePeer(
-        [
-            response(
-                tool(BandTool.NO_REPLY, {}, "decline"),
-                reply("requested work"),
-            )
-        ]
+    peer = native_turn.peer
+    peer.responds_with(
+        response(
+            decline(),
+            reply("requested work"),
+        )
     )
-    tools = NativeTools()
-    async with native_adapter(peer) as adapter:
-        await run_turn(adapter, sample_platform_message, tools)
+    tools = await native_turn.run()
 
     assert len(peer.requests) == 1
     assert tools.chat == ["requested work"]
@@ -315,28 +320,22 @@ class BlockingReadTools(NativeTools):
 
 @pytest.mark.asyncio
 async def test_cancellation_after_decline_still_cancels_the_unfinished_batch(
-    sample_platform_message: PlatformMessage,
+    native_turn: NativeTurn,
 ) -> None:
-    peer = NativePeer(
-        [
-            response(
-                tool(BandTool.NO_REPLY, {}, "decline"),
-                tool(BandTool.GET_PARTICIPANTS, {}, "read"),
-            )
-        ]
+    peer = native_turn.peer
+    peer.responds_with(
+        response(
+            decline(),
+            participants(),
+        )
     )
     tools = BlockingReadTools()
-    async with native_adapter(peer) as adapter:
-        task = asyncio.create_task(run_turn(adapter, sample_platform_message, tools))
-        try:
-            await asyncio.wait_for(tools.read_started.wait(), timeout=2)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        finally:
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+    async with asyncio.TaskGroup() as tasks:
+        task = tasks.create_task(native_turn.run(tools))
+        await asyncio.wait_for(tools.read_started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
     assert tools.read_cancelled.is_set()
     assert len(peer.requests) == 1

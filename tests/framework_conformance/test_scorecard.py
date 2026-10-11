@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,6 +58,22 @@ from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 from tests.paths import REPO_ROOT
 
 
+@dataclass(frozen=True)
+class FailureDetail:
+    nodeid: str
+    phase: str
+    longrepr: str
+    truncated: bool
+
+
+def read_failures(path: Path) -> list[FailureDetail]:
+    return [FailureDetail(**json.loads(line)) for line in path.read_text().splitlines()]
+
+
+def read_scorecard(path: Path) -> list[ScorecardRow]:
+    return [ScorecardRow(**row) for row in json.loads(path.read_text())]
+
+
 def test_completed_reports_survive_a_watchdog_exit(pytester: pytest.Pytester) -> None:
     pytester.makeconftest(f"""
 from __future__ import annotations
@@ -92,20 +109,11 @@ def test_unreached():
     )
     assert result.ret == 1
     result.stdout.fnmatch_lines(["*Timeout*"])
-    details = [
-        json.loads(line)
-        for line in (pytester.path / "scorecard.failures.jsonl")
-        .read_text()
-        .splitlines()
-    ]
-    assert len(details) == 1
-    assert details[0]["nodeid"] == "test_watchdog.py::test_fail"
-    assert details[0]["phase"] == "call"
-    assert "original failure before watchdog exit" in details[0]["longrepr"]
-    rows = [
-        ScorecardRow(**row)
-        for row in json.loads((pytester.path / "scorecard.json").read_text())
-    ]
+    (failure,) = read_failures(pytester.path / "scorecard.failures.jsonl")
+    assert failure.nodeid == "test_watchdog.py::test_fail"
+    assert failure.phase == "call"
+    assert "original failure before watchdog exit" in failure.longrepr
+    rows = read_scorecard(pytester.path / "scorecard.json")
     assert rows == [
         ScorecardRow("test_watchdog.py::test_fail", SUITE_ADAPTER, "fail"),
         ScorecardRow("test_watchdog.py::test_pass", SUITE_ADAPTER, "pass"),
@@ -357,16 +365,10 @@ def test_teardown_failure_supersedes_pass_and_preserves_each_failure(
         ("call", "passed"),
     ):
         collector.pytest_runtest_logreport(_report(nodeid, phase, outcome=outcome))
-    assert [ScorecardRow(**row) for row in json.loads(path.read_text())] == [
-        ScorecardRow("m.py::t", "anthropic", "fail")
-    ]
-    details = [
-        json.loads(line) for line in collector.diagnostics_path.read_text().splitlines()
-    ]
-    assert [(entry["nodeid"], entry["phase"]) for entry in details] == [
-        (nodeid, "teardown"),
-        (nodeid, "setup"),
-    ]
+    assert read_scorecard(path) == [ScorecardRow("m.py::t", "anthropic", "fail")]
+    teardown, setup = read_failures(collector.diagnostics_path)
+    assert (teardown.nodeid, teardown.phase) == (nodeid, "teardown")
+    assert (setup.nodeid, setup.phase) == (nodeid, "setup")
 
 
 def test_failure_details_redact_before_bounding_and_keep_captured_logs(
@@ -379,18 +381,18 @@ def test_failure_details_redact_before_bounding_and_keep_captured_logs(
     report.longrepr = "provider rejected opaque-key\nAuthorization: Bearer auth-key"
     report.sections = [("Captured log call", "processing room abc; tool band_no_reply")]
     collector.pytest_runtest_logreport(report)
-    detail = json.loads(collector.diagnostics_path.read_text())
-    assert "opaque-key" not in detail["longrepr"]
-    assert "auth-key" not in detail["longrepr"]
-    assert "provider rejected [REDACTED]" in detail["longrepr"]
-    assert "processing room abc; tool band_no_reply" in detail["longrepr"]
-    assert not detail["truncated"]
+    (detail,) = read_failures(collector.diagnostics_path)
+    assert "opaque-key" not in detail.longrepr
+    assert "auth-key" not in detail.longrepr
+    assert "provider rejected [REDACTED]" in detail.longrepr
+    assert "processing room abc; tool band_no_reply" in detail.longrepr
+    assert not detail.truncated
     report.longrepr = "x" * (FAILURE_DETAIL_LIMIT - 5) + "opaque-key"
     collector.pytest_runtest_logreport(report)
-    bounded = json.loads(collector.diagnostics_path.read_text().splitlines()[-1])
-    assert len(bounded["longrepr"]) == FAILURE_DETAIL_LIMIT
-    assert bounded["truncated"]
-    assert "opaqu" not in bounded["longrepr"]
+    _, bounded = read_failures(collector.diagnostics_path)
+    assert len(bounded.longrepr) == FAILURE_DETAIL_LIMIT
+    assert bounded.truncated
+    assert "opaqu" not in bounded.longrepr
 
 
 def test_failed_atomic_replacement_preserves_the_previous_scorecard(
@@ -403,13 +405,13 @@ def test_failed_atomic_replacement_preserves_the_previous_scorecard(
 
     def refuse_replacement(source: Path, target: Path) -> None:
         assert json.loads(source.read_text())[0]["status"] == "fail"
-        assert [ScorecardRow(**row) for row in json.loads(target.read_text())] == prior
+        assert read_scorecard(target) == prior
         raise OSError("destination unavailable")
 
     monkeypatch.setattr(Path, "replace", refuse_replacement)
     with pytest.raises(OSError, match="destination unavailable"):
         write_json([ScorecardRow("m.py::test_fail", SUITE_ADAPTER, "fail")], path)
-    assert [ScorecardRow(**row) for row in json.loads(path.read_text())] == prior
+    assert read_scorecard(path) == prior
     assert list(tmp_path.iterdir()) == [path]
 
 
