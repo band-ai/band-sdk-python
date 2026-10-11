@@ -530,7 +530,8 @@ class AgentInput:
     Contains everything an adapter needs to process a message.
     History is provided via HistoryProvider for lazy conversion.
     Custom preprocessors that consume context can supply ``commit_context``;
-    the host calls it after every attempt except proven non-acceptance.
+    the host calls it after model attempts except proven non-acceptance.
+    Controls leave model context owed.
     """
 
     msg: PlatformMessage

@@ -32,6 +32,7 @@ def mock_adapter():
     adapter.on_started = AsyncMock()
     adapter.on_cleanup = AsyncMock()
     adapter.on_event = AsyncMock()
+    adapter.try_handle_control = None
     return adapter
 
 

@@ -17,7 +17,6 @@ from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.startup import release_adapter, start_adapter
-from band.runtime.tools import AgentTools
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -27,6 +26,7 @@ from band.runtime.types import (
 )
 
 if TYPE_CHECKING:
+    from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
 
@@ -460,7 +460,7 @@ class Agent:
             agent_id=self._runtime.agent_id,
         )
 
-        if inp is None:
+        if inp is None or await self._try_control(inp):
             return
 
         rejected = False
@@ -475,10 +475,11 @@ class Agent:
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
         """Handle controls with their delivery tools, preserving active ownership."""
+        inp = await self._preprocessor.process(
+            ctx=ctx, event=event, agent_id=self._runtime.agent_id
+        )
+        return await self._try_control(inp) if inp is not None else False
+
+    async def _try_control(self, inp: AgentInput) -> bool:
         handler = getattr(self._adapter, "try_handle_control", None)
-        if handler is None:
-            return False
-        msg = DefaultPreprocessor.message(ctx, event, self._runtime.agent_id)
-        if msg is None:
-            return False
-        return await handler(msg, AgentTools.from_context(ctx))
+        return await handler(inp.msg, inp.tools) if handler is not None else False

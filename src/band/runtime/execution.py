@@ -1752,10 +1752,6 @@ class ExecutionContext:
         housekeeping and skip it.
         """
         if isinstance(event, MessageEvent):
-            if self._on_message_control is not None and await self._on_message_control(
-                self, event
-            ):
-                return
             await self._execute_message_cycle(event)
         else:
             await self._on_execute(self, event)

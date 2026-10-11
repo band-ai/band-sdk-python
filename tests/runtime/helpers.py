@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -12,8 +11,8 @@ from unittest.mock import MagicMock
 
 import httpx
 
+from band.agent import Agent
 from band.client.rest import AsyncRestClient
-from band.core.exceptions import InputNotAccepted
 from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
@@ -23,9 +22,7 @@ from band.core.memory_types import (
 from band.core.protocols import TURN_FAILURE_PROVIDER
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
-from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
-from band.runtime.tools.agent import AgentTools
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
 from tests.identifiers import UUID_ID
@@ -77,35 +74,15 @@ def run_through(
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:
-    preprocessor = DefaultPreprocessor()
-
-    async def handler(ctx: ExecutionContext, event: Any) -> None:
-        inp = await preprocessor.process(ctx=ctx, event=event, agent_id=AGENT_ID)
-        if inp is not None:
-            try:
-                await adapter.on_event(inp)
-            finally:
-                if (
-                    not isinstance(sys.exception(), InputNotAccepted)
-                    and inp.commit_context is not None
-                ):
-                    inp.commit_context()
-
-    async def control(ctx: ExecutionContext, event: Any) -> bool:
-        msg = preprocessor.message(ctx=ctx, event=event, agent_id=AGENT_ID)
-        return (
-            await adapter.try_handle_control(msg, AgentTools.from_context(ctx))
-            if msg is not None
-            else False
-        )
+    agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
 
     return ExecutionContext(
         ROOM_ID,
         link,
-        handler,
+        agent._on_execute,
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
-        on_message_control=control,
+        on_message_control=agent._on_control,
     )
 
 
@@ -161,12 +138,12 @@ class LifecyclePlatform:
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
 
-    def add_message(self, message_id: str) -> None:
+    def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(
             {
                 "id": message_id,
                 "chat_room_id": ROOM_ID,
-                "content": "hello",
+                "content": content,
                 "sender_id": "user-1",
                 "sender_type": "User",
                 "sender_name": "User",
