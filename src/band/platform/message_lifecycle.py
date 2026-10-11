@@ -7,6 +7,7 @@ of WebSocket connection or subscription state.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TypeVar
@@ -157,13 +158,14 @@ class MessageLifecycle:
         working: bool,
         *,
         timeout_seconds: int = 2,
+        on_stopped: Callable[[], None] | None = None,
     ) -> bool:
         """
         Report the agent's boolean working state for a room's execution.
 
         ``working=True`` while a reasoning cycle is active (refreshed on a
-        keep-alive cadence), ``False`` once it ends. Never raises — failures
-        are swallowed and returned as ``False``, since the platform's TTL is
+        keep-alive cadence), ``False`` once it ends. Request failures are
+        swallowed and returned as ``False``, since the platform's TTL is
         the backstop and activity reporting must never break message
         processing.
 
@@ -172,9 +174,13 @@ class MessageLifecycle:
         dropped keep-alive gets re-sent next cadence tick, and a dropped
         ``false`` is cleared by the platform TTL either way — retrying would
         only add latency.
+
+        A successful ``working=True`` report echoed as ``False`` identifies a
+        stopped execution. Notify ``on_stopped`` separately from the request's
+        success boolean; transport failures never imply STOP.
         """
         try:
-            await rest.agent_api_activity.report_agent_chat_activity(
+            response = await rest.agent_api_activity.report_agent_chat_activity(
                 chat_id=room_id,
                 working=working,
                 request_options={
@@ -182,6 +188,7 @@ class MessageLifecycle:
                     "max_retries": 0,
                 },
             )
+            stopped = working and response.data.working is False
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             if not self._activity_report_failing:
                 self._activity_report_failing = True
@@ -203,6 +210,8 @@ class MessageLifecycle:
         if self._activity_report_failing:
             self._activity_report_failing = False
             logger.info("Activity reporting recovered for room %s", room_id)
+        if stopped and on_stopped is not None:
+            on_stopped()
         return True
 
     async def get_next_message(

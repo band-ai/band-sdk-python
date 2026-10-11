@@ -1626,10 +1626,26 @@ class ExecutionContext:
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
+        scope = self.current_scope
+
+        def on_stopped() -> None:
+            if (
+                scope is not None
+                and self.owns_scope(scope)
+                and not scope.stop_observed
+                and not self._closing
+            ):
+                logger.info(
+                    "Activity report observed stopped execution for room %s",
+                    self.room_id,
+                )
+                self.observe_platform_stop(scope)
+
         return await self.link.report_activity(
             self.room_id,
             working,
             timeout_seconds=self.config.working_request_timeout_seconds,
+            on_stopped=on_stopped,
         )
 
     async def _execute_message_cycle(self, event: PlatformEvent) -> None:
@@ -1641,8 +1657,12 @@ class ExecutionContext:
         mirroring the final idle-state transition. The reporter is a no-op
         when disabled or for the hub room, so call sites need no extra gating.
         """
-        await self._working_reporter.start()
         try:
+            await self._working_reporter.start()
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                # Deliver self-cancellation before entering the handler's cleanup.
+                await asyncio.sleep(0)
             self._resync_handled_work = True
             self._reset_resync_interval()
             await self._on_execute(self, event)

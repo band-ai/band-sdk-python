@@ -194,6 +194,7 @@ async def test_known_stop_recovers_without_play_push(
             forwarded_control_modes=frozenset(
                 {ControlMode.STOP, ControlMode.INTERRUPT}
             ),
+            enable_working_state=False,
         ) as control,
     ):
         await control.wait_for_startup_sync(deadline_s=timeout)
@@ -222,6 +223,53 @@ async def test_known_stop_recovers_without_play_push(
 
 
 @lane(Lane.CORE)
+async def test_activity_acknowledgement_recovers_without_stop_push(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    baseline_settings: BaselineSettings,
+    reply_capture: CaptureFactory,
+) -> None:
+    agent = await resource_manager.provision_agent("activitystop")
+    room_id = await resource_manager.provision_room(participants=[agent.id])
+    timeout = baseline_settings.e2e_timeout
+    async with (
+        reply_capture(room_id) as capture,
+        running_control_runtime(
+            agent,
+            room_id,
+            baseline_settings,
+            user_ops,
+            forwarded_control_modes=frozenset(),
+        ) as control,
+    ):
+        await control.wait_for_startup_sync(deadline_s=timeout)
+        mid = await user_ops.send_message(
+            room_id,
+            "resume interrupted work",
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await control.wait_for_start(deadline_s=timeout)
+        await capture.wait_for_delivery(
+            mid, agent.id, until={DeliveryStatus.PROCESSING}
+        )
+        await user_ops.stop_agent(room_id)
+        await control.wait_for_activity_stop(deadline_s=timeout)
+        await control.wait_for_cancellation(deadline_s=timeout)
+        await control.wait_for_activity_idle(deadline_s=timeout)
+        assert control.cancelled_message_ids == [mid]
+        assert control.completed_message_ids == []
+        statuses = await capture.durable_delivery_statuses((mid,), agent.id)
+        assert statuses[mid] is DeliveryStatus.PROCESSING
+
+        await user_ops.play_agent(room_id)
+        await capture.wait_for_processed(mid, agent.id)
+        assert control.invoked_message_ids == [mid, mid]
+        assert control.cancelled_message_ids == [mid]
+        assert control.completed_message_ids == [mid]
+
+
+@lane(Lane.CORE)
 async def test_refused_auxiliary_claim_aborts_and_replays(
     resource_manager: ResourceManager,
     user_ops: UserOps,
@@ -242,6 +290,7 @@ async def test_refused_auxiliary_claim_aborts_and_replays(
             forwarded_control_modes=frozenset(
                 {ControlMode.PLAY, ControlMode.INTERRUPT}
             ),
+            enable_working_state=False,
         ),
     ):
         trigger = await user_ops.send_message(

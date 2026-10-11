@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 
 import band.runtime
@@ -42,6 +42,9 @@ class ControlRuntime:
         self.startup_synced = asyncio.Event()
         self.invoked_message_ids: list[str] = []
         self.cancelled = asyncio.Event()
+        self.cancelled_message_ids: list[str] = []
+        self.activity_stopped = asyncio.Event()
+        self.activity_idle = asyncio.Event()
         self.received_control_modes: list[ControlMode] = []
         self.completed_message_ids: list[str] = []
         self.withheld_message_marker = withheld_message_marker
@@ -71,8 +74,18 @@ class ControlRuntime:
             if message_id is not None:
                 self.completed_message_ids.append(message_id)
         except asyncio.CancelledError:
+            if message_id is not None:
+                self.cancelled_message_ids.append(message_id)
             self.cancelled.set()
             raise
+
+    async def wait_for_activity_stop(self, *, deadline_s: float) -> None:
+        async with asyncio.timeout(deadline_s):
+            await self.activity_stopped.wait()
+
+    async def wait_for_activity_idle(self, *, deadline_s: float) -> None:
+        async with asyncio.timeout(deadline_s):
+            await self.activity_idle.wait()
 
     async def wait_for_startup_sync(self, *, deadline_s: float) -> None:
         async with asyncio.timeout(deadline_s):
@@ -165,6 +178,27 @@ class ControlLink(BandLink):
     control: ControlRuntime
     control_room_id: str
 
+    async def report_activity(
+        self,
+        room_id: str,
+        working: bool,
+        *,
+        timeout_seconds: int = 2,
+        on_stopped: Callable[[], None] | None = None,
+    ) -> bool:
+        def observe_stop() -> None:
+            if room_id == self.control_room_id:
+                self.control.activity_stopped.set()
+            if on_stopped is not None:
+                on_stopped()
+
+        accepted = await super().report_activity(
+            room_id, working, timeout_seconds=timeout_seconds, on_stopped=observe_stop
+        )
+        if accepted and not working and room_id == self.control_room_id:
+            self.control.activity_idle.set()
+        return accepted
+
     async def _on_message_created(
         self, room_id: str, payload: MessageCreatedPayload
     ) -> None:
@@ -189,6 +223,7 @@ async def running_control_runtime(
     block_cycles: int = 1,
     control: ControlRuntime | None = None,
     forwarded_control_modes: frozenset[ControlMode] = frozenset(ControlMode),
+    enable_working_state: bool = True,
 ) -> AsyncGenerator[ControlRuntime, None]:
     """Run one controlled agent and leave its room playable on teardown."""
     if control is None:
@@ -211,7 +246,11 @@ async def running_control_runtime(
                 room,
                 link,
                 control.on_execute,
-                config=SessionConfig(idle_resync_seconds=1, idle_resync_max_seconds=2),
+                config=SessionConfig(
+                    idle_resync_seconds=1,
+                    idle_resync_max_seconds=2,
+                    enable_working_state=enable_working_state,
+                ),
                 agent_id=agent.id,
                 hub_room_id=hub_room_id,
             )
