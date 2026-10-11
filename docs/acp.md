@@ -195,8 +195,12 @@ failure fails that room turn visibly instead of falling back.
   work while jobs run, then use OMP's
   native `wait` when blocked on required work instead of ending the ACP prompt
   for a later automatic wakeup. A partial wakeup is not completion; failed jobs
-  are reported through `band_send_message`, and `band_no_reply` never means
-  "still waiting". Unrelated long-lived services do not prevent completion.
+  are reported through `band_send_message`. Do not use `band_no_reply` while
+  required work you started is pending. For no-response turns, including FYI,
+  settled requests, or waiting only on another agent, use `band_no_reply`
+  instead of a plain-text acknowledgement. End with the appropriate Band tool
+  call; do not add private closing prose or duplicate a delivered reply.
+  Unrelated long-lived services do not prevent completion.
   This is an instruction-based mitigation, not an async lifecycle barrier:
   it requires the model to follow the guidance and does not change OMP,
   `turn_timeout_s`, cancellation, or missing-reply detection. Without `wait`,

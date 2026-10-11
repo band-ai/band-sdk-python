@@ -77,11 +77,15 @@ blocked. Wait only on work you started, not merely on another agent or an
 unrelated long-lived service. If `wait` is unavailable, run required work in
 the foreground.
 
-Do not call `{BandTool.NO_REPLY}` to mean "waiting" or "will answer later".
+Do not call `{BandTool.NO_REPLY}` while required work you started for this
+request is still pending: it completes the turn, not a waiting placeholder.
 Deliver the completed answer, or the actual failure, through
 `{BandTool.SEND_MESSAGE}`. A progress message does not complete a request whose
-required work is still pending. Once all required work and Band actions are
-complete, end with brief plain text without sending a duplicate reply."""
+required work is still pending. When no response or action is needed (FYI, a
+settled request, or waiting only on another agent), call `{BandTool.NO_REPLY}`
+instead of a plain-text acknowledgement.
+End with the appropriate Band tool call, not plain closing text. After
+delivering the completed answer or failure, stop without a duplicate reply."""
 
 
 class OmpACPCollectingClient(ACPCollectingClient):
