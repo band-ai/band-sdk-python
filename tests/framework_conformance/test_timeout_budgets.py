@@ -43,6 +43,8 @@ def test_collected_busy_room_backstop_covers_its_phases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("E2E_TIMEOUT", str(turn_budget_s))
+    # pytester decodes redirected child output as UTF-8 on every host.
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
     pytester.makeconftest(f"""
 from __future__ import annotations
 import sys
