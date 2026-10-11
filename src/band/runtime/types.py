@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -86,12 +87,8 @@ class SessionConfig:
     # constructor validates this range itself -- no second Python-side check.
     max_message_retries: int = 1
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
-    # Phase 2 idle timeout (seconds) before re-polling /next as a safety net.
-    # Lower values recover faster from missed WS pushes but generate more REST traffic.
-    # With N rooms, each resync fires N parallel /next polls. Default 60s balances
-    # recovery speed against REST load for typical single-agent deployments.
-    # Uses float so tests can exercise sub-second values without forcing prod to
-    # round. Must be > 0; zero or negative turns Phase 2 into a REST hot loop.
+    # Base reconciliation interval, also used for stopped probes and retries.
+    # Queue traffic cannot postpone a check; active handlers remain serial.
     idle_resync_seconds: float = 60.0
 
     # --- Working-state (boolean "is the agent reasoning") reporting ---
@@ -124,11 +121,15 @@ class SessionConfig:
     # never received.
     report_turn_failures_to_room: bool = True
 
+    # Empty checks double the interval up to max(base, maximum). Only the first
+    # periodic check is spread within the base interval. Equal caps disable growth.
+    idle_resync_max_seconds: float = 120.0
+
     def __post_init__(self) -> None:
-        if self.idle_resync_seconds <= 0:
-            raise ValueError(
-                f"idle_resync_seconds must be > 0 (got {self.idle_resync_seconds})"
-            )
+        for name in ("idle_resync_seconds", "idle_resync_max_seconds"):
+            value = getattr(self, name)
+            if not isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and > 0 (got {value})")
 
         # Working-state invariants only matter when reporting is enabled.
         if self.enable_working_state:

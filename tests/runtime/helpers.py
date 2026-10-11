@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -29,7 +30,7 @@ from tests.identifiers import UUID_ID
 
 @asynccontextmanager
 async def rest_client_over(
-    handler: Callable[[httpx.Request], httpx.Response],
+    handler: Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]],
 ) -> AsyncIterator[AsyncRestClient]:
     """A real ``AsyncRestClient`` whose HTTP boundary is ``handler`` instead
     of the network, so request building and response parsing run through the
@@ -135,8 +136,10 @@ class LifecyclePlatform:
         self.stopped = stopped
         self.messages: list[dict[str, Any]] = []
         self.accepted_marks: list[tuple[str, str]] = []
+        self.requested_marks: list[tuple[str, str]] = []
         self.posts: list[str] = []
         self.processing_list_reads = 0
+        self.next_reads: list[float] = []
 
     def add_message(self, message_id: str) -> None:
         self.messages.append(
@@ -163,13 +166,15 @@ class LifecyclePlatform:
                 200, json={"data": self.messages, "metadata": {"total_pages": 1}}
             )
         if tail == "next":
+            self.next_reads.append(asyncio.get_running_loop().time())
             if self.stopped or not self.messages:
                 return httpx.Response(204)
             return httpx.Response(200, json={"data": self.messages[0]})
         if tail in {"processing", "processed", "failed"}:
+            message_id = path.split("/")[-2]
+            self.requested_marks.append((message_id, tail))
             if self.stopped:
                 return httpx.Response(204)
-            message_id = path.split("/")[-2]
             self.accepted_marks.append((message_id, tail))
             if tail == "processed":
                 self.messages = [m for m in self.messages if m["id"] != message_id]
@@ -199,3 +204,61 @@ class LifecyclePlatform:
         return httpx.Response(
             200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
         )
+
+    def marked(self, status: str) -> list[str]:
+        return [mid for mid, mark in self.accepted_marks if mark == status]
+
+    def requested(self, status: str) -> list[str]:
+        return [mid for mid, mark in self.requested_marks if mark == status]
+
+
+class ClaimGate:
+    """Hold one real HTTP processing response across a control or shutdown."""
+
+    def __init__(
+        self,
+        peer: LifecyclePlatform,
+        message_id: str,
+        *,
+        response: httpx.Response | None = None,
+        suppress_cancel: bool = False,
+    ) -> None:
+        self.peer = peer
+        self.message_id = message_id
+        self.response = response
+        self.suppress_cancel = suppress_cancel
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(f"/{self.message_id}/processing"):
+            self.entered.set()
+            while not self.release.is_set():
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+                    if not self.suppress_cancel:
+                        raise
+            if self.response is not None:
+                self.peer.requested_marks.append((self.message_id, "processing"))
+                return self.response
+        return self.peer.answer(request)
+
+
+class ResponseGate:
+    """Hold a real HTTP response across an execution control boundary."""
+
+    def __init__(self, peer: LifecyclePlatform, suffix: str) -> None:
+        self.peer = peer
+        self.suffix = suffix
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        response = self.peer.answer(request)
+        if request.url.path.endswith(self.suffix):
+            self.entered.set()
+            await self.release.wait()
+        return response

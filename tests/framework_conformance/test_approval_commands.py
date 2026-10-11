@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import codecs
+import logging
+import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -34,6 +37,8 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 )
 from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall, ToolCalls
+
+logger = logging.getLogger(__name__)
 
 SHELL_POLICIES = tuple(
     policy
@@ -204,8 +209,16 @@ def test_shell_redirect_readback_handles_host_encodings(
     ids=lambda shell: shell or "host",
 )
 def test_approval_commands_write_and_append_with_host_shell(
-    tmp_path: Path, shell: str | None
+    tmp_path: Path, shell: str | None, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger=__name__)
+    logger.info(
+        "Shell probe: platform=%s python=%s executable=%s cwd=%s",
+        sys.platform,
+        sys.version,
+        shutil.which(shell) if shell else "host default",
+        tmp_path,
+    )
     target = tmp_path / "approval with spaces.txt"
     marker = "approval-marker"
     target.write_text("old", encoding="utf-8")
@@ -220,8 +233,10 @@ def test_approval_commands_write_and_append_with_host_shell(
             if shell is None
             else [shell, "-NoProfile", "-NonInteractive", "-Command", text]
         )
+        logger.info("Starting shell command: %s", args)
+        started = time.monotonic()
         try:
-            subprocess.run(
+            result = subprocess.run(
                 args,
                 shell=shell is None,
                 check=True,
@@ -232,11 +247,25 @@ def test_approval_commands_write_and_append_with_host_shell(
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
             contents = target.read_bytes() if target.exists() else None
+            logger.exception(
+                "Shell command failed after %ss: stdout=%r stderr=%r target=%r",
+                time.monotonic() - started,
+                exc.stdout,
+                exc.stderr,
+                contents,
+            )
             pytest.fail(
                 f"{exc}\nstdout={exc.stdout!r}\nstderr={exc.stderr!r}"
                 f"\ntarget bytes={contents!r}",
                 pytrace=False,
             )
+        logger.info(
+            "Shell command completed after %ss: returncode=%s stdout=%r stderr=%r",
+            time.monotonic() - started,
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
         assert written_lines(target) == expected
 
 

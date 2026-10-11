@@ -51,7 +51,7 @@ from band.client.streaming import (
     MessageCreatedPayload,
     WebSocketClient,
 )
-from band.core.types import MessageType
+from band.core.types import MessageType, metadata_to_dict
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.observations import (
     Errors,
@@ -164,6 +164,22 @@ class ReplyCapture:
         """
         recipient = self._delivery.get(message_id, {}).get(recipient_id) or {}
         return _parse_status(recipient.get("status"))
+
+    async def durable_delivery_statuses(
+        self, message_ids: Iterable[str], recipient_id: str
+    ) -> dict[str, DeliveryStatus | None]:
+        """Read current REST state after a barrier, independent of observer ordering."""
+        requested = set(message_ids)
+        statuses: dict[str, DeliveryStatus | None] = {}
+        for message in await self._require_user_ops().list_messages(self.room_id):
+            if message.id in requested:
+                delivery = (
+                    metadata_to_dict(message.metadata).get("delivery_status") or {}
+                )
+                recipient = delivery.get(recipient_id) or {}
+                statuses[message.id] = _parse_status(recipient.get("status"))
+        assert statuses.keys() == requested, "requested messages missing from room"
+        return statuses
 
     def delivery_history(
         self, message_id: str, recipient_id: str
