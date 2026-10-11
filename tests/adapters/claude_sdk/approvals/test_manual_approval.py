@@ -13,6 +13,7 @@ from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE,
     APPROVAL_UNAUTHORIZED_MESSAGE,
 )
+from band.core.exceptions import InputNotAccepted
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.claude_sdk.helpers import (
     WRITE_NOTE,
@@ -72,12 +73,10 @@ async def test_a_room_answers_each_gated_tool_while_its_commands_stay_local(
     assert room.failures == []
 
 
-async def test_messages_during_a_parked_turn_settle_on_their_own_tools(
+async def test_controls_preserve_a_parked_turn_and_busy_work_is_unaccepted(
     claude_room: OpenRoom,
 ) -> None:
-    """While a turn waits on an approval, a command or a second request is
-    answered and settled on its own message's tools; the parked turn keeps
-    the tools it started with, and its prompt is never taken for its reply."""
+    """Controls settle independently; unaccepted work cannot steal the reply."""
     room = await claude_room(with_approvals())
     room.claude.script([LIST_FILES, room.model_reply("Listed.")])
     parked, status, busy, approve = (room.fresh_tools() for _ in range(4))
@@ -85,7 +84,8 @@ async def test_messages_during_a_parked_turn_settle_on_their_own_tools(
     await room.send("List the files", tools=parked)
     prompted_turn_replied = parked.turn.replied
     await room.send("/status", tools=status)
-    await room.send("And the hidden ones?", tools=busy)
+    with pytest.raises(InputNotAccepted):
+        await room.send("And the hidden ones?", tools=busy)
     await room.send("/approve", tools=approve)
     await room.settled()
 
@@ -93,14 +93,19 @@ async def test_messages_during_a_parked_turn_settle_on_their_own_tools(
     del chat[1]  # the status report
     assert chat == [
         prompt("a-1", "Bash: `ls`"),
-        "Still processing the previous request in this room.",
         resolved("a-1", "accept"),
         "Listed.",
     ]
+    assert not busy.turn.complete
     assert prompted_turn_replied is False
     assert parked.turn.replied
-    for side_turn in (status.turn, busy.turn, approve.turn):
+    for side_turn in (status.turn, approve.turn):
         assert (side_turn.complete, side_turn.replied) == (True, False)
+    room.claude.script([room.model_reply("Hidden files listed.")])
+    await room.send("And the hidden ones?", tools=busy)
+    await room.settled()
+    assert busy.turn.replied
+    assert len(room.claude.prompts) == 2
 
 
 async def test_a_released_turn_that_ends_unanswered_is_reported_at_its_end(

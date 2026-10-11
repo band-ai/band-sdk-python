@@ -24,7 +24,6 @@ from band.adapters.codex import (
     _THOUGHT_ITEM_TYPES,
     _TOOL_ITEM_TYPES,
     NO_APPROVALS_TO_RESOLVE_MESSAGE,
-    TURN_IN_PROGRESS_MESSAGE,
     ApprovalDecision,
     CodexAdapter,
     CodexAdapterConfig,
@@ -33,6 +32,7 @@ from band.adapters.codex import (
 )
 from band.client.streaming import ControlMode
 from band.core.defaultmodels import OPENAI_MODEL
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -77,6 +77,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
+from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.framework_conformance.turnprobes import undeclared
 from tests.paths import host_absolute_path
 
@@ -231,7 +232,8 @@ async def send_bootstrap(
     tools: FakeAgentTools | None = None,
 ) -> None:
     """Deliver a room's session-bootstrap message to ``adapter``."""
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(room_id=room_id),
         tools if tools is not None else ToolSchemaFakeTools(),
         CodexSessionState(),
@@ -271,7 +273,8 @@ class CodexRoom:
 
     async def send(self, content: str) -> None:
         self.deliveries.append(tools := ToolSchemaFakeTools())
-        await self.adapter.on_event(
+        await deliver_event(
+            self.adapter,
             AgentInput(
                 msg=make_platform_message(room_id=ROOM_ID, content=content),
                 tools=tools,
@@ -280,7 +283,7 @@ class CodexRoom:
                 contacts_msg=None,
                 is_session_bootstrap=len(self.deliveries) == 1,
                 room_id=ROOM_ID,
-            )
+            ),
         )
 
     async def settled(self) -> None:
@@ -334,7 +337,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -368,7 +372,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -412,7 +417,8 @@ class TestCodexAdapter:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         with pytest.raises(CodexJsonRpcError, match="not available"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(room_id="room-1", content="first try"),
                 tools,
                 CodexSessionState(),
@@ -423,7 +429,8 @@ class TestCodexAdapter:
             )
         assert "room-1" not in adapter._prompt_injected_rooms
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(room_id="room-1", content="second try"),
             tools,
             CodexSessionState(),
@@ -456,7 +463,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -523,7 +531,8 @@ class TestCodexAdapter:
         tools = SendMessageFailureTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -553,7 +562,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(thread_id="thr-old", room_id="room-1"),
@@ -584,7 +594,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -628,7 +639,8 @@ class TestCodexAdapter:
         tools = FailingNotifyTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -668,7 +680,8 @@ class TestCodexAdapter:
         tools = FailingNotifyTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -709,7 +722,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(room_id="room-1"),
             tools,
             CodexSessionState(),
@@ -731,7 +745,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(room_id="room-1"),
             tools,
             CodexSessionState(),
@@ -762,7 +777,8 @@ class TestCodexAdapter:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         for room_id in ("room-1", "room-2"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(room_id=room_id),
                 tools,
                 CodexSessionState(),
@@ -797,7 +813,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -843,7 +860,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -882,7 +900,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -910,7 +929,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="@thenvoi/ar-2-darter /status"),
             tools,
             CodexSessionState(),
@@ -934,7 +954,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/model gpt-5.5-codex"),
             tools,
             CodexSessionState(),
@@ -960,7 +981,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/models list"),
             tools,
             CodexSessionState(),
@@ -990,7 +1012,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="hello"),
             tools,
             CodexSessionState(),
@@ -1009,7 +1032,8 @@ class TestCodexAdapter:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="hello"),
             tools,
             CodexSessionState(),
@@ -1029,7 +1053,8 @@ class TestCodexAdapter:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content=f"/reasoning {effort}"),
             tools,
             CodexSessionState(),
@@ -1053,7 +1078,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/reasoning"),
             tools,
             CodexSessionState(),
@@ -1093,7 +1119,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content=f"/reasoning {effort}"),
             tools,
             CodexSessionState(),
@@ -1117,7 +1144,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/reasoning"),
             tools,
             CodexSessionState(),
@@ -1140,7 +1168,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="hello"),
             tools,
             CodexSessionState(),
@@ -1164,7 +1193,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="hello"),
             tools,
             CodexSessionState(),
@@ -1198,7 +1228,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="switch to o3"),
             tools,
             CodexSessionState(),
@@ -1239,7 +1270,8 @@ class TestCodexAdapter:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="increase reasoning"),
             tools,
             CodexSessionState(),
@@ -1262,7 +1294,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1289,7 +1322,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1326,7 +1360,8 @@ class TestCodexAdapter:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1358,7 +1393,8 @@ class TestCodexAdapter:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1394,7 +1430,8 @@ class TestCodexAdapter:
         adapter._raw_history_by_room["room-1"] = [{"role": "user", "content": "hi"}]
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1436,7 +1473,8 @@ class TestCodexAdapter:
         )
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1471,7 +1509,8 @@ class TestCodexAdapter:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1497,7 +1536,8 @@ class TestCodexAdapter:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1540,7 +1580,8 @@ class TestCodexAdapter:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -1588,7 +1629,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1668,7 +1710,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1710,7 +1753,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1751,7 +1795,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1788,7 +1833,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1840,7 +1886,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1889,7 +1936,8 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1951,7 +1999,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -1996,7 +2045,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2050,7 +2100,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2096,7 +2147,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2136,7 +2188,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2181,7 +2234,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2228,7 +2282,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2269,7 +2324,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2325,7 +2381,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2393,7 +2450,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2434,7 +2492,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2492,7 +2551,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2526,7 +2586,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2573,7 +2634,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2625,7 +2687,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2667,7 +2730,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2707,7 +2771,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2746,7 +2811,8 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -2811,7 +2877,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
@@ -2866,7 +2932,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
@@ -2909,7 +2975,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
@@ -2976,7 +3042,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
@@ -3038,7 +3104,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         turn_input = turn_start["input"]
@@ -3088,7 +3154,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await deliver_event(adapter, inp)
 
         # After injection, stashed data should be cleaned up
         assert "room-1" not in adapter._raw_history_by_room
@@ -3116,7 +3182,8 @@ class TestHistoryInjection:
 
         msg = make_platform_message(room_id="room-1", content="hello")
         with pytest.raises(CodexJsonRpcError, match="not available"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 msg,
                 tools,
                 CodexSessionState(),
@@ -3172,7 +3239,8 @@ class TestHistoryInjection:
 
         msg = make_platform_message(room_id="room-1", content="hello")
         with pytest.raises(CodexJsonRpcError, match="not available"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 msg,
                 tools,
                 CodexSessionState(),
@@ -3230,7 +3298,8 @@ class TestHistoryInjection:
 
         msg = make_platform_message(room_id="room-1", content="hello")
         with pytest.raises(CodexJsonRpcError, match="overloaded"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 msg,
                 tools,
                 CodexSessionState(),
@@ -3288,7 +3357,8 @@ class TestHistoryInjection:
 
         msg = make_platform_message(room_id="room-1", content="do something")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 msg,
                 tools,
                 CodexSessionState(),
@@ -3372,7 +3442,8 @@ class TestHistoryInjection:
         tools = ValidationErrorTools()
 
         await adapter.on_started("Bot", "desc")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3424,7 +3495,8 @@ class TestStructuredErrors:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3469,7 +3541,8 @@ class TestStructuredErrors:
 
         await adapter.on_started("Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -3499,7 +3572,8 @@ class TestStructuredErrors:
 
         await adapter.on_started("Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -3528,7 +3602,8 @@ class TestStructuredErrors:
 
         await adapter.on_started("Agent", "A coding agent")
         with pytest.raises(RuntimeError, match="transport hiccup"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -3587,7 +3662,8 @@ class TestEnrichedApprovals:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3613,7 +3689,8 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/sandbox read-only"),
             tools,
             CodexSessionState(),
@@ -3647,7 +3724,8 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/sandbox danger-full-access"),
             tools,
             CodexSessionState(),
@@ -3672,7 +3750,8 @@ class TestEnrichedApprovals:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(content="/sandbox danger-full-access --confirm"),
                 tools,
                 CodexSessionState(),
@@ -3695,7 +3774,8 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/sandbox invalid-mode"),
             tools,
             CodexSessionState(),
@@ -3716,7 +3796,8 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/permissions"),
             tools,
             CodexSessionState(),
@@ -3761,7 +3842,8 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3806,7 +3888,8 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3836,7 +3919,8 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3870,7 +3954,8 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3881,7 +3966,8 @@ class TestPlanAndLifecycle:
         )
 
         # Now run /threads
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/threads"),
             tools,
             CodexSessionState(),
@@ -3911,7 +3997,8 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3922,7 +4009,8 @@ class TestPlanAndLifecycle:
         )
         assert "room-1" in adapter._room_threads
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/thread archive"),
             tools,
             CodexSessionState(),
@@ -3958,7 +4046,8 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -3994,7 +4083,8 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4026,7 +4116,8 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4067,7 +4158,8 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4110,7 +4202,8 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4147,7 +4240,8 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4190,7 +4284,8 @@ class TestDiffsAndTokenUsage:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4228,7 +4323,8 @@ class TestDiffsAndTokenUsage:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4269,7 +4365,8 @@ class TestDiffsAndTokenUsage:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4312,7 +4409,8 @@ class TestDiffsAndTokenUsage:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4358,7 +4456,8 @@ class TestDiffsAndTokenUsage:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4369,7 +4468,8 @@ class TestDiffsAndTokenUsage:
         )
 
         # Now run /usage
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/usage"),
             tools,
             CodexSessionState(),
@@ -4592,7 +4692,8 @@ class TestSessionAutoApproval:
             [("commandExecution:npm install", None)]
         )
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="install deps"),
             tools,
             CodexSessionState(),
@@ -4632,7 +4733,8 @@ class TestSessionAutoApproval:
             [("commandExecution:npm install", None)]
         )
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="publish package"),
             tools,
             CodexSessionState(),
@@ -4672,7 +4774,8 @@ class TestSessionAutoApproval:
             [("commandExecution:npm", None)]
         )
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="install deps"),
             tools,
             CodexSessionState(),
@@ -4712,7 +4815,8 @@ class TestCleanup:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4804,7 +4908,8 @@ class TestReviewFixes:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/sandbox workspace-write"),
             tools,
             CodexSessionState(),
@@ -4828,7 +4933,8 @@ class TestReviewFixes:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -4842,7 +4948,8 @@ class TestReviewFixes:
         adapter._raw_history_by_room["room-1"] = [{"role": "user", "content": "hi"}]
         adapter._needs_history_injection.add("room-1")
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/thread archive"),
             tools,
             CodexSessionState(),
@@ -4897,7 +5004,8 @@ class TestReviewFixes:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -4926,7 +5034,8 @@ class TestReviewFixes:
         await adapter.on_started("Agent", "A coding agent")
 
         with pytest.raises(CodexJsonRpcError, match="model unavailable"):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -4960,7 +5069,8 @@ class TestReviewFixes:
         await adapter.on_started("Agent", "A coding agent")
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -5010,7 +5120,8 @@ class TestAcceptForSession:
             [("commandExecution:npm install", None)]
         )
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="install deps"),
             tools,
             CodexSessionState(),
@@ -5072,7 +5183,8 @@ class TestTurnStartedLifecycle:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="fix the login bug"),
             tools,
             CodexSessionState(),
@@ -5111,7 +5223,8 @@ class TestContextCompaction:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -5145,7 +5258,8 @@ class TestContextCompaction:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -5443,7 +5557,8 @@ class TestSessionApprovalKeying:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -5458,7 +5573,8 @@ class TestSessionApprovalKeying:
         # so /approve-session reports no pending approvals rather than
         # storing an empty session key.
         tools.messages_sent.clear()
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/approve-session 88"),
             tools,
             CodexSessionState(),
@@ -5505,9 +5621,16 @@ class TestApprovalFromASequentialRoom:
         )
 
         await room.send("run tests")
-        await room.send(f"/{CodexCommand.APPROVE} req-10")
+        control_tools = ToolSchemaFakeTools()
+        assert await room.adapter.try_handle_control(
+            make_platform_message(
+                room_id=ROOM_ID, content=f"/{CodexCommand.APPROVE} req-10"
+            ),
+            control_tools,
+        )
         await room.settled()
 
+        assert control_tools.turn.complete
         assert room.client.responses == [(10, {"decision": "accept"})]
 
     @pytest.mark.asyncio
@@ -5519,9 +5642,10 @@ class TestApprovalFromASequentialRoom:
         )
 
         await room.send("run tests")
-        await room.send("and lint too")
+        with pytest.raises(InputNotAccepted):
+            await room.send("and lint too")
 
-        assert room.chat[-1] == TURN_IN_PROGRESS_MESSAGE
+        assert not room.deliveries[-1].turn.complete
         methods = room.client.request_methods
         assert methods.count(CodexRequestMethod.TURN_START) == 1
 
@@ -5856,7 +5980,8 @@ class TestSlashCommandCoverage:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/thread info"),
             tools,
             CodexSessionState(),
@@ -5891,7 +6016,8 @@ class TestSlashCommandCoverage:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -5900,7 +6026,8 @@ class TestSlashCommandCoverage:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/thread info"),
             tools,
             CodexSessionState(),
@@ -5924,7 +6051,8 @@ class TestSlashCommandCoverage:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/sandbox read-only"),
             tools,
             CodexSessionState(),
@@ -5933,7 +6061,8 @@ class TestSlashCommandCoverage:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="/permissions"),
             tools,
             CodexSessionState(),
@@ -5974,7 +6103,8 @@ class TestSlashCommandCoverage:
             caplog.at_level(logging.ERROR, logger="band.core.delivery"),
             pytest.raises(RuntimeError, match="platform rejected the message"),
         ):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(content="/help"),
                 tools,
                 CodexSessionState(),
@@ -6013,7 +6143,8 @@ class TestSlashCommandCoverage:
             caplog.at_level(logging.ERROR, logger="band.core.delivery"),
             pytest.raises(RuntimeError, match="platform rejected the message"),
         ):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(content="/approvals"),
                 tools,
                 CodexSessionState(),
@@ -6045,7 +6176,8 @@ class TestMalformedPayloadTolerance:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -6083,7 +6215,8 @@ class TestMalformedPayloadTolerance:
         await adapter.on_started("Agent", "A coding agent")
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -6120,7 +6253,8 @@ class TestMalformedPayloadTolerance:
         await adapter.on_started("Agent", "A coding agent")
 
         with pytest.raises(TurnResultAlreadyReported):
-            await adapter.on_message(
+            await deliver_message(
+                adapter,
                 make_platform_message(),
                 tools,
                 CodexSessionState(),
@@ -6148,7 +6282,8 @@ class TestMalformedPayloadTolerance:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -6175,7 +6310,8 @@ class TestMalformedPayloadTolerance:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -6201,7 +6337,8 @@ class TestTurnLifecycleEventsDisabled:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -6363,7 +6500,8 @@ class TestDiffByteCap:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools,
             CodexSessionState(),
@@ -6831,7 +6969,8 @@ class TestDetachedTurnOutcome:
         )
 
         await room.send("run tests")
-        await room.send("and lint too")
+        with pytest.raises(InputNotAccepted):
+            await room.send("and lint too")
         await room.send("/approve req-10")
         await room.settled()
 
@@ -6841,8 +6980,9 @@ class TestDetachedTurnOutcome:
             "Tests pass.",
         ]
         assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
-        assert busy.chat == [TURN_IN_PROGRESS_MESSAGE]
-        assert turn.turn.complete and busy.turn.complete and approval.turn.complete
+        assert busy.chat == []
+        assert not busy.turn.complete
+        assert turn.turn.complete and approval.turn.complete
         assert failure_reports(busy) == failure_reports(approval) == []
 
     @pytest.mark.asyncio
@@ -7010,7 +7150,8 @@ async def test_restored_codex_thread_receives_the_mandatory_transport_contract()
         client, config=CodexAdapterConfig(system_prompt="custom")
     )
     await adapter.on_started("Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         ToolSchemaFakeTools(),
         CodexSessionState(thread_id="restored"),
