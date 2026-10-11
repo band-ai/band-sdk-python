@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -170,8 +171,25 @@ async def test_other_permissions_still_require_the_room_decision(
         },
         {"content": [tool_content(text_block("```json\n{}\n```"))]},
         {"content": [tool_content(text_block("```json\ninvalid\n```"))]},
+        {
+            "content": [
+                tool_content(
+                    text_block(f"```json\n{json.dumps(reply_invocation())}\n```")
+                )
+            ]
+        },
     ],
-    ids=["foreign", "case", "shell", "raw-input", "missing", "extra", "schema", "json"],
+    ids=[
+        "foreign",
+        "case",
+        "shell",
+        "raw-input",
+        "missing",
+        "extra",
+        "schema",
+        "json",
+        "nested-invocation",
+    ],
 )
 async def test_other_cursor_display_frames_still_require_a_room_decision(
     changes: dict[str, Any],

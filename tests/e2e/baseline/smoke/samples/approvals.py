@@ -456,36 +456,14 @@ def cursor_test_adapter(
     custom_section: str = SHELL_PROMPT,
     capabilities: set[Capability] | None = None,
     inject_band_tools: bool = True,
+    adapter_class: type[CursorACPAdapter] | None = None,
 ) -> CursorACPAdapter:
-    from band.adapters.cursor_acp import CursorACPAdapter  # noqa: PLC0415
-
-    return _cursor_test_adapter(
+    from band.adapters.cursor_acp import (  # noqa: PLC0415 -- ACP is optional outside the backends lane
         CursorACPAdapter,
-        settings,
-        setup,
-        approval_mode=approval_mode,
-        workspace_for_room=workspace_for_room,
-        custom_section=custom_section,
-        capabilities=capabilities,
-        inject_band_tools=inject_band_tools,
-    )
-
-
-def _cursor_test_adapter(
-    adapter_class: type[CursorACPAdapter],
-    settings: BaselineSettings,
-    setup: AgentSetup,
-    *,
-    approval_mode: ApprovalMode = "manual",
-    workspace_for_room: WorkspaceResolver | None = None,
-    custom_section: str = SHELL_PROMPT,
-    capabilities: set[Capability] | None = None,
-    inject_band_tools: bool = True,
-) -> CursorACPAdapter:
-    from band.adapters.cursor_acp import (  # noqa: PLC0415
         CursorACPAdapterConfig,
     )
 
+    adapter_class = adapter_class or CursorACPAdapter
     config_kwargs: dict[str, Any] = {
         **cursor_config_kwargs(settings, prompt=custom_section),
         "approval_mode": approval_mode,
@@ -515,7 +493,7 @@ def cursor_approval_adapter(
         CursorApprovalAdapter,
     )
 
-    return _cursor_test_adapter(CursorApprovalAdapter, settings, setup)
+    return cursor_test_adapter(settings, setup, adapter_class=CursorApprovalAdapter)
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:

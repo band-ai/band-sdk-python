@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from acp.schema import ContentToolCallContent, TextContent, ToolCallUpdate
 from pydantic import ValidationError
 
@@ -61,39 +59,26 @@ class CursorApprovalAdapter(CursorACPAdapter):
 
 def cursor_reply_input(tool_call: object) -> object:
     """Cursor's pinned permission frame carries reply args only as display JSON."""
-    title = (
+    expected_title = (
         f"{mcp_tool_spelling(BAND_MCP_SERVER_NAME, BandTool.SEND_MESSAGE)}: "
         f"{BandTool.SEND_MESSAGE}"
     )
-    if (
-        not isinstance(tool_call, ToolCallUpdate)
-        or tool_call.raw_input is not None
-        or tool_call.title != title
-        or tool_call.kind != "other"
-        or not tool_call.content
-        or len(tool_call.content) != 1
-    ):
-        return tool_call
-    block = tool_call.content[0]
-    if not isinstance(block, ContentToolCallContent) or not isinstance(
-        block.content, TextContent
-    ):
-        return tool_call
-    lines = block.content.text.splitlines()
+    match tool_call:
+        case ToolCallUpdate(
+            raw_input=None,
+            title=title,
+            kind="other",
+            content=[ContentToolCallContent(content=TextContent(text=text))],
+        ) if title == expected_title:
+            lines = text.splitlines()
+        case _:
+            return tool_call
     if len(lines) < 3 or lines[0] != "```json" or lines[-1] != "```":
         return tool_call
     try:
-        arguments = json.loads("\n".join(lines[1:-1]))
-    except json.JSONDecodeError:
-        return tool_call
-    if not isinstance(arguments, dict):
+        reply = SendMessageInput.model_validate_json("\n".join(lines[1:-1]))
+    except ValidationError:
         return tool_call
     return tool_call.model_copy(
-        update={
-            "raw_input": {
-                "providerIdentifier": BAND_MCP_SERVER_NAME,
-                "toolName": BandTool.SEND_MESSAGE,
-                "args": arguments,
-            }
-        }
+        update={"title": BandTool.SEND_MESSAGE, "raw_input": reply.model_dump()}
     )
