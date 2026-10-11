@@ -86,6 +86,8 @@ from band.runtime.types import PlatformMessage as RestPlatformMessage
 
 logger = logging.getLogger(__name__)
 
+FAILURE_DETAIL_LIMIT = 500
+
 
 class OneShotStatus(StrEnum):
     """``handle_event``/``_process_message_event``'s ``status`` vocabulary.
@@ -319,7 +321,8 @@ class OneShotInvoker:
                     raise BandConnectionError("Platform refused message completion")
             case {"decision": "failed"}:
                 try:
-                    await self._link.mark_failed(room_id, message_id, error)
+                    detail = error[:FAILURE_DETAIL_LIMIT] or "error"
+                    await self._link.mark_failed(room_id, message_id, detail)
                 except RoomExecutionStoppedError:
                     raise
                 except Exception:
@@ -424,7 +427,7 @@ class OneShotInvoker:
                 room_id=room_id,
                 message_id=msg_id,
                 succeeded=False,
-                error=str(exc)[:500] or "error",
+                error=str(exc),
             )
             raise
         if consumed:
@@ -484,7 +487,7 @@ class OneShotInvoker:
                 room_id=room_id,
                 message_id=msg_id,
                 succeeded=False,
-                error=str(exc)[:500] or "error",
+                error=str(exc),
             )
             raise
 
