@@ -32,6 +32,7 @@ def mock_adapter():
     adapter.on_started = AsyncMock()
     adapter.on_cleanup = AsyncMock()
     adapter.on_event = AsyncMock()
+    adapter.try_handle_control = None
     return adapter
 
 
@@ -764,7 +765,11 @@ class TestStartupRaceCondition:
                 pass
 
             async def start(
-                self, on_execute, on_cleanup=None, on_control=None, on_idle_release=None
+                self,
+                on_execute,
+                on_cleanup=None,
+                on_control=None,
+                on_message_control=None,
             ):
                 self._on_execute = on_execute
 

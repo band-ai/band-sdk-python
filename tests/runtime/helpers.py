@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock
 
 import httpx
 
+from band.agent import Agent
 from band.client.rest import AsyncRestClient
 from band.core.memory_types import (
     MemorySegment,
@@ -20,7 +22,6 @@ from band.core.memory_types import (
 from band.core.protocols import TURN_FAILURE_PROVIDER
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
-from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
@@ -29,7 +30,7 @@ from tests.identifiers import UUID_ID
 
 @asynccontextmanager
 async def rest_client_over(
-    handler: Callable[[httpx.Request], httpx.Response],
+    handler: Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]],
 ) -> AsyncIterator[AsyncRestClient]:
     """A real ``AsyncRestClient`` whose HTTP boundary is ``handler`` instead
     of the network, so request building and response parsing run through the
@@ -73,19 +74,15 @@ def run_through(
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:
-    preprocessor = DefaultPreprocessor()
-
-    async def handler(ctx: ExecutionContext, event: Any) -> None:
-        inp = await preprocessor.process(ctx=ctx, event=event, agent_id=AGENT_ID)
-        if inp is not None:
-            await adapter.on_event(inp)
+    agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
 
     return ExecutionContext(
         ROOM_ID,
         link,
-        handler,
+        agent._on_execute,
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
+        on_message_control=agent._on_control,
     )
 
 
@@ -135,15 +132,18 @@ class LifecyclePlatform:
         self.stopped = stopped
         self.messages: list[dict[str, Any]] = []
         self.accepted_marks: list[tuple[str, str]] = []
+        self.requested_marks: list[tuple[str, str]] = []
         self.posts: list[str] = []
         self.processing_list_reads = 0
+        self.next_reads: list[float] = []
+        self.actionable_cursors: list[str | None] = []
 
-    def add_message(self, message_id: str) -> None:
+    def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(
             {
                 "id": message_id,
                 "chat_room_id": ROOM_ID,
-                "content": "hello",
+                "content": content,
                 "sender_id": "user-1",
                 "sender_type": "User",
                 "sender_name": "User",
@@ -157,19 +157,56 @@ class LifecyclePlatform:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
-        if tail == "messages" and request.method == "GET":
-            self.processing_list_reads += 1
+        if tail == "me":
             return httpx.Response(
-                200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                200,
+                json={
+                    "data": {
+                        "id": AGENT_ID,
+                        "name": "Agent",
+                        "handle": "agent",
+                        "owner_uuid": "user-1",
+                        "feature_flags": {},
+                        "inserted_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                    }
+                },
+            )
+        if tail == "messages" and request.method == "GET":
+            if request.url.params.get("status") == "processing":
+                self.processing_list_reads += 1
+                return httpx.Response(
+                    200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                )
+            cursor = request.url.params.get("cursor")
+            self.actionable_cursors.append(cursor)
+            start = next(
+                (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
+            )
+            limit = int(request.url.params.get("limit", "100"))
+            page = self.messages[start : start + limit]
+            has_more = start + limit < len(self.messages)
+            return httpx.Response(
+                200,
+                json={
+                    "data": page,
+                    "metadata": {
+                        "limit": limit,
+                        "has_more": has_more,
+                        "next_cursor": page[-1]["id"] if has_more else None,
+                    },
+                },
             )
         if tail == "next":
+            self.next_reads.append(asyncio.get_running_loop().time())
             if self.stopped or not self.messages:
                 return httpx.Response(204)
             return httpx.Response(200, json={"data": self.messages[0]})
         if tail in {"processing", "processed", "failed"}:
+            message_id = path.split("/")[-2]
+            self.requested_marks.append((message_id, tail))
             if self.stopped:
                 return httpx.Response(204)
-            message_id = path.split("/")[-2]
             self.accepted_marks.append((message_id, tail))
             if tail == "processed":
                 self.messages = [m for m in self.messages if m["id"] != message_id]
@@ -199,3 +236,61 @@ class LifecyclePlatform:
         return httpx.Response(
             200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
         )
+
+    def marked(self, status: str) -> list[str]:
+        return [mid for mid, mark in self.accepted_marks if mark == status]
+
+    def requested(self, status: str) -> list[str]:
+        return [mid for mid, mark in self.requested_marks if mark == status]
+
+
+class ClaimGate:
+    """Hold one real HTTP processing response across a control or shutdown."""
+
+    def __init__(
+        self,
+        peer: LifecyclePlatform,
+        message_id: str,
+        *,
+        response: httpx.Response | None = None,
+        suppress_cancel: bool = False,
+    ) -> None:
+        self.peer = peer
+        self.message_id = message_id
+        self.response = response
+        self.suppress_cancel = suppress_cancel
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(f"/{self.message_id}/processing"):
+            self.entered.set()
+            while not self.release.is_set():
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+                    if not self.suppress_cancel:
+                        raise
+            if self.response is not None:
+                self.peer.requested_marks.append((self.message_id, "processing"))
+                return self.response
+        return self.peer.answer(request)
+
+
+class ResponseGate:
+    """Hold a real HTTP response across an execution control boundary."""
+
+    def __init__(self, peer: LifecyclePlatform, suffix: str) -> None:
+        self.peer = peer
+        self.suffix = suffix
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        response = self.peer.answer(request)
+        if request.url.path.endswith(self.suffix):
+            self.entered.set()
+            await self.release.wait()
+        return response

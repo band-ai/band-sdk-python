@@ -27,6 +27,7 @@ from band.core.types import (
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
 from tests.mcpclient import crash_backend
 
@@ -219,7 +220,8 @@ class ClaudeRoom:
         raw_history = [*history]
         if session_id is not None:
             raw_history.append(recorded_session(session_id))
-        await self.adapter.on_event(
+        await deliver_event(
+            self.adapter,
             AgentInput(
                 msg=PlatformMessage(
                     id=f"msg-{next(self._message_ids)}",
@@ -238,7 +240,7 @@ class ClaudeRoom:
                 contacts_msg=None,
                 is_session_bootstrap=bootstrap,
                 room_id=self.room_id,
-            )
+            ),
         )
 
     def send_in_background(self, content: str) -> asyncio.Task[None]:

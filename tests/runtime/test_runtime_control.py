@@ -152,7 +152,7 @@ class TestRouting:
 
 class TestStopSurvivesReconnect:
     async def test_reconnect_while_stopped_does_not_invoke_adapter(self):
-        """A received STOP keeps reconnect quiet until PLAY."""
+        """Reconnect probes preserve a stopped room when /next returns 204."""
         link = MagicMock()
         link.agent_id = "agent-123"
         link.rest = MagicMock()
@@ -189,7 +189,6 @@ class TestStopSurvivesReconnect:
 
         ctx = ExecutionContext("room-123", link, on_execute, agent_id="agent-123")
         ctx._stopped = True
-        ctx._reconnect_sync_requested = True
 
         # Drive the reconnect sync path directly.
         await ctx._process_event(ReconnectedEvent())
@@ -198,10 +197,8 @@ class TestStopSurvivesReconnect:
         link.mark_processing.assert_not_awaited()
         # Diagnostic listing is never used to dispatch execution.
         link.get_stale_processing_messages.assert_not_awaited()
-        # Efficiency: the reconnect sync must short-circuit on _stopped locally,
-        # same as the idle-timeout and resync-sentinel paths, instead of making
-        # a /next call that's guaranteed to come back empty.
-        link.get_next_message.assert_not_awaited()
+        link.get_next_message.assert_awaited_once_with("room-123")
+        assert ctx.is_stopped
 
 
 class TestGracefulDegradation:

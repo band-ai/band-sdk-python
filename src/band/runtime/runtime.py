@@ -101,9 +101,10 @@ class AgentRuntime:
         session_config: SessionConfig | None = None,
         on_session_cleanup: Callable[[str], Awaitable[None]] | None = None,
         on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
+        on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
+        | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
-        on_idle_release: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -121,8 +122,6 @@ class AgentRuntime:
                 to the execution's own ``interrupt()``/``stop_room()`` -- for
                 adapter work that keeps running after those return early
             on_participant_added: Optional callback for participant_added events
-            on_idle_release: Optional callback (receives room_id) run when a
-                room has been idle for ``SessionConfig.release_idle_room_after_s``
             on_participant_removed: Optional callback for participant_removed events
         """
         self.link = link
@@ -132,8 +131,8 @@ class AgentRuntime:
         self._session_config = session_config or SessionConfig()
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
+        self._on_message_control = on_message_control
         self._on_participant_added = on_participant_added
-        self._on_idle_release = on_idle_release
         self._on_participant_removed = on_participant_removed
 
         # Hub room (set by PlatformRuntime when ContactEventStrategy.HUB_ROOM
@@ -417,6 +416,7 @@ class AgentRuntime:
                 room_id=room_id,
                 link=self.link,
                 on_execute=self._on_execute,
+                on_message_control=self._on_message_control,
                 config=self._session_config,
                 agent_id=self.agent_id,
                 on_participant_added=self._on_participant_added,
@@ -424,7 +424,6 @@ class AgentRuntime:
                 hub_room_id=self._hub_room_id,
                 claim_registry=self._claim_registry,
                 on_platform_stop=self._on_platform_stop,
-                on_idle_release=self._on_idle_release,
             )
 
         self.executions[room_id] = execution
@@ -450,14 +449,11 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        execution = self.executions.get(room_id)
-        if execution is None:
+        if room_id not in self.executions:
             return True
 
-        # Pop only after stop() finishes; a cancelled stop() must leave the
-        # execution registered so a later stop() can finish release/cleanup.
+        execution = self.executions.pop(room_id)
         graceful = await execution.stop(timeout=timeout)
-        self.executions.pop(room_id, None)
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin

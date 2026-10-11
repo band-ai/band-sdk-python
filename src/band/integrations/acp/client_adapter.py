@@ -33,20 +33,21 @@ from acp.schema import (
     SseMcpServer,
 )
 from band_sdk_core import AgentFailure
-from pydantic import PositiveFloat, field_validator, model_validator
+from pydantic import Field, PositiveFloat, field_validator, model_validator
 from typing_extensions import TypeVar, Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
+from band.core.retention import RoomRetentionConfig
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -152,13 +153,15 @@ class SessionInitializer:
 _PROVIDER = "acp"
 
 
-@dataclass(frozen=True)
+@dataclass
 class RoomSession:
     """A room's ACP session and the Band MCP URL it dials, ``None`` when it
     dials none."""
 
     session_id: str
     band_url: str | None
+    bootstrap_pending: bool = True
+    replay_pending: bool = True
 
 
 @dataclass(frozen=True)
@@ -305,7 +308,13 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         reasoning_effort: Reasoning effort selected the same way.
     """
 
+    retention_unavailable_reason: ClassVar[str] = (
+        "ACP end_turn and loadSession do not establish whole-session inactivity "
+        "or non-cancelling shutdown"
+    )
+
     command: tuple[str, ...]
+    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
     env: dict[str, str] | None = None
     cwd: str | None = None
     mcp_servers: tuple[SessionMcpServer, ...] = ()
@@ -316,6 +325,18 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
     model: str | None = None
     reasoning_effort: str | None = None
+
+    @field_validator("retention")
+    @classmethod
+    def _require_safe_retention(
+        cls, retention: RoomRetentionConfig
+    ) -> RoomRetentionConfig:
+        if retention.idle_timeout_s is not None:
+            raise ValueError(
+                f"Idle retention is unavailable: {cls.retention_unavailable_reason}. "
+                "Leave retention.idle_timeout_s unset."
+            )
+        return retention
 
     @model_validator(mode="before")
     @classmethod
@@ -427,7 +448,6 @@ class ACPClientAdapter(
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
-        self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
 
     @property
@@ -640,7 +660,7 @@ class ACPClientAdapter(
                 self._room_tools[room_id] = tools
 
         try:
-            session_id, created = await self._get_or_create_session(
+            session_id, _ = await self._get_or_create_session(
                 runtime,
                 room_id,
                 history if is_session_bootstrap else None,
@@ -658,8 +678,9 @@ class ACPClientAdapter(
         # so seed it with the Band room's transcript. On bootstrap the converter
         # carried it; a session minted later (the previous runtime was torn down
         # mid-run) re-fetches it.
+        session = self._room_to_session[room_id]
         replay: list[str] | None = None
-        if created:
+        if session.bootstrap_pending and session.replay_pending:
             replay = (
                 history.replay_messages
                 if is_session_bootstrap
@@ -704,6 +725,16 @@ class ACPClientAdapter(
                             prompt_text=prompt_text,
                             on_chunk=emitter.emit,
                         )
+                        session.bootstrap_pending = False
+                        session.replay_pending = False
+                except RequestError as error:
+                    if (
+                        error.code == -32003
+                        and isinstance(error.data, dict)
+                        and error.data.get("reason") == "session_busy"
+                    ):
+                        raise InputNotAccepted("ACP session is busy") from error
+                    raise
                 except asyncio.CancelledError:
                     # Cancelling the local request leaves the agent running the
                     # prompt; it only stops on session/cancel.
@@ -736,6 +767,8 @@ class ACPClientAdapter(
             # never an ACP provider failure, so the connection stays up.
             reraise_delivery_cause(e)
         except ACPTurnTimeoutError:
+            raise
+        except InputNotAccepted:
             raise
         except Exception as e:
             logger.exception("ACP agent error")
@@ -1054,7 +1087,6 @@ class ACPClientAdapter(
                 return stale.session_id, False
             if stale is not None:
                 del self._room_to_session[room_id]
-                self._bootstrapped_sessions.discard(stale.session_id)
                 # Never restore: the persisted id may be the one being retired.
                 history = None
             initializer = self._session_initializers.get(room_id)
@@ -1166,7 +1198,10 @@ class ACPClientAdapter(
             )
             raise
         await self._record_session(
-            room_id, RoomSession(session_id=session_id, band_url=mcp.band_url)
+            room_id,
+            RoomSession(
+                session_id=session_id, band_url=mcp.band_url, replay_pending=False
+            ),
         )
         logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
         return session_id
@@ -1406,22 +1441,6 @@ class ACPClientAdapter(
             )
         )
 
-    def _claim_session_bootstrap(self, session_id: str) -> bool:
-        """True exactly once per session — the caller owns the bootstrap prompt.
-
-        Lock-free: the check-and-add runs without an ``await``, so the event
-        loop's run-to-completion makes it atomic. ``on_cleanup``,
-        ``cleanup_all`` and ``_get_or_create_session`` mutate this same set
-        under ``_session_lock`` instead — also safe today for the same
-        no-``await``-in-between reason, not because of the lock. Adding an
-        ``await`` before any of these mutations would need a real lock added
-        back everywhere ``_bootstrapped_sessions`` is touched.
-        """
-        if session_id in self._bootstrapped_sessions:
-            return False
-        self._bootstrapped_sessions.add(session_id)
-        return True
-
     def _system_update_sections(
         self, participants_msg: str | None, contacts_msg: str | None
     ) -> list[str]:
@@ -1465,7 +1484,7 @@ class ACPClientAdapter(
         live_message = msg.format_for_llm()
         system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        if not self._claim_session_bootstrap(session_id):
+        if not self._room_to_session[room_id].bootstrap_pending:
             return "\n\n".join([*system_updates, live_message])
 
         sections = [self._build_system_context(room_id, msg), *system_updates]
@@ -1493,8 +1512,6 @@ class ACPClientAdapter(
             session = self._room_to_session.pop(room_id, None)
             initializer = self._session_initializers.pop(room_id, None)
             self._room_tools.pop(room_id, None)
-            if session is not None:
-                self._bootstrapped_sessions.discard(session.session_id)
             runtime = self._runtimes.pop(room_id, None)
             self._workspaces.release(room_id)
 
@@ -1532,7 +1549,6 @@ class ACPClientAdapter(
             self._session_initializers.clear()
             self._room_to_session.clear()
             self._room_tools.clear()
-            self._bootstrapped_sessions.clear()
             runtimes = list(self._runtimes.values())
             self._runtimes.clear()
             for room_id in self._workspaces.rooms:

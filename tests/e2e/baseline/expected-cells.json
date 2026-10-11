@@ -996,6 +996,33 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]",
       "adapter": "suite",
       "lanes": [
@@ -1267,6 +1294,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_resync.py::test_missed_message_push_recovers_through_rest",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_events.py::test_event_emitted[error]",
       "adapter": "suite",
       "lanes": [
@@ -1430,7 +1466,25 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_known_stop_recovers_without_play_push",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_next_includes_processing_messages",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_refused_auxiliary_claim_aborts_and_replays",
       "adapter": "suite",
       "lanes": [
         "core"

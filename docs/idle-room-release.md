@@ -1,24 +1,80 @@
-# Idle room resource release
+# Idle room resource retention
 
-Set `SessionConfig(release_idle_room_after_s=...)` to have the runtime ask the
-adapter to release a room's harness resources once the room has been idle that
-long after a turn. The room stays joined; its next message recreates the process
-and continues the same conversation where the adapter supports it. The default
-`None` releases nothing.
+Automatic idle release is **unavailable for every production adapter**. The SDK
+contains a shared lifecycle foundation and explicit configuration gates; provider
+integration and live suspension acceptance remain blocked by native safety
+prerequisites. Existing room processes remain resident until room cleanup or
+adapter shutdown.
 
-The release runs on the room's own processing loop, between turns: a turn in
-progress is never released, a message that arrives first is processed first, and
-a room that never ran a turn is left alone. The next turn re-arms the timer. A
-failed release is logged and the room keeps serving. Leaving the room or stopping
-the agent waits for an in-flight teardown to finish.
-
-`SimpleAdapter.release_room_resources` is the adapter hook; the default is a
-no-op. Managed-host adapters override it when they can tear down a per-room
-process and resume on the next message.
+`CodexAdapterConfig`, `ClaudeSDKAdapterConfig`, and the ACP client configs accept
+a frozen `RoomRetentionConfig` under `retention`. Leaving `idle_timeout_s=None`
+keeps existing behavior. An enabled timeout must be finite and strictly positive,
+but every current provider rejects it during configuration validation with its
+specific qualification blocker. This also applies to JSON/YAML configuration and
+Codex environment settings. There is no supported bypass or restricted feature
+profile.
 
 ```python
-from band.runtime.types import SessionConfig
+from pydantic import ValidationError
 
-config = SessionConfig(release_idle_room_after_s=900.0)
-assert config.release_idle_room_after_s == 900.0
+from band.adapters.codex import CodexAdapterConfig
+from band.core.retention import RoomRetentionConfig
+
+try:
+    CodexAdapterConfig(retention=RoomRetentionConfig(idle_timeout_s=60))
+except ValidationError as error:
+    assert "idle retention is unavailable" in str(error)
+else:
+    raise AssertionError("Unqualified providers must reject idle retention")
 ```
+
+## Why turn completion is insufficient
+
+Room membership, native conversation state, and live provider resources have
+different lifetimes. A completed Band turn does not prove that native tools,
+delegated agents, hooks, scheduled prompts, or parent continuation have stopped.
+Stopping a process after an inactivity timer can destroy that work even when the
+same conversation subsequently reloads successfully.
+
+Qualification on 2026-10-11 found these blockers:
+
+| Profile examined | Evidence | Missing guarantee |
+| --- | --- | --- |
+| Codex CLI 0.160.0 and 0.162.1 | Native probes reproduced background terminal and asynchronous hook loss on shutdown after foreground completion. The hook case had an idle thread and empty terminal inventory. | Whole-session inactivity or a non-cancelling drain covering hooks, terminals, and delegated continuation. |
+| Claude SDK 0.2.159; candidate 0.2.165 with CLI 2.1.294 | Candidate probes passed isolated shell/subagent completion and same-session resume, but asynchronous hooks continued after empty Stop inventories and native idle. Disconnect killed them; a resident control completed. | Hook-inclusive inactivity/drain or a complete effective configuration and change boundary, including managed policy. |
+| Copilot ACP CLI 1.0.89 | Native probes showed scheduled `/after` work survives in a resident process but is lost after shutdown and successful reload of the same session. | Activity/drain that includes scheduled autonomous work. |
+| OMP ACP 18.2.8 | Released source shows pending-work helpers omit suppressed/acknowledged jobs and shutdown cancels jobs. | Activity/drain covering every owned job. Source evidence; no native loss probe was executed for this row. |
+| Cursor ACP 2026.09.28-64d2043 | Installed source drains subagent completions but does not establish general background-work inactivity. | A demonstrated whole-session safe release boundary. Source evidence; no native loss probe was executed for this row. |
+| Generic ACP | `end_turn`, `loadSession`, and session closure do not provide a general non-cancelling process drain. | Qualification for the concrete provider and launch profile. |
+
+The native probes used actual provider binaries with deterministic local model
+responses. They are not live Band/LLM acceptance. These findings do not rule out
+future provider contracts; upgrading a dependency alone does not qualify it.
+Copilot SDK's server-wide timeout is a different ownership model and is excluded.
+
+## Shared lifecycle contract
+
+The common owner lives in `band.core.retention`, below the adapter boundary.
+It separates full-duration SDK activity leases from provider activity, uses one
+monotonic scheduler per owner, and serializes transitions within each room while
+allowing independent rooms to progress. Unknown provider activity keeps a room
+resident. It must never be inferred quiescent from an empty local task ledger.
+
+Suspension must retain native conversation identity, effective settings, and the
+workspace claim. A wake must resume that exact conversation; failed resume must
+retain its identity for retry and must not silently replay public history into a
+new session. Only final disposal releases room ownership. Failed or cancelled
+cleanup must retain concrete resource ownership, and a failed release must retry
+after the configured idle interval without waiting for another room message.
+
+The shared mechanics do not certify a provider's release callback. Production
+integration still needs authoritative native inactivity or a demonstrated
+non-cancelling drain, uninterrupted background event handling, strict resume,
+tool/settings rebinding, and owned final cleanup. Shared adapter MCP resources
+must survive suspension of an individual room. Until those prerequisites and the
+required native/live tests pass, provider retention stays unavailable.
+
+Provider references: [Codex app-server](https://learn.chatgpt.com/docs/app-server),
+[Claude hooks](https://code.claude.com/docs/en/hooks),
+[Claude managed settings](https://code.claude.com/docs/en/settings),
+[ACP session setup](https://agentclientprotocol.com/protocol/v1/session-setup).

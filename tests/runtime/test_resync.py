@@ -1,30 +1,39 @@
-"""Tests for idle-timeout resync and reconnect resync (INT-333).
-
-Covers:
-- request_resync() enqueues ResyncRequest sentinel
-- Sentinel wakes Phase 2 loop and calls _resync_pending_messages()
-- Idle timeout calls _resync_pending_messages() after configured seconds
-- _resync_pending_messages() happy path: processes missed message
-- _resync_pending_messages() empty path: /next returns None, no error
-- AgentRuntime._on_reconnected() calls request_resync() on all executions
-- AgentRuntime._on_reconnected() skips executions without request_resync (custom impls)
-- RoomPresence._handle_reconnect() fires on_reconnected even when auto_subscribe_existing=False
-"""
+"""Periodic reconciliation, missed controls, and reconnect recovery."""
 
 from __future__ import annotations
 
 import asyncio
+import random
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import pytest_asyncio
+from band_sdk_core import RetryTracker
 
-from band.runtime.execution import ExecutionContext, ResyncRequest
+from band.client.streaming import ControlMode, ParticipantRemovedPayload
+from band.platform.event import MessageEvent, ParticipantRemovedEvent, ReconnectedEvent
+from band.platform.link import BandLink
+from band.runtime.cycle import TurnScope
+from band.runtime.execution import ExecutionContext, ResyncOutcome, ResyncRequest
 from band.runtime.presence import RoomPresence
+from band.runtime.resync import ResyncSchedule
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.conftest import admit_room, wait_for_condition
+from tests.runtime.helpers import (
+    AGENT_ID,
+    ROOM_ID,
+    LifecyclePlatform,
+    ResponseGate,
+    rest_client_over,
+)
+
+ReconciledRoom = tuple[ExecutionContext, LifecyclePlatform, list[str]]
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -93,6 +102,492 @@ def make_platform_message(
         metadata={},
         created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def reconciled_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[ReconciledRoom]:
+    monkeypatch.setattr(random, "uniform", lambda lower, upper: upper)
+    peer = LifecyclePlatform()
+    invoked: list[str] = []
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        if isinstance(event, MessageEvent):
+            invoked.append(event.payload.id)
+
+    async with rest_client_over(peer.answer) as rest:
+        link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+        link.rest = rest
+        ctx = ExecutionContext(
+            ROOM_ID,
+            link,
+            handler,
+            agent_id=AGENT_ID,
+            config=SessionConfig(
+                enable_context_hydration=False, enable_working_state=False
+            ),
+        )
+        try:
+            yield ctx, peer, invoked
+        finally:
+            await ctx.stop()
+
+
+@pytest.mark.looptime
+async def test_traffic_cannot_postpone_missed_message_recovery(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    peer.add_message("missed")
+    for _ in range(3):
+        await asyncio.sleep(20)
+        await ctx.on_event(
+            ParticipantRemovedEvent(
+                room_id=ROOM_ID,
+                payload=ParticipantRemovedPayload(
+                    id="unrelated", name="Other", type="User"
+                ),
+            )
+        )
+    await asyncio.sleep(1)
+    assert invoked == ["missed"]
+    assert peer.marked("processed") == ["missed"]
+
+
+@pytest.mark.looptime
+async def test_known_stop_recovers_after_missed_play(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    ctx.stop_room()
+    peer.stopped = True
+    peer.add_message("resumed")
+    await asyncio.sleep(61)
+    assert invoked == []
+    peer.stopped = False
+    await asyncio.sleep(60)
+    assert invoked == ["resumed"]
+    assert peer.marked("processed") == ["resumed"]
+
+
+@pytest.mark.looptime
+async def test_quiet_reconciliation_grows_to_conservative_cap(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(301)
+    assert peer.next_reads == pytest.approx([0, 60, 180, 300])
+    assert invoked == []
+
+
+@pytest.mark.looptime
+async def test_new_work_brings_backed_off_deadline_forward(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(200)
+    peer.add_message("live")
+    work_at = asyncio.get_running_loop().time()
+    await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="live"))
+    await wait_for_condition(lambda: peer.marked("processed") == ["live"])
+    await asyncio.sleep(61)
+    assert invoked == ["live"]
+    assert peer.next_reads[-1] == pytest.approx(work_at + 60)
+
+
+@pytest.mark.looptime
+async def test_duplicate_delivery_does_not_reset_quiet_growth(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(200)
+    ctx.claims.remember_completed(ROOM_ID, "duplicate")
+    await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="duplicate"))
+    await asyncio.sleep(61)
+    assert peer.next_reads == pytest.approx([0, 60, 180])
+    assert invoked == []
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize("signal", ["request", "reconnect", "play"])
+async def test_explicit_recovery_is_immediate_after_backoff(
+    reconciled_room: ReconciledRoom, signal: str
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(200)
+    peer.add_message("explicit")
+    match signal:
+        case "request":
+            await ctx.request_resync()
+        case "reconnect":
+            await ctx.on_event(ReconnectedEvent(room_id=ROOM_ID))
+        case "play":
+            await ctx.resume_room()
+    await wait_for_condition(lambda: peer.marked("processed") == ["explicit"])
+    assert invoked == ["explicit"]
+    assert peer.next_reads[-1] < 201
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize("signal", ["request", "reconnect"])
+async def test_explicit_reconnect_probes_known_stopped_room(
+    reconciled_room: ReconciledRoom, signal: str
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    ctx.stop_room()
+    peer.add_message("played")
+    if signal == "request":
+        await ctx.request_resync()
+    else:
+        await ctx.on_event(ReconnectedEvent(room_id=ROOM_ID))
+    await wait_for_condition(lambda: peer.marked("processed") == ["played"])
+    assert invoked == ["played"]
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize("mode", list(ControlMode))
+async def test_control_during_stopped_probe_invalidates_response(
+    reconciled_room: ReconciledRoom, mode: ControlMode
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    ctx.stop_room()
+    peer.add_message("obsolete")
+    gate = ResponseGate(peer, "/next")
+    async with rest_client_over(gate.answer) as rest:
+        ctx.link.rest = rest
+        recovery = asyncio.create_task(ctx._wait_until_resync_complete())
+        await gate.entered.wait()
+        if mode is ControlMode.PLAY:
+            await ctx.resume_room()
+        else:
+            ctx.interrupt(kind=mode)
+        gate.release.set()
+        assert await recovery is ResyncOutcome.BLOCKED
+    assert invoked == []
+    assert peer.requested("processing") == []
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize(
+    "suffix", ["/pending/processed", "/obsolete/processing", "/context"]
+)
+async def test_new_stop_fences_recovered_candidate_across_awaits(
+    reconciled_room: ReconciledRoom, suffix: str
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    ctx.stop_room()
+    peer.add_message("obsolete")
+    if suffix == "/pending/processed":
+        ctx.claims.remember_ack_pending(ROOM_ID, "pending")
+    if suffix == "/context":
+        ctx.config.enable_context_hydration = True
+    gate = ResponseGate(peer, suffix)
+    async with rest_client_over(gate.answer) as rest:
+        ctx.link.rest = rest
+        recovery = asyncio.create_task(ctx._wait_until_resync_complete())
+        await gate.entered.wait()
+        ctx.stop_room()
+        peer.stopped = True
+        gate.release.set()
+        outcome = await recovery
+        assert outcome in {ResyncOutcome.BLOCKED, ResyncOutcome.STOPPED}
+    assert invoked == []
+    assert ctx.is_stopped
+    assert "obsolete" not in peer.marked("processed")
+
+
+@pytest.mark.looptime
+async def test_stopped_ack_does_not_block_missed_play_discovery(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    ctx.claims.remember_ack_pending(ROOM_ID, "completed")
+    ctx.stop_room()
+    peer.stopped = True
+    peer.add_message("completed")
+    await asyncio.sleep(61)
+    assert ctx.claims.is_ack_pending(ROOM_ID, "completed")
+    assert peer.requested("processed") == []
+    peer.stopped = False
+    await asyncio.sleep(60)
+    assert peer.marked("processed") == ["completed"]
+    assert invoked == []
+
+
+@pytest.mark.looptime
+async def test_unchanged_completed_head_defers_without_spinning(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    ctx.claims.remember_completed(ROOM_ID, "stuck")
+    peer.add_message("stuck")
+    assert await ctx._resync_pending_messages() is ResyncOutcome.BLOCKED
+    assert len(peer.next_reads) == 2
+    assert peer.requested("processed") == []
+    assert invoked == []
+
+
+@pytest.mark.looptime
+async def test_stopped_probe_keeps_pause_on_nonrunnable_head(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    ctx.claims.remember_completed(ROOM_ID, "stuck")
+    peer.add_message("stuck")
+    ctx.stop_room()
+    peer.stopped = True
+    outcome = await ctx._wait_until_resync_complete()
+    assert outcome is ResyncOutcome.STOPPED
+    assert ctx.is_stopped
+    assert invoked == []
+
+
+@pytest.mark.looptime
+async def test_requests_during_reconciliation_are_not_lost(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, _ = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    gate = ResponseGate(peer, "/next")
+    async with rest_client_over(gate.answer) as rest:
+        ctx.link.rest = rest
+        requested_at = asyncio.get_running_loop().time()
+        await ctx.request_resync()
+        await gate.entered.wait()
+        await ctx.request_resync()
+        gate.release.set()
+        await wait_for_condition(lambda: len(peer.next_reads) == 3)
+    assert peer.next_reads == pytest.approx([0, requested_at, requested_at])
+
+
+@pytest.mark.looptime
+async def test_shutdown_cancels_blocked_probe(reconciled_room: ReconciledRoom) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    gate = ResponseGate(peer, "/next")
+    async with rest_client_over(gate.answer) as rest:
+        ctx.link.rest = rest
+        await ctx.request_resync()
+        await gate.entered.wait()
+        await ctx.stop()
+        gate.release.set()
+        await asyncio.sleep(180)
+    assert len(peer.next_reads) == 2
+    assert invoked == []
+
+
+@pytest.mark.looptime
+async def test_stop_shortens_an_already_armed_quiet_wait(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(200)
+    stopped_at = asyncio.get_running_loop().time()
+    ctx.stop_room()
+    peer.stopped = True
+    await asyncio.sleep(61)
+    assert peer.next_reads[-1] == pytest.approx(stopped_at + 60)
+    assert invoked == []
+
+
+@pytest.mark.looptime
+@pytest.mark.parametrize("path", ["startup", "resync"])
+async def test_retryable_handler_failure_is_retried_in_the_same_drain(
+    reconciled_room: ReconciledRoom, path: str
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    peer.add_message("retryable")
+    ctx._retry_tracker = RetryTracker(max_retries=3)
+    ctx.config.report_turn_failures_to_room = False
+
+    async def transient_handler(context: ExecutionContext, event: Any) -> None:
+        invoked.append(event.payload.id)
+        if len(invoked) == 1:
+            raise RuntimeError("transient failure")
+
+    ctx._on_execute = transient_handler
+    if path == "startup":
+        assert await ctx._synchronize_with_next()
+    else:
+        assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+    assert invoked == ["retryable", "retryable"]
+    assert peer.marked("processed") == ["retryable"]
+
+
+@pytest.mark.looptime
+async def test_new_stop_during_observer_drain_keeps_candidate_paused(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    ctx.stop_room()
+    peer.add_message("obsolete")
+    cancelling = asyncio.Event()
+    release = asyncio.Event()
+
+    async def observer() -> None:
+        try:
+            await asyncio.Future[None]()
+        except asyncio.CancelledError:
+            cancelling.set()
+            await release.wait()
+
+    task = asyncio.create_task(observer())
+    await asyncio.sleep(0)
+    task.cancel()
+    await cancelling.wait()
+    ctx.current_scope = TurnScope(ctx._control_revision, observer_task=task)
+    recovery = asyncio.create_task(ctx._wait_until_resync_complete())
+    await asyncio.sleep(0)
+    ctx.stop_room()
+    peer.stopped = True
+    release.set()
+    assert await recovery is ResyncOutcome.STOPPED
+    await task
+    assert invoked == []
+    assert peer.requested("processing") == []
+
+
+@pytest.mark.looptime
+async def test_due_pass_coalesces_request_before_ready_events(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    started = asyncio.Event()
+    release = asyncio.Event()
+    handled: list[str] = []
+
+    async def handler(context: ExecutionContext, event: Any) -> None:
+        handled.append(event.payload.id)
+        if isinstance(event, ParticipantRemovedEvent):
+            started.set()
+            await release.wait()
+        else:
+            invoked.append(event.payload.id)
+
+    ctx._on_execute = handler
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    participant = ParticipantRemovedEvent(
+        room_id=ROOM_ID,
+        payload=ParticipantRemovedPayload(id="other", name="Other", type="User"),
+    )
+    await ctx.on_event(participant)
+    await started.wait()
+    peer.add_message("missed")
+    await ctx.on_event(participant)
+    await ctx.request_resync()
+    await asyncio.sleep(61)
+    release.set()
+    await asyncio.sleep(1)
+    assert len(peer.next_reads) == 3
+    assert invoked == ["missed"]
+    assert handled == ["other", "missed", "other"]
+
+
+@pytest.mark.looptime
+async def test_deadline_does_not_cancel_handler_or_issue_catchup_burst(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(context: ExecutionContext, event: Any) -> None:
+        started.set()
+        await release.wait()
+        invoked.append(event.payload.id)
+
+    ctx._on_execute = handler
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    peer.add_message("slow")
+    await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="slow"))
+    await started.wait()
+    await asyncio.sleep(301)
+    assert invoked == []
+    assert len(peer.next_reads) == 1
+    release.set()
+    await asyncio.sleep(1)
+    assert invoked == ["slow"]
+    assert peer.marked("processed") == ["slow"]
+    assert len(peer.next_reads) == 2
+
+
+@pytest.mark.looptime
+async def test_custom_base_above_default_maximum_keeps_its_interval(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, _ = reconciled_room
+    ctx.config = SessionConfig(idle_resync_seconds=300, enable_working_state=False)
+    ctx._resync_schedule = ResyncSchedule(300, 120)
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(601)
+    assert peer.next_reads == pytest.approx([0, 300, 600])
+
+
+@pytest.mark.looptime
+async def test_initial_spread_does_not_shorten_recurring_intervals(
+    reconciled_room: ReconciledRoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, peer, _ = reconciled_room
+    monkeypatch.setattr(random, "uniform", lambda lower, upper: upper / 2)
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    await asyncio.sleep(271)
+    assert peer.next_reads == pytest.approx([0, 30, 150, 270])
+
+
+@pytest.mark.looptime
+async def test_http_error_retains_base_retry_cadence(
+    reconciled_room: ReconciledRoom,
+) -> None:
+    ctx, peer, invoked = reconciled_room
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
+    failure_pending = True
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        nonlocal failure_pending
+        response = peer.answer(request)
+        if request.url.path.endswith("/next") and failure_pending:
+            failure_pending = False
+            return httpx.Response(400)
+        return response
+
+    async with rest_client_over(answer) as rest:
+        ctx.link.rest = rest
+        await asyncio.sleep(241)
+    assert peer.next_reads == pytest.approx([0, 60, 120, 240])
+    assert invoked == []
+
+
+@pytest.mark.parametrize("field", ["idle_resync_seconds", "idle_resync_max_seconds"])
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), -float("inf")])
+def test_unsafe_reconciliation_intervals_are_rejected(field: str, value: float) -> None:
+    with pytest.raises(ValueError, match=field):
+        SessionConfig(**{field: value})
 
 
 # ---------------------------------------------------------------------------
@@ -172,10 +667,10 @@ class TestIdleTimeout:
 
         await ctx.stop()
 
-    async def test_idle_timeout_does_not_fire_when_events_arrive(
-        self, mock_link, mock_handler
+    async def test_websocket_work_does_not_force_an_immediate_poll(
+        self, mock_link, mock_handler, monkeypatch
     ):
-        """If events arrive before timeout, resync should not add extra /next calls."""
+        monkeypatch.setattr(random, "uniform", lambda lower, upper: upper)
         config = SessionConfig(idle_resync_seconds=60)  # very long timeout
         ctx = ExecutionContext("room-1", mock_link, mock_handler, config=config)
         await ctx.start()
@@ -183,7 +678,7 @@ class TestIdleTimeout:
 
         call_count_after_phase1 = mock_link.get_next_message.call_count
 
-        # Send a real WS event — this resets the idle timer
+        # New work restores the base interval without postponing the deadline.
         event = make_message_event(room_id="room-1", msg_id="msg-x")
         await ctx.on_event(event)
         await wait_for_condition(lambda: mock_handler.await_count >= 1)

@@ -15,7 +15,7 @@ A turn is **complete** when it:
 - declined on purpose (`band_no_reply`)
 - did real work (any Band tool whose effect is `act`, such as
   `band_add_participant`)
-- was settled by the adapter itself (a control reply or a busy notice)
+- was settled by the adapter itself (such as a control reply)
 - already reported a failure (`send_failure`)
 
 Anything else is a **missing reply**. Fetching state or narrating through
@@ -114,6 +114,29 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+## Input that was not accepted
+
+`InputNotAccepted` means this particular attempt provably started no provider
+execution. A local occupancy check before sending or a validated provider busy
+rejection can establish that; timeouts and transport errors cannot. The SDK does
+not judge, fail or complete the rejected delivery, and does not spend its
+execution-failure retry budget. It remains outstanding for the room scheduler.
+One-shot invocation instead returns `OneShotStatus.NOT_ACCEPTED`; its caller
+owns later invocation, with no acknowledgement or history drain.
+
+Ordinary pending work keeps its order. Adapter-owned approval, status and
+question controls remain reachable behind it, using the existing authorization
+rules and the control message's own tools. A consumed control completes only
+itself. Already accepted detached work retains its original tools until its
+actual end and follows the existing acknowledgement and judgment rules.
+
+The default preprocessor prepares bootstrap, participant and system context
+without consuming it. A rejected attempt leaves that context owed; every other
+outcome commits it conservatively, preserving updates that arrived during the
+attempt. Custom preprocessors that consume context must defer that consumption
+through `AgentInput.commit_context` to support this contract. This waiting is
+process-local recovery, not an exactly-once guarantee across crashes.
 
 ## Declining with `band_no_reply`
 
@@ -301,6 +324,17 @@ and leave unfinished work actionable. The refusal does not permanently pause the
 room: later `/next` reconciliation can recover after PLAY without its push signal.
 Scope identity and control revision prevent delayed responses from cancelling
 newer work or invoking an outdated adapter interrupt hook.
+
+Hosts that merge additional messages into a turn use
+`await ctx.claim_message(message_id)` from directly awaited preprocessing in the
+active handler. It returns `True` for acceptance and `False` for an ordinary
+failed claim. A stopped refusal raises native `asyncio.CancelledError`, aborting
+the unfinished turn through its existing scope. Calls from standalone,
+background or detached tasks raise `RuntimeError` before making a request.
+The host remains responsible for auxiliary local ownership and acknowledgements;
+its `finally` cleanup must release uncommitted claims. SDK delivery admission
+remains separate because it runs before the handler and owns the trigger's retry
+accounting.
 
 Once the handler completes, its delivery is `ACK_PENDING` until the platform
 accepts completion. A stopped refusal retains that marker and retries only the
