@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 
 static class ShellWaits
 {
@@ -9,11 +10,15 @@ static class ShellWaits
     const uint OutOfProcess = 1;
     const int MoreData = 234;
     const int TooManyThreads = 565;
+    const uint TokenAdjustPrivileges = 0x20;
+    const uint TokenQuery = 0x8;
+    const uint PrivilegeEnabled = 0x2;
 
     public static int Main(string[] args)
     {
         try
         {
+            EnableDebugPrivilege();
             if (args is ["--self-test"]) return SelfTest();
             Capture(int.Parse(args.Single()));
             return 0;
@@ -22,6 +27,23 @@ static class ShellWaits
         {
             Write(new { phase = "capture.error", type = error.GetType().Name });
             return 1;
+        }
+    }
+
+    static void EnableDebugPrivilege()
+    {
+        using var process = Process.GetCurrentProcess();
+        if (!OpenProcessToken(process.Handle, TokenAdjustPrivileges | TokenQuery, out var token))
+            throw new System.ComponentModel.Win32Exception();
+        using (token)
+        {
+            if (!LookupPrivilegeValue(null, "SeDebugPrivilege", out var luid))
+                throw new System.ComponentModel.Win32Exception();
+            var privileges = new TokenPrivileges { Count = 1, Luid = luid, Attributes = PrivilegeEnabled };
+            if (!AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero))
+                throw new System.ComponentModel.Win32Exception();
+            var error = Marshal.GetLastWin32Error();
+            if (error != 0) throw new System.ComponentModel.Win32Exception(error);
         }
     }
 
@@ -64,12 +86,24 @@ static class ShellWaits
         finally { CloseThreadWaitChainSession(session); }
     }
 
+    const string NativeWaitSource = """
+        using System;
+        using System.Runtime.InteropServices;
+        public static class NativeWait {
+            [DllImport("kernel32.dll")]
+            public static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
+        }
+        """;
+
     static int SelfTest()
     {
         var name = "Local\\shell-wait-" + Guid.NewGuid().ToString("N");
         using var mutex = new Mutex(true, name);
         using var child = Process.Start(new ProcessStartInfo("powershell") {
-            ArgumentList = { "-NoProfile", "-Command", $"$m=[Threading.Mutex]::new($false,'{name}'); Write-Output 'ready'; $m.WaitOne()" },
+            ArgumentList = { "-NoProfile", "-Command",
+                $"Add-Type -TypeDefinition '{NativeWaitSource}'; " +
+                $"$m=[Threading.Mutex]::new($false,'{name}'); Write-Output 'ready'; " +
+                "if ([NativeWait]::WaitForSingleObject($m.SafeWaitHandle.DangerousGetHandle(),[uint32]::MaxValue) -ne 0) { throw 'native wait failed' }" },
             UseShellExecute = false, RedirectStandardOutput = true,
         }) ?? throw new InvalidOperationException();
         try
@@ -114,6 +148,22 @@ static class ShellWaits
         [FieldOffset(8)] public uint ProcessId;
         [FieldOffset(12)] public uint ThreadId;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct Luid { public uint Low; public int High; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct TokenPrivileges { public uint Count; public Luid Luid; public uint Attributes; }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool OpenProcessToken(IntPtr process, uint access, out SafeAccessTokenHandle token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool LookupPrivilegeValue(string? system, string name, out Luid luid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool AdjustTokenPrivileges(SafeAccessTokenHandle token, [MarshalAs(UnmanagedType.Bool)] bool disableAll,
+        ref TokenPrivileges privileges, uint length, IntPtr previous, IntPtr required);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern IntPtr OpenThreadWaitChainSession(uint flags, IntPtr callback);
