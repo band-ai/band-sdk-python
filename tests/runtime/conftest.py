@@ -233,6 +233,7 @@ def make_link_mock(
     async def _get_next(*_args: Any, **_kwargs: Any) -> PlatformMessage | None:
         return sequence.pop(0) if sequence else None
 
+    link.get_actionable_message = AsyncMock(return_value=None)
     link.get_next_message = AsyncMock(side_effect=_get_next)
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()

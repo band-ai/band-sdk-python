@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock
 import httpx
 
 from band.client.rest import AsyncRestClient
+from band.core.exceptions import InputNotAccepted
 from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
@@ -23,6 +25,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
+from band.runtime.tools.agent import AgentTools
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
 from tests.identifiers import UUID_ID
@@ -79,7 +82,22 @@ def run_through(
     async def handler(ctx: ExecutionContext, event: Any) -> None:
         inp = await preprocessor.process(ctx=ctx, event=event, agent_id=AGENT_ID)
         if inp is not None:
-            await adapter.on_event(inp)
+            try:
+                await adapter.on_event(inp)
+            finally:
+                if (
+                    not isinstance(sys.exception(), InputNotAccepted)
+                    and inp.commit_context is not None
+                ):
+                    inp.commit_context()
+
+    async def control(ctx: ExecutionContext, event: Any) -> bool:
+        msg = preprocessor.message(ctx=ctx, event=event, agent_id=AGENT_ID)
+        return (
+            await adapter.try_handle_control(msg, AgentTools.from_context(ctx))
+            if msg is not None
+            else False
+        )
 
     return ExecutionContext(
         ROOM_ID,
@@ -87,6 +105,7 @@ def run_through(
         handler,
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
+        on_message_control=control,
     )
 
 
@@ -140,6 +159,7 @@ class LifecyclePlatform:
         self.posts: list[str] = []
         self.processing_list_reads = 0
         self.next_reads: list[float] = []
+        self.actionable_cursors: list[str | None] = []
 
     def add_message(self, message_id: str) -> None:
         self.messages.append(
@@ -160,10 +180,45 @@ class LifecyclePlatform:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
-        if tail == "messages" and request.method == "GET":
-            self.processing_list_reads += 1
+        if tail == "me":
             return httpx.Response(
-                200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                200,
+                json={
+                    "data": {
+                        "id": AGENT_ID,
+                        "name": "Agent",
+                        "handle": "agent",
+                        "owner_uuid": "user-1",
+                        "feature_flags": {},
+                        "inserted_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                    }
+                },
+            )
+        if tail == "messages" and request.method == "GET":
+            if request.url.params.get("status") == "processing":
+                self.processing_list_reads += 1
+                return httpx.Response(
+                    200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                )
+            cursor = request.url.params.get("cursor")
+            self.actionable_cursors.append(cursor)
+            start = next(
+                (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
+            )
+            limit = int(request.url.params.get("limit", "100"))
+            page = self.messages[start : start + limit]
+            has_more = start + limit < len(self.messages)
+            return httpx.Response(
+                200,
+                json={
+                    "data": page,
+                    "metadata": {
+                        "limit": limit,
+                        "has_more": has_more,
+                        "next_cursor": page[-1]["id"] if has_more else None,
+                    },
+                },
             )
         if tail == "next":
             self.next_reads.append(asyncio.get_running_loop().time())

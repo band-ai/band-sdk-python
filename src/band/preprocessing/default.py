@@ -45,6 +45,51 @@ class DefaultPreprocessor(Preprocessor):
         agent_id: str,
     ) -> AgentInput | None:
         """Process platform event into AgentInput."""
+        msg = self.message(ctx, event, agent_id)
+        if msg is None:
+            return None
+
+        is_bootstrap = not ctx.is_llm_initialized
+
+        # Load history on session bootstrap (if hydration enabled)
+        raw_history: list[dict[str, Any]] = []
+        if is_bootstrap and ctx.config.enable_context_hydration:
+            raw_history = await self._load_history(ctx, msg)
+
+        # Check participants
+        participants = ctx.participants
+        participants_msg = check_and_format_participants(ctx, mark_sent=False)
+
+        # Get pending system messages (contact broadcasts)
+        system_messages = ctx.peek_pending_system_messages()
+        contacts_msg = "\n".join(system_messages) if system_messages else None
+
+        def commit_context() -> None:
+            if is_bootstrap:
+                ctx.mark_llm_initialized()
+            if participants_msg is not None:
+                ctx.mark_participants_sent(participants)
+            ctx.commit_system_messages(system_messages)
+
+        # Create tools
+        tools = AgentTools.from_context(ctx)
+
+        return AgentInput(
+            msg=msg,
+            tools=tools,
+            history=HistoryProvider(raw=raw_history),
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+            is_session_bootstrap=is_bootstrap,
+            room_id=msg.room_id,
+            commit_context=commit_context,
+        )
+
+    @staticmethod
+    def message(
+        ctx: ExecutionContext, event: PlatformEvent, agent_id: str
+    ) -> PlatformMessage | None:
+        """Project a delivery without consuming model context."""
         # Pattern match on tagged union - only handle MessageEvent
         match event:
             case MessageEvent(room_id=room_id, payload=msg_data):
@@ -67,13 +112,13 @@ class DefaultPreprocessor(Preprocessor):
             return None
 
         # Look up sender name from participants list
-        sender_name = self._lookup_sender_name(ctx, msg_data.sender_id)
+        sender_name = DefaultPreprocessor._lookup_sender_name(ctx, msg_data.sender_id)
 
         # Convert to PlatformMessage (typed attribute access, no dict lookups).
         # Translate @[[uuid]] mention tokens to @handle like history formatting
         # does: the platform normalizes mentions to uuid form, and a raw uuid in
         # the turn misleads the LLM (e.g. into using it as a memory subject_id).
-        msg = PlatformMessage(
+        return PlatformMessage(
             id=msg_data.id,
             room_id=room_id,
             content=replace_uuid_mentions(msg_data.content, ctx.participants),
@@ -85,46 +130,8 @@ class DefaultPreprocessor(Preprocessor):
             created_at=datetime.fromisoformat(msg_data.inserted_at),
         )
 
-        is_bootstrap = not ctx.is_llm_initialized
-
-        # Load history on session bootstrap (if hydration enabled)
-        raw_history: list[dict[str, Any]] = []
-        if is_bootstrap:
-            if ctx.config.enable_context_hydration:
-                raw_history = await self._load_history(ctx, msg)
-            ctx.mark_llm_initialized()
-
-        # Check participants
-        participants_msg = check_and_format_participants(ctx)
-
-        # Get pending system messages (contact broadcasts)
-        contacts_msg = self._drain_system_messages(ctx)
-
-        # Create tools
-        tools = AgentTools.from_context(ctx)
-
-        return AgentInput(
-            msg=msg,
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=participants_msg,
-            contacts_msg=contacts_msg,
-            is_session_bootstrap=is_bootstrap,
-            room_id=room_id,
-        )
-
-    def _drain_system_messages(self, ctx: ExecutionContext) -> str | None:
-        """Drain pending system messages from context.
-
-        Returns:
-            Combined system messages as a single string, or None if no messages.
-        """
-        messages = ctx.get_pending_system_messages()
-        if not messages:
-            return None
-        return "\n".join(messages)
-
-    def _lookup_sender_name(self, ctx: ExecutionContext, sender_id: str) -> str | None:
+    @staticmethod
+    def _lookup_sender_name(ctx: ExecutionContext, sender_id: str) -> str | None:
         """Look up sender name from participants list by sender_id."""
         for participant in ctx.participants:
             if participant.get("id") == sender_id:

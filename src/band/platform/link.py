@@ -38,7 +38,7 @@ from band.platform.event import (
     RoomRemovedEvent,
     WebSocketDisconnectedEvent,
 )
-from band.platform.message_lifecycle import MessageLifecycle
+from band.platform.message_lifecycle import ActionablePage, MessageLifecycle
 from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage
 
@@ -588,6 +588,26 @@ class BandLink:
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
         return await self._messages.get_next_message(self.rest, room_id)
+
+    async def get_actionable_page(
+        self, room_id: str, *, cursor: str | None = None
+    ) -> ActionablePage:
+        return await self._messages.get_actionable_page(
+            self.rest, room_id, cursor=cursor
+        )
+
+    async def get_actionable_message(
+        self, room_id: str, message_id: str
+    ) -> PlatformMessage | None:
+        cursor: str | None = None
+        while True:
+            page = await self.get_actionable_page(room_id, cursor=cursor)
+            for message in page.messages:
+                if message.id == message_id:
+                    return message
+            if page.next_cursor is None:
+                return None
+            cursor = page.next_cursor
 
     async def get_stale_processing_messages(
         self, room_id: str

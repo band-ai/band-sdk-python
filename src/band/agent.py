@@ -11,11 +11,13 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, cast
 
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.startup import release_adapter, start_adapter
+from band.runtime.tools import AgentTools
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -290,6 +292,7 @@ class Agent:
                 try:
                     await self._runtime.start(
                         on_execute=self._on_execute,
+                        on_message_control=self._on_control,
                         on_cleanup=self._adapter.on_cleanup,
                         # A bare FrameworkAdapter predates on_interrupt and needn't
                         # implement it -- degrade to a no-op signal like other
@@ -460,4 +463,22 @@ class Agent:
         if inp is None:
             return
 
-        await self._adapter.on_event(inp)
+        rejected = False
+        try:
+            await self._adapter.on_event(inp)
+        except InputNotAccepted:
+            rejected = True
+            raise
+        finally:
+            if not rejected and inp.commit_context is not None:
+                inp.commit_context()
+
+    async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
+        """Handle controls with their delivery tools, preserving active ownership."""
+        handler = getattr(self._adapter, "try_handle_control", None)
+        if handler is None:
+            return False
+        msg = DefaultPreprocessor.message(ctx, event, self._runtime.agent_id)
+        if msg is None:
+            return False
+        return await handler(msg, AgentTools.from_context(ctx))

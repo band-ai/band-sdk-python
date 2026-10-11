@@ -41,6 +41,7 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -169,9 +170,6 @@ APPROVAL_REQUESTED_TEMPLATE = (
 APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as `{decision}`."
 APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Applied `{decision}`."
 NO_APPROVALS_TO_RESOLVE_MESSAGE = "No pending approvals to resolve."
-TURN_IN_PROGRESS_MESSAGE = (
-    "Codex is still processing the previous request in this room."
-)
 
 
 class CodexSubcommand(StrEnum):
@@ -855,20 +853,17 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             self._raw_history_by_room[inp.room_id] = inp.history.raw
         await super().on_event(inp)
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: CodexSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        command = self._extract_local_command(msg.content)
+        if command is None or (
+            command[0] not in _APPROVAL_COMMANDS and command[0] != CodexCommand.STATUS
+        ):
+            return False
+        room_id = msg.room_id
         self._room_client(room_id)
         self._active_room.set(room_id)
-        command = self._extract_local_command(msg.content)
         if command is not None and command[0] in _APPROVAL_COMMANDS:
             try:
                 handled = await self._handle_approval_command(
@@ -882,15 +877,38 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 reraise_delivery_cause(e)
             if handled:
                 tools.turn.settle()
-                return
+                return True
 
-        running = self._turn_tasks.get(room_id)
-        if running is not None and not running.done():
-            await tools.send_notice(
-                TURN_IN_PROGRESS_MESSAGE, mentions=self._sender_mention(msg)
+        if command is not None and command[0] == CodexCommand.STATUS:
+            await self._handle_local_command(
+                tools=tools,
+                msg=msg,
+                history=CodexSessionState(),
+                room_id=room_id,
+                command=command[0],
+                args=command[1],
             )
             tools.turn.settle()
-            return
+            return True
+        return False
+
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        self._room_client(room_id)
+        self._active_room.set(room_id)
+        running = self._turn_tasks.get(room_id)
+        if running is not None and not running.done():
+            raise InputNotAccepted("The room already has an active Codex turn")
+        command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._turn_release[room_id] = release

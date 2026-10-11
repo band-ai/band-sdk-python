@@ -7,9 +7,10 @@ of WebSocket connection or subscription state.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
@@ -61,6 +62,15 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
         metadata=metadata_to_dict(item.metadata, exclude_none=True),
         created_at=item.inserted_at or datetime.now(UTC),
     )
+
+
+ACTIONABLE_PAGE_SIZE = 100
+
+
+@dataclass(frozen=True)
+class ActionablePage:
+    messages: list[PlatformMessage]
+    next_cursor: str | None
 
 
 class MessageLifecycle:
@@ -232,6 +242,27 @@ class MessageLifecycle:
         if response.status_code == HTTPStatus.NO_CONTENT:
             return None
         return _platform_message(_accepted_response(response).data, room_id)
+
+    async def get_actionable_page(
+        self, rest: AsyncRestClient, room_id: str, *, cursor: str | None = None
+    ) -> ActionablePage:
+        """Read one chronological page of outstanding deliveries; failures propagate."""
+        kwargs: dict[str, Any] = {"cursor": cursor} if cursor is not None else {}
+        response = await rest.agent_api_messages.list_agent_messages(
+            chat_id=room_id,
+            sort_order="asc",
+            limit=ACTIONABLE_PAGE_SIZE,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+            **kwargs,
+        )
+        next_cursor = (
+            response.metadata.next_cursor if response.metadata.has_more else None
+        )
+        if response.metadata.has_more and next_cursor is None:
+            raise ValueError("Actionable messages page has_more without next_cursor")
+        return ActionablePage(
+            [_platform_message(item, room_id) for item in response.data], next_cursor
+        )
 
     async def get_stale_processing_messages(
         self, rest: AsyncRestClient, room_id: str
