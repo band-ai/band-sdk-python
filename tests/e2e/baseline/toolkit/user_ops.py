@@ -317,8 +317,7 @@ class UserOps:
         except ValueError:
             payload = None
         data = payload.get("data") if isinstance(payload, dict) else None
-        control = data if isinstance(data, dict) else {}
-        affected = control.get("affected")
+        affected = data.get("affected") if isinstance(data, dict) else None
         logger.warning(
             "Control REST method=%s path=%s status=%s affected=%s request=%s build=%s",
             method,

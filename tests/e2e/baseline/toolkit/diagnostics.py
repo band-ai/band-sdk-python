@@ -53,9 +53,8 @@ class TransportSnapshot(TypedDict):
     oversized_frames: int
 
 
-class ControlTransportDiagnostics(logging.Handler):
+class ControlTransportDiagnostics:
     def __init__(self, agent_id: str) -> None:
-        super().__init__()
         self.topic = AgentTopicKind.Control.topic(agent_id)
         self.observations: deque[dict[str, object]] = deque(maxlen=OBSERVATION_LIMIT)
         self.dropped_observations = 0
