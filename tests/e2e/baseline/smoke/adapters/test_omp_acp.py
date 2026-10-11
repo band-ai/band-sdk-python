@@ -37,8 +37,8 @@ from tests.paths import REPO_ROOT
 
 if TYPE_CHECKING:
     from band.adapters.omp_acp import OmpACPAdapter
-    from band.integrations.acp.client_adapter import ACPPermissionRequest
 
+FORM_PROBE_TITLE = "Approve the E2E form probe?"
 BAND_EVENT_TOOL_NAME = "band_send_event"
 BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=1)
 
@@ -115,8 +115,10 @@ async def test_omp_acp_band_tool_call_is_narrated(
     tool_call_events.assert_contains_any([BAND_EVENT_TOOL_NAME])
 
 
-def _denying_omp_adapter(settings: BaselineSettings, sandbox: str) -> OmpACPAdapter:
-    """OMP with a native form extension and a resolver that denies every ask."""
+def _probe_denying_omp_adapter(
+    settings: BaselineSettings, sandbox: str
+) -> OmpACPAdapter:
+    """OMP denies the native probe while permitting Band completion."""
     # Deferred: omp_acp pulls in the optional `acp` package, not installed in
     # every lane's venv (e.g. dev-crewai, dev-parlant) -- importing at module
     # level would break collection there.
@@ -124,9 +126,9 @@ def _denying_omp_adapter(settings: BaselineSettings, sandbox: str) -> OmpACPAdap
         OmpACPAdapter,
         OmpACPAdapterConfig,
     )
-
-    async def deny(_request: ACPPermissionRequest) -> None:
-        return None
+    from tests.e2e.baseline.smoke.samples.ompapproval import (  # noqa: PLC0415
+        deny_probe_allow_completion,
+    )
 
     return OmpACPAdapter(
         config=OmpACPAdapterConfig(
@@ -139,7 +141,7 @@ def _denying_omp_adapter(settings: BaselineSettings, sandbox: str) -> OmpACPAdap
             cwd=sandbox,
             env=omp_acp_env(settings, omp_agent_home_dir(sandbox)),
         ),
-        resolve_permission=deny,
+        resolve_permission=deny_probe_allow_completion,
     )
 
 
@@ -156,11 +158,11 @@ async def test_omp_acp_form_elicitation_denied_is_narrated(
     """A native OMP form is denied and narrated through the real ACP boundary.
 
     The extension asks before the model turn, so form coverage does not depend
-    on which file tool a model happens to choose. The resumed reply is not
-    asserted; the denial and its room narration are the behavior under test.
+    on which file tool a model happens to choose. The turn must then deliver
+    its requested reply through a Band completion tool.
     """
     with tempfile.TemporaryDirectory(prefix="band-e2e-omp-acp-deny-") as sandbox:
-        adapter = _denying_omp_adapter(baseline_settings, sandbox)
+        adapter = _probe_denying_omp_adapter(baseline_settings, sandbox)
         async with running_provisioned_agent(
             adapter, resource_manager, label="omp-acp-form-deny"
         ) as agent:
@@ -174,27 +176,28 @@ async def test_omp_acp_form_elicitation_denied_is_narrated(
                     mention_id=agent.id,
                     mention_name=agent.name,
                 )
-                await capture.wait_for_processed(
+                replies = await capture.wait_for_reply(
                     mid, agent.id, deadline_s=BUDGET.deadline_s
                 )
-                tool_calls = await capture.events(
-                    MessageType.TOOL_CALL, sender_id=agent.id
-                )
+                tool_calls = await capture.tool_calls(sender_id=agent.id)
                 tool_results = await capture.tool_results(sender_id=agent.id)
 
-            tool_calls.assert_contains_any([OMP_APPROVAL_FORM_TOOL_NAME])
-            form_results = tool_results.named(OMP_APPROVAL_FORM_TOOL_NAME)
-            form_results.assert_present()
-            assert any(
-                result.is_error and "cancelled" in result.output.lower()
-                for result in form_results
-            )
-            assert any(
-                (
-                    result.raw.metadata.model_dump()
-                    if result.raw.metadata is not None
-                    else {}
-                ).get("permission_outcome")
-                == "cancelled"
-                for result in form_results
-            )
+            replies.assert_present()
+            probe_calls = [
+                call
+                for call in tool_calls.named(OMP_APPROVAL_FORM_TOOL_NAME)
+                if call.args.get("message") == FORM_PROBE_TITLE
+            ]
+            assert len(probe_calls) == 1, "expected exactly one native form probe"
+            probe_call = probe_calls[0]
+            assert probe_call.tool_call_id, "native form probe must have a call ID"
+            probe_results = [
+                result
+                for result in tool_results.named(OMP_APPROVAL_FORM_TOOL_NAME)
+                if result.tool_call_id == probe_call.tool_call_id
+            ]
+            assert len(probe_results) == 1, "expected the native probe's result"
+            result = probe_results[0]
+            assert result.is_error and "cancelled" in result.output.lower()
+            assert result.raw.metadata is not None
+            assert result.raw.metadata.model_dump()["permission_outcome"] == "cancelled"
