@@ -15,6 +15,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,6 +66,12 @@ _google_llm = importlib.import_module("google.adk.models.google_llm")
 
 LOCAL_API_KEY = "local-test-key"
 EFFECT_ARGS = {"content": "Completed effect", "mentions": ["@alice"]}
+
+
+class HTTPMode(StrEnum):
+    MOCK = "mock"
+    TCP = "tcp"
+    PROXY = "proxy"
 
 
 class RecoveryTools(DispatchingFakeTools, PlatformSchemaFakeTools):
@@ -146,16 +153,16 @@ async def google_http(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[GoogleHTTPPeer]:
     peer = GoogleHTTPPeer()
-    mode = getattr(request, "param", "mock")
+    mode = HTTPMode(getattr(request, "param", HTTPMode.MOCK))
     server = (
         await asyncio.start_server(peer.serve, "127.0.0.1", 0)
-        if mode != "mock"
+        if mode != HTTPMode.MOCK
         else None
     )
     base_url = (
         f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}" if server else None
     )
-    if mode == "proxy":
+    if mode == HTTPMode.PROXY:
         assert base_url is not None
         monkeypatch.setenv("HTTP_PROXY", base_url)
         monkeypatch.setenv("NO_PROXY", "")
@@ -1744,7 +1751,7 @@ async def _empty_async_iter(**kwargs):
     yield  # Make it an async generator
 
 
-@pytest.mark.parametrize("google_http", ["mock", "tcp"], indirect=True)
+@pytest.mark.parametrize("google_http", [HTTPMode.MOCK, HTTPMode.TCP], indirect=True)
 class TestNativeHTTPRecovery:
     @pytest.mark.parametrize(
         ("responses", "max_retries", "expected_calls", "error_code"),
@@ -1912,7 +1919,7 @@ class TestNativeHTTPRecovery:
 
 
 class TestWireBudget:
-    @pytest.mark.parametrize("google_http", ["proxy"], indirect=True)
+    @pytest.mark.parametrize("google_http", [HTTPMode.PROXY], indirect=True)
     @pytest.mark.asyncio
     async def test_generation_preserves_environment_proxy_routing(
         self, google_http: GoogleHTTPPeer
@@ -1929,7 +1936,7 @@ class TestWireBudget:
         assert len(google_http.requests) == 2
         assert google_http.clients_closed
 
-    @pytest.mark.parametrize("google_http", ["tcp"], indirect=True)
+    @pytest.mark.parametrize("google_http", [HTTPMode.TCP], indirect=True)
     @pytest.mark.asyncio
     async def test_provider_clients_close_when_runner_cleanup_fails(
         self, google_http: GoogleHTTPPeer
@@ -1952,7 +1959,7 @@ class TestWireBudget:
             await adapter.on_event(turn_input(RecoveryTools()))
         assert google_http.clients_closed
 
-    @pytest.mark.parametrize("google_http", ["tcp"], indirect=True)
+    @pytest.mark.parametrize("google_http", [HTTPMode.TCP], indirect=True)
     @pytest.mark.parametrize("post_tool", [False, True], ids=["initial", "post-tool"])
     @pytest.mark.asyncio
     async def test_zero_budget_never_resends_a_disconnected_request(
