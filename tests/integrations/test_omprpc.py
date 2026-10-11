@@ -630,9 +630,7 @@ async def test_cancelled_cleanup_reaps_descendants_but_not_unrelated_processes(
     process_gate: ProcessGate,
     stdio: str,
     interruption: str,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level("DEBUG", logger="band.integrations.omprpc")
     peer = str(Path(__file__).with_name("omppeer.py"))
     port = str(process_gate.port)
     unrelated = await asyncio.create_subprocess_exec(

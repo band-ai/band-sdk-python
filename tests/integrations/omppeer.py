@@ -52,6 +52,9 @@ def start_descendant(scenario: str, port: int, stdio: str) -> subprocess.Popen[b
             "--gate-port",
             str(port),
         ),
+        # A parent's pending pipe read can block Python's stdin initialization on Windows.
+        # Descendants are controlled by the gate socket, not the RPC input pipe.
+        stdin=subprocess.DEVNULL,
         stdout=None if stdio == "inherit" else subprocess.DEVNULL,
         stderr=None if stdio == "inherit" else subprocess.DEVNULL,
     )
