@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload
+from tests.e2e.baseline.toolkit import capture as capture_module
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
+from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.runtime.helpers import rest_client_over
 
 MSG = "msg-1"
 AGENT = "agent-1"
@@ -138,3 +142,92 @@ async def test_wait_for_processed_timeout_reports_last_status_and_error() -> Non
     message = str(excinfo.value)
     assert "failed" in message  # last status surfaced
     assert "kaboom" in message  # attempt error surfaced
+
+
+async def test_timeout_reports_durable_completion_without_passing_stale_observer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    content = "private message body"
+    message = _delivery_update("processed").model_dump()
+    message.update(content=content, inserted_at=None, updated_at=None)
+    async with rest_client_over(
+        lambda _: httpx.Response(
+            200,
+            json={"data": [message], "metadata": {"has_more": False, "limit": 100}},
+        )
+    ) as rest:
+        capture = ReplyCapture("room-1", user_ops=UserOps(rest))
+        capture._on_message_updated(_delivery_update("processing"))
+
+        with pytest.raises(TimeoutError, match="last delivery status: processing"):
+            await capture.wait_for_processed(MSG, AGENT, deadline_s=0.01)
+
+    assert "websocket=processing history=['processing'] rest=processed" in caplog.text
+    assert content not in caplog.text
+    assert capture.delivery_status(MSG, AGENT) is DeliveryStatus.PROCESSING
+
+
+@pytest.mark.parametrize("status,error", [(400, "ApiError"), (200, "ParsingError")])
+async def test_snapshot_http_failure_preserves_delivery_timeout_and_omits_body(
+    status: int,
+    error: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    body = "private provider exception body"
+    async with rest_client_over(
+        lambda _: httpx.Response(status, json={"message": body})
+    ) as rest:
+        capture = ReplyCapture("room-1", user_ops=UserOps(rest))
+        capture._on_message_updated(_delivery_update("processing"))
+
+        with pytest.raises(TimeoutError, match="last delivery status: processing"):
+            await capture.wait_for_processed(MSG, AGENT, deadline_s=0.01)
+
+    assert f"rest=None rest_error={error}" in caplog.text
+    assert body not in caplog.text
+
+
+async def test_snapshot_deadline_preserves_delivery_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(capture_module, "DELIVERY_SNAPSHOT_TIMEOUT_S", 0.02)
+    cancelled = asyncio.Event()
+
+    async def stalled_response(_request: httpx.Request) -> httpx.Response:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        raise AssertionError("unreachable")
+
+    async with rest_client_over(stalled_response) as rest:
+        capture = ReplyCapture("room-1", user_ops=UserOps(rest))
+        with pytest.raises(TimeoutError, match="last delivery status: none"):
+            await asyncio.wait_for(
+                capture.wait_for_processed(MSG, AGENT, deadline_s=0.01), timeout=1
+            )
+
+    assert cancelled.is_set()
+    assert "rest=None rest_error=TimeoutError" in caplog.text
+
+
+async def test_cancellation_during_snapshot_propagates() -> None:
+    requested = asyncio.Event()
+
+    async def stalled_response(_request: httpx.Request) -> httpx.Response:
+        requested.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async with rest_client_over(stalled_response) as rest:
+        capture = ReplyCapture("room-1", user_ops=UserOps(rest))
+        waiter = asyncio.create_task(
+            capture.wait_for_processed(MSG, AGENT, deadline_s=0.01)
+        )
+        try:
+            await asyncio.wait_for(requested.wait(), timeout=1)
+        finally:
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter

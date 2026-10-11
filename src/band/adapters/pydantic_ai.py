@@ -8,10 +8,13 @@ built-in Band tool surface is built by
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
 from collections.abc import Callable
+from contextvars import ContextVar
+from time import monotonic
 from typing import Any, ClassVar, get_origin, get_type_hints
 
 from band_sdk_core import AgentFailure
@@ -77,6 +80,64 @@ from band.runtime.tools.schema import is_failed_tool_output
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "pydantic_ai"
+
+_native_turn: ContextVar[tuple[str, str, float] | None] = ContextVar(
+    "pydantic_native_turn", default=None
+)
+
+
+def _log_native_progress(
+    phase: str,
+    *,
+    request: int | None = None,
+    events: int | None = None,
+    tool: str | None = None,
+    error: BaseException | None = None,
+) -> None:
+    turn = _native_turn.get()
+    if turn is None:
+        return
+    room_id, message_id, started = turn
+    logger.info(
+        "Pydantic native room=%s message=%s phase=%s elapsed=%.3f "
+        "request=%s events=%s tool=%r error=%s",
+        room_id,
+        message_id,
+        phase,
+        monotonic() - started,
+        request,
+        events,
+        tool[:80] if tool is not None else None,
+        type(error).__name__ if error is not None else None,
+    )
+
+
+def _before_model_request(
+    ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    _log_native_progress("request_started", request=ctx.run_step)
+    return request_context
+
+
+def _after_model_request(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+) -> ModelResponse:
+    # With streaming, this hook sees the assembled response after consumption.
+    _log_native_progress("response_ready", request=ctx.run_step)
+    return _drop_blank_text(ctx, request_context=request_context, response=response)
+
+
+def _model_request_error(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    request_context: ModelRequestContext,
+    error: Exception,
+) -> ModelResponse:
+    _log_native_progress("request_error", request=ctx.run_step, error=error)
+    raise error
 
 
 def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
@@ -398,7 +459,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
                 ProcessHistory(_drop_non_replayable_messages),
-                Hooks(after_model_request=_drop_blank_text),
+                Hooks(
+                    before_model_request=_before_model_request,
+                    after_model_request=_after_model_request,
+                    model_request_error=_model_request_error,
+                ),
             ],
             # The built-in Band surface, selected and built from the tool
             # registry. Custom tools keep their own registration paths below.
@@ -477,10 +542,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         user_message = msg.format_for_llm()
 
         logger.debug(
-            "Room %s: Running Pydantic AI agent (history: %s msgs, prompt: %s...)",
+            "Room %s: Running Pydantic AI agent (history: %s msgs)",
             room_id,
             len(self._message_history[room_id]),
-            user_message[:80],
         )
 
         # Run agent with streaming to capture tool events.
@@ -509,7 +573,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # failed run captured.
         capture_cm = capture_run_messages()
         captured = capture_cm.__enter__()
+        trace_token = _native_turn.set((room_id, msg.id, monotonic()))
+        event_count = 0
         try:
+            _log_native_progress("run_started")
             # run_stream_events is an async context manager: it starts the run on the
             # first iteration and tears the background task down on exit.
             async with self._agent.run_stream_events(
@@ -518,7 +585,16 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 message_history=self._message_history[room_id],
             ) as events:
                 async for event in events:
+                    event_count += 1
+                    # Logarithmic sampling bounds output during long token streams.
+                    if event_count & (event_count - 1) == 0:
+                        _log_native_progress("stream_progress", events=event_count)
                     if isinstance(event, FunctionToolCallEvent):
+                        _log_native_progress(
+                            "tool_started",
+                            events=event_count,
+                            tool=event.part.tool_name,
+                        )
                         if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
@@ -537,11 +613,19 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
+                        tool_succeeded = isinstance(
+                            event.part, ToolReturnPart
+                        ) and not is_failed_tool_output(event.part.content)
+                        _log_native_progress(
+                            "tool_succeeded" if tool_succeeded else "tool_failed",
+                            events=event_count,
+                            tool=event.part.tool_name,
+                        )
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
                         if (
-                            isinstance(event.part, ToolReturnPart)
-                            and not is_failed_tool_output(event.part.content)
+                            tool_succeeded
+                            and isinstance(event.part, ToolReturnPart)
                             and (
                                 effect := self._custom_effects.get(event.part.tool_name)
                             )
@@ -577,6 +661,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                     "Failed to send tool_result event: %s", e
                                 )
                     elif isinstance(event, AgentRunResultEvent):
+                        _log_native_progress("result_received", events=event_count)
                         turn_usage = self._usage_from_result(event.result)
                         # Keep native run history, but drop responses that replay as
                         # content:null (e.g. thinking-only) — providers reject them
@@ -595,7 +680,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 room_id,
                                 dropped,
                             )
+                _log_native_progress("iterator_completed", events=event_count)
+            _log_native_progress("run_completed", events=event_count)
+        except asyncio.CancelledError as error:
+            _log_native_progress("run_cancelled", events=event_count, error=error)
+            raise
         except Exception as e:
+            _log_native_progress("run_error", events=event_count, error=e)
             # A turn that already did its work must not fail over the reply the model
             # owes pydantic-ai. Allowing `None` — and normalizing blank text into it
             # — ends the ordinary nothing-left-to-say response cleanly, but some
@@ -619,7 +710,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     "the turn was already complete; treating as "
                     "non-fatal: %s",
                     room_id,
-                    e,
+                    type(e).__name__,
                 )
                 # No AgentRunResultEvent fired, so history was never recorded this
                 # turn — and it reloads from the platform only on bootstrap. Persist
@@ -633,12 +724,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 return
-            logger.exception("Room %s: Pydantic AI turn failed", room_id)
+            logger.error(
+                "Room %s: Pydantic AI turn failed (%s)", room_id, type(e).__name__
+            )
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
         finally:
+            _native_turn.reset(trace_token)
             capture_cm.__exit__(None, None, None)
             # Single emit point for every exit. A run that raised (benign
             # empty-final or a hard failure) never saw the result event, so

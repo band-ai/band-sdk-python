@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
+from time import monotonic
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -94,6 +95,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@contextlib.contextmanager
+def _observe_phase(
+    phase: str, room_id: str, message_id: str | None = None
+) -> Iterator[None]:
+    """Record boundary completion separately from entry, without payloads."""
+    started = monotonic()
+    logger.info(
+        "Turn phase=%s state=started room=%s message=%s at=%.6f",
+        phase,
+        room_id,
+        message_id,
+        started,
+    )
+    outcome = "returned"
+    try:
+        yield
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
+    except Exception as error:
+        outcome = type(error).__name__
+        raise
+    finally:
+        logger.info(
+            "Turn phase=%s state=%s room=%s message=%s elapsed=%.6f",
+            phase,
+            outcome,
+            room_id,
+            message_id,
+            monotonic() - started,
+        )
 def _log_turn_error(error: Exception, message: str, *args: object) -> None:
     """Log a failed turn; one whose failure already reached the room was logged
     where it was reported, so it stays out of ERROR alerting."""
@@ -485,7 +517,7 @@ class ExecutionContext:
             return False
 
         try:
-            durable_processed = await self.link.mark_processed(self.room_id, message_id)
+            durable_processed = await self._acknowledge(message_id)
         except RoomExecutionStoppedError:
             return False
         if durable_processed:
@@ -1033,7 +1065,8 @@ class ExecutionContext:
             self._expire_context_cache_if_needed()
 
         if not self._context_hydrated:
-            await self.hydrate()
+            with _observe_phase("hydrate", self.room_id):
+                await self.hydrate()
 
     def build_context(self) -> ConversationContext:
         """
@@ -1599,7 +1632,7 @@ class ExecutionContext:
         if scope is None or revision != self._control_revision:
             return BacklogProcessResult.RETRY_LATER
         self._set_state(ExecutionState.PROCESSING)
-        logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
+        logger.info("Dispatch source=backlog room=%s message=%s", self.room_id, msg_id)
 
         attempts: int | None = None
         try:
@@ -1664,7 +1697,7 @@ class ExecutionContext:
             # retries only the ack via _retry_processed_ack, never re-running
             # the handler. remember_completed clears this on success below.
             self.claims.remember_ack_pending(self.room_id, msg_id)
-            durable_processed = await self.link.mark_processed(self.room_id, msg_id)
+            durable_processed = await self._acknowledge(msg_id)
             if durable_processed:
                 self._retry_tracker.mark_success(msg_id)
                 self.claims.remember_completed(self.room_id, msg_id)
@@ -1741,10 +1774,16 @@ class ExecutionContext:
         handler drains; participant add/remove events are housekeeping and
         skip it.
         """
-        if isinstance(event, MessageEvent):
-            await self._execute_message_cycle(event)
-        else:
-            await self._on_execute(self, event)
+        message_id = (
+            event.payload.id
+            if isinstance(event, MessageEvent) and event.payload
+            else None
+        )
+        with _observe_phase("cycle", self.room_id, message_id):
+            if isinstance(event, MessageEvent):
+                await self._execute_message_cycle(event)
+            else:
+                await self._on_execute(self, event)
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
@@ -1778,7 +1817,13 @@ class ExecutionContext:
             raise asyncio.CancelledError
         self._resync_handled_work = True
         self._reset_resync_interval()
-        await self._on_execute(self, event)
+        message_id = (
+            event.payload.id
+            if isinstance(event, MessageEvent) and event.payload
+            else None
+        )
+        with _observe_phase("handler", self.room_id, message_id):
+            await self._on_execute(self, event)
 
     def _retain_detached_cycle_task(
         self, task: asyncio.Task[None], *, owner: TurnTask | None = None
@@ -1916,11 +1961,24 @@ class ExecutionContext:
             raise asyncio.CancelledError
         return accepted
 
+    async def _acknowledge(self, message_id: str) -> bool:
+        with _observe_phase("ack", self.room_id, message_id):
+            accepted = await self.link.mark_processed(self.room_id, message_id)
+        logger.info(
+            "Ack room=%s message=%s accepted=%s", self.room_id, message_id, accepted
+        )
+        return accepted
+
     async def _claim(self, msg_id: str) -> bool:
         """Mark ``msg_id`` processing on the platform; a refused claim never
         ran the handler, so it gives back the attempt already charged."""
         try:
-            if await self.link.mark_processing(self.room_id, msg_id):
+            with _observe_phase("claim", self.room_id, msg_id):
+                accepted = await self.link.mark_processing(self.room_id, msg_id)
+            logger.info(
+                "Claim room=%s message=%s accepted=%s", self.room_id, msg_id, accepted
+            )
+            if accepted:
                 return True
         except RoomExecutionStoppedError:
             pass
@@ -1956,7 +2014,7 @@ class ExecutionContext:
             # interrupted. Mirror the success-path bookkeeping.
             self.claims.remember_ack_pending(self.room_id, msg_id)
             try:
-                accepted = await self.link.mark_processed(self.room_id, msg_id)
+                accepted = await self._acknowledge(msg_id)
             except RoomExecutionStoppedError:
                 accepted = False
             if accepted:
@@ -2161,7 +2219,12 @@ class ExecutionContext:
             return False
 
         self._set_state(ExecutionState.PROCESSING)
-        logger.debug("Processing %s in room %s", event.type, self.room_id)
+        logger.info(
+            "Dispatch source=websocket room=%s message=%s event=%s",
+            self.room_id,
+            msg_id,
+            event.type,
+        )
 
         attempts: int | None = None
         try:
@@ -2246,7 +2309,7 @@ class ExecutionContext:
             # remember_completed clears this on success below.
             if isinstance(event, MessageEvent) and msg_id:
                 self.claims.remember_ack_pending(self.room_id, msg_id)
-                durable_processed = await self.link.mark_processed(self.room_id, msg_id)
+                durable_processed = await self._acknowledge(msg_id)
                 if durable_processed:
                     self._retry_tracker.mark_success(msg_id)
                     self.claims.remember_completed(self.room_id, msg_id)

@@ -31,6 +31,8 @@ exclusion the other rehydration tests spell out.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from band.client.streaming import DeliveryStatus
@@ -51,6 +53,13 @@ from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+
+@pytest.fixture(autouse=True)
+def turn_diagnostics(caplog: pytest.LogCaptureFixture) -> None:
+    """Keep boundary observations in pytest's existing failure report."""
+    for name in ("band.runtime.execution", "band.adapters.pydantic_ai"):
+        caplog.set_level(logging.INFO, logger=name)
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT, **EXECUTION_REPORTING)

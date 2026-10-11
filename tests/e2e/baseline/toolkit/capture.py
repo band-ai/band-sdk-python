@@ -45,6 +45,7 @@ from typing import Any
 
 from band_rest import AsyncRestClient
 from phoenix_channels_python_client.exceptions import PHXClientError
+from pydantic import ValidationError
 
 from band.client.streaming import (
     DeliveryStatus,
@@ -77,6 +78,8 @@ from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 logger = logging.getLogger(__name__)
 
 DEFAULT_DEADLINE_S = 60.0
+DELIVERY_SNAPSHOT_TIMEOUT_S = 5.0
+DELIVERY_SNAPSHOT_HISTORY_LIMIT = 16
 
 
 def _parse_status(raw: Any) -> DeliveryStatus | None:
@@ -218,6 +221,41 @@ class ReplyCapture:
         )
         return f" (last error: {last_error})" if last_error else ""
 
+    async def _log_delivery_timeout(self, message_id: str, recipient_id: str) -> None:
+        """Compare the observer with REST before teardown removes the evidence."""
+        observed = self.delivery_status(message_id, recipient_id)
+        history = [
+            status.value
+            for status in self.delivery_history(message_id, recipient_id)[
+                -DELIVERY_SNAPSHOT_HISTORY_LIMIT:
+            ]
+        ]
+        durable = None
+        error = "unavailable"
+        if self._user_ops is not None:
+            error = None
+            try:
+                async with asyncio.timeout(DELIVERY_SNAPSHOT_TIMEOUT_S):
+                    statuses = await self.durable_delivery_statuses(
+                        [message_id], recipient_id
+                    )
+                durable = statuses[message_id]
+            except ValidationError as exc:
+                error = type(exc).__name__
+            except Exception as exc:  # noqa: BLE001 — diagnostics cannot replace the timeout
+                error = type(exc).__name__
+        logger.warning(
+            "Delivery timeout snapshot room=%s message=%s recipient=%s "
+            "websocket=%s history=%s rest=%s rest_error=%s",
+            self.room_id,
+            message_id,
+            recipient_id,
+            observed.value if observed else None,
+            history,
+            durable.value if durable else None,
+            error,
+        )
+
     async def wait_until(
         self,
         predicate: Callable[[list[MessageCreatedPayload]], bool],
@@ -295,12 +333,14 @@ class ReplyCapture:
             )
         except TimeoutError:
             last = self.delivery_status(message_id, recipient_id)
-            raise TimeoutError(
+            error = TimeoutError(
                 f"{recipient_id} did not process message {message_id} in room "
                 f"{self.room_id}; last delivery status: "
                 f"{last.value if last else 'none'}"
                 f"{self._delivery_error(message_id, recipient_id)}"
-            ) from None
+            )
+            await self._log_delivery_timeout(message_id, recipient_id)
+            raise error from None
 
     async def wait_for_reply(
         self,
