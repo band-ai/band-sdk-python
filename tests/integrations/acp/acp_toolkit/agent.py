@@ -38,6 +38,7 @@ from acp.schema import (
 )
 from mcp.types import Tool
 
+from band.integrations.acp.client_runtime import ALLOW_ONCE_KIND
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
@@ -454,14 +455,20 @@ class FakeACPAgent:
         tool_call_id: str = "tc-1",
         title: str | None = None,
         allow_option_id: str = "allow-1",
+        raw_input: Any = None,
+        options: list[PermissionOption] | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
                 sid,
-                ToolCallUpdate(tool_call_id=tool_call_id, title=title),
-                [
+                ToolCallUpdate(
+                    tool_call_id=tool_call_id, title=title, raw_input=raw_input
+                ),
+                options
+                if options is not None
+                else [
                     PermissionOption(
-                        kind="allow_once", name="Allow", optionId=allow_option_id
+                        kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id
                     ),
                     PermissionOption(
                         kind="reject_once", name="Reject", optionId="reject-1"

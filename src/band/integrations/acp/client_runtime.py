@@ -54,8 +54,9 @@ ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
 # ``{"outcome": {"outcome": "cancelled"}}`` (see ``acp.schema`` AllowedOutcome /
 # DeniedOutcome). There is no ``"allowed"`` literal — emitting one makes a
 # spec-strict agent (e.g. codex-acp) fail to parse the response and abort the turn.
+ALLOW_ONCE_KIND = "allow_once"
 ALLOW_ALWAYS_KIND = "allow_always"
-_ALLOW_OPTION_KINDS = ("allow_once", ALLOW_ALWAYS_KIND)
+_ALLOW_OPTION_KINDS = (ALLOW_ONCE_KIND, ALLOW_ALWAYS_KIND)
 
 
 def _resolve_option_id(option: object) -> str | None:

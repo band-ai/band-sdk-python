@@ -457,8 +457,32 @@ def cursor_test_adapter(
     capabilities: set[Capability] | None = None,
     inject_band_tools: bool = True,
 ) -> CursorACPAdapter:
-    from band.adapters.cursor_acp import (  # noqa: PLC0415
+    from band.adapters.cursor_acp import CursorACPAdapter  # noqa: PLC0415
+
+    return _cursor_test_adapter(
         CursorACPAdapter,
+        settings,
+        setup,
+        approval_mode=approval_mode,
+        workspace_for_room=workspace_for_room,
+        custom_section=custom_section,
+        capabilities=capabilities,
+        inject_band_tools=inject_band_tools,
+    )
+
+
+def _cursor_test_adapter(
+    adapter_class: type[CursorACPAdapter],
+    settings: BaselineSettings,
+    setup: AgentSetup,
+    *,
+    approval_mode: ApprovalMode = "manual",
+    workspace_for_room: WorkspaceResolver | None = None,
+    custom_section: str = SHELL_PROMPT,
+    capabilities: set[Capability] | None = None,
+    inject_band_tools: bool = True,
+) -> CursorACPAdapter:
+    from band.adapters.cursor_acp import (  # noqa: PLC0415
         CursorACPAdapterConfig,
     )
 
@@ -475,7 +499,7 @@ def cursor_test_adapter(
             "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
         },
     }
-    return CursorACPAdapter(
+    return adapter_class(
         config=CursorACPAdapterConfig(**config_kwargs),
         # Not ``cwd``: that roots a per-room child dir, while the cells read
         # their effects straight from ``setup.workdir``.
@@ -487,8 +511,11 @@ def cursor_test_adapter(
 def cursor_approval_adapter(
     settings: BaselineSettings, setup: AgentSetup
 ) -> CursorACPAdapter:
-    # Band MCP replies need a separate Cursor permission after the shell decision.
-    return cursor_test_adapter(settings, setup, inject_band_tools=False)
+    from tests.e2e.baseline.smoke.samples.cursorapproval import (  # noqa: PLC0415 -- ACP is optional outside the backends lane
+        CursorApprovalAdapter,
+    )
+
+    return _cursor_test_adapter(CursorApprovalAdapter, settings, setup)
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:

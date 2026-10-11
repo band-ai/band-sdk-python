@@ -147,7 +147,6 @@ def hermetic_copilot_config(
     hosted: bool = False,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    inject_band_tools: bool = True,
 ) -> Any:
     """A per-test ``CopilotACPAdapterConfig`` with a fresh cwd + ``COPILOT_HOME``.
 
@@ -161,8 +160,6 @@ def hermetic_copilot_config(
     advertised catalog; a hosted ``model`` defaults to
     ``settings.backends.copilot_hosted_model``, since the env's
     ``COPILOT_MODEL`` does not pick an ACP session's model.
-    ``inject_band_tools=False`` leaves the agent without Band tools, so the
-    adapter posts its text as the room reply.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapterConfig,
@@ -177,7 +174,6 @@ def hermetic_copilot_config(
         "env": ({"COPILOT_HOME": home} if hosted else copilot_acp_env(settings, home)),
         "model": model,
         "reasoning_effort": reasoning_effort,
-        "inject_band_tools": inject_band_tools,
     }
     if hosted:
         kwargs["github_token"] = settings.backends.github_token
@@ -231,8 +227,7 @@ async def test_copilot_hosted_auth_replies(
     quota, but the hosted path is the one production users run — one cheap
     turn per cell keeps it proven. Only hosted sessions advertise model/effort
     selects, so the typed-effort cell proves a typed selection is accepted
-    against Copilot's live catalog. Band tools stay off: with them, a hosted
-    turn keeps calling band_send_message after its reply and never ends.
+    against Copilot's live catalog. Replies use the injected Band tools.
     """
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
         CopilotACPAdapter,
@@ -251,7 +246,6 @@ async def test_copilot_hosted_auth_replies(
             tmp_path / "hosted",
             hosted=True,
             reasoning_effort=reasoning_effort,
-            inject_band_tools=False,
         )
     )
     async with (
@@ -424,7 +418,6 @@ async def test_copilot_switches_model_and_effort_in_a_live_room(
         tmp_path / "copilot",
         hosted=True,
         reasoning_effort="high",
-        inject_band_tools=False,
     )
     # Only a switch away from what the session starts on proves anything.
     assert config.model != SWITCHED.model, "COPILOT_HOSTED_MODEL is the switch target"
