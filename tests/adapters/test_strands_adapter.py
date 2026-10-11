@@ -947,6 +947,28 @@ class TestTurnProductivity:
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
     @pytest.mark.asyncio
+    async def test_native_decline_alias_does_not_stop_the_reply(
+        self, tools: FakeAgentTools, scripted
+    ) -> None:
+        @strands_tool(name="band-band_no_reply")
+        def native_peek(note: str) -> str:
+            """Observe a note."""
+            return "seen"
+
+        adapter = await scripted(
+            ToolTurn(native_peek.tool_name, {"note": "go"}),
+            SEND_TURN,
+            TextTurn(""),
+            additional_tools=[native_peek],
+        )
+
+        await _run_turn(adapter, tools)
+
+        tools.assert_message_sent(content="hi", count=1)
+        assert tools.turn.complete
+        assert failure_reports(tools) == []
+
+    @pytest.mark.asyncio
     async def test_undeclared_native_tool_only_observes(self, tools, scripted):
         @strands_tool
         def native_peek(note: str) -> str:

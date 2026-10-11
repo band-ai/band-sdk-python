@@ -422,7 +422,11 @@ class BandTurnHooks(HookProvider):
             ToolEventKey.IS_ERROR: not succeeded,
         }
         call.update(result_payload)
-        if succeeded and turn_effect(name) is TurnEffect.DECLINE:
+        if (
+            succeeded
+            and name in ALL_TOOL_NAMES
+            and turn_effect(name) is TurnEffect.DECLINE
+        ):
             # Strands stops after recording every result in the current tool batch.
             event.invocation_state["request_state"]["stop_event_loop"] = True
         # Native Strands tools run outside execute_custom_tool, so their
