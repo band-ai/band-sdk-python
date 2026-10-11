@@ -167,6 +167,47 @@ async def test_timeout_reports_durable_completion_without_passing_stale_observer
     assert capture.delivery_status(MSG, AGENT) is DeliveryStatus.PROCESSING
 
 
+@pytest.mark.parametrize("newer_type", ["tool_result", "text"])
+async def test_timeout_snapshot_finds_note_beyond_first_message_page(
+    newer_type: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    note = _delivery_update("failed").model_dump()
+    note.update(content="private note", inserted_at=None, updated_at=None)
+    messages = [
+        {**note, "id": f"other-{index}", "message_type": newer_type}
+        for index in range(205)
+    ]
+    messages[105] = note
+    cursors: list[str | None] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        cursor = request.url.params.get("cursor")
+        cursors.append(cursor)
+        start = int(cursor) if cursor else 0
+        end = start + int(request.url.params["limit"])
+        return httpx.Response(
+            200,
+            json={
+                "data": messages[start:end],
+                "metadata": {
+                    "has_more": end < len(messages),
+                    "next_cursor": str(end),
+                    "limit": end - start,
+                },
+            },
+        )
+
+    async with rest_client_over(answer) as rest:
+        capture = ReplyCapture("room-1", user_ops=UserOps(rest))
+        capture._on_message_updated(_delivery_update("processing"))
+        with pytest.raises(TimeoutError, match="last delivery status: processing"):
+            await capture.wait_for_processed(MSG, AGENT, deadline_s=0.01)
+
+    assert "rest=failed rest_error=None" in caplog.text
+    assert "private note" not in caplog.text
+    assert cursors == [None, "100"]
+
+
 @pytest.mark.parametrize("status,error", [(400, "ApiError"), (200, "ParsingError")])
 async def test_snapshot_http_failure_preserves_delivery_timeout_and_omits_body(
     status: int,

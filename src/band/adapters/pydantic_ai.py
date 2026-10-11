@@ -115,7 +115,7 @@ def _log_native_progress(
 def _before_model_request(
     ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
 ) -> ModelRequestContext:
-    _log_native_progress("request_started", request=ctx.run_step)
+    _log_native_progress("request_attempt", request=ctx.run_step)
     return request_context
 
 

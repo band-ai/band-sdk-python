@@ -174,13 +174,12 @@ class ReplyCapture:
         """Read current REST state after a barrier, independent of observer ordering."""
         requested = set(message_ids)
         statuses: dict[str, DeliveryStatus | None] = {}
-        for message in await self._require_user_ops().list_messages(self.room_id):
-            if message.id in requested:
-                delivery = (
-                    metadata_to_dict(message.metadata).get("delivery_status") or {}
-                )
-                recipient = delivery.get(recipient_id) or {}
-                statuses[message.id] = _parse_status(recipient.get("status"))
+        for message in await self._require_user_ops().find_messages(
+            self.room_id, requested
+        ):
+            delivery = metadata_to_dict(message.metadata).get("delivery_status") or {}
+            recipient = delivery.get(recipient_id) or {}
+            statuses[message.id] = _parse_status(recipient.get("status"))
         assert statuses.keys() == requested, "requested messages missing from room"
         return statuses
 

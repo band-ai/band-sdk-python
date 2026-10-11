@@ -1221,6 +1221,44 @@ async def _run_on_message(
 
 class TestNativeDiagnostics:
     @pytest.mark.asyncio
+    async def test_initial_acknowledgement_then_decline_finishes_without_replay(
+        self, sample_message: PlatformMessage, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        requests = 0
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[dict[int, DeltaToolCall]]:
+            nonlocal requests
+            requests += 1
+            replying = requests == 1
+            yield {
+                0: DeltaToolCall(
+                    name=BandTool.SEND_MESSAGE if replying else BandTool.NO_REPLY,
+                    json_args=json.dumps(
+                        _reply_arguments(sample_message, "Noted")
+                        if replying
+                        else {"reason": "Already acknowledged"}
+                    ),
+                )
+            }
+
+        caplog.set_level(logging.INFO, logger="band.adapters.pydantic_ai")
+        tools = FakeAgentTools(room_id=sample_message.room_id)
+        adapter = PydanticAIAdapter(
+            llm=FunctionModel(stream_function=stream), emit=Emit.USAGE
+        )
+        await _run_on_message(adapter, sample_message, tools)
+
+        assert requests == 2
+        assert tools.chat == ["Noted"]
+        assert reported_failures(tools) == []
+        assert "phase=run_completed" in caplog.text
+        _assert_billed_responses(
+            tools, adapter._message_history[tools.room_id], model_requests=2
+        )
+
+    @pytest.mark.asyncio
     async def test_streamed_tool_turn_keeps_effects_and_redacts_payloads(
         self, sample_message: PlatformMessage, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1239,7 +1277,7 @@ class TestNativeDiagnostics:
         await _run_on_message(adapter, message, tools)
 
         tools.assert_message_sent(content="private tool body")
-        assert caplog.text.count("phase=request_started") == 2
+        assert caplog.text.count("phase=request_attempt") == 2
         assert caplog.text.count("phase=response_ready") == 2
         assert "phase=tool_succeeded" in caplog.text
         assert f"tool='{BandTool.SEND_MESSAGE}'" in caplog.text

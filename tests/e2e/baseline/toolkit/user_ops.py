@@ -8,9 +8,10 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Any
 
 import httpx
 from band_rest import (
@@ -28,6 +29,8 @@ from band_rest import (
 from band_rest.core.api_error import ApiError
 
 from band.core.types import MessageType
+
+MESSAGE_PAGE_SIZE = 100
 
 
 class UserOps:
@@ -218,7 +221,7 @@ class UserOps:
         *,
         message_type: MessageType | None = None,
         since: datetime | None = None,
-        limit: int = 100,
+        limit: int = MESSAGE_PAGE_SIZE,
     ) -> list[ChatMessage]:
         """List a room's messages/events, optionally filtered by type and time.
 
@@ -234,6 +237,29 @@ class UserOps:
             room_id, message_type=message_type, since=since, limit=limit
         )
         return list(reversed(response.data or []))
+
+    async def find_messages(
+        self, room_id: str, message_ids: Iterable[str]
+    ) -> list[ChatMessage]:
+        """Read cursor pages until the requested messages are found or exhausted."""
+        missing = set(message_ids)
+        found: list[ChatMessage] = []
+        options: dict[str, Any] = {}
+        while missing:
+            response = await self._client.human_api_messages.list_my_chat_messages(
+                room_id, limit=MESSAGE_PAGE_SIZE, **options
+            )
+            for message in response.data:
+                if message.id in missing:
+                    found.append(message)
+                    missing.remove(message.id)
+            if not missing or not response.metadata.has_more:
+                break
+            cursor = response.metadata.next_cursor
+            if not cursor or cursor == options.get("cursor"):
+                raise ValueError("Message pagination did not advance")
+            options["cursor"] = cursor
+        return found
 
     async def delete_room(self, room_id: str) -> None:
         """Soft-delete a room.
