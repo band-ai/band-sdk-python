@@ -1193,6 +1193,17 @@ class ExecutionContext:
             self._deferred_message_id = message_id
             self._control_cursor = None
 
+    def _defer_unaccepted_input(self, message_id: str | None) -> None:
+        if message_id:
+            self._retry_tracker.discard_attempt(message_id)
+            self._set_deferred_head(message_id)
+        logger.debug(
+            "ExecutionContext %s: Input %s not accepted; "
+            "keeping it pending for scheduler recovery",
+            self.room_id,
+            message_id or "synthetic",
+        )
+
     def _retain_synthetic(
         self, event: PlatformEvent | None, *, first: bool = False
     ) -> bool:
@@ -1678,8 +1689,7 @@ class ExecutionContext:
             return BacklogProcessResult.ADVANCED
 
         except InputNotAccepted:
-            self._retry_tracker.discard_attempt(msg_id)
-            self._set_deferred_head(msg_id)
+            self._defer_unaccepted_input(msg_id)
             return BacklogProcessResult.NOT_ACCEPTED
 
         except RoomExecutionStoppedError:
@@ -2373,9 +2383,7 @@ class ExecutionContext:
             return True
 
         except InputNotAccepted:
-            if msg_id:
-                self._retry_tracker.discard_attempt(msg_id)
-                self._set_deferred_head(msg_id)
+            self._defer_unaccepted_input(msg_id)
             return False
 
         except RoomExecutionStoppedError:
