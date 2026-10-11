@@ -61,13 +61,18 @@ def baseline_user_client(baseline_settings: BaselineSettings) -> AsyncRestClient
 
 
 @pytest.fixture
-def user_ops(baseline_user_client: AsyncRestClient) -> UserOps:
+def user_ops(
+    baseline_user_client: AsyncRestClient, baseline_settings: BaselineSettings
+) -> UserOps:
     """User-operation driver over the session-scoped user REST client.
 
     Reuses ``baseline_user_client`` (which already requires BAND_API_KEY_USER)
     rather than spinning up a fresh client per test.
     """
-    return UserOps(baseline_user_client)
+    return UserOps(
+        baseline_user_client,
+        trace_controls=baseline_settings.run.first_attempt_diagnostics,
+    )
 
 
 @pytest.fixture
@@ -79,7 +84,10 @@ async def second_user_ops(baseline_settings: BaselineSettings) -> UserOps:
     an assertion that ``flaky_infra`` never reruns.
     """
     require_dep(Dep.SECOND_USER, baseline_settings)
-    ops = UserOps(user_rest_client(baseline_settings, second=True))
+    ops = UserOps(
+        user_rest_client(baseline_settings, second=True),
+        trace_controls=baseline_settings.run.first_attempt_diagnostics,
+    )
     try:
         await ops.whoami()
     except ApiError as error:

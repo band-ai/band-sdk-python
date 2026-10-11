@@ -191,6 +191,7 @@ async def test_known_stop_recovers_without_play_push(
             room_id,
             baseline_settings,
             user_ops,
+            enable_working_state=False,
             forwarded_control_modes=frozenset(
                 {ControlMode.STOP, ControlMode.INTERRUPT}
             ),
@@ -209,6 +210,7 @@ async def test_known_stop_recovers_without_play_push(
         )
         await user_ops.stop_agent(room_id)
         await control.wait_for_cancellation(deadline_s=timeout)
+        assert control.cancelled_message_ids == [mid]
         assert ControlMode.STOP in control.received_control_modes
         assert control.completed_message_ids == []
         statuses = await capture.durable_delivery_statuses((mid,), agent.id)
@@ -239,6 +241,7 @@ async def test_refused_auxiliary_claim_aborts_and_replays(
             baseline_settings,
             user_ops,
             control=control,
+            enable_working_state=False,
             forwarded_control_modes=frozenset(
                 {ControlMode.PLAY, ControlMode.INTERRUPT}
             ),

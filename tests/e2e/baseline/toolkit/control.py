@@ -13,12 +13,17 @@ from band.client.streaming import (
     ControlMode,
     MessageCreatedPayload,
 )
+from band.client.streaming.client import WebSocketClient
 from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.diagnostics import (
+    collect_control_transport,
+    safe_control_fields,
+)
 from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -42,6 +47,7 @@ class ControlRuntime:
         self.startup_synced = asyncio.Event()
         self.invoked_message_ids: list[str] = []
         self.cancelled = asyncio.Event()
+        self.cancelled_message_ids: list[str] = []
         self.received_control_modes: list[ControlMode] = []
         self.completed_message_ids: list[str] = []
         self.withheld_message_marker = withheld_message_marker
@@ -71,6 +77,8 @@ class ControlRuntime:
             if message_id is not None:
                 self.completed_message_ids.append(message_id)
         except asyncio.CancelledError:
+            if message_id is not None:
+                self.cancelled_message_ids.append(message_id)
             self.cancelled.set()
             raise
 
@@ -164,6 +172,16 @@ class ControlLink(BandLink):
 
     control: ControlRuntime
     control_room_id: str
+    trace_controls: bool
+
+    async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
+        await super()._join_agent_control_channel(ws)
+        if self.trace_controls:
+            logger.warning(
+                "Control join acknowledged agent=%s room=%s",
+                self.agent_id,
+                self.control_room_id,
+            )
 
     async def _on_message_created(
         self, room_id: str, payload: MessageCreatedPayload
@@ -189,6 +207,7 @@ async def running_control_runtime(
     block_cycles: int = 1,
     control: ControlRuntime | None = None,
     forwarded_control_modes: frozenset[ControlMode] = frozenset(ControlMode),
+    enable_working_state: bool = True,
 ) -> AsyncGenerator[ControlRuntime, None]:
     """Run one controlled agent and leave its room playable on teardown."""
     if control is None:
@@ -201,8 +220,12 @@ async def running_control_runtime(
     )
     link.control = control
     link.control_room_id = room_id
+    link.trace_controls = settings.run.first_attempt_diagnostics
     # The SDK control path's DEBUG lines explain a failing control test.
-    with sdk_logs_at(band.runtime, logging.DEBUG):
+    with (
+        sdk_logs_at(band.runtime, logging.DEBUG),
+        collect_control_transport(agent.id, enabled=link.trace_controls),
+    ):
 
         def execution_factory(
             room: str, link: BandLink, *, hub_room_id: str | None = None
@@ -211,7 +234,11 @@ async def running_control_runtime(
                 room,
                 link,
                 control.on_execute,
-                config=SessionConfig(idle_resync_seconds=1, idle_resync_max_seconds=2),
+                config=SessionConfig(
+                    idle_resync_seconds=1,
+                    idle_resync_max_seconds=2,
+                    enable_working_state=enable_working_state,
+                ),
                 agent_id=agent.id,
                 hub_room_id=hub_room_id,
             )
@@ -228,6 +255,12 @@ async def running_control_runtime(
         )
 
         async def record_control(payload: AgentControlPayload) -> None:
+            if link.trace_controls:
+                logger.warning(
+                    "Control typed forwarded=%s fields=%s",
+                    payload.mode in forwarded_control_modes,
+                    safe_control_fields(payload.model_dump()),
+                )
             control.received_control_modes.append(payload.mode)
             control.control_received.set()
             if payload.mode in forwarded_control_modes:
@@ -239,6 +272,8 @@ async def running_control_runtime(
             yield control
         finally:
             try:
+                if link.trace_controls:
+                    logger.warning("Control teardown room=%s", room_id)
                 await user_ops.play_agent(room_id)
             except Exception:
                 logger.warning(

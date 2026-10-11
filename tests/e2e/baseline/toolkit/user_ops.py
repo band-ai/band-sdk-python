@@ -8,6 +8,7 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -29,12 +30,17 @@ from band_rest.core.api_error import ApiError
 
 from band.core.types import MessageType
 
+logger = logging.getLogger(__name__)
+
 
 class UserOps:
     """Drive platform actions as the test user via the Human API."""
 
-    def __init__(self, client: AsyncRestClient) -> None:
+    def __init__(
+        self, client: AsyncRestClient, *, trace_controls: bool = False
+    ) -> None:
         self._client = client
+        self._trace_controls = trace_controls
 
     async def create_room(self, *, title: str | None = None) -> str:
         """Create a room as the user; return its id."""
@@ -297,5 +303,28 @@ class UserOps:
         url = f"{wrapper.get_base_url().rstrip('/')}{path}"
         async with httpx.AsyncClient(timeout=30.0) as http:
             response = await http.request(method, url, headers=wrapper.get_headers())
+            if self._trace_controls:
+                self._observe_control_response(method, path, response)
             response.raise_for_status()
             return response
+
+    @staticmethod
+    def _observe_control_response(
+        method: str, path: str, response: httpx.Response
+    ) -> None:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        control = data if isinstance(data, dict) else {}
+        affected = control.get("affected")
+        logger.warning(
+            "Control REST method=%s path=%s status=%s affected=%s request=%s build=%s",
+            method,
+            path,
+            response.status_code,
+            affected if type(affected) is int else None,
+            response.headers.get("x-request-id"),
+            response.headers.get("x-build-commit"),
+        )
