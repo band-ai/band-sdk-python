@@ -701,6 +701,11 @@ class SlackAdapter(SimpleAdapter[Any]):
             thread_key,
         )
 
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        return await self._inner.try_handle_control(msg, tools)
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -732,6 +737,9 @@ class SlackAdapter(SimpleAdapter[Any]):
                     room_id,
                     binding.app_slug,
                 )
+
+        if await self.try_handle_control(msg, tools):
+            return
 
         # Status indicator only meaningful in Slack-bound rooms.
         # Prepend the Slack-context note to participants_msg so the brain
@@ -867,6 +875,9 @@ class SlackAdapter(SimpleAdapter[Any]):
             write_tool_names=self.config.write_tool_names,
             show_tool_progress=self.config.show_tool_progress,
         )
+
+        if await self.try_handle_control(synthesized, tools):
+            return
 
         # Pull thread context from Slack on every event that lands inside
         # an existing thread (``thread_ts != ts``). Slack does NOT deliver
