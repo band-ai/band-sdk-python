@@ -40,6 +40,9 @@ jobs:
           wpr -status collectors -details > artifacts/shell-diagnostic/wpr-end.txt || true
           wpr -stop artifacts/shell-diagnostic/suite-end.etl "suite end" || true
           uv run python -c "import subprocess; subprocess.run(['artifacts/shell-waits/ShellWaits.exe','--self-test'],check=True,timeout=15)"
+      - name: Analyze captured native stacks and process timeline
+        if: always()
+        run: python .github/scripts/analyze-shell.py
       - name: Upload original diagnostic artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
