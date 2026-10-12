@@ -488,11 +488,10 @@ class Sandbox:
         """Stop the sandbox, then hold a fresh attached `sbx run` for the block.
 
         This re-runs the kit's entrypoint the way a host reboot, or an idle
-        auto-stop followed by a supervisor re-attach, does. The block starts
-        once the entrypoint has rebuilt ``$BAND_CA_BUNDLE`` for the new
-        session; checking before that would read the previous session's file.
+        auto-stop followed by a supervisor re-attach, does. The attach returns
+        before the agent is up, so the caller waits for its own readiness
+        signal.
         """
-        stopped_at = int(self.exec("date +%s"))
         subprocess.run(
             [SBX, "stop", self.name],
             capture_output=True,
@@ -501,10 +500,6 @@ class Sandbox:
             timeout=EXEC_TIMEOUT_S,
         )
         with attached_run(self.name):
-            self.exec(
-                f'until [ "$(stat -c %Y "$BAND_CA_BUNDLE")" -gt {stopped_at} ]; '
-                "do sleep 1; done"
-            )
             yield
 
     def shell_env(self) -> str:

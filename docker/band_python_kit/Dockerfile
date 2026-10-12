@@ -103,16 +103,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# BAND_CA_ROOTS is a read-only build-time snapshot of the system roots (it
-# lives under the SDK home, locked below). BAND_CA_BUNDLE starts as a copy of
-# it; the entrypoint rewrites it to roots + proxy CA on each sandbox start.
-# SSL_CERT_FILE/REQUESTS_CA_BUNDLE point at the full bundle, never a narrowed
-# CA file: httpx and requests otherwise trust only their vendored certifi
-# bundle, and public TLS must keep verifying alongside the proxy.
+# BAND_CA_ROOTS is a build-time snapshot of the system roots under the SDK
+# home; the `chmod -R a-w` below makes it read-only to `agent` (root ignores
+# mode bits). BAND_CA_BUNDLE starts as a copy of it; the entrypoint rewrites
+# it to roots + proxy CA on each start and points every TLS client at it.
+# It is the full root set, never a narrowed CA file, so public TLS keeps
+# verifying alongside the proxy.
 ENV BAND_CA_ROOTS=${BAND_SDK_HOME}/ca/system-roots.pem \
     BAND_CA_BUNDLE=/etc/band-python-kit/ca-bundle.pem
-ENV SSL_CERT_FILE=${BAND_CA_BUNDLE} \
-    REQUESTS_CA_BUNDLE=${BAND_CA_BUNDLE}
 RUN install -D -m 644 /etc/ssl/certs/ca-certificates.crt "${BAND_CA_ROOTS}" \
     && install -D -m 644 "${BAND_CA_ROOTS}" "${BAND_CA_BUNDLE}"
 
@@ -161,8 +159,8 @@ RUN useradd -m -u 1000 -s /bin/bash agent
 ENV HOME=/home/agent
 WORKDIR /home/agent
 
-# Container starts as root: the entrypoint decodes the sandbox's per-session
-# proxy CA (only root can update the system trust store), then drops to the
-# non-root "agent" user via setpriv before handing off to CMD.
+# Container starts as root: the entrypoint writes the root-owned
+# BAND_CA_BUNDLE (system roots + the sandbox's per-session proxy CA), then
+# drops to the non-root "agent" user via setpriv before handing off to CMD.
 ENTRYPOINT ["/usr/local/bin/band-entrypoint.sh"]
 CMD ["bash"]
