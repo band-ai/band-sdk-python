@@ -8,7 +8,7 @@ import logging
 import time as _time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
@@ -168,6 +168,10 @@ _APPROVAL_COMMAND_DECISIONS: dict[CodexCommand, ApprovalDecision] = {
     CodexCommand.DECLINE: "decline",
 }
 _APPROVAL_COMMANDS = frozenset({*_APPROVAL_COMMAND_DECISIONS, CodexCommand.APPROVALS})
+# Local commands that ask the room's Codex process.
+_PROCESS_COMMANDS = frozenset(
+    {CodexCommand.MODEL, CodexCommand.MODELS, CodexCommand.REASONING}
+)
 # Membership by plain string: Python 3.11's Enum rejects `"word" in CodexCommand`.
 _COMMAND_WORDS = frozenset(CodexCommand)
 
@@ -356,6 +360,8 @@ class CodexContinuityError(RuntimeError):
 
 
 _METHOD_NOT_FOUND = -32601
+# How a turn whose Codex process was lost reports its failure.
+TRANSPORT_LOST_ERROR = "Codex transport closed unexpectedly"
 _UNOWNED_TOOL_CALL_TEXT = (
     "No Band turn started this Codex turn, so Band tools are unavailable to it."
 )
@@ -437,6 +443,8 @@ class NativeTurn:
         default_factory=asyncio.Queue
     )
     early: list[RpcEvent] = dataclass_field(default_factory=list)
+    # The process stopped: its closing notice is queued behind its requests.
+    lost: bool = False
 
     def owns(self, event: RpcEvent) -> bool:
         native = _native_turn_id(event)
@@ -1086,6 +1094,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """Run one turn to completion, leasing its room's process throughout."""
         async with room.rpc_lock:
             try:
+                if command is not None and await self._run_local_command(
+                    room=room, msg=msg, tools=tools, history=history, command=command
+                ):
+                    return
                 async with room.residency.use():
                     await self._serve_turn(
                         room=room,
@@ -1095,7 +1107,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         participants_msg=participants_msg,
                         contacts_msg=contacts_msg,
                         is_session_bootstrap=is_session_bootstrap,
-                        command=command,
                     )
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
@@ -1116,6 +1127,33 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 raise
 
+    async def _run_local_command(
+        self,
+        *,
+        room: RoomCodexClient,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        command: tuple[CodexCommand, str],
+    ) -> bool:
+        """Handle a local command, leasing the room's process only for those
+        that ask it: the rest must work while it cannot start, as
+        ``/thread archive`` must after Codex refuses to restore the thread."""
+        name, args = command
+        lease = room.residency.use() if name in _PROCESS_COMMANDS else nullcontext()
+        async with lease:
+            handled = await self._handle_local_command(
+                tools=tools,
+                msg=msg,
+                history=history,
+                room_id=room.room_id,
+                command=name,
+                args=args,
+            )
+        if handled:
+            tools.turn.settle()
+        return handled
+
     async def _serve_turn(
         self,
         *,
@@ -1126,22 +1164,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         participants_msg: str | None,
         contacts_msg: str | None,
         is_session_bootstrap: bool,
-        command: tuple[CodexCommand, str] | None,
     ) -> None:
         room_id = room.room_id
-        if command is not None:
-            handled = await self._handle_local_command(
-                tools=tools,
-                msg=msg,
-                history=history,
-                room_id=room_id,
-                command=command[0],
-                args=command[1],
-            )
-            if handled:
-                tools.turn.settle()
-                return
-
         thread_id = await self._ensure_thread(
             room=room,
             history=history,
@@ -1388,12 +1412,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 if isinstance(event, Exception):
                     raise event
                 if event.kind == "request":
-                    await self._handle_server_request(
-                        client=native.client,
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        event=event,
+                    await self._answer_native_request(
+                        native, tools=tools, msg=msg, room_id=room_id, event=event
                     )
                     continue
 
@@ -1601,7 +1621,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
                 if event.method == TRANSPORT_CLOSED:
                     result.turn_status = "failed"
-                    result.turn_error = "Codex transport closed unexpectedly"
+                    result.turn_error = TRANSPORT_LOST_ERROR
                     logger.warning(
                         "Room %s: %s (thread=%s turn=%s)",
                         room_id,
@@ -1700,6 +1720,31 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             raise TurnResultAlreadyReported(timeout_message)
         return result
+
+    async def _answer_native_request(
+        self,
+        native: NativeTurn,
+        *,
+        tools: AgentToolsProtocol,
+        msg: PlatformMessage,
+        room_id: str,
+        event: RpcEvent,
+    ) -> None:
+        """Answer the turn's request while its process can still read the
+        answer; a lost process's requests go neither to the room nor to it."""
+        if native.lost:
+            return
+        try:
+            await self._handle_server_request(
+                client=native.client,
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                event=event,
+            )
+        except ConnectionError:
+            if not native.lost:
+                raise
 
     async def on_cleanup(self, room_id: str) -> None:
         """Leave a room: settle its turn, close its process, then forget it.
@@ -1855,6 +1900,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         )
         native = room.turn
         if native is not None and native.generation == generation:
+            native.lost = True
             # Approvals the lost process asked for can never be answered.
             self._clear_pending_approvals_for_room(room.room_id)
             native.events.put_nowait(cause)

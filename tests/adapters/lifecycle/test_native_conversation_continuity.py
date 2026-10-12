@@ -65,6 +65,26 @@ class TestNativeConversationContinuity:
         assert host.overlaps == 0
 
     @pytest.mark.parametrize("host", ["codex"], indirect=True)
+    async def test_archiving_a_thread_codex_refuses_to_restore_starts_a_new_one(
+        self,
+        host: RetentionHost,
+    ) -> None:
+        assert await host.send("room-a", memo_instruction("private-7")) == ["Noted."]
+        thread = host.native_id("room-a")
+        with pytest.raises(TurnResultAlreadyReported):
+            await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
+        await host.settled("room-a")
+        (host.root / "codex-home" / f"{thread}.json").unlink()
+        with pytest.raises(CodexJsonRpcError, match="no rollout found"):
+            await host.send("room-a", PeerCommand.RECALL)
+        await host.settled("room-a")
+
+        await host.send("room-a", f"/{CodexCommand.THREAD} {CodexSubcommand.ARCHIVE}")
+
+        assert await host.send("room-a", memo_instruction("fresh-1")) == ["Noted."]
+        assert host.native_id("room-a") not in (None, thread)
+
+    @pytest.mark.parametrize("host", ["codex"], indirect=True)
     async def test_restored_threads_refuse_tools_they_were_not_started_with(
         self,
         host: RetentionHost,

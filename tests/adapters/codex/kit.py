@@ -24,7 +24,11 @@ from band.core.types import (
     HistoryProvider,
     PlatformMessage,
 )
-from band.integrations.codex import DYNAMIC_TOOL_CALL_METHOD, RpcEvent
+from band.integrations.codex import (
+    DYNAMIC_TOOL_CALL_METHOD,
+    TRANSPORT_CLOSED,
+    RpcEvent,
+)
 from band.integrations.codex.types import (
     CodexRequestMethod,
     CodexSessionState,
@@ -35,6 +39,7 @@ from band.testing import FakeAgentTools
 from tests.adapters.codexturns import (
     FakeCodexClient,
     await_released_turn,
+    event_notification,
     event_request,
     make_codex_adapter,
     turn_completed,
@@ -398,3 +403,15 @@ class StopsReadingAfterTurnClient(SlowTurnStartClient):
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
         await asyncio.Event().wait()
+
+
+# The notice a client queues once its Codex process has exited.
+PROCESS_EXITED = event_notification(TRANSPORT_CLOSED, {"reason": "exited"})
+
+
+class ExitsWhileAskedClient(FakeCodexClient):
+    """An app-server that exits while the room decides what it asked: an
+    answer can no longer be written to it, as with a real exited child."""
+
+    async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
+        raise ConnectionResetError("Connection lost")

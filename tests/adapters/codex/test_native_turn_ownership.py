@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from band.adapters.codex import (
+    TRANSPORT_LOST_ERROR,
     CodexAdapterConfig,
     CodexCommand,
     CodexContinuityError,
@@ -24,9 +25,11 @@ from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    PROCESS_EXITED,
     ROOM_ID,
     CodexRoom,
     CompletesWhileRefusingClient,
+    ExitsWhileAskedClient,
     SlowTurnStartClient,
     StopsReadingAfterTurnClient,
     ToolSchemaFakeTools,
@@ -192,10 +195,40 @@ class TestNativeTurnOwnership:
         assert adapter._room_clients[ROOM_ID].turn is None
 
     @pytest.mark.asyncio
+    async def test_a_request_from_a_process_that_exited_is_never_put_to_the_room(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(*parked_on_approval(PROCESS_EXITED))
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await asyncio.wait_for(room.send("run tests"), timeout=5)
+
+        assert room.chat == []
+        assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
+            TRANSPORT_LOST_ERROR
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_decision_the_exited_process_cannot_read_still_reports_the_loss(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        exits = ExitsWhileAskedClient(events=list(parked_on_approval()))
+        room = await codex_room(client=exits, approval_wait_timeout_s=3600)
+        await room.send("run tests")
+
+        exits.emit(PROCESS_EXITED)
+        with pytest.raises(TurnResultAlreadyReported):
+            await asyncio.wait_for(room.settled(), timeout=5)
+
+        assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
+            TRANSPORT_LOST_ERROR
+        ]
+
+    @pytest.mark.asyncio
     async def test_a_stale_process_loss_cannot_retire_its_replacement(self) -> None:
         client = FakeCodexClient(
             events=[
-                event_notification(TRANSPORT_CLOSED, {"reason": "exited"}),
+                PROCESS_EXITED,
                 turn_completed("turn-2"),
             ]
         )
@@ -235,7 +268,7 @@ class TestNativeTurnOwnership:
         self, restore: dict[str, Any], refusal: str
     ) -> None:
         client = FakeCodexClient(
-            events=[event_notification(TRANSPORT_CLOSED, {"reason": "exited"})],
+            events=[PROCESS_EXITED],
             started_settings={"modelProvider": "openai"},
             **restore,
         )

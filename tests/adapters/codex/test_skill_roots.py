@@ -15,6 +15,7 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
+    PROCESS_EXITED,
     REGISTER_SKILL_ROOT,
     SKILL_ROOT,
     patch_codex_clients_by_room,
@@ -23,7 +24,6 @@ from tests.adapters.codex.kit import (
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
-    event_notification,
     make_codex_adapter,
     turn_completed,
 )
@@ -66,7 +66,7 @@ class TestSkillRoots:
     async def test_a_restarted_process_gets_the_roots_again(self) -> None:
         client = FakeCodexClient(
             events=[
-                event_notification("transport/closed", {"reason": "exited"}),
+                PROCESS_EXITED,
                 turn_completed("turn-2"),
             ]
         )
