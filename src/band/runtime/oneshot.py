@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
+from collections.abc import Coroutine
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, cast
@@ -175,6 +176,7 @@ class OneShotInvoker:
         self._started = False
         # Set from the adapter's start until its cleanup_all succeeds.
         self._adapter_cleanup_pending = False
+        self._startup: asyncio.Task[None] | None = None
         self._shutdown: asyncio.Task[None] | None = None
 
     @property
@@ -196,24 +198,34 @@ class OneShotInvoker:
 
         Mirrors the bootstrap half of ``Agent.start()``: sets the adapter's
         runtime agent id and calls ``on_started(name, description)``. Skips
-        WebSocket connect and room subscriptions. Idempotent.
+        WebSocket connect and room subscriptions. Idempotent: concurrent
+        callers join one owned startup.
 
         Raises:
-            CleanupIncompleteError: A previous shutdown has not finished
+            CleanupIncompleteError: A shutdown is running or has not finished
                 adapter cleanup; call ``shutdown()`` to retry it first.
+            RuntimeError: ``shutdown()`` was requested during this startup.
         """
         if self._started:
             return
-        if self._adapter_cleanup_pending or self._shutting_down:
-            raise CleanupIncompleteError(
-                "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
-            )
+        if not self._running(self._startup):
+            if self._running(self._shutdown) or self._adapter_cleanup_pending:
+                raise CleanupIncompleteError(
+                    "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
+                )
+            self._startup = self._owned(self._run_startup())
+        assert self._startup is not None
+        await asyncio.shield(self._startup)
 
+    async def _run_startup(self) -> None:
+        """Start the adapter unless shutdown was requested; a failed start
+        releases it here, so shutdown never overlaps that cleanup."""
         (
             self._agent_name,
             self._agent_description,
             self._feature_flags,
         ) = await self._fetch_agent_metadata()
+        self._refuse_if_shutting_down()
         # Parity with Agent.start(): adapters read their identity and platform
         # coordinates from the injected connection.
         setattr(  # noqa: B010
@@ -233,6 +245,7 @@ class OneShotInvoker:
             if await release_adapter(self._adapter):
                 self._adapter_cleanup_pending = False
             raise
+        self._refuse_if_shutting_down()
         self._started = True
         logger.info(
             "OneShotInvoker ready: agent_id=%s name=%s",
@@ -240,29 +253,31 @@ class OneShotInvoker:
             self._agent_name,
         )
 
+    def _refuse_if_shutting_down(self) -> None:
+        if self._running(self._shutdown):
+            raise RuntimeError("OneShotInvoker shut down during startup")
+
     async def shutdown(self) -> None:
         """Dispose the adapter, then disconnect the link (best-effort).
 
-        Concurrent callers join one owned shutdown, and a cancelled caller
-        leaves it running. Only a settled shutdown is retried, so cleanup
-        never overlaps itself.
+        Shutdown stops an in-flight startup from becoming ready and waits for
+        it to settle, so cleanup never overlaps startup. Concurrent callers
+        join one owned shutdown, and a cancelled caller leaves it running.
+        Only a settled shutdown is retried.
 
         Raises:
             Exception: The adapter's ``cleanup_all`` failed. The link is still
                 disconnected, and the next ``shutdown()`` retries the cleanup.
         """
         self._started = False
-        if not self._shutting_down:
-            self._shutdown = asyncio.create_task(self._run_shutdown())
-            self._shutdown.add_done_callback(self._observe_shutdown)
+        if not self._running(self._shutdown):
+            self._shutdown = self._owned(self._run_shutdown())
         assert self._shutdown is not None
         await asyncio.shield(self._shutdown)
 
-    @property
-    def _shutting_down(self) -> bool:
-        return self._shutdown is not None and not self._shutdown.done()
-
     async def _run_shutdown(self) -> None:
+        if self._startup is not None:
+            await asyncio.wait({self._startup})
         try:
             if self._adapter_cleanup_pending:
                 await dispose_adapter(self._adapter)
@@ -274,9 +289,20 @@ class OneShotInvoker:
                 logger.warning("Error during link disconnect", exc_info=True)
 
     @staticmethod
-    def _observe_shutdown(task: asyncio.Task[None]) -> None:
+    def _running(task: asyncio.Task[None] | None) -> bool:
+        return task is not None and not task.done()
+
+    @staticmethod
+    def _owned(operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
+        """Run a lifecycle operation that outlives a cancelled caller."""
+        task = asyncio.create_task(operation)
+        task.add_done_callback(OneShotInvoker._observe_lifecycle)
+        return task
+
+    @staticmethod
+    def _observe_lifecycle(task: asyncio.Task[None]) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
-            logger.warning("OneShotInvoker shutdown failed: %s", error)
+            logger.warning("OneShotInvoker lifecycle operation failed: %s", error)
 
     # --- Event entry point ---
 
