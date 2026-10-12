@@ -24,7 +24,6 @@ from strands.models.openai_responses import OpenAIResponsesModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
-from band.core.defaultmodels import OPENAI_MODEL
 from band.core.types import Capability
 
 configure_logging(logging.INFO)
@@ -48,7 +47,7 @@ async def main() -> None:
         StrandsAdapterConfig(
             custom_section="You can check the weather with the weather tool."
         ),
-        llm=OpenAIResponsesModel(model_id=OPENAI_MODEL),
+        llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
         additional_tools=[(WeatherInput, get_weather)],  # CustomToolDef tuple
         capabilities=Capability.MEMORY | Capability.CONTACTS,
     )

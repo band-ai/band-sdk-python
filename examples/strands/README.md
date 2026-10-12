@@ -22,9 +22,8 @@ from strands.models import BedrockModel
 from strands.models.openai_responses import OpenAIResponsesModel
 
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
-from band.core.defaultmodels import OPENAI_MODEL
 
-StrandsAdapter(llm=OpenAIResponsesModel(model_id=OPENAI_MODEL))  # OpenAI
+StrandsAdapter(llm=OpenAIResponsesModel(model_id="gpt-6-luna"))  # OpenAI
 StrandsAdapter(
     StrandsAdapterConfig(model="us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 )  # Bedrock id

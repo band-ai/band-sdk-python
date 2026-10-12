@@ -87,6 +87,12 @@ RETIRED_FEATURE_SURFACE_TOKENS = (
     "enable_task_events",
 )
 
+# `uv run` of a PEP 723 script ignores the project and installs the declared
+# PyPI floor (`band-sdk>=4.0.0`). That release has no `band.core.defaultmodels`,
+# so an example that imports it fails before the agent starts. Model ids in
+# examples stay literals, the same way the rest of examples/ writes them.
+UNRELEASED_PYPI_IMPORTS = ("band.core.defaultmodels",)
+
 
 def example_scripts() -> list[Path]:
     """Customer-facing adapter-construction scripts: examples/ + docker/*/runner.py.
@@ -143,6 +149,13 @@ def test_example_uses_current_construction_surface(path: Path) -> None:
             "Emit.TOOL_CALLS"
         )
 
+    for token in UNRELEASED_PYPI_IMPORTS:
+        assert token not in source, (
+            f"{path}: imports '{token}', which the PEP 723 floor "
+            "band-sdk>=4.0.0 does not ship. Standalone uv run installs that "
+            "release and fails at import. Write the model id as a literal."
+        )
+
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -186,4 +199,11 @@ def test_doc_uses_current_construction_surface(path: Path) -> None:
             "emit=/capabilities=/... directly to the adapter constructor "
             "instead of features=AdapterFeatures(...); Emit.EXECUTION is now "
             "Emit.TOOL_CALLS"
+        )
+
+    for token in UNRELEASED_PYPI_IMPORTS:
+        assert token not in text, (
+            f"{path}: documents '{token}', which the example PEP 723 floor "
+            "band-sdk>=4.0.0 does not ship. A copied snippet fails at import. "
+            "Write the model id as a literal."
         )

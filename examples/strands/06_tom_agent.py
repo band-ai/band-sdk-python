@@ -34,7 +34,6 @@ from prompts.characters import generate_tom_prompt
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
-from band.core.defaultmodels import OPENAI_MODEL
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ async def main() -> None:
 
     adapter = StrandsAdapter(
         StrandsAdapterConfig(custom_section=generate_tom_prompt("Tom")),
-        llm=OpenAIResponsesModel(model_id=OPENAI_MODEL),
+        llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")

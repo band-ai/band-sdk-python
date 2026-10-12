@@ -28,7 +28,6 @@ from strands.models.openai_responses import OpenAIResponsesModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
-from band.core.defaultmodels import OPENAI_MODEL
 from band.core.types import Emit
 
 configure_logging(logging.INFO)
@@ -56,7 +55,7 @@ async def main() -> None:
     adapter = StrandsAdapter(
         # Full override: custom_section would be ignored alongside this.
         StrandsAdapterConfig(system_prompt=SUPPORT_PROMPT),
-        llm=OpenAIResponsesModel(model_id=OPENAI_MODEL),
+        llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
         # Post each tool call and result into the room for visibility.
         emit=Emit.TOOL_CALLS,
     )
