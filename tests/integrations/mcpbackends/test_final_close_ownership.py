@@ -80,12 +80,17 @@ class TestFinalCloseOwnership:
 
         caplog.set_level(logging.WARNING)
         stop_release.set()
-        deadline = asyncio.get_running_loop().time() + 1
-        while asyncio.get_running_loop().time() < deadline:
-            if any("final close failed" in record.message for record in caplog.records):
-                break
+        callback_wait_s = 1.0
+
+        def failure_logged() -> bool:
+            return any(
+                "final close failed" in record.message for record in caplog.records
+            )
+
+        deadline = asyncio.get_running_loop().time() + callback_wait_s
+        while asyncio.get_running_loop().time() < deadline and not failure_logged():
             await asyncio.sleep(0)
-        assert any("final close failed" in record.message for record in caplog.records)
+        assert failure_logged()
 
         await owner.close(final=True)
         assert backend.stop_calls == 2

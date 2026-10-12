@@ -90,12 +90,9 @@ class WorkingStateReporter:
         """
         if not self._enabled or not self._active:
             return
-        self._active = False
-        task, self._task = self._task, None
+        task = self._arm_false_report()
         if task is not None:
-            task.cancel()
             task.add_done_callback(_retrieve_task_error)
-        self._false_send = asyncio.ensure_future(self._safe_report(False))
 
     async def stop(self) -> None:
         """End the reasoning cycle: cancel keep-alive and send ``working: false``.
@@ -109,10 +106,8 @@ class WorkingStateReporter:
         if not self._active:
             await self._finish_false_send()
             return
-        self._active = False
-        task, self._task = self._task, None
+        task = self._arm_false_report()
         if task is not None:
-            task.cancel()
             # ``gather(return_exceptions=True)`` swallows the keep-alive task's
             # own CancelledError (returned as a result) while still propagating a
             # cancellation aimed at *us* — the caller awaiting stop(). A bare
@@ -121,9 +116,15 @@ class WorkingStateReporter:
             # process loop and stalling shutdown (observed as a hang on Windows,
             # where scheduling makes the race routine).
             await asyncio.gather(task, return_exceptions=True)
-
-        self._false_send = asyncio.ensure_future(self._safe_report(False))
         await self._finish_false_send()
+
+    def _arm_false_report(self) -> asyncio.Task[None] | None:
+        self._active = False
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+        self._false_send = asyncio.ensure_future(self._safe_report(False))
+        return task
 
     async def _finish_false_send(self) -> None:
         send = self._false_send

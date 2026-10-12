@@ -612,11 +612,10 @@ class ExecutionContext:
         try:
             await self._stop_retained_tasks(deadline)
         finally:
-            # Defensively clear any lingering working-state keep-alive so a
-            # removed room can't leak its refresh task. Idempotent: a no-op if
-            # not active (the per-cycle finally normally clears it already).
-            # Outside the settlement deadline, which may already be spent: the
-            # one working:false POST is bounded by working_request_timeout_seconds.
+            # Finishes working:false outside the settlement budget, which may
+            # already be spent. A closing cycle defers that POST; this await
+            # is idle when the reporter is already inactive. The POST itself
+            # is bounded by working_request_timeout_seconds.
             await self._working_reporter.stop()
         return graceful
 

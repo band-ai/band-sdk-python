@@ -109,8 +109,9 @@ class TestRoomShutdown:
     async def test_stop_finishes_a_slow_working_false_outside_settlement(
         self, mock_link, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.05)
-        started = asyncio.Event()
+        grace = 0.05
+        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", grace)
+        started, false_sent = asyncio.Event(), asyncio.Event()
 
         async def handler(ctx: ExecutionContext, event: Any) -> None:
             started.set()
@@ -120,7 +121,8 @@ class TestRoomShutdown:
             room_id: str, working: bool, **kwargs: object
         ) -> bool:
             if not working:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(grace * 4)
+                false_sent.set()
             return True
 
         mock_link.report_activity = report_activity
@@ -129,3 +131,4 @@ class TestRoomShutdown:
         await ctx.on_event(make_message_event(msg_id="working-false"))
         await started.wait()
         assert await ctx.stop() is True
+        assert false_sent.is_set()

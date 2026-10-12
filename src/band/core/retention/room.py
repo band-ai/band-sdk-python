@@ -412,9 +412,10 @@ class RetainedRoom:
         self._schedule()
 
     def _commit_release(self, cause: ReleaseCause) -> None:
-        """A confirmed release. Recovery recorded during another release stays pending."""
+        """A confirmed release. A stronger cause recorded during it stays pending."""
         self._error = None
-        if self._cause == ReleaseCause.RECOVERY and cause != ReleaseCause.RECOVERY:
+        pending = self._cause
+        if pending is not None and stronger_cause(cause, pending) != cause:
             self._state = Residency.CLEANUP_PENDING
             self._resume = False
             return

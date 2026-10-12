@@ -34,9 +34,35 @@ class TestDisposal:
         await leaving
         with pytest.raises(RuntimeError):
             await wake
+        assert resident.releases == [ReleaseCause.IDLE, ReleaseCause.FINAL]
         assert len(resident.resume_requests) == 1
         assert resident.room.snapshot.state is Residency.CLOSED
         assert not resident.live
+
+    async def test_a_failed_dispose_after_an_idle_release_retries_final(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        resident.closing = Barrier()
+        resident.leaving = Barrier()
+        await host.clock.advance(10)
+        await resident.closing.reached.wait()
+        leaving = asyncio.create_task(resident.room.dispose())
+        await asyncio.sleep(0)
+        resident.closing.released.set()
+        await resident.leaving.reached.wait()
+        resident.fail_dispose = True
+        resident.leaving.released.set()
+        with pytest.raises(RuntimeError, match="dispose refused"):
+            await leaving
+        assert resident.releases == [ReleaseCause.IDLE, ReleaseCause.FINAL]
+        assert resident.identity == "native-1"
+
+        resident.fail_dispose = False
+        await resident.room.dispose()
+        assert resident.releases == [ReleaseCause.IDLE, ReleaseCause.FINAL]
+        assert resident.identity is None
 
     async def test_cancelled_disposal_waiter_leaves_retryable_owned_cleanup(
         self,

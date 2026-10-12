@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from band.runtime.rooms import RoomExecutions
 from tests.runtime.helpers import StartGate
 from tests.runtime.rooms.kit import Phase, deliver_first_of_two, phase, settle
@@ -14,6 +16,7 @@ class TestHeldDeliveryAuthority:
         self,
         rooms: RoomExecutions,
         start_gate: StartGate,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         delivering = await deliver_first_of_two(rooms, start_gate)
         rooms.withdraw("room-1")
@@ -22,6 +25,9 @@ class TestHeldDeliveryAuthority:
         assert await delivering is None
         (stale,) = start_gate.built
         assert stale.events == ["early"]
+        assert any(
+            "discarding 1 undelivered" in record.message for record in caplog.records
+        )
         assert stale.resyncs == 0
         assert start_gate.journal == ["start 1", "stop 1", "cleanup room-1"]
         assert phase(rooms, "room-1") == Phase.ABSENT
