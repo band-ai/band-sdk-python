@@ -145,10 +145,29 @@ async def test_registered_worker_inherits_spent_scope_grace() -> None:
     await started.wait()
     scope.bind(owner)
     before = asyncio.get_running_loop().time()
-    assert not await owner.drain()
+    assert await owner.drain()
     assert asyncio.get_running_loop().time() == before
-    await asyncio.wait({owner.task})
     assert owner.task.cancelled()
+
+
+@pytest.mark.looptime
+async def test_cooperative_worker_without_a_drainer_is_cancelled_at_its_grace() -> None:
+    entered = asyncio.Event()
+
+    async def work() -> None:
+        async with owner.timed(10 * CYCLE_CANCEL_GRACE_SECONDS):
+            entered.set()
+            await asyncio.Future[None]()
+
+    owner = TurnTask(asyncio.create_task(work()))
+    await entered.wait()
+    terminated_at = asyncio.get_running_loop().time()
+    owner.terminate(cooperative=True)
+    await asyncio.wait({owner.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS)
+    assert owner.task.cancelled()
+    assert (
+        asyncio.get_running_loop().time() - terminated_at == CYCLE_CANCEL_GRACE_SECONDS
+    )
 
 
 def test_finished_work_can_be_drained_after_its_loop_closes() -> None:

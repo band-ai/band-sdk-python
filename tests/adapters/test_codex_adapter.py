@@ -7165,6 +7165,33 @@ async def test_restored_codex_thread_receives_the_mandatory_transport_contract()
     assert client.params_of(CodexRequestMethod.THREAD_RESUME)
 
 
+async def test_cleanup_cancelled_during_close_still_readmits_the_room() -> None:
+    closing, finish_close, closed = (asyncio.Event() for _ in range(3))
+
+    class SlowCloseClient(FakeCodexClient):
+        async def close(self) -> None:
+            closing.set()
+            await finish_close.wait()
+            await super().close()
+            closed.set()
+
+    client = SlowCloseClient(events=[turn_completed(), turn_completed("turn-2")])
+    adapter = make_codex_adapter(client)
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await send_bootstrap(adapter)
+    cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
+    await closing.wait()
+    cleanup.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup
+    finish_close.set()
+    await closed.wait()
+
+    await adapter.on_cleanup(ROOM_ID)
+    await send_bootstrap(adapter)
+    assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+
+
 @pytest.mark.parametrize("retain", [False, True])
 async def test_stop_callbacks_share_worker_cleanup(retain: bool) -> None:
     started, cleaning, release = (asyncio.Event() for _ in range(3))

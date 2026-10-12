@@ -136,7 +136,7 @@ async def test_activity_acknowledgement_separates_stop_from_request_success(
             )
             is True
         )
-    assert observed.call_count == int(stopped)
+    assert observed.called is stopped
 
 
 @pytest.mark.parametrize(

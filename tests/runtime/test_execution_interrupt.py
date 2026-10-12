@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ import pytest
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode, DeliveryStatus
 from band.core.exceptions import CleanupIncompleteError, RoomExecutionStoppedError
+from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, bind_turn_task
 from band.platform.link import BandLink
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import BacklogProcessResult, ExecutionContext, ResyncOutcome
@@ -837,7 +839,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        with patch("band.runtime.cycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
+        with patch("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
             result = await asyncio.wait_for(
                 ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
                 timeout=0.2,
@@ -942,6 +944,107 @@ async def test_real_stopped_post_aborts_scope_and_keeps_replayable(
         assert invoked == ["stopped", "stopped"]
 
 
+async def test_runtime_stop_leaves_a_released_worker_to_room_cleanup(
+    mock_link,
+) -> None:
+    released: list[asyncio.Task[None]] = []
+    processed = asyncio.Event()
+    mock_link.mark_processed.side_effect = lambda *_: processed.set() or True
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        worker = asyncio.create_task(asyncio.Event().wait())
+        bind_turn_task(AgentTools.from_context(ctx), worker)
+        released.append(worker)
+
+    ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+    await ctx.start()
+    await ctx.on_event(make_message_event(msg_id="released"))
+    await processed.wait()
+
+    assert await ctx.stop(timeout=10)
+    assert not released[0].done()
+    released[0].cancel()
+
+
+async def test_interrupted_cleanup_failure_is_logged(mock_link, caplog) -> None:
+    started = asyncio.Event()
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        started.set()
+        try:
+            await asyncio.Future[None]()
+        except asyncio.CancelledError:
+            raise RuntimeError("provider interrupt failed") from None
+
+    ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+    with caplog.at_level(logging.ERROR, logger="band.runtime.execution"):
+        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        await started.wait()
+        ctx.interrupt()
+        assert await turn
+
+    [record] = caplog.records
+    assert record.exc_info is not None
+    assert str(record.exc_info[1]) == "provider interrupt failed"
+
+
+@pytest.mark.looptime
+async def test_cleanup_outliving_its_grace_is_reported(mock_link, caplog) -> None:
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        started.set()
+        try:
+            await asyncio.Future[None]()
+        except asyncio.CancelledError:
+            await finish.wait()
+            raise
+
+    ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+    with caplog.at_level(logging.WARNING, logger="band.runtime.execution"):
+        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        await started.wait()
+        ctx.interrupt()
+        assert await turn
+
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "outlived its cleanup grace" in record.getMessage()
+    finish.set()
+    assert await ctx.stop()
+
+
+@pytest.mark.looptime
+async def test_stopped_post_cancels_a_released_worker_at_its_grace(mock_link) -> None:
+    peer = LifecyclePlatform()
+    async with rest_client_over(peer.answer) as rest:
+        mock_link.rest = rest
+        ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
+        await ctx._begin_scope()
+        tools = AgentTools.from_context(ctx)
+        refused = asyncio.Event()
+
+        async def released_worker() -> None:
+            # Provider tool calls post from their own task, so the refusal
+            # cannot unwind the worker itself.
+            post = asyncio.create_task(
+                tools.send_message(
+                    "late", mentions=[{"id": "user-1", "handle": "user"}]
+                )
+            )
+            await asyncio.wait({post})
+            refused.set()
+            await asyncio.Future[None]()
+
+        worker = bind_turn_task(tools, asyncio.create_task(released_worker()))
+        await ctx._begin_scope()
+        await refused.wait()
+        await asyncio.wait({worker.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS)
+
+        assert peer.posts == ["messages"]
+        assert worker.task.cancelled()
+
+
 async def test_old_post_cannot_cancel_new_claim_window(mock_link) -> None:
     captured: list[AgentTools] = []
     invoked: list[str] = []
@@ -1040,7 +1143,7 @@ async def test_pending_stop_cleanup_defers_claims_with_bounded_wait(
     await ctx._begin_scope()
     ctx.observe_platform_stop(ctx.current_scope)
     await entered.wait()
-    monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
     assert not await ctx._process_event(make_message_event(msg_id="later"))
     mock_link.mark_processing.assert_not_awaited()
     release.set()
@@ -1594,7 +1697,7 @@ async def test_late_rest_refusal_preserves_a_pending_explicit_interrupt(
 async def test_cancellation_resistant_cycle_keeps_stop_pending_until_settled(
     mock_link, monkeypatch
 ) -> None:
-    monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
     started, finish = asyncio.Event(), asyncio.Event()
 
     async def handler(ctx: ExecutionContext, event: Any) -> None:

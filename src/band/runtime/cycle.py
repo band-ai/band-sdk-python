@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from band.client.streaming import ControlMode
-from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, TurnTask
+from band.core.turn_lifecycle import TurnTask, terminal_deadline
 
 
 @dataclass(eq=False)
@@ -54,9 +54,7 @@ class TurnScope:
             self.kind = kind
         self.shutdown |= shutdown
         if self.deadline is None:
-            self.deadline = (
-                asyncio.get_running_loop().time() + CYCLE_CANCEL_GRACE_SECONDS
-            )
+            self.deadline = terminal_deadline()
             self.cooperative = cooperative
         for owner in self.workers:
             owner.terminate(deadline=self.deadline, cooperative=self.cooperative)

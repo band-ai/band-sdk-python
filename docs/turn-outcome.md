@@ -357,9 +357,11 @@ again or renew its deadline.
 A stopped tool or auxiliary claim first revokes that scope's posting permission
 and raises cancellation in its caller. Bound workers and the handler get the same
 cleanup grace to unwind cooperatively; an unfinished task receives cancellation
-once at expiry if none was delivered. Native controls, heartbeat refusal,
-watchdog expiry and shutdown cancel immediately. Provider execution and recovery
-timeouts retain their adapter policy and coordinate with that same owner.
+once at expiry if none was delivered, even when nothing waits for it. Native
+controls, heartbeat refusal, watchdog expiry and shutdown cancel a running turn
+immediately; a worker already released for approval is left to the adapter's
+room cleanup. Provider execution and recovery timeouts retain their adapter
+policy and coordinate with that same owner.
 
 Unfinished tasks remain owned after grace expires. They cannot post late replies,
 change a newer turn's activity, or overlap replacement provider work. Room cleanup

@@ -56,6 +56,27 @@ async def test_a_turn_that_ignores_the_interrupt_is_closed_and_resumed(
     assert [session.alive for session in room.claude.sessions] == [False, True]
 
 
+async def test_stop_during_timeout_recovery_ends_the_turn_without_a_timeout(
+    claude_room: OpenRoom,
+) -> None:
+    """STOP takes over the wedged recovery instead of waiting out its drain
+    bound, reports no timeout, and leaves no interrupted client behind."""
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+    room.claude.ignore_interrupt = True
+    room.claude.script([Hold()], [room.model_reply("Fresh start.")])
+    sending = room.send_in_background("take forever")
+
+    await room.claude.interrupted.wait()
+    await room.adapter.on_interrupt(room.room_id, ControlMode.STOP)
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+    await room.send("and now?")
+
+    assert room.reported_failures == []
+    assert room.chat == ["Fresh start."]
+    assert [session.alive for session in room.claude.sessions] == [False, True]
+
+
 async def test_a_timeout_from_the_cli_stream_is_an_ordinary_failure(
     claude_room: OpenRoom,
 ) -> None:

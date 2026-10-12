@@ -594,7 +594,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
     async def test_cancellation_resistant_execution_keeps_room_fenced(
         self, mock_link, room_cleanup: RoomCleanup, monkeypatch
     ):
-        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+        monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
         started, finish = asyncio.Event(), asyncio.Event()
 
         async def stubborn(ctx: ExecutionContext, event) -> None:

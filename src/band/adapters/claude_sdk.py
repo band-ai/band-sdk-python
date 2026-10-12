@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 
 try:
@@ -82,7 +83,7 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -92,7 +93,6 @@ from band.core.protocols import (
 from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
-    task_failure,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
@@ -837,8 +837,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         if room_id in self._closing_rooms:
             raise InputNotAccepted("The room's Claude session is closing")
-        running_turn = self._turn_tasks.get(room_id)
-        if running_turn is not None and not running_turn.task.done():
+        if self._turn_running(room_id):
             raise InputNotAccepted("The room already has an active Claude turn")
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
@@ -1582,20 +1581,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._closing_rooms.add(room_id)
         self._clear_pending_approvals_for_room(room_id)
         await self._cancel_turn(room_id)
-        owner = self._turn_tasks.get(room_id)
-        if owner is not None and not owner.task.done():
-            raise CleanupIncompleteError(
-                f"Room {room_id}: Claude turn is still cleaning up"
-            )
-        close = self._room_cleanup.get(room_id)
-        if close is None or (close.done() and task_failure(close) is not None):
-            close = asyncio.create_task(self._close_room(room_id))
-            close.add_done_callback(task_failure)
-            self._room_cleanup[room_id] = close
-        await asyncio.shield(close)
-        if self._room_cleanup.get(room_id) is close:
-            del self._room_cleanup[room_id]
-        self._closing_rooms.discard(room_id)
+        await self._retire_room(room_id, partial(self._close_room, room_id))
 
     async def _close_room(self, room_id: str) -> None:
         if self._session_manager:

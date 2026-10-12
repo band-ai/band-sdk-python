@@ -52,6 +52,7 @@ async def activity_context(
     observer: AsyncMock,
     *,
     enabled: bool = True,
+    max_cycle_seconds: float | None = None,
 ) -> AsyncIterator[ExecutionContext]:
     async with rest_client_over(peer.respond) as rest:
         link = BandLink(agent_id=AGENT_ID, api_key="test-key")
@@ -66,7 +67,9 @@ async def activity_context(
             agent_id=AGENT_ID,
             on_platform_stop=runtime._on_platform_stop,
             config=SessionConfig(
-                enable_context_hydration=False, enable_working_state=enabled
+                enable_context_hydration=False,
+                enable_working_state=enabled,
+                max_cycle_seconds=max_cycle_seconds,
             ),
         )
         try:
@@ -76,6 +79,34 @@ async def activity_context(
             await ctx.stop()
 
 
+@pytest.mark.looptime
+async def test_heartbeat_stop_during_watchdog_cleanup_keeps_stop_disposition() -> None:
+    peer = ActivityPeer()
+    observer = AsyncMock()
+    keep_alive = SessionConfig().working_keep_alive_seconds
+
+    async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+        try:
+            await asyncio.Future[None]()
+        except asyncio.CancelledError:
+            # The platform stops the room while the watchdog's cleanup runs
+            # through the next keep-alive.
+            peer.stopped = True
+            await asyncio.sleep(0.9)
+            raise
+
+    async with activity_context(
+        peer, handler, observer, max_cycle_seconds=keep_alive - 0.5
+    ) as ctx:
+        assert not await ctx._process_event(make_message_event(msg_id="trigger"))
+
+        assert peer.activity_reports == [(True, True), (True, False), (False, False)]
+        assert peer.marked("processing") == ["trigger"]
+        assert peer.requested("failed") == []
+        observer.assert_awaited_once()
+
+
+@pytest.mark.looptime
 async def test_heartbeat_stop_cancels_once_and_preserves_replay() -> None:
     peer = ActivityPeer()
     handler = BlockingHandler(block=1)
@@ -111,8 +142,11 @@ async def test_stop_on_initial_activity_report_never_enters_handler() -> None:
     handler = BlockingHandler(block=False)
     observer = AsyncMock()
     async with activity_context(peer, handler, observer) as ctx:
-        await ctx._begin_scope()
-        assert not await ctx._run_cycle(make_message_event(msg_id="trigger"), "trigger")
+        scope = await ctx._begin_scope()
+        assert scope is not None
+        assert not await ctx._run_cycle(
+            scope, make_message_event(msg_id="trigger"), "trigger"
+        )
 
         assert handler.invoked == []
         assert peer.activity_reports == [(True, False), (False, False)]
@@ -162,7 +196,7 @@ async def test_repeated_activity_refusal_does_not_cancel_handler_cleanup() -> No
 async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
     peer = ActivityPeer()
     started = asyncio.Event()
-    cleaned_up = asyncio.Event()
+    reports_at_cleanup: list[tuple[bool, bool]] = []
     cleaning, release = asyncio.Event(), asyncio.Event()
     observer = AsyncMock()
 
@@ -173,7 +207,7 @@ async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
         finally:
             cleaning.set()
             await release.wait()
-            cleaned_up.set()
+            reports_at_cleanup.extend(peer.activity_reports)
 
     async with activity_context(peer, handler, observer) as ctx:
         async with asyncio.TaskGroup() as tasks:
@@ -188,8 +222,9 @@ async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
             release.set()
             await turn
 
-        assert cleaned_up.is_set()
-        assert peer.activity_reports == [(True, True), (True, False), (False, False)]
+        # The final idle report follows the cleanup it reports on.
+        assert reports_at_cleanup == [(True, True), (True, False)]
+        assert peer.activity_reports == [*reports_at_cleanup, (False, False)]
         observer.assert_not_awaited()
         assert peer.marked("processing") == ["trigger"]
         assert peer.requested("processed") == []
@@ -214,7 +249,7 @@ async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
 
     observer = AsyncMock()
     async with activity_context(peer, handler, observer, enabled=False) as ctx:
-        await ctx._begin_scope()
+        scope = await ctx._begin_scope()
         async with asyncio.TaskGroup() as tasks:
             report = tasks.create_task(ctx._report_working_state(True))
             await peer.entered.wait()
@@ -222,7 +257,7 @@ async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
                 case "play":
                     await ctx.resume_room()
                 case "replacement":
-                    await ctx._begin_scope()
+                    scope = await ctx._begin_scope()
                 case "shutdown":
                     await ctx.stop()
                     peer.release.set()
@@ -230,7 +265,8 @@ async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
                     observer.assert_not_awaited()
                     return
             event = make_message_event(msg_id="newer")
-            turn = tasks.create_task(ctx._run_cycle(event, "newer"))
+            assert scope is not None
+            turn = tasks.create_task(ctx._run_cycle(scope, event, "newer"))
             await started.wait()
             peer.release.set()
             assert await report
@@ -305,6 +341,7 @@ async def test_fresh_activity_stop_after_play_cancels_the_same_turn(
 async def test_stopped_tool_preserves_awaited_cleanup(refusal: str) -> None:
     peer = ActivityPeer()
     cleanup: list[str] = []
+    cleaning, release = asyncio.Event(), asyncio.Event()
 
     async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
         peer.stopped = True
@@ -316,11 +353,19 @@ async def test_stopped_tool_preserves_awaited_cleanup(refusal: str) -> None:
                     "reply", mentions=[{"id": "user-1", "type": "user"}]
                 )
         finally:
-            await asyncio.sleep(0)
+            cleaning.set()
+            await release.wait()
             cleanup.append("completed")
 
     async with activity_context(peer, handler, AsyncMock(), enabled=False) as ctx:
-        await ctx._process_event(make_message_event(msg_id="trigger"))
+        turn = asyncio.create_task(
+            ctx._process_event(make_message_event(msg_id="trigger"))
+        )
+        await cleaning.wait()
+        await asyncio.sleep(0)
+        assert not turn.done()
+        release.set()
+        await turn
     assert cleanup == ["completed"]
     assert peer.requested("processed") == []
     assert peer.requested("failed") == []

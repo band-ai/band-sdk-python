@@ -55,7 +55,11 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.retention import task_failure
-from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, TurnTask
+from band.core.turn_lifecycle import (
+    TurnTask,
+    finished_within_grace,
+    terminal_deadline,
+)
 from band.core.types import (
     delivery_status_for_agent,
     is_contact_hub_turn,
@@ -563,21 +567,17 @@ class ExecutionContext:
             self._stop_graceful = True
             if timeout is not None and self.is_processing:
                 self._stop_graceful = await self._wait_for_idle(timeout)
-            if self.current_scope is not None:
-                self.current_scope.terminate(shutdown=True)
+            # A released worker belongs to adapter room cleanup, not shutdown.
+            if (scope := self._running_scope) is not None:
+                scope.terminate(shutdown=True)
             self._is_running = False
             loop_owner = TurnTask(self._process_loop_task)
             loop_owner.terminate()
-            if not await loop_owner.drain():
-                self._retain_detached_cycle_task(loop_owner.task, owner=loop_owner)
+            await self._drain_or_retain(loop_owner)
             self._process_loop_task = None
-        await self._stop_retained_tasks(self._settlement_deadline())
+        await self._stop_retained_tasks(terminal_deadline())
         await self._working_reporter.stop()
         return self._stop_graceful
-
-    @staticmethod
-    def _settlement_deadline() -> float:
-        return asyncio.get_running_loop().time() + CYCLE_CANCEL_GRACE_SECONDS
 
     async def _wait_for_idle(self, timeout: float) -> bool:
         """
@@ -637,11 +637,10 @@ class ExecutionContext:
     def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
         """Abort the in-flight reasoning cycle, if any.
 
-        Called from the WebSocket receive task. The receive-side surface is
-        deliberately minimal — set a flag and cancel the child cycle task. All
-        message-status / dedupe bookkeeping happens in the loop coroutine's
-        cancel handler (``_run_cycle``), never here, so the two coroutines do
-        not race on shared state.
+        Called from the WebSocket receive task. It only terminates the running
+        turn scope; all message-status / dedupe bookkeeping happens once in
+        ``_run_cycle``, never here, so the two coroutines do not race on shared
+        state.
 
         Args:
             kind: ``ControlMode.INTERRUPT`` (consume the message) or
@@ -650,10 +649,9 @@ class ExecutionContext:
                 matching string coerces; anything else raises ``ValueError``.
 
         Returns:
-            True if the signal took effect — either a running cycle was
-            cancelled, or a claimed-but-not-yet-started cycle was armed to abort
-            (the claim->cycle window). Between cycles this is a clean no-op and
-            cannot affect the next cycle.
+            True if the signal terminated an admitted, unsettled turn scope,
+            whether or not its handler has started. Between cycles this is a
+            clean no-op and cannot affect the next cycle.
 
         Raises:
             ValueError: ``kind`` is not a valid ``ControlMode``, or is
@@ -668,15 +666,23 @@ class ExecutionContext:
         return self._cancel_cycle(kind)
 
     @property
-    def _active_cycle_task(self) -> asyncio.Task[None] | None:
+    def _running_scope(self) -> TurnScope | None:
+        """The current scope between admission and settlement."""
         scope = self.current_scope
-        if scope is None or scope.handler is None or scope.settled:
+        if scope is None or scope.settled or not scope.admitted:
+            return None
+        return scope
+
+    @property
+    def _active_cycle_task(self) -> asyncio.Task[None] | None:
+        scope = self._running_scope
+        if scope is None or scope.handler is None:
             return None
         return scope.handler.task
 
     def _cancel_cycle(self, kind: ControlMode) -> bool:
-        scope = self.current_scope
-        if scope is None or scope.settled or not scope.admitted:
+        scope = self._running_scope
+        if scope is None:
             return False
         scope.terminate(kind)
         return True
@@ -741,14 +747,16 @@ class ExecutionContext:
         if self.owns_stop_observation(scope) and self._on_platform_stop is not None:
             await self._on_platform_stop(self, scope)
 
-    async def _begin_scope(self) -> bool:
+    async def _begin_scope(self) -> TurnScope | None:
         previous = self.current_scope
-        if previous is not None and previous.observer_task is not None:
-            await self._drain_cancelled_cycle_task(previous.observer_task)
-            if not previous.observer_task.done():
-                return False
+        if (
+            previous is not None
+            and previous.observer_task is not None
+            and not await finished_within_grace(previous.observer_task)
+        ):
+            return None
         self.current_scope = TurnScope(self._control_revision)
-        return True
+        return self.current_scope
 
     async def _stop_retained_tasks(self, deadline: float) -> None:
         owners = tuple(self._detached_cycle_tasks.values())
@@ -1251,7 +1259,7 @@ class ExecutionContext:
             self.claims.remember_completed(self.room_id, msg_id)
             return False
         with self._claim_message(msg_id) as acquired:
-            if not acquired or not await self._begin_scope():
+            if not acquired or (scope := await self._begin_scope()) is None:
                 return False
             revision = self._control_revision
             consumed = False
@@ -1261,14 +1269,14 @@ class ExecutionContext:
                 consumed = await self._on_message_control(self, event)
 
             try:
-                self._admit_scope()
+                scope.admitted = True
                 if not await self.link.mark_processing(self.room_id, msg_id):
                     return False
                 await self._ensure_fresh_context()
                 if revision != self._control_revision:
                     return False
                 if (
-                    not await self._run_cycle(event, msg_id, handler=probe)
+                    not await self._run_cycle(scope, event, msg_id, handler=probe)
                     or not consumed
                 ):
                     return False
@@ -1287,7 +1295,7 @@ class ExecutionContext:
                     self._retry_tracker.mark_permanently_failed(msg_id)
                 return False
             finally:
-                self._finish_scope()
+                scope.settled = True
                 self._turn_failure_reported = False
                 self._set_state(ExecutionState.IDLE)
 
@@ -1580,7 +1588,8 @@ class ExecutionContext:
         msg_id = msg.id
         if revision is None:
             revision = self._control_revision
-        if not await self._begin_scope() or revision != self._control_revision:
+        scope = await self._begin_scope()
+        if scope is None or revision != self._control_revision:
             return BacklogProcessResult.RETRY_LATER
         self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
@@ -1607,10 +1616,9 @@ class ExecutionContext:
                 )
                 return BacklogProcessResult.ADVANCED
 
-            # Open the claim->cycle window: until _run_cycle creates the
-            # cancellable task, an interrupt/stop has no task to cancel, so
-            # interrupt() records it as pending instead.
-            self._admit_scope()
+            # From admission a control terminates this scope, even before its
+            # handler starts.
+            scope.admitted = True
 
             # Mark as processing on server BEFORE we start. If this fails, do not
             # invoke the adapter; otherwise the platform will keep returning the
@@ -1637,8 +1645,8 @@ class ExecutionContext:
             # control signal can abort just this turn; when it does, status is
             # handled inside _run_cycle and we advance without sending
             # anything.
-            if not await self._run_cycle(event, msg_id):
-                if self.current_scope is not None and self.current_scope.stop_observed:
+            if not await self._run_cycle(scope, event, msg_id):
+                if scope.stop_observed:
                     return BacklogProcessResult.RETRY_LATER
                 return BacklogProcessResult.ADVANCED
 
@@ -1679,7 +1687,7 @@ class ExecutionContext:
             return BacklogProcessResult.ADVANCED
 
         finally:
-            self._finish_scope()
+            scope.settled = True
             self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
 
@@ -1747,7 +1755,7 @@ class ExecutionContext:
             or not self._owns_control_revision(scope, revision)
             or scope.stop_observed
             or self._closing
-            or scope.deadline is not None
+            or scope.kind is not None
         ):
             return
         logger.info(
@@ -1763,14 +1771,6 @@ class ExecutionContext:
         self._resync_handled_work = True
         self._reset_resync_interval()
         await self._on_execute(self, event)
-
-    def _admit_scope(self) -> None:
-        assert self.current_scope is not None
-        self.current_scope.admitted = True
-
-    def _finish_scope(self) -> None:
-        if self.current_scope is not None:
-            self.current_scope.settled = True
 
     def _retain_detached_cycle_task(
         self, task: asyncio.Task[None], *, owner: TurnTask | None = None
@@ -1794,32 +1794,31 @@ class ExecutionContext:
                 error,
             )
 
-    async def _drain_cancelled_cycle_task(
-        self, task: asyncio.Task[None], *, deadline: float | None = None
-    ) -> None:
-        if task.done():
-            return
-        owner = self._detached_cycle_tasks.get(task)
-        if owner is not None and owner.deadline is not None:
-            await owner.drain()
-        else:
-            bound = deadline if deadline is not None else self._settlement_deadline()
-            await asyncio.wait(
-                {task}, timeout=max(0.0, bound - asyncio.get_running_loop().time())
+    async def _drain_or_retain(self, owner: TurnTask) -> None:
+        """Drain a terminated task, retaining it if cleanup outlives its grace."""
+        if not await owner.drain():
+            logger.warning(
+                "ExecutionContext %s: cancelled task outlived its cleanup grace; "
+                "retaining it",
+                self.room_id,
             )
-        if not task.done():
-            self._retain_detached_cycle_task(task)
+            self._retain_detached_cycle_task(owner.task, owner=owner)
+        elif not owner.task.cancelled() and (error := owner.task.exception()):
+            logger.error(
+                "ExecutionContext %s: cancelled cycle cleanup failed",
+                self.room_id,
+                exc_info=error,
+            )
 
     async def _run_cycle(
         self,
+        scope: TurnScope,
         event: PlatformEvent,
         msg_id: str | None,
         *,
         handler: Callable[[], Awaitable[None]] | None = None,
     ) -> bool:
         """Supervise one handler, then select its delivery operation once."""
-        scope = self.current_scope
-        assert scope is not None
         if scope.kind is not None:
             scope.settled = True
             return await self._abort_cycle(scope.kind, msg_id, event=event)
@@ -1845,14 +1844,12 @@ class ExecutionContext:
                 timed_out = True
                 scope.terminate()
             if scope.deadline is not None:
-                if not await owner.drain():
-                    self._retain_detached_cycle_task(owner.task, owner=owner)
+                await self._drain_or_retain(owner)
             else:
                 owner.task.result()
         except asyncio.CancelledError:
             scope.terminate(shutdown=True)
-            if not await owner.drain():
-                self._retain_detached_cycle_task(owner.task, owner=owner)
+            await self._drain_or_retain(owner)
             raise
         finally:
             wake.cancel()
@@ -1923,9 +1920,8 @@ class ExecutionContext:
     ) -> bool:
         """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
 
-        Shared by the in-flight cancel path (``_run_cycle``'s ``CancelledError``
-        handler) and the claim->cycle window where interrupt()/stop_room()
-        landed before the cycle task existed. Returns False so the caller sends
+        Used by ``_run_cycle`` for a scope terminated by STOP/INTERRUPT, whether
+        before or after its handler started. Returns False so the caller sends
         nothing further. ``kind`` is only ever ``INTERRUPT``/``STOP`` here —
         ``interrupt()`` rejects ``PLAY`` before either path can reach this.
         """
@@ -2144,7 +2140,8 @@ class ExecutionContext:
             self.claims.remember_completed(self.room_id, msg_id)
             return True
 
-        if not await self._begin_scope():
+        scope = await self._begin_scope()
+        if scope is None:
             return False
 
         self._set_state(ExecutionState.PROCESSING)
@@ -2180,10 +2177,9 @@ class ExecutionContext:
                     self.claims.remember_completed(self.room_id, msg_id)
                     return True
 
-                # Open the claim->cycle window: from here until _run_cycle
-                # creates the cancellable task, an interrupt/stop has no task to
-                # cancel, so interrupt() records it as pending instead.
-                self._admit_scope()
+                # From admission a control terminates this scope, even before
+                # its handler starts.
+                scope.admitted = True
 
                 # For messages: mark as processing on server
                 if not await self._claim(msg_id):
@@ -2224,10 +2220,8 @@ class ExecutionContext:
             # _run_cycle and we send nothing further. Only message-driven
             # cycles report the working signal (see _invoke_handler);
             # participant add/remove events are housekeeping and skip it.
-            if not await self._run_cycle(event, msg_id):
-                return not (
-                    self.current_scope is not None and self.current_scope.stop_observed
-                )
+            if not await self._run_cycle(scope, event, msg_id):
+                return not scope.stop_observed
 
             # For messages: record ack-pending BEFORE the awaited mark_processed
             # call, synchronously, so a cancellation landing inside that await
@@ -2269,7 +2263,7 @@ class ExecutionContext:
             return True
 
         finally:
-            self._finish_scope()
+            scope.settled = True
             self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
 
