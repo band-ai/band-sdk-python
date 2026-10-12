@@ -23,9 +23,9 @@ from band.core.memory_types import (
     MemoryType,
 )
 from band.core.types import Capability
+from band.integrations.acp.cursor import is_cursor_band_tool
 from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
-from band.runtime.tools.effects import turn_effect
-from band.runtime.tools.types import TurnEffect
+from band.runtime.tools.types import BandTool
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import (
@@ -60,7 +60,6 @@ logger = logging.getLogger(__name__)
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 WORKFLOW_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
 RECOVERY_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=4)
-MAX_PERMISSION_REQUESTS = 8
 PROJECT_TEST_TIMEOUT_S = 30
 SOURCE_FILE = "calculator.py"
 TEST_FILE = "test_calculator.py"
@@ -276,7 +275,7 @@ async def _permission_request(
     return request
 
 
-async def _decide_permissions_until_closed(
+async def _decide_permission_and_expect_close(
     room: ApprovalRoom,
     request: re.Match[str],
     *,
@@ -284,54 +283,38 @@ async def _decide_permissions_until_closed(
     reply_marker: str,
     deny_first_tool: str | None = None,
 ) -> None:
-    """Answer every permission request until the turn closes, then expect the reply.
-
-    A request can follow the reply (a memory write, a read-back), and an unanswered
-    one holds the turn open, so the reply alone does not end the decisions.
-    """
-    for attempt in range(MAX_PERMISSION_REQUESTS):
-        outcome = Outcome.APPROVE
-        if deny_first_tool is not None and attempt == 0:
-            assert deny_first_tool in request["tool"], (
-                f"Cursor did not request the expected project action: {request['tool']}"
-            )
-            outcome = Outcome.DECLINE
-        after_decision = await room.decide(outcome, request)
-        await _within_turn(
-            room,
-            checkpoint,
-            f"Cursor did not confirm the {outcome} decision",
-            room.shown(
-                room.dialect.notice(outcome, request).text, since=after_decision
-            ),
+    """Decide the single native call; Band calls must not need room approval."""
+    assert not is_cursor_band_tool(request["tool"], tuple(BandTool)), (
+        f"Cursor asked the room to approve a Band tool: {request['tool']}"
+    )
+    outcome = Outcome.APPROVE
+    if deny_first_tool is not None:
+        assert deny_first_tool in request["tool"], (
+            f"Cursor did not request the expected project action: {request['tool']}"
         )
-        pending = await _within_turn(
-            room,
-            checkpoint,
-            f"Cursor did not finish after {outcome}",
-            _next_request_or_close(room, checkpoint),
-        )
-        if pending is None:
-            await _within_turn(
-                room,
-                checkpoint,
-                "Cursor closed the turn without its reply",
-                room.shown(reply_marker, since=checkpoint.cursor),
-            )
-            return
-        requested_tool = pending["tool"].partition(":")[0]
-        if (
-            deny_first_tool is not None
-            and turn_effect(requested_tool) is not TurnEffect.REPLY
-        ):
-            pytest.fail(
-                "Cursor requested another permission after the denied action: "
-                f"{room.said_since(checkpoint.cursor)}"
-            )
-        request = pending
-    pytest.fail(
-        f"Cursor requested permission more than {MAX_PERMISSION_REQUESTS} times: "
+        outcome = Outcome.DECLINE
+    after_decision = await room.decide(outcome, request)
+    await _within_turn(
+        room,
+        checkpoint,
+        f"Cursor did not confirm the {outcome} decision",
+        room.shown(room.dialect.notice(outcome, request).text, since=after_decision),
+    )
+    pending = await _within_turn(
+        room,
+        checkpoint,
+        f"Cursor did not finish after {outcome}",
+        _next_request_or_close(room, checkpoint),
+    )
+    assert pending is None, (
+        "Cursor requested another permission after the single native action: "
         f"{room.said_since(checkpoint.cursor)}"
+    )
+    await _within_turn(
+        room,
+        checkpoint,
+        "Cursor closed the turn without its reply",
+        room.shown(reply_marker, since=checkpoint.cursor),
     )
 
 
@@ -379,7 +362,7 @@ async def test_repairs_a_failing_project_after_a_human_gate(
             f"deny the copy, do not retry; reply with {denied_reply}.",
         )
         request = await _permission_request(room, checkpoint)
-        await _decide_permissions_until_closed(
+        await _decide_permission_and_expect_close(
             room,
             request,
             checkpoint=checkpoint,
@@ -400,7 +383,7 @@ async def test_repairs_a_failing_project_after_a_human_gate(
         request = await _permission_request(room, checkpoint)
         # Nothing may change while the human gate is pending.
         _assert_project_unchanged(root, original_state)
-        await _decide_permissions_until_closed(
+        await _decide_permission_and_expect_close(
             room, request, checkpoint=checkpoint, reply_marker=report
         )
         assert source.read_text() != original
