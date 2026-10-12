@@ -647,6 +647,41 @@ class TestCursorTurns:
         assert answers == [answered("plan")]
         assert len(agent.prompts) == 2
 
+    @pytest.mark.asyncio
+    async def test_a_message_accepted_as_the_room_frees_waits_off_the_queue(
+        self,
+    ) -> None:
+        """A turn starting after the room's holder let go, but before the
+        queued turn ahead of it took the room, still hands the queue back."""
+        agent = FakeACPAgent()
+        parked = Gate()
+
+        @agent.on_prompt
+        async def park_queued(peer: FakeACPAgent, session_id: str) -> None:
+            if len(peer.prompts) == 2:
+                parked.received.set()
+                await parked.release.wait()
+
+        async with cursor(agent) as session:
+            await session.send("first")
+            room = session.room()
+            await room.reservation.acquire()
+            async with asyncio.timeout(5):
+                await session.send("queued")
+            latest = asyncio.create_task(session.send("latest"))
+            async with asyncio.timeout(5):
+                while len(session.adapter._turns[DEFAULT_ROOM]) < 2:
+                    await asyncio.sleep(0)
+            room.reservation.release()
+
+            async with asyncio.timeout(5):
+                await latest
+                await parked.received.wait()
+            parked.release.set()
+            await accepted_work_finished(room)
+
+        assert len(agent.prompts) == 3
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

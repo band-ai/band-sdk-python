@@ -302,7 +302,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     ) -> None:
         room = turn.room
         try:
-            if room.reservation.locked():
+            if self._waits_for_room(turn):
                 _detach(turn)
             async with self._using_room(room, turn.tools) as runtime:
                 turn.generation = room.generation
@@ -349,6 +349,15 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             partial(self._resolve_extension_method, room, generation),
             active_session=partial(self._extension_session, room, generation),
         )
+
+    def _waits_for_room(self, turn: CursorTurn) -> bool:
+        """Whether ``turn`` queues behind the room's holder or an earlier turn.
+
+        A free reservation alone is not enough: the turn ahead may have been
+        woken for it without having taken it yet.
+        """
+        room = turn.room
+        return room.reservation.locked() or self._turns[room.room_id][0] is not turn
 
     def _holding_turn(self, room_id: str) -> CursorTurn | None:
         """The room's turn that holds it, if any."""
