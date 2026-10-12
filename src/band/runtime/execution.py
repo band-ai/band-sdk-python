@@ -1801,7 +1801,13 @@ class ExecutionContext:
 
     async def _drain_or_retain(self, owner: TurnTask) -> None:
         """Drain a terminated task, retaining it if cleanup outlives its grace."""
-        if not await owner.drain():
+        try:
+            drained = await owner.drain()
+        except asyncio.CancelledError:
+            # A cancelled drainer must not lose the task it was waiting on.
+            self._retain_detached_cycle_task(owner.task, owner=owner)
+            raise
+        if not drained:
             logger.warning(
                 "ExecutionContext %s: cancelled task outlived its cleanup grace; "
                 "retaining it",

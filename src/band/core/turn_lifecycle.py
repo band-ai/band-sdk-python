@@ -42,6 +42,7 @@ class TurnTask:
             task.add_done_callback(self._retrieve_result)
         self.deadline: float | None = None
         self._cancel_delivered = False
+        self._grace_expired = False
         self._timer: asyncio.Timeout | None = None
         self._cleanup_timer = False
 
@@ -59,7 +60,7 @@ class TurnTask:
         bound = deadline if deadline is not None else terminal_deadline()
         self.deadline = self._release_timer(bound)
         # The owner enforces its own deadline: a detached worker may have no drainer.
-        asyncio.get_running_loop().call_at(self.deadline, self._cancel)
+        asyncio.get_running_loop().call_at(self.deadline, self._expire)
         if not cooperative:
             self._cancel()
 
@@ -69,11 +70,19 @@ class TurnTask:
         A task that swallowed its cancel would otherwise stay unfinished on
         every cleanup retry; within an unexpired grace this is ``terminate``.
         """
-        if self.deadline is None or self.deadline > asyncio.get_running_loop().time():
+        if not self._grace_expired:
             self.terminate(deadline=deadline)
             return
         self.deadline = deadline
+        self._grace_expired = False
         self._cancel_delivered = False
+        asyncio.get_running_loop().call_at(deadline, self._expire)
+        self._cancel()
+
+    def _expire(self) -> None:
+        # The loop's own timer marks expiry: it can fire up to one clock
+        # resolution before loop.time() reaches the deadline.
+        self._grace_expired = True
         self._cancel()
 
     def _release_timer(self, bound: float) -> float:

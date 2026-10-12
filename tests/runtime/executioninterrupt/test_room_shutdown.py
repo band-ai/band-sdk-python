@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.turn_lifecycle import bind_turn_task
+from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
@@ -110,6 +110,27 @@ class TestRoomShutdown:
             await ctx.stop()
         await ctx.stop()
         assert cancels == 2
+
+    async def test_interrupted_drain_still_keeps_the_stubborn_task_for_stop(
+        self, mock_link
+    ) -> None:
+        finish = asyncio.Event()
+        stubborn = TurnTask(asyncio.create_task(resist_cancellation_until(finish)))
+        await asyncio.sleep(0)
+        stubborn.terminate()
+        ctx = ExecutionContext("room-123", mock_link, AsyncMock())
+        draining = asyncio.create_task(ctx._drain_or_retain(stubborn))
+        await asyncio.sleep(0)
+        draining.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await draining
+
+        try:
+            with pytest.raises(CleanupIncompleteError):
+                await ctx.stop()
+        finally:
+            finish.set()
+        await ctx.stop()
 
     async def test_cancellation_resistant_cycle_keeps_stop_pending_until_settled(
         self, mock_link, monkeypatch
