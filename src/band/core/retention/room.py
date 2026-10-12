@@ -1,112 +1,31 @@
-"""Adapter-owned residency; native handles and continuation stay with adapters."""
+"""One room's residency: admission, acquisition, release and disposal."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
-from enum import StrEnum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any
 
-from pydantic import Field
-
-from band.core.adapterconfig import BaseAdapterConfig
 from band.core.exceptions import CleanupIncompleteError
+from band.core.retention.cleanup import report_owned
+from band.core.retention.states import (
+    BUSY_ACTIVITY_REASON,
+    UNKNOWN_ACTIVITY_REASON,
+    ProviderActivity,
+    ReleaseCause,
+    ReleaseOutcome,
+    Residency,
+    RetentionSnapshot,
+    stronger_cause,
+)
+
+if TYPE_CHECKING:
+    from band.core.retention.owner import RoomRetention
 
 logger = logging.getLogger(__name__)
-UNKNOWN_ACTIVITY_REASON = "Provider has not established authoritative quiescence"
-BUSY_ACTIVITY_REASON = "Provider refused idle release"
-
-
-class RoomRetentionConfig(BaseAdapterConfig):
-    """Automatic suspension is opt-in and requires a qualified provider.
-
-    ``transition_timeout_s`` bounds how long a caller waits to learn the result
-    of one owned acquisition or cleanup; an unfinished one stays owned.
-    """
-
-    idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    transition_timeout_s: float = Field(default=10.0, gt=0, allow_inf_nan=False)
-
-
-def require_disabled_retention(
-    retention: RoomRetentionConfig, *, reason: str
-) -> RoomRetentionConfig:
-    if retention.idle_timeout_s is not None:
-        raise ValueError(f"{reason} Leave retention.idle_timeout_s unset.")
-    return retention
-
-
-class ProviderActivity(StrEnum):
-    ACTIVE = "active"
-    QUIESCENT = "quiescent"
-    UNKNOWN = "unknown"
-
-
-class Residency(StrEnum):
-    RESIDENT = "resident"
-    SUSPENDING = "suspending"
-    SUSPENDED = "suspended"
-    ACQUIRING = "acquiring"
-    CLEANUP_PENDING = "cleanup_pending"
-    DISPOSING = "disposing"
-    CLOSED = "closed"
-
-
-class ReleaseCause(StrEnum):
-    """Why a physical release runs; later members supersede earlier ones."""
-
-    IDLE = "idle"
-    RECOVERY = "recovery"
-    FINAL = "final"
-
-
-class ReleaseOutcome(StrEnum):
-    """A release callback's successful result; raising means incomplete cleanup.
-
-    ``BUSY`` is valid only for ``IDLE``, and only when nothing was torn down.
-    """
-
-    RELEASED = "released"
-    BUSY = "busy"
-
-
-_PRECEDENCE = tuple(ReleaseCause)
-
-
-class RetentionSnapshot(BaseAdapterConfig):
-    state: Residency
-    generation: int
-    leases: int
-    accepted: int
-    provider_activity: ProviderActivity
-    reason: str
-    deadline: float | None
-    pending_release: ReleaseCause | None
-    pending_cleanup: bool
-    error: str | None
-
-
-class RetentionClock(Protocol):
-    def now(self) -> float: ...
-
-    async def wait(self, changed: asyncio.Event, deadline: float | None) -> None: ...
-
-
-class MonotonicClock:
-    def now(self) -> float:
-        return time.monotonic()
-
-    async def wait(self, changed: asyncio.Event, deadline: float | None) -> None:
-        timeout = None if deadline is None else max(0, deadline - self.now())
-        try:
-            async with asyncio.timeout(timeout):
-                await changed.wait()
-        except TimeoutError:
-            pass
 
 
 class RetainedRoom:
@@ -336,10 +255,7 @@ class RetainedRoom:
             self._state = Residency.CLEANUP_PENDING
 
     def _request(self, cause: ReleaseCause) -> None:
-        if self._cause is None or _PRECEDENCE.index(cause) > _PRECEDENCE.index(
-            self._cause
-        ):
-            self._cause = cause
+        self._cause = stronger_cause(self._cause, cause)
 
     def _spawn(self, operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(operation)
@@ -417,14 +333,18 @@ class RetainedRoom:
                 )
             return
         try:
-            outcome = await self._release(cause)
-            if outcome == ReleaseOutcome.BUSY and cause == ReleaseCause.IDLE:
-                self._activity = ProviderActivity.ACTIVE
-                self._reason = BUSY_ACTIVITY_REASON
-                self._refuse_idle_release(intact=True)
-                return
-            if outcome != ReleaseOutcome.RELEASED:
-                raise RuntimeError(f"{outcome!r} is not a valid {cause} release result")
+            match cause, await self._release(cause):
+                case ReleaseCause.IDLE, ReleaseOutcome.BUSY:
+                    self._activity = ProviderActivity.ACTIVE
+                    self._reason = BUSY_ACTIVITY_REASON
+                    self._refuse_idle_release(intact=True)
+                    return
+                case _, ReleaseOutcome.RELEASED:
+                    pass
+                case _, outcome:
+                    raise RuntimeError(
+                        f"{outcome!r} is not a valid {cause} release result"
+                    )
         except BaseException as error:
             self._record_failure(error)
             raise
@@ -461,27 +381,41 @@ class RetainedRoom:
         self._error = f"{type(error).__name__}: {error}"
 
     def _schedule(self, *, reset: bool = False) -> None:
+        """Re-arm the idle deadline and wake everything waiting on a change."""
+        self._rearm_deadline(reset=reset)
+        self._notify()
+
+    def _rearm_deadline(self, *, reset: bool) -> None:
         timeout = self._owner.config.idle_timeout_s
-        idle_candidate = (
-            self._state == Residency.RESIDENT and self._cause is None
-        ) or (
-            self._state == Residency.CLEANUP_PENDING
-            and self._cause == ReleaseCause.IDLE
-        )
-        eligible = (
-            timeout is not None
-            and idle_candidate
+        if timeout is None or not self._idle_eligible:
+            self._deadline = None
+        elif reset or self._deadline is None:
+            self._deadline = self._owner.clock.now() + timeout
+
+    @property
+    def _idle_eligible(self) -> bool:
+        return (
+            self._idle_candidate
             and not self._closing
             and not self._owner.stopping
             and not self._leases
             and not self._accepted
             and self._activity == ProviderActivity.QUIESCENT
         )
-        if not eligible:
-            self._deadline = None
-        elif reset or self._deadline is None:
-            assert timeout is not None
-            self._deadline = self._owner.clock.now() + timeout
+
+    @property
+    def _idle_candidate(self) -> bool:
+        """A residency an idle release may retire, or retry retiring."""
+        match self._state, self._cause:
+            case (Residency.RESIDENT, None) | (
+                Residency.CLEANUP_PENDING,
+                ReleaseCause.IDLE,
+            ):
+                return True
+            case _:
+                return False
+
+    def _notify(self) -> None:
         self._changed.set()
         self._changed = asyncio.Event()
         self._owner.changed.set()
@@ -563,115 +497,3 @@ class RetainedRoom:
                 self._transition.cancel()
         while self._accepted:
             await self._changed.wait()
-
-
-def task_failure(task: asyncio.Task[Any]) -> BaseException | None:
-    """A finished owned cleanup's failure; cancellation is incomplete cleanup."""
-    if task.cancelled():
-        return CleanupIncompleteError("Cleanup was cancelled")
-    return task.exception()
-
-
-async def report_owned(task: asyncio.Task[Any], timeout: float) -> None:
-    """Report an owned cleanup's result within ``timeout`` without cancelling it."""
-    done, _ = await asyncio.wait({task}, timeout=timeout)
-    if not done:
-        raise CleanupIncompleteError(f"Cleanup still running after {timeout}s")
-    if (error := task_failure(task)) is not None:
-        raise error
-
-
-class RoomRetention:
-    """One deadline scheduler per adapter; each room owns its awaited I/O."""
-
-    def __init__(
-        self, config: RoomRetentionConfig, *, clock: RetentionClock | None = None
-    ) -> None:
-        self.config = config
-        self.clock = clock or MonotonicClock()
-        self.changed = asyncio.Event()
-        self.stopping = False
-        self._rooms: dict[str, RetainedRoom] = {}
-        self._scheduler: asyncio.Task[None] | None = None
-        self._shutdown: asyncio.Task[None] | None = None
-
-    def register(
-        self,
-        room_id: str,
-        *,
-        acquire: Callable[[int, bool], Awaitable[None]],
-        release: Callable[[ReleaseCause], Awaitable[ReleaseOutcome]],
-        dispose: Callable[[], Awaitable[None]],
-    ) -> RetainedRoom:
-        if self.stopping:
-            raise RuntimeError("Room retention is stopping")
-        if room_id in self._rooms:
-            raise ValueError(f"Room {room_id} already has a residency owner")
-        room = RetainedRoom(self, room_id, acquire, release, dispose)
-        self._rooms[room_id] = room
-        if self.config.idle_timeout_s is not None and self._scheduler is None:
-            self._scheduler = asyncio.create_task(self._run())
-        self.changed.set()
-        return room
-
-    def _forget(self, room: RetainedRoom) -> None:
-        if self._rooms.get(room.room_id) is room:
-            del self._rooms[room.room_id]
-        self.changed.set()
-
-    async def _run(self) -> None:
-        while not self.stopping:
-            self.changed.clear()
-            deadline: float | None = None
-            for room in self._rooms.values():
-                due = room._deadline
-                if due is None:
-                    continue
-                if due <= self.clock.now():
-                    room._start_idle_release()
-                elif deadline is None or due < deadline:
-                    deadline = due
-            await self.clock.wait(self.changed, deadline)
-
-    async def stop(self) -> None:
-        """Dispose every room under one reporting deadline; retain failures.
-
-        Work enrolled in a room cannot await this shutdown; it is told cleanup
-        is pending, is not cancelled by it, and is joined once it unwinds.
-        """
-        requested_from_inside = [
-            room._spare_requester() for room in tuple(self._rooms.values())
-        ]
-        self.stopping = True
-        self.changed.set()
-        if self._shutdown is None or (
-            self._shutdown.done()
-            and (self._shutdown.cancelled() or self._shutdown.exception())
-        ):
-            self._shutdown = asyncio.create_task(self._run_stop())
-            self._shutdown.add_done_callback(self._observe_shutdown)
-        if any(requested_from_inside):
-            raise CleanupIncompleteError(
-                "Room retention shutdown waits for the calling work to finish"
-            )
-        await report_owned(self._shutdown, self.config.transition_timeout_s)
-
-    @staticmethod
-    def _observe_shutdown(task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and (error := task.exception()) is not None:
-            logger.warning("Room retention shutdown failed: %s", error)
-
-    async def _run_stop(self) -> None:
-        pending: list[asyncio.Task[None]] = []
-        if self._scheduler is not None:
-            pending.append(self._scheduler)
-        pending.extend(
-            disposal
-            for room in tuple(self._rooms.values())
-            if (disposal := room._begin_disposal()) is not None
-        )
-        if pending:
-            await asyncio.wait(pending)
-        failures = [error for task in pending if (error := task_failure(task))]
-        if failures:
-            raise BaseExceptionGroup("Room cleanup remains incomplete", failures)
