@@ -87,6 +87,28 @@ class TestAgentRuntimeStartupOwnership:
         assert held_runtime.executions["room-1"] is admitted
         assert held_runtime.unsettled_rooms == []
 
+    async def test_a_start_finishing_during_stop_gets_the_stop_grace(
+        self,
+        held_runtime: AgentRuntime,
+        start_gate: StartGate,
+        room_cleanup: RoomCleanup,
+    ):
+        await joined(held_runtime, "room-1")
+        start_gate.hold()
+        await held_runtime._on_room_joined("room-2", {})
+        await start_gate.entered.wait()
+        room_cleanup.hold()
+        stopping = asyncio.create_task(held_runtime.stop(timeout=30))
+        await room_cleanup.entered.wait()
+
+        start_gate.release.set()
+        serving, starting = start_gate.built
+        await wait_for_condition(lambda: starting.stopped)
+        room_cleanup.release.set()
+        await stopping
+        assert serving.stop_timeout == 30
+        assert starting.stop_timeout == 30
+
     async def test_rejoin_during_held_start_admits_a_fresh_execution(
         self, held_runtime: AgentRuntime, start_gate: StartGate
     ):

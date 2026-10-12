@@ -343,6 +343,7 @@ class HeldExecution:
         self.number = number
         self.started = False
         self.stopped = False
+        self.stop_timeout: float | None = None
         self.resyncs = 0
         self.events: list[object] = []
 
@@ -357,6 +358,7 @@ class HeldExecution:
 
     async def stop(self, timeout: float | None = None) -> bool:
         self.stopped = True
+        self.stop_timeout = timeout
         self.gate.journal.append(f"stop {self.number}")
         return self.gate.graceful
 

@@ -458,7 +458,8 @@ async def test_sequential_rooms_keep_their_work_after_restart(
         room_id: await user_ops.send_message(
             room_id,
             "Recall the marker from our earlier conversation in this room and "
-            "reply with it. Do not read or write files or call Band tools.",
+            f"reply with it using only {BandTool.SEND_MESSAGE}. "
+            "Do not read or write files or use memory or other retrieval tools.",
             mention_id=identity.id,
             mention_name=identity.name,
         )
@@ -487,7 +488,7 @@ async def test_sequential_rooms_keep_their_work_after_restart(
                 since=recall_since[room_id],
                 include_memory=True,
             )
-            assert not calls, f"Cursor used tools to recall the room marker: {calls}"
+            calls.assert_only(BandTool.SEND_MESSAGE)
             assert DeliveryStatus.PROCESSING not in captures[room_id].delivery_history(
                 handled[room_id], identity.id
             )

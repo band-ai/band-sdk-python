@@ -42,7 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import Counter, deque
-from collections.abc import Coroutine, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -65,6 +65,7 @@ from band.core.exceptions import (
     RoomExecutionStoppedError,
 )
 from band.core.protocols import FrameworkAdapter
+from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AgentInput,
@@ -89,6 +90,8 @@ from band.runtime.tools import AgentTools
 from band.runtime.types import PlatformMessage as RestPlatformMessage
 
 logger = logging.getLogger(__name__)
+
+LIFECYCLE_LABEL = "OneShotInvoker lifecycle operation"
 
 FAILURE_DETAIL_LIMIT = 500
 
@@ -220,7 +223,9 @@ class OneShotInvoker:
                 raise CleanupIncompleteError(
                     "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
                 )
-            startup = self._startup = self._owned(self._run_startup())
+            startup = self._startup = spawn_owned(
+                self._run_startup(), label=LIFECYCLE_LABEL
+            )
         await asyncio.shield(startup)
 
     async def _run_startup(self) -> None:
@@ -272,6 +277,10 @@ class OneShotInvoker:
         one owned shutdown, and a cancelled caller leaves it running. Only a
         settled shutdown is retried.
 
+        The wait has no time bound, so a hung event holds it open. A host with
+        a deadline wraps the call in ``asyncio.timeout``; the shutdown keeps
+        running, and a later call joins it.
+
         Raises:
             CleanupIncompleteError: Called from an accepted event, which the
                 shutdown waits for; it continues once that event unwinds.
@@ -281,7 +290,9 @@ class OneShotInvoker:
         self._started = False
         shutdown = self._shutdown
         if not self._running(shutdown):
-            shutdown = self._shutdown = self._owned(self._run_shutdown())
+            shutdown = self._shutdown = spawn_owned(
+                self._run_shutdown(), label=LIFECYCLE_LABEL
+            )
         if asyncio.current_task() in self._operations:
             raise CleanupIncompleteError(
                 "OneShotInvoker shutdown waits for the calling event to finish"
@@ -318,18 +329,6 @@ class OneShotInvoker:
     @staticmethod
     def _running(task: asyncio.Task[None] | None) -> TypeGuard[asyncio.Task[None]]:
         return task is not None and not task.done()
-
-    @staticmethod
-    def _owned(operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
-        """Run a lifecycle operation that outlives a cancelled caller."""
-        task = asyncio.create_task(operation)
-        task.add_done_callback(OneShotInvoker._observe_lifecycle)
-        return task
-
-    @staticmethod
-    def _observe_lifecycle(task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and (error := task.exception()) is not None:
-            logger.warning("OneShotInvoker lifecycle operation failed: %s", error)
 
     # --- Event entry point ---
 

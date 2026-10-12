@@ -29,13 +29,17 @@ class ControlledRooms:
             on_execute=never_executes,
             on_control=self.on_interrupt,
         )
-        self.executions = {
-            room_id: ExecutionContext(
-                room_id, link, never_executes, agent_id=link.agent_id
-            )
-            for room_id in room_ids
-        }
-        self.runtime.executions.update(self.executions)
+        self.link = link
+        self.executions: dict[str, ExecutionContext] = {}
+        for room_id in room_ids:
+            self.route(room_id)
+
+    def route(self, room_id: str) -> None:
+        """Give the room an idle execution that receives control."""
+        self.executions[room_id] = ExecutionContext(
+            room_id, self.link, never_executes, agent_id=self.link.agent_id
+        )
+        self.runtime.executions[room_id] = self.executions[room_id]
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         self.heard.append((room_id, mode))
