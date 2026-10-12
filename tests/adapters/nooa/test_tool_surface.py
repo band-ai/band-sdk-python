@@ -7,11 +7,13 @@ from band.testing import FakeAgentTools
 from band.testing.nooa import room_call, scripted_llm
 from tests.adapters.nooa.kit import (
     OrderInput,
+    TaggedInput,
     advertised_tools,
     find_order,
     prompt_text,
     run_turn,
     started_adapter,
+    tag_order,
 )
 
 
@@ -45,6 +47,18 @@ class TestRoomToolSurface:
         await run_turn(adapter, tools)
 
         assert "mentions: List of participants to mention." in prompt_text(llm)
+
+    async def test_a_factory_default_is_documented_without_calling_it(
+        self, tools: FakeAgentTools
+    ) -> None:
+        llm = scripted_llm(room_call("band_no_reply"))
+        adapter = await started_adapter(
+            llm, additional_tools=[(TaggedInput, tag_order)]
+        )
+
+        await run_turn(adapter, tools)
+
+        assert "tags: list[str] = ..." in prompt_text(llm)
 
     async def test_the_turn_binding_is_hidden_from_the_model(
         self, tools: FakeAgentTools

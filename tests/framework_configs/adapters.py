@@ -44,7 +44,7 @@ from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 
-# NOOA supports Python 3.12 and 3.13 only, so the dev extra skips it elsewhere.
+# NOOA supports Python 3.12 and 3.13 on POSIX only, so the dev extra skips it elsewhere.
 _HAS_NOOA = importlib.util.find_spec("nooa") is not None
 
 __all__ = [

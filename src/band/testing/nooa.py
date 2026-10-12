@@ -13,10 +13,13 @@ from uuid import uuid4
 
 try:
     from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall
-except ImportError as error:
-    raise ImportError(
-        "NOOA dependencies not installed (NOOA requires Python 3.12 or newer). "
-        "Install with: uv add band-sdk[nooa]"
+except ModuleNotFoundError as error:
+    # ModuleNotFoundError keeps the missing module's name, so a venv without the
+    # extra can still tell "absent optional dependency" from a broken import.
+    raise ModuleNotFoundError(
+        "NOOA dependencies not installed (NOOA supports Python 3.12 and 3.13 on "
+        "Linux and macOS). Install with: uv add band-sdk[nooa]",
+        name=error.name,
     ) from error
 
 from band.adapters.nooa import NooaRoomAgent

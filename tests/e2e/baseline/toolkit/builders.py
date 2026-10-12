@@ -362,7 +362,7 @@ def _build_agno(
     )
 
 
-@adapter(Adapter.NOOA, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)
+@adapter(Adapter.NOOA, requires=[Dep.ANTHROPIC, Dep.NOOA], supports=_EVERY_CAPABILITY)
 def _build_nooa(
     s: BaselineSettings,
     *,

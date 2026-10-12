@@ -65,7 +65,7 @@ _SOMETIMES_MISSING: dict[str, bool] = {
     "crewai": _CREWAI_AVAILABLE,
     "crewai_flow": _CREWAI_AVAILABLE,
     "pydantic_ai": _PYDANTIC_AI_AVAILABLE,
-    # NOOA supports Python 3.12 and 3.13 only.
+    # NOOA supports Python 3.12 and 3.13 on POSIX only.
     "nooa": _NOOA_AVAILABLE,
 }
 

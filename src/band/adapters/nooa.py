@@ -21,16 +21,20 @@ from uuid import uuid4
 
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 try:
     from nooa import Agent, Context, Image, hidden
     from nooa.agentdoc import doc
     from nooa.context_blocks import EventBase
     from nooa.events import LLMComplete
-except ImportError as error:
-    raise ImportError(
-        "NOOA dependencies not installed (NOOA requires Python 3.12 or newer). "
-        "Install with: uv add band-sdk[nooa]"
+except ModuleNotFoundError as error:
+    # ModuleNotFoundError keeps the missing module's name, so a venv without the
+    # extra can still tell "absent optional dependency" from a broken import.
+    raise ModuleNotFoundError(
+        "NOOA dependencies not installed (NOOA supports Python 3.12 and 3.13 on "
+        "Linux and macOS). Install with: uv add band-sdk[nooa]",
+        name=error.name,
     ) from error
 
 from typing_extensions import Unpack
@@ -214,15 +218,31 @@ def tool_method_doc(input_model: type[BaseModel]) -> str:
     return "\n".join([description, "", "Args:", *arguments])
 
 
+class ComputedDefault:
+    """Stands in for a ``default_factory`` default in a rendered signature.
+
+    Calling the factory just to document it could fail (a factory may take the
+    validated data) or build an expensive object.
+    """
+
+    def __repr__(self) -> str:
+        return "<computed>"
+
+
+def documented_default(field: FieldInfo) -> object:
+    """The default a signature shows for *field*."""
+    if field.is_required():
+        return inspect.Parameter.empty
+    if field.default_factory is not None:
+        return ComputedDefault()
+    return field.default
+
+
 def tool_method_signature(input_model: type[BaseModel]) -> inspect.Signature:
     """Keyword-only parameters mirroring the tool's input model."""
     parameters = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
     for name, field in input_model.model_fields.items():
-        default = (
-            inspect.Parameter.empty
-            if field.is_required()
-            else field.get_default(call_default_factory=True)
-        )
+        default = documented_default(field)
         parameters.append(
             inspect.Parameter(
                 name,
@@ -292,7 +312,8 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
 
 
 def validate_custom_tool_names(custom_tools: list[CustomToolDef]) -> None:
-    """Custom tools become methods, so their names must be public identifiers."""
+    """Custom tools become ``RoomTools`` methods, so each name must be a public
+    identifier that does not replace one of its own attributes."""
     names = [get_custom_tool_name(input_model) for input_model, _ in custom_tools]
     reject_conflicting_tool_names(names)
     if invalid := sorted(
@@ -303,6 +324,8 @@ def validate_custom_tool_names(custom_tools: list[CustomToolDef]) -> None:
         raise ValueError(
             f"Custom tool names must be public Python identifiers: {invalid}"
         )
+    if reserved := sorted(set(names) & set(dir(RoomTools))):
+        raise ValueError(f"Custom tool names are reserved by RoomTools: {reserved}")
 
 
 class NooaRoomAgent(Agent):
@@ -364,6 +387,16 @@ def recording_usage(agent: NooaRoomAgent) -> Iterator[list[TurnUsage]]:
         yield usages
     finally:
         unsubscribe()
+
+
+async def report_failure(tools: AgentToolsProtocol) -> None:
+    """Report a failed turn without letting the report replace its cause."""
+    try:
+        await tools.send_failure(
+            AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+        )
+    except Exception:
+        logger.exception("Failed to report the NOOA turn failure")
 
 
 def with_system_context(
@@ -449,8 +482,9 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
     def _tool_specs(self) -> list[RoomToolSpec]:
         """Band tools the features allow, then the custom tools.
 
-        A tool the features exclude must never reach the model, since reaching
-        it is enough to execute it.
+        This controls what the model is told about and what ``self.room``
+        offers. It is not an access boundary: generated code runs in-process
+        and can reach the turn's tools object directly.
         """
         definitions = filter_tool_schemas(
             list(iter_tool_definitions(capabilities=self.features.capabilities)),
@@ -517,9 +551,7 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
                     await agent.respond(message)
             except Exception:
                 logger.exception("Room %s: NOOA turn failed", room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
+                await report_failure(tools)
                 raise
             finally:
                 await self.emit_usage(tools, sum(usages, TurnUsage()))

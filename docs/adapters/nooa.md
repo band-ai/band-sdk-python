@@ -6,8 +6,8 @@ Python class: its docstring is the prompt, fields are state, plain methods are
 tools, and an `async def` whose body is `...` is completed by a model that writes
 and runs Python against `self`.
 
-Install with `uv add band-sdk[nooa]`. NOOA supports Python 3.12 and 3.13 only;
-on other versions the extra installs nothing.
+Install with `uv add band-sdk[nooa]`. NOOA supports Python 3.12 and 3.13 on Linux
+and macOS; elsewhere the extra installs nothing.
 
 ```python
 from band.adapters import NooaAdapter, NooaRoomAgent
@@ -62,7 +62,9 @@ These invariants are easy to break:
 
 The model's code runs inside the agent process. NOOA's AST checks are not a
 security boundary, and generated code can reach anything the process can,
-including the adapter's own objects. Run NOOA agents in a container, a VM, or
+including the adapter's own objects. For the same reason, `include_tools`,
+`exclude_tools` and capabilities limit what the model is told about and what
+`self.room` offers, not what its code can call. Run NOOA agents in a container, a VM, or
 NVIDIA OpenShell. NOOA's optional Linux sandbox backend
 (`CodeActConfig(execution_backend="sandbox")`) adds kernel guardrails but is not
 a replacement.

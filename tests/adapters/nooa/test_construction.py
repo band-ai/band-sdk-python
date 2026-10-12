@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from nooa import Agent
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from band.adapters.nooa import NooaAdapter
 from band.testing import FakeAgentTools
@@ -30,6 +30,13 @@ class TestConstruction:
             NooaAdapter(
                 agent=scripted_room_agent(scripted_llm()),
                 additional_tools=[(ClassInput, find_order)],
+            )
+
+    def test_a_custom_tool_may_not_replace_the_turn_binding(self) -> None:
+        with pytest.raises(ValueError, match=r"reserved by RoomTools: \['bound_to'\]"):
+            NooaAdapter(
+                agent=scripted_room_agent(scripted_llm()),
+                additional_tools=[(create_model("bound_to"), find_order)],
             )
 
     async def test_a_message_before_start_fails_loudly(self) -> None:

@@ -53,6 +53,21 @@ class ImageFileTools(FakeAgentTools):
         }
 
 
+class TaggedInput(BaseModel):
+    """Tag an order."""
+
+    order_id: str = Field(description="The order to tag")
+    # A factory that needs the validated data cannot be called just to document it.
+    tags: list[str] = Field(
+        default_factory=lambda data: [data["order_id"]], description="Tags to add"
+    )
+
+
+def tag_order(args: TaggedInput) -> list[str]:
+    """A custom tool whose argument has a factory default."""
+    return args.tags
+
+
 def declining_turns(count: int) -> FakeLLMClient:
     """A model that declines *count* messages in a row."""
     return FakeLLMClient(
@@ -73,6 +88,11 @@ def failing_llm(reason: str) -> FakeLLMClient:
     llm = FakeLLMClient()
     llm.acall = fail  # type: ignore[method-assign]
     return llm
+
+
+async def failing_report(*args: object, **kwargs: object) -> None:
+    """A ``send_failure`` whose platform call itself fails."""
+    raise ConnectionError("platform unreachable")
 
 
 def room_message(

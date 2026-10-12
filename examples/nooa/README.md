@@ -6,7 +6,8 @@ See [docs/adapters/nooa.md](../../docs/adapters/nooa.md) for how the adapter wor
 
 ## Prerequisites
 
-1. **Python 3.12 or 3.13**: NOOA does not support other versions.
+1. **Python 3.12 or 3.13 on Linux or macOS**: NOOA does not support other
+   versions or Windows.
 2. **Dependencies**: `uv sync --extra nooa` (or `pip install band-sdk[nooa]`).
 3. **Band platform**: a registered agent plus `BAND_WS_URL` / `BAND_REST_URL`.
 4. **Model credentials**: these examples use `ANTHROPIC_API_KEY`. NOOA routes

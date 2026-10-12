@@ -14,6 +14,7 @@ from band.testing import FakeAgentTools, events_of_type, failure_reports
 from band.testing.nooa import code_turn, result_turn, room_call, scripted_llm
 from tests.adapters.nooa.kit import (
     failing_llm,
+    failing_report,
     prompt_text,
     run_turn,
     started_adapter,
@@ -114,6 +115,15 @@ class TestRoomTurn:
 
         assert [provider for provider, _ in failure_reports(tools)] == ["nooa"]
         assert tools.chat == []
+
+    async def test_a_failing_failure_report_keeps_the_models_error(
+        self, tools: FakeAgentTools
+    ) -> None:
+        tools.send_failure = failing_report  # type: ignore[method-assign]
+        adapter = await started_adapter(failing_llm("provider down"))
+
+        with pytest.raises(GenerationError, match="provider down"):
+            await run_turn(adapter, tools)
 
     async def test_a_tool_called_outside_a_turn_is_refused(self) -> None:
         spec = platform_tool_spec(TOOL_DEFINITIONS[BandTool.NO_REPLY])
