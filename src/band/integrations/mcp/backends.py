@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Self
 
+from band.core.exceptions import CleanupIncompleteError
 from band.integrations.mcp.engine import (
     RoomToolResolver,
     build_resolved_band_mcp_tool_registrations,
@@ -159,6 +160,9 @@ class SharedBandMCPBackend:
         self._settings = settings
         self._backend: BandMCPBackend | None = None
         self._closed = False
+        # A final close owns its backend until the stop is confirmed.
+        self._closing: BandMCPBackend | None = None
+        self._stopping: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
     async def __aenter__(self) -> Self:
@@ -183,7 +187,7 @@ class SharedBandMCPBackend:
             return self._backend
 
     async def detach(self, *, final: bool) -> BandMCPBackend | None:
-        """Hand the backend over for the caller to stop.
+        """Hand the backend over; from then on the caller owns stopping it.
 
         ``final`` refuses every later ``ensure()`` until ``reopen()``, so a
         message parked on the lock through shutdown can't start a server
@@ -197,13 +201,46 @@ class SharedBandMCPBackend:
 
     async def close(self, *, final: bool) -> None:
         """Detach and stop the backend; the stop runs outside the lock, so a
-        slow one never holds up the next ``ensure()``."""
-        if (backend := await self.detach(final=final)) is not None:
-            await backend.stop()
+        slow one never holds up the next ``ensure()``.
+
+        A final close keeps its backend and stop task until the stop succeeds:
+        a cancelled caller leaves the stop running, a retry joins it, and a
+        retry after a failure stops that same backend again.
+        """
+        if not final:
+            if (backend := await self.detach(final=False)) is not None:
+                await backend.stop()
+            return
+        if (stopping := await self._final_stop()) is not None:
+            await asyncio.shield(stopping)
+
+    async def _final_stop(self) -> asyncio.Task[None] | None:
+        async with self._lock:
+            self._closed = True
+            if self._closing is None:
+                self._closing, self._backend = self._backend, None
+            if self._closing is None:
+                return None
+            if self._stopping is None or self._stopping.done():
+                self._stopping = asyncio.create_task(self._stop_closing(self._closing))
+            return self._stopping
+
+    async def _stop_closing(self, backend: BandMCPBackend) -> None:
+        await backend.stop()
+        self._closing = None
 
     async def reopen(self) -> None:
-        """Accept ``ensure()`` again after a final close (an agent restarting)."""
+        """Accept ``ensure()`` again after a final close (an agent restarting).
+
+        Raises:
+            CleanupIncompleteError: The final close has not stopped its
+                backend yet; ``close(final=True)`` retries it.
+        """
         async with self._lock:
+            if self._closing is not None:
+                raise CleanupIncompleteError(
+                    "Band MCP backend final close is still pending"
+                )
             self._closed = False
 
     async def _start(self, *, replacing: BandMCPBackend | None) -> BandMCPBackend:
