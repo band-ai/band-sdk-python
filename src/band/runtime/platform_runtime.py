@@ -295,6 +295,9 @@ class PlatformRuntime:
         Raises:
             ExceptionGroup: Execution cleanup remains incomplete. The runtime and
                 its single-instance guard stay held; ``stop()`` retries.
+            Exception: The link failed to disconnect. An owned single-instance
+                guard stays held, since the socket may still be up, until a
+                retried ``stop()`` disconnects.
         """
         self._running = False
         graceful = True

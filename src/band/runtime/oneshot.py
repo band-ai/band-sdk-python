@@ -277,6 +277,10 @@ class OneShotInvoker:
         one owned shutdown, and a cancelled caller leaves it running. Only a
         settled shutdown is retried.
 
+        The wait has no time bound, so a hung event holds it open. A host with
+        a deadline wraps the call in ``asyncio.timeout``; the shutdown keeps
+        running, and a later call joins it.
+
         Raises:
             CleanupIncompleteError: Called from an accepted event, which the
                 shutdown waits for; it continues once that event unwinds.
