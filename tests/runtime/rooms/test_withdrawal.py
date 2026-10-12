@@ -63,3 +63,36 @@ class TestWithdrawal:
 
         assert await rooms.destroy("room-1") is True
         assert phase(rooms, "room-1") == Phase.ABSENT
+
+    async def test_a_start_failing_after_withdrawal_is_retired_not_reported(
+        self, rooms: RoomExecutions, start_gate: StartGate, room_cleanup: RoomCleanup
+    ) -> None:
+        start_gate.hold()
+        start_gate.failures = 1
+        admitting = asyncio.create_task(rooms.admit("room-1"))
+        await start_gate.entered.wait()
+
+        rooms.accepting = False
+        destroying = asyncio.create_task(rooms.destroy("room-1"))
+        start_gate.release.set()
+
+        assert await destroying is True
+        assert await admitting is None
+        (failed,) = start_gate.built
+        assert failed.stopped and room_cleanup.rooms == ["room-1"]
+        assert phase(rooms, "room-1") == Phase.ABSENT
+
+    async def test_events_for_a_withdrawn_room_are_not_replayed(
+        self, rooms: RoomExecutions, start_gate: StartGate, room_cleanup: RoomCleanup
+    ) -> None:
+        start_gate.hold()
+        admitting = asyncio.create_task(rooms.admit("room-1"))
+        await start_gate.entered.wait()
+        rooms.hold("room-1", "before leaving")
+        rooms.withdraw("room-1")
+        rooms.request_admission("room-1")
+
+        start_gate.release.set()
+        await admitting
+        await settle(rooms, "room-1")
+        assert [execution.events for execution in start_gate.built] == [[], []]

@@ -40,10 +40,11 @@ class TestAgentRuntimeRoomCleanupOwnership:
         room_cleanup.release.set()
         await leaving
         await asyncio.wait_for(until_admitted(runtime, "room-1"), timeout=1)
-        assert runtime.executions["room-1"] is not old
+        new = runtime.executions["room-1"]
+        assert new is not old
         assert not old.is_running
         assert runtime.unsettled_rooms == []
-        mock_handler.assert_not_awaited()
+        assert [call.args[0] for call in mock_handler.await_args_list] == [new]
 
     @pytest.mark.parametrize("retry", ["reconnect", "event", "rejoin"])
     async def test_failed_cleanup_is_retained_and_retried_by_admission(

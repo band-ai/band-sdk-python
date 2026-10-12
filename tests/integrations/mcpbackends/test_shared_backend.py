@@ -1,45 +1,19 @@
+"""TestSharedBandMCPBackend"""
+
 from __future__ import annotations
 
 import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError
 from band.integrations.mcp import (
-    BandMCPBackendSettings,
     BandMCPBackendStoppedError,
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.runtime.tools import iter_tool_definitions
-from band.testing import FakeAgentTools
-from tests.mcpbackends import FakeBandMCPBackend, backends_created_by, hold_backend
-from tests.mcpclient import crash_backend, served_tool_names, started_backend
-
-ONE_TOOL = next(iter(iter_tool_definitions()))
-
-
-def one_tool_settings() -> BandMCPBackendSettings:
-    """A real server on the default port range."""
-    return BandMCPBackendSettings(
-        tool_definitions=[ONE_TOOL],
-        get_tools=lambda _room_id: None,
-    )
-
-
-class TestBandMcpBackends:
-    @pytest.mark.asyncio
-    async def test_create_http_backend(self) -> None:
-        async with started_backend(
-            room_bound=False,
-            tool_definitions=[ONE_TOOL],
-            get_tools=lambda _room_id: FakeAgentTools(),
-        ) as backend:
-            assert backend.allowed_tools == [f"mcp__band__{ONE_TOOL.name}"]
-            assert backend.local_server.http_url.startswith("http://127.0.0.1:")
-            assert backend.is_running
-
-        assert backend.is_running is False
+from tests.integrations.mcpbackends.kit import ONE_TOOL, one_tool_settings
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
+from tests.mcpclient import crash_backend, served_tool_names
 
 
 class TestSharedBandMCPBackend:
@@ -180,50 +154,3 @@ class TestSharedBandMCPBackend:
                 await shutdown
 
         assert replacement is not stopping
-
-
-class TestFinalCloseOwnership:
-    """A final close owns its backend until the stop actually succeeds."""
-
-    async def test_failed_final_stop_retries_the_same_backend_and_blocks_reopen(
-        self,
-    ) -> None:
-        backend = FakeBandMCPBackend()
-        backend.fail_stops = 1
-        owner = SharedBandMCPBackend(one_tool_settings)
-        await hold_backend(owner, backend)
-
-        with pytest.raises(OSError, match="stop failed"):
-            await owner.close(final=True)
-        with pytest.raises(CleanupIncompleteError):
-            await owner.reopen()
-
-        await owner.close(final=True)
-        assert backend.stop_calls == 2
-        await owner.reopen()
-        replacement = await hold_backend(owner)
-        assert replacement is not backend
-        await owner.close(final=True)
-
-    async def test_cancelled_final_close_leaves_its_stop_owned(self) -> None:
-        stop_started, stop_release = asyncio.Event(), asyncio.Event()
-        backend = FakeBandMCPBackend(
-            stop_started=stop_started, stop_release=stop_release
-        )
-        owner = SharedBandMCPBackend(one_tool_settings)
-        await hold_backend(owner, backend)
-
-        closing = asyncio.create_task(owner.close(final=True))
-        await stop_started.wait()
-        closing.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await closing
-        with pytest.raises(CleanupIncompleteError):
-            await owner.reopen()
-
-        retry = asyncio.create_task(owner.close(final=True))
-        await asyncio.sleep(0)
-        stop_release.set()
-        await retry
-        assert backend.stop_calls == 1
-        await owner.reopen()

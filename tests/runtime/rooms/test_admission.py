@@ -54,3 +54,18 @@ class TestAdmission:
         assert execution.stopped and execution.resyncs == 0
         assert room_cleanup.rooms == ["room-1"]
         assert phase(rooms, "room-1") == Phase.ABSENT
+
+    async def test_events_during_startup_reach_the_execution_in_order(
+        self, rooms: RoomExecutions, start_gate: StartGate
+    ) -> None:
+        start_gate.hold()
+        admitting = asyncio.create_task(rooms.admit("room-1"))
+        await start_gate.entered.wait()
+
+        rooms.hold("room-1", "participant added")
+        rooms.hold("room-1", "message created")
+        start_gate.release.set()
+
+        execution = await admitting
+        assert execution.events == ["participant added", "message created"]
+        assert execution.resyncs == 1

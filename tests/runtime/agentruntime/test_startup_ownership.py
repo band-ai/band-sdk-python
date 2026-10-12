@@ -54,21 +54,20 @@ class TestAgentRuntimeStartupOwnership:
         assert held_runtime.active_sessions == {}
         assert room_cleanup.rooms == ["room-1"]
 
-    async def test_event_before_first_startup_is_recovered_by_resync(
+    async def test_event_before_first_startup_is_delivered_then_resynced(
         self, held_runtime: AgentRuntime, start_gate: StartGate
     ):
         start_gate.hold()
         await held_runtime._on_room_joined("room-1", {})
         await start_gate.entered.wait()
-        await held_runtime._on_room_event(
-            "room-1", make_message_event(room_id="room-1")
-        )
+        early = make_message_event(room_id="room-1")
+        await held_runtime._on_room_event("room-1", early)
 
         start_gate.release.set()
         await settled(held_runtime, "room-1")
         (execution,) = start_gate.built
         assert held_runtime.executions["room-1"] is execution
-        assert execution.events == []
+        assert execution.events == [early]
         assert execution.resyncs == 1
 
     async def test_failed_start_is_not_routed_and_is_retried(

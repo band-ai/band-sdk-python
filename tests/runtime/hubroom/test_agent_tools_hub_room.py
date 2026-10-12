@@ -1,51 +1,11 @@
-"""Tests for HUB_ROOM auto-enable contact tools.
-
-When ContactEventStrategy.HUB_ROOM is active, the runtime auto-enables
-contact-management tool schemas for the hub-room execution path,
-regardless of the adapter's include_contacts preference. This is required
-because the hub-room system prompt instructs the LLM to call contact
-tools — those calls would fail if the schemas were not exposed.
-"""
+"""The hub room exposes contact tools whatever the adapter requests."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-
-from band.core.types import Capability
-from band.runtime.execution import ExecutionContext
-from band.runtime.runtime import AgentRuntime
 from band.runtime.tools import (
     CONTACT_TOOL_NAMES,
-    MEMORY_TOOL_NAMES,
     AgentTools,
-    iter_tool_definitions,
 )
-
-
-@pytest.fixture
-def mock_rest():
-    return MagicMock()
-
-
-class TestIterToolDefinitionsContactsFlag:
-    def test_contacts_included_by_default(self) -> None:
-        defs = iter_tool_definitions()
-        names = {d.name for d in defs}
-        assert CONTACT_TOOL_NAMES.issubset(names)
-
-    def test_contacts_excluded_when_flag_false(self) -> None:
-        defs = iter_tool_definitions(capabilities=frozenset())
-        names = {d.name for d in defs}
-        assert names.isdisjoint(CONTACT_TOOL_NAMES)
-
-    def test_memory_and_contacts_independent(self) -> None:
-        defs = iter_tool_definitions(capabilities=frozenset({Capability.MEMORY}))
-        names = {d.name for d in defs}
-        assert names.isdisjoint(CONTACT_TOOL_NAMES)
-        # Memory tools present
-        assert MEMORY_TOOL_NAMES.issubset(names)
 
 
 class TestAgentToolsHubRoomAutoEnable:
@@ -92,28 +52,3 @@ class TestAgentToolsHubRoomAutoEnable:
         schemas = tools.get_anthropic_tool_schemas()
         names = {s["name"] for s in schemas}
         assert CONTACT_TOOL_NAMES.issubset(names)
-
-
-class TestRuntimeHubRoomWiring:
-    def test_set_hub_room_id_propagates_to_new_executions(self) -> None:
-        """AgentRuntime.set_hub_room_id is forwarded to ExecutionContext."""
-        link = MagicMock()
-        link.rest = MagicMock()
-        on_execute = AsyncMock()
-        runtime = AgentRuntime(link=link, agent_id="agent-1", on_execute=on_execute)
-
-        runtime.set_hub_room_id("hub-room-xyz")
-        assert runtime._hub_room_id == "hub-room-xyz"
-
-        # Build an ExecutionContext the way the runtime admits a room
-        ctx = ExecutionContext(
-            room_id="hub-room-xyz",
-            link=link,
-            on_execute=on_execute,
-            hub_room_id=runtime._hub_room_id,
-        )
-        assert ctx.hub_room_id == "hub-room-xyz"
-
-        # AgentTools.from_context picks it up
-        tools = AgentTools.from_context(ctx)
-        assert tools.is_hub_room is True
