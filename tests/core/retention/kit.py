@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from band.core.retention import (
@@ -15,28 +16,42 @@ from band.core.retention import (
 )
 
 
+@dataclass
+class ManualTimer:
+    when: float
+    callback: Callable[[], None]
+    cancelled: bool = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
 class ManualClock:
+    """Test time: ``advance`` fires the timers it passes, in deadline order."""
+
     def __init__(self) -> None:
         self.time = 0.0
-        self.changed: asyncio.Event | None = None
-        self.waits: asyncio.Queue[None] = asyncio.Queue()
+        self.timers: list[ManualTimer] = []
 
     def now(self) -> float:
         return self.time
 
-    async def wait(self, changed: asyncio.Event, deadline: float | None) -> None:
-        self.changed = changed
-        self.waits.put_nowait(None)
-        if deadline is None or deadline > self.time:
-            await changed.wait()
+    def call_at(self, when: float, callback: Callable[[], None]) -> ManualTimer:
+        timer = ManualTimer(when, callback)
+        self.timers.append(timer)
+        return timer
 
     async def advance(self, seconds: float) -> None:
-        while not self.waits.empty():
-            self.waits.get_nowait()
         self.time += seconds
-        if self.changed is not None:
-            self.changed.set()
-        await self.waits.get()
+        due = sorted(
+            (t for t in self.timers if not t.cancelled and t.when <= self.time),
+            key=lambda t: t.when,
+        )
+        self.timers = [t for t in self.timers if t not in due and not t.cancelled]
+        for timer in due:
+            if not timer.cancelled:
+                timer.callback()
+        await asyncio.sleep(0)
 
 
 @dataclass
@@ -141,3 +156,8 @@ class ResidenceHost:
                 if barrier is not None:
                     barrier.released.set()
         await self.owner.stop()
+
+
+def armed(clock: ManualClock) -> list[float]:
+    """Deadlines of the timers still waiting to fire."""
+    return [timer.when for timer in clock.timers if not timer.cancelled]

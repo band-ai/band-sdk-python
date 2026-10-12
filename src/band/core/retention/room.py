@@ -27,6 +27,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# One operation settles in at most: join a running transition, wait for leases
+# to drain, run the pending release, and once more for a cause requested
+# meanwhile. Becoming resident: join a running transition, then acquire.
+MAX_SETTLE_STEPS = 6
+MAX_RESIDENCY_STEPS = 3
+
+
+def _hold(signal: asyncio.Event, active: bool) -> None:
+    """Keep a level signal set exactly while ``active``."""
+    if active:
+        signal.set()
+    else:
+        signal.clear()
+
 
 class RetainedRoom:
     """Serialize residency transitions without owning provider objects.
@@ -68,7 +82,13 @@ class RetainedRoom:
         self._resume = False
         self._closing = False
         self._work_cancelled = False
-        self._changed = asyncio.Event()
+        # Level signals re-derived on every change: a settling operation waits
+        # for its leases to drain or admission to close, final disposal for
+        # every accepted operation to finish.
+        self._settleable = asyncio.Event()
+        self._settleable.set()
+        self._drained = asyncio.Event()
+        self._drained.set()
         self._transition: asyncio.Task[None] | None = None
         self._disposal: asyncio.Task[None] | None = None
 
@@ -197,32 +217,43 @@ class RetainedRoom:
 
     async def _settle(self) -> None:
         """Finish earlier transitions and pending releases without a lease."""
-        while True:
+        for _ in range(MAX_SETTLE_STEPS):
             self._check_admission()
-            if self._transition is not None and not self._transition.done():
-                await self._join(self._transition)
-            elif self._cause is None:
-                return
-            elif self._leases:
-                await self._changed.wait()
-            else:
-                self._start_release(self._cause, automatic=False)
+            match self._in_flight(), self._cause, self._leases:
+                case asyncio.Task() as transition, _, _:
+                    await self._join(transition)
+                case None, None, _:
+                    return
+                case None, ReleaseCause() as cause, 0:
+                    await self._join(self._start_release(cause, automatic=False))
+                case _:
+                    await self._settleable.wait()
+        raise self._stalled(MAX_SETTLE_STEPS)
 
     async def _ensure_resident(self) -> None:
-        while True:
+        for _ in range(MAX_RESIDENCY_STEPS):
             self._check_admission()
-            if self._transition is not None and not self._transition.done():
-                await self._join(self._transition)
-                continue
-            match self._state:
-                case Residency.RESIDENT:
+            match self._in_flight(), self._state, self._cause:
+                case asyncio.Task() as transition, _, _:
+                    await self._join(transition)
+                case None, Residency.RESIDENT, _:
                     return
-                case Residency.SUSPENDED if self._cause is None:
+                case None, Residency.SUSPENDED, None:
                     await self._join(self._start_acquire(), initiator=True)
                 case _:
                     raise RuntimeError(
                         f"Room {self.room_id} cleanup pending: {self._cause} release"
                     )
+        raise self._stalled(MAX_RESIDENCY_STEPS)
+
+    def _in_flight(self) -> asyncio.Task[None] | None:
+        transition = self._transition
+        return transition if transition is not None and not transition.done() else None
+
+    def _stalled(self, steps: int) -> RuntimeError:
+        """The circuit breaker: transitions kept changing under one operation."""
+        logger.error("Room %s did not settle within %d steps", self.room_id, steps)
+        return RuntimeError(f"Room {self.room_id} did not settle within {steps} steps")
 
     async def _join(
         self, transition: asyncio.Task[None], *, initiator: bool = False
@@ -419,9 +450,10 @@ class RetainedRoom:
                 return False
 
     def _notify(self) -> None:
-        self._changed.set()
-        self._changed = asyncio.Event()
-        self._owner.changed.set()
+        settleable = not self._leases or self._closing or self._owner.stopping
+        _hold(self._settleable, settleable)
+        _hold(self._drained, not self._accepted)
+        self._owner.reschedule()
 
     def _start_idle_release(self) -> None:
         self._start_release(ReleaseCause.IDLE, automatic=True)
@@ -496,5 +528,4 @@ class RetainedRoom:
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
                 self._transition.cancel()
-        while self._accepted:
-            await self._changed.wait()
+        await self._drained.wait()

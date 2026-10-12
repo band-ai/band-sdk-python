@@ -116,3 +116,32 @@ class TestDisposal:
         expected = 2 if failure == "release" else 1
         assert resident.releases == [ReleaseCause.FINAL] * expected
         assert resident.identity is None
+
+    async def test_an_operation_waiting_on_a_lease_learns_of_disposal_at_once(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        holding = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def hold_a_lease() -> None:
+            async with resident.room.use():
+                holding.set()
+                await finish.wait()
+
+        holder = asyncio.create_task(hold_a_lease())
+        await holding.wait()
+        resident.room.recover(
+            generation=resident.room.snapshot.generation, reason="crashed"
+        )
+        waiter = asyncio.create_task(resident.turn())
+        await asyncio.sleep(0)
+
+        disposal = asyncio.create_task(resident.room.dispose())
+        with pytest.raises(RuntimeError, match="is closing"):
+            await asyncio.wait_for(waiter, timeout=1)
+        assert not holder.done()
+
+        finish.set()
+        await holder
+        await disposal

@@ -1,26 +1,27 @@
-"""The time source idle deadlines are measured against."""
+"""The time source idle deadlines are measured and fired against."""
 
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import Callable
 from typing import Protocol
+
+
+class Cancellable(Protocol):
+    def cancel(self) -> None: ...
 
 
 class RetentionClock(Protocol):
     def now(self) -> float: ...
 
-    async def wait(self, changed: asyncio.Event, deadline: float | None) -> None: ...
+    def call_at(self, when: float, callback: Callable[[], None]) -> Cancellable: ...
 
 
 class MonotonicClock:
-    def now(self) -> float:
-        return time.monotonic()
+    """The running event loop's clock, so ``now`` and ``call_at`` agree."""
 
-    async def wait(self, changed: asyncio.Event, deadline: float | None) -> None:
-        timeout = None if deadline is None else max(0, deadline - self.now())
-        try:
-            async with asyncio.timeout(timeout):
-                await changed.wait()
-        except TimeoutError:
-            pass
+    def now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def call_at(self, when: float, callback: Callable[[], None]) -> Cancellable:
+        return asyncio.get_running_loop().call_at(when, callback)
