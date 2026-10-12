@@ -27,6 +27,30 @@ existing leading `#` shorthand, including board numbers and UUIDs. This lexical
 check does not establish resource existence. Direct REST client calls remain
 responsible for their own input validation.
 
+## Tool result bytes
+
+`serialize_tool_result` converts bytes in model results (including lists of
+models) to padded **URL-safe base64**. This shared boundary affects every adapter
+that consumes those results. UTF-8 bytes are encoded too: `b"hello"` becomes
+`"aGVsbG8="`; return `str` when the result is readable text. Plain dicts and other
+non-model values retain their types at this boundary.
+
+`tool_result_text`, used by Parlant and MCP, also encodes bytes in plain values
+and nested models. Decode with `base64.urlsafe_b64decode`, rather than a decoder
+that only accepts the standard `+`/`/` alphabet. Image content blocks have their
+own protocol encoding and do not use this text serialization rule.
+
+```python
+import json
+from base64 import urlsafe_b64decode
+
+from band.runtime.tools import tool_result_text
+
+encoded = json.loads(tool_result_text({"payload": b"\xfb\xff"}))["payload"]
+assert encoded == "-_8="
+assert urlsafe_b64decode(encoded) == b"\xfb\xff"
+```
+
 ## Lifecycle acceptance
 
 `MessageLifecycle` uses the public `agent_api_messages.with_raw_response` API

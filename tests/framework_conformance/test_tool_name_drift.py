@@ -252,9 +252,9 @@ class TestGeminiToolDrift:
 
 
 class TestParlantToolDrift:
-    """Parlant integration (integrations/parlant/tools.py) — chat tools only."""
+    """Parlant integration (integrations/parlant/bandtools/chat.py) — chat tools only."""
 
-    _FILE = SRC_ROOT / "integrations" / "parlant" / "tools.py"
+    _FILE = SRC_ROOT / "integrations" / "parlant" / "bandtools" / "chat.py"
 
     def test_all_chat_tools_registered(self):
         """Every chat tool has a Parlant tool function."""
@@ -263,7 +263,7 @@ class TestParlantToolDrift:
         missing = CHAT_TOOL_NAMES - found
         assert not missing, (
             f"Parlant integration is missing tool functions for: {sorted(missing)}. "
-            f"Add tool implementations in create_parlant_tools()."
+            f"Add tool implementations in {self._FILE.relative_to(SRC_ROOT)}."
         )
 
 

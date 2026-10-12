@@ -54,6 +54,20 @@ class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
 
 
+class InvalidToolArgumentsError(BandError, ValueError):
+    """A tool call's arguments failed its input model. Actionable by the LLM,
+    which reads the message and retries; a ``ValueError`` for callers that
+    already catch one."""
+
+
+class InputNotAccepted(BandError):
+    """This attempt provably started no provider execution.
+
+    Transport failures, timeouts and uncertain acceptance do not qualify.
+    The host retains the input without reporting a failed turn.
+    """
+
+
 class ProviderRunError(BandError):
     """A provider or framework returned a failed run as data instead of raising.
     Actionable by the adapter: raise it inside the turn so the turn is reported

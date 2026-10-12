@@ -33,14 +33,12 @@ import pytest
 from tests.paths import EXAMPLES_ROOT, REPO_ROOT
 
 # Adapter constructors that must not take Band credentials in examples/docs.
-# ParlantAdapter is included for its retired additional_tools parameter.
 FORBIDDEN_CONSTRUCTOR_KWARGS: dict[str, frozenset[str]] = {
     "SlackAdapter": frozenset({"api_key", "rest_url"}),
     "A2AGatewayAdapter": frozenset({"api_key", "rest_url"}),
     "BandACPServerAdapter": frozenset({"api_key", "rest_url"}),
     "ACPClientAdapter": frozenset({"rest_url"}),
     "CopilotACPAdapterConfig": frozenset({"rest_url"}),
-    "ParlantAdapter": frozenset({"additional_tools"}),
 }
 
 # Agent.from_config()/Agent.create() resolve BAND_WS_URL/BAND_REST_URL

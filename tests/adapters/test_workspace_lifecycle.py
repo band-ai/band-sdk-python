@@ -169,6 +169,19 @@ async def host(
                 await child.close()
 
 
+async def test_completed_turns_retain_children_until_explicit_cleanup(
+    host: WorkspaceHost,
+) -> None:
+    host.shared = False
+    for room in ("room-a", "room-b", "room-c"):
+        assert await host.send(room, write_instruction(room)) == [room]
+    assert host.exited == [False, False, False]
+    assert await host.send("room-a", PeerCommand.READ) == ["Read: room-a"]
+    assert host.exited == [False, False, False]
+    await host.adapter.cleanup_all()
+    assert host.exited == [True, True, True]
+
+
 async def test_failed_cleanup_retains_ownership_and_blocks_replacement(
     host: WorkspaceHost,
 ) -> None:

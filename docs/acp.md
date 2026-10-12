@@ -4,6 +4,9 @@ Facts about the ACP integration that span modules or that the code cannot say fo
 itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
 the server side is `ACPServer` + `BandACPServerAdapter`.
 
+Client-side automatic idle release is unavailable pending provider-specific
+safety qualification; see [idle room resource retention](idle-room-release.md).
+
 ## Configuration
 
 `ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig`,
@@ -60,9 +63,18 @@ assert adapter.config.command == ("codex-acp",)
   MCP servers remain outside SDK registration control.
 - **Approved permissions are silent.** Only a denied request posts a synthetic
   `tool_call`/`tool_result` pair, and only when `Emit.TOOL_CALLS` is on.
-- **Replay happens once**, only for a freshly minted session (a failed `session/load`
-  counts), under a nonce'd boundary marker so a replayed message cannot spoof it. History
-  stops strictly before the triggering message (`messages_before`).
+- **Definitively rejected prompts stay pending.** The exact OMP JSON-RPC busy
+  response (`-32003` with `data.reason == "session_busy"`) raises
+  `InputNotAccepted` after one attempt. It preserves the room's runtime and
+  session without cancellation or a failure event; the shared runtime schedules
+  later attempts. Other errors retain normal failure cleanup. Session-scoped
+  external notifications cannot complete the rejected request: their successful
+  effects commit only after a prompt closes successfully.
+- **Bootstrap commits after successful prompt completion.** A rejection keeps
+  room context owed. Fresh sessions also keep transcript replay owed; restored
+  sessions already hold their history and receive only Band context. Replay uses
+  a nonce'd boundary marker so history cannot spoof the live message, and stops
+  strictly before the triggering message (`messages_before`).
 
 ## Upgrading from SDK 4.x to 5.x
 
@@ -114,7 +126,11 @@ failure fails that room turn visibly instead of falling back.
   `OMP_MODEL` env variable. Set `api_key` with it and the adapter passes the key in the env
   variable that model's provider needs.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
-  room participant with `/cursor <word> <token>`. Cursor omits the session id on its
+  room participant with `/cursor <word> <token>`. Band's own tools, including
+  `additional_tools`, are approved once per call in every `approval_mode` during
+  an active turn. If Cursor offers no allow-once option, the configured approval
+  policy applies instead. Late Band permission requests are refused after the
+  turn closes or is interrupted. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
   session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
   replies post through `send_notice`, so they never count as the model's reply, and a

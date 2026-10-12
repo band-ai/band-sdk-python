@@ -13,6 +13,7 @@ from band.adapters.opencode.approvals import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_REQUESTED_TEMPLATE,
 )
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.core.types import (
     Capability,
@@ -24,10 +25,10 @@ from band.runtime.tools import BandTool
 from band.testing import (
     MISSING_REPLY_FAILURE,
     FakeAgentTools,
-    events_of_type,
     failure_reports,
     reported_failures,
 )
+from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     BandMCPCalls,
@@ -118,7 +119,8 @@ async def test_prompt_submission_failure_does_not_leave_room_stuck(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     with pytest.raises(httpx.HTTPStatusError):
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content="first try"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -128,7 +130,8 @@ async def test_prompt_submission_failure_does_not_leave_room_stuck(
             room_id="room-1",
         )
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="second try"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -201,7 +204,8 @@ async def test_reports_tool_events_when_enabled() -> None:
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -263,7 +267,8 @@ async def test_reports_tool_call_args_from_first_non_pending_frame(
     adapter = make_adapter(fake_client, emit=Emit.TOOL_CALLS)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -304,7 +309,8 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting(
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -341,7 +347,8 @@ async def test_reports_is_error_on_a_failed_tool_result(make_adapter, tools) -> 
     adapter = make_adapter(fake_client, emit=Emit.TOOL_CALLS)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -374,7 +381,7 @@ async def test_does_not_echo_user_text_parts_as_assistant_output(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     with pytest.raises(TurnResultAlreadyReported):
-        await adapter.on_event(agent_input("user prompt text", tools))
+        await deliver_event(adapter, agent_input("user prompt text", tools))
 
     assert tools.messages_sent == []
     assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
@@ -397,7 +404,7 @@ async def test_a_reply_that_cannot_be_posted_is_reported_once(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_event(agent_input("ping", tools))
+    await deliver_event(adapter, agent_input("ping", tools))
 
     assert [provider for provider, _ in failure_reports(tools)] == ["opencode"]
 
@@ -434,7 +441,8 @@ async def test_ignores_reasoning_deltas_and_relays_final_text_only(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="Reply with exactly: pong"),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -454,7 +462,8 @@ async def test_session_error_emits_error_event(make_adapter, tools) -> None:
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -482,7 +491,8 @@ async def test_session_error_abandons_a_pending_permission(make_adapter, tools) 
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     turn_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -526,7 +536,8 @@ async def test_session_idle_abandons_a_pending_permission(make_adapter, tools) -
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     turn_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -562,7 +573,8 @@ async def test_session_error_abandons_a_pending_question(make_adapter, tools) ->
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     turn_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -600,7 +612,8 @@ async def test_session_idle_abandons_a_pending_question(make_adapter, tools) -> 
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     turn_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -658,7 +671,8 @@ async def test_session_idle_does_not_abort_an_in_flight_approval(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     turn_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -675,7 +689,8 @@ async def test_session_idle_does_not_abort_an_in_flight_approval(
     await turn_task
 
     reply_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="approve perm-1"),
             tools_protocol(tools),
             OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -708,7 +723,8 @@ async def test_stale_approval_id_survives_a_later_turn(make_adapter, tools) -> N
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="run it"),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -717,7 +733,8 @@ async def test_stale_approval_id_survives_a_later_turn(make_adapter, tools) -> N
         is_session_bootstrap=True,
         room_id="room-1",
     )
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve perm-1"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -732,7 +749,8 @@ async def test_stale_approval_id_survives_a_later_turn(make_adapter, tools) -> N
         lambda: room_state.turn is not None and room_state.turn.turn_future.done()
     )
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="next turn"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -743,7 +761,8 @@ async def test_stale_approval_id_survives_a_later_turn(make_adapter, tools) -> N
     )
     await wait_for(lambda: len(fake_client.prompt_calls) == 2)
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve perm-1"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -777,7 +796,8 @@ async def test_new_turn_does_not_inherit_previous_human_wait(
     )
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="run it"),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -787,7 +807,8 @@ async def test_new_turn_does_not_inherit_previous_human_wait(
         room_id="room-1",
     )
     await asyncio.sleep(0.15)
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve perm-1"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -802,7 +823,8 @@ async def test_new_turn_does_not_inherit_previous_human_wait(
         lambda: room_state.turn is not None and room_state.turn.turn_future.done()
     )
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="next turn"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -833,7 +855,8 @@ async def test_cleanup_cancel_during_abandon_still_tears_down(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -865,7 +888,8 @@ async def test_turn_timeout_aborts_session_and_emits_error() -> None:
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -916,7 +940,8 @@ async def test_emits_turn_usage_folding_reasoning_into_output(
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -955,7 +980,8 @@ async def test_malformed_events_do_not_kill_event_loop(make_adapter, tools) -> N
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -1050,7 +1076,8 @@ async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
     # No hang: on_message returns once the relay releases the turn wait,
     # even though the mention-less room post was rejected.
     await asyncio.wait_for(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(sender_id="", sender_name=""),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -1089,7 +1116,8 @@ async def test_turn_completes_when_fallback_reply_send_rejected(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await asyncio.wait_for(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(sender_id="", sender_name=""),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -1164,7 +1192,8 @@ async def test_approval_prompts_never_stand_in_for_the_models_reply(
 
     # Returns once the permission ask releases the turn wait.
     await run_single_turn(adapter, tools, content="run it")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve req-1"),
         tools_protocol(FakeAgentTools()),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -1205,7 +1234,8 @@ async def test_approval_reply_is_settled_and_leaves_the_turn_its_tools(
     approver_tools = FakeAgentTools()
 
     await run_single_turn(adapter, tools, content="run it")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve req-1"),
         tools_protocol(approver_tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -1221,12 +1251,10 @@ async def test_approval_reply_is_settled_and_leaves_the_turn_its_tools(
     assert tools.messages_sent[-1]["content"] == "Done."
 
 
-async def test_busy_message_is_settled_and_leaves_the_turn_its_tools(
+async def test_busy_message_is_unaccepted_and_leaves_the_turn_its_tools(
     make_adapter, tools, mcp_backend: BandMCPCalls
 ) -> None:
-    """A message arriving mid-turn only gets the busy notice, which settles
-    its own turn; the running turn's band tool calls still resolve to the
-    turn's tools."""
+    """Unaccepted work cannot rebind the running turn's tools."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_message_updated("sess-1", "msg-1")]]
     )
@@ -1235,15 +1263,17 @@ async def test_busy_message_is_settled_and_leaves_the_turn_its_tools(
     running_turn = asyncio.create_task(run_single_turn(adapter, tools))
     await wait_for(lambda: len(fake_client.prompt_calls) == 1)
 
-    await adapter.on_message(
-        make_platform_message(content="are you done?"),
-        tools_protocol(busy_tools),
-        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=False,
-        room_id="room-1",
-    )
+    with pytest.raises(InputNotAccepted):
+        await deliver_message(
+            adapter,
+            make_platform_message(content="are you done?"),
+            tools_protocol(busy_tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
     await fake_client.push_event(
         mcp_backend.band_tool_call(
             BandTool.SEND_MESSAGE, {"content": "Done.", "mentions": ["@alice"]}
@@ -1252,10 +1282,8 @@ async def test_busy_message_is_settled_and_leaves_the_turn_its_tools(
     await fake_client.push_event(event_session_idle("sess-1"))
     await running_turn
 
-    assert busy_tools.turn.complete
-    assert [e["content"] for e in events_of_type(busy_tools, "error")] == [
-        "OpenCode is still processing the previous request in this room."
-    ]
+    assert not busy_tools.turn.complete
+    assert busy_tools.events_sent == []
     assert tools.chat == ["Done."]
 
 
@@ -1345,7 +1373,8 @@ async def test_manual_approval_pauses_the_turn_timeout(make_adapter, tools) -> N
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     # Returns once the permission ask releases the turn wait.
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="run it"),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -1360,7 +1389,8 @@ async def test_manual_approval_pauses_the_turn_timeout(make_adapter, tools) -> N
     assert fake_client.aborted_sessions == []
 
     # The human approves via a room reply; the held turn completes and delivers.
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve req-1"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -1420,7 +1450,8 @@ async def test_approval_wait_does_not_shorten_the_resumed_turn(
     adapter = make_adapter(fake_client, config=config)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="run it"),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -1431,7 +1462,8 @@ async def test_approval_wait_does_not_shorten_the_resumed_turn(
     )
 
     await asyncio.sleep(0.25)
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve req-1"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -1465,7 +1497,8 @@ async def test_session_saved_before_registration_tracking_is_reused(tools) -> No
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-legacy", room_id="room-1"),
