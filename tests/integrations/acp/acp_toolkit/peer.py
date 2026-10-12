@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from acp import run_agent
-from acp.schema import InitializeResponse
+from acp.schema import (
+    InitializeResponse,
+    LoadSessionResponse,
+    NewSessionResponse,
+    SetSessionConfigOptionResponse,
+)
 
 from band.integrations.acp.client_adapter import ACPClientAdapterConfig
 from band.runtime.tools import BandTool
@@ -29,6 +34,9 @@ class ExitStage(StrEnum):
     INITIALIZE_WAIT = "initialize-wait"
     PROMPT = "prompt"
     PROTOCOL_ERROR = "protocol-error"
+    NEW_SESSION_PROTOCOL_ERROR = "new-session-protocol-error"
+    LOAD_SESSION_PROTOCOL_ERROR = "load-session-protocol-error"
+    CONFIG_PROTOCOL_ERROR = "config-protocol-error"
     STDOUT_EOF = "stdout-eof"
     EOF = "eof"
 
@@ -58,7 +66,7 @@ class StdioPeer(FakeACPAgent):
     def __init__(
         self, stage: ExitStage, code: int, lines: list[str], crash_marker: Path | None
     ) -> None:
-        super().__init__()
+        super().__init__(supports_session_load=True)
         self.stage = stage
         self.code = code
         self.lines = lines
@@ -82,6 +90,32 @@ class StdioPeer(FakeACPAgent):
                 sys.stderr.flush()
                 await asyncio.Future[None]()
         return await super().initialize(protocol_version, client_capabilities, **kwargs)
+
+    async def fail_protocol(self) -> None:
+        sys.stdout.write("[]\n")
+        sys.stdout.flush()
+        await asyncio.Future[None]()
+
+    async def new_session(
+        self, cwd: str, mcp_servers: Any = None, **kwargs: Any
+    ) -> NewSessionResponse:
+        if self.stage == ExitStage.NEW_SESSION_PROTOCOL_ERROR:
+            await self.fail_protocol()
+        return await super().new_session(cwd, mcp_servers, **kwargs)
+
+    async def load_session(
+        self, cwd: str, session_id: str, mcp_servers: Any = None, **kwargs: Any
+    ) -> LoadSessionResponse:
+        if self.stage == ExitStage.LOAD_SESSION_PROTOCOL_ERROR:
+            await self.fail_protocol()
+        return await super().load_session(cwd, session_id, mcp_servers, **kwargs)
+
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: str, **kwargs: Any
+    ) -> SetSessionConfigOptionResponse:
+        if self.stage == ExitStage.CONFIG_PROTOCOL_ERROR:
+            await self.fail_protocol()
+        return await super().set_config_option(config_id, session_id, value, **kwargs)
 
     async def exit_on_prompt(self, agent: FakeACPAgent, session_id: str) -> None:
         del agent

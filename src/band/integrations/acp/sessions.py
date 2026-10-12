@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import cast
+from collections.abc import Awaitable
+from typing import TypeVar, cast
 
 from acp import text_block
 from acp.exceptions import RequestError
@@ -28,6 +29,7 @@ from band.integrations.mcp.backends import BandMCPTransport
 
 logger = logging.getLogger(__name__)
 ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
+Response = TypeVar("Response")
 
 
 class ACPSessionOperations(ABC):
@@ -56,7 +58,7 @@ class ACPSessionOperations(ABC):
         conn = await self.ensure_connection(can_respawn=False)
         response = cast(
             NewSessionResponse,
-            await conn.new_session(cwd=cwd, mcp_servers=mcp_servers),
+            await self._request(conn.new_session(cwd=cwd, mcp_servers=mcp_servers)),
         )
         self._record_config_options(response.session_id, response)
         return response
@@ -90,10 +92,12 @@ class ACPSessionOperations(ABC):
         conn = await self.ensure_connection(can_respawn=False)
         try:
             response = await asyncio.wait_for(
-                conn.load_session(
-                    cwd=cwd,
-                    session_id=session_id,
-                    mcp_servers=mcp_servers,
+                self._request(
+                    conn.load_session(
+                        cwd=cwd,
+                        session_id=session_id,
+                        mcp_servers=mcp_servers,
+                    )
                 ),
                 timeout=ACP_SESSION_LOAD_TIMEOUT_SECONDS,
             )
@@ -129,10 +133,12 @@ class ACPSessionOperations(ABC):
     ) -> SetSessionConfigOptionResponse | None:
         """Set one advertised select option and return the refreshed catalog."""
         conn = await self.ensure_connection(can_respawn=False)
-        response = await conn.set_config_option(
-            session_id=session_id,
-            config_id=config_id,
-            value=value,
+        response = await self._request(
+            conn.set_config_option(
+                session_id=session_id,
+                config_id=config_id,
+                value=value,
+            )
         )
         self._record_config_options(session_id, response)
         return response
@@ -160,7 +166,7 @@ class ACPSessionOperations(ABC):
         if not self._agent_supports_session_close:
             return
         conn = await self.ensure_connection(can_respawn=False)
-        await conn.close_session(session_id)
+        await self._request(conn.close_session(session_id))
 
     async def prompt(
         self,
@@ -173,12 +179,11 @@ class ACPSessionOperations(ABC):
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
         try:
-            await conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+            await self._request(
+                conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+            )
             if self._client is not None:
                 await self._client.flush(session_id)
-        except ConnectionError:
-            self._connection_failed = True
-            raise
         finally:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
@@ -187,7 +192,14 @@ class ACPSessionOperations(ABC):
     async def cancel_turn(self, session_id: str) -> None:
         """Tell the agent to stop a room's in-flight prompt."""
         conn = await self.ensure_connection(can_respawn=False)
-        await conn.cancel(session_id)
+        await self._request(conn.cancel(session_id))
+
+    async def _request(self, operation: Awaitable[Response]) -> Response:
+        try:
+            return await operation
+        except ConnectionError:
+            self._connection_failed = True
+            raise
 
     def reset_session(self, session_id: str) -> None:
         if self._client is not None:

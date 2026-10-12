@@ -15,7 +15,12 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from acp.helpers import start_tool_call, update_tool_call
-from acp.schema import AllowedOutcome, PermissionOption, ToolCallUpdate
+from acp.schema import (
+    AllowedOutcome,
+    NewSessionResponse,
+    PermissionOption,
+    ToolCallUpdate,
+)
 from pydantic import BaseModel, create_model
 
 from band.adapters.cursor_acp import (
@@ -37,7 +42,7 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
 from band.runtime.tools.types import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
 from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
     launch_for,
@@ -588,7 +593,9 @@ class TestCursorACPAdapterDecisions:
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
-            tool_call=ACPToolCall("reply", BandTool.SEND_MESSAGE, {}),
+            tool_call=ACPToolCall(
+                "reply", BandTool.SEND_MESSAGE, {}, mcp_server=BAND_MCP_SERVER_NAME
+            ),
             options=(
                 PermissionOption(
                     optionId="once", name="Allow once", kind=ALLOW_ONCE_KIND
@@ -630,6 +637,7 @@ class TestCursorACPAdapterDecisions:
                     "band-band_send_message: band_send_message"
                 ),
                 {},
+                mcp_server=BAND_MCP_SERVER_NAME,
             ),
             options=(
                 PermissionOption(
@@ -1604,3 +1612,87 @@ async def test_a_cleanup_cancelled_mid_stop_still_releases_the_session() -> None
         cleanup.cancel()
         await asyncio.gather(cleanup, return_exceptions=True)
         assert released not in adapter._cursor_profile._todos_by_session
+
+
+class SetupGatedAgent(FakeACPAgent):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setup = Gate()
+
+    async def new_session(
+        self, cwd: str, mcp_servers: Any = None, **kwargs: Any
+    ) -> NewSessionResponse:
+        self.setup.received.set()
+        await self.setup.release.wait()
+        return await super().new_session(cwd, mcp_servers, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_interrupt_during_session_setup_prevents_prompt(
+    cursor_room: Callable[..., Awaitable[CursorRoom]],
+) -> None:
+    agent = SetupGatedAgent()
+    room = await cursor_room(agent)
+    sending = asyncio.create_task(room.send("start"))
+    try:
+        await agent.setup.received.wait()
+        await room.adapter.on_interrupt("room-1", ControlMode.STOP)
+        agent.setup.release.set()
+        await asyncio.gather(sending, return_exceptions=True)
+        await room.turns_finished()
+    finally:
+        agent.setup.release.set()
+        await asyncio.gather(sending, return_exceptions=True)
+    assert agent.prompts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approval_mode", ["manual", "auto_decline"])
+async def test_registered_native_title_uses_configured_permission_policy(
+    cursor_approval_room: Callable[[str, str], Awaitable[CursorRoom]],
+    approval_mode: str,
+) -> None:
+    room = await cursor_approval_room("echo", approval_mode)
+    tools = await room.send("run native echo")
+    await room.turns_finished()
+    assert room.agent.approved is False
+    assert len(permission_requests(tools)) == (1 if approval_mode == "manual" else 0)
+
+
+@pytest.mark.asyncio
+async def test_foreign_mcp_identity_cannot_use_a_band_display_title(
+    cursor_room: Callable[..., Awaitable[CursorRoom]],
+) -> None:
+    agent = FakeACPAgent()
+
+    @agent.on_prompt
+    async def ask_foreign_permission(peer: FakeACPAgent, session_id: str) -> None:
+        response = await peer.ask_permission(
+            session_id,
+            ToolCallUpdate(
+                toolCallId="foreign",
+                title="band-band_send_message: band_send_message",
+                rawInput={
+                    "providerIdentifier": "foreign",
+                    "toolName": BandTool.SEND_MESSAGE,
+                    "args": {},
+                },
+            ),
+            [
+                PermissionOption(
+                    optionId="once", name="Allow once", kind=ALLOW_ONCE_KIND
+                )
+            ],
+        )
+        peer.approved = isinstance(response.outcome, AllowedOutcome)
+        await peer.call_mcp_tool(
+            session_id=session_id,
+            server=BAND_MCP_SERVER_NAME,
+            tool_name=BandTool.SEND_MESSAGE,
+            arguments={"content": "finished", "mentions": ["@user-1"]},
+        )
+
+    room = await cursor_room(agent, approval_mode="auto_decline")
+    await room.send("run")
+    await room.turns_finished()
+    assert agent.approved is False

@@ -40,6 +40,7 @@ from band.integrations.acp.cursor import (
     ROOM_COMMAND,
     CursorCommandWord,
     canonicalize_cursor_tool_name,
+    is_cursor_band_tool,
 )
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -56,6 +57,7 @@ from band.runtime.decisions import (
     Timeout,
 )
 from band.runtime.formatters import strip_leading_mentions
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,7 @@ class CursorTurn:
     requester_id: str | None
     release: asyncio.Future[None]
     session_id: str | None = None
+    closed: bool = False
     # Cursor sends parallel tool calls' permission requests together and does
     # not apply an "allow always" to one already outstanding, so the room is
     # asked one at a time and a granted tool settles its queued repeats.
@@ -311,6 +314,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         )
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
+            if turn.closed:
+                raise asyncio.CancelledError
             turn.session_id = session_id
             self._cursor_profile.bind_session(session_id)
         return session_id, created
@@ -327,7 +332,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         # once the runtime this stops out from under it closes the connection.
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
+            turn.closed = True
             turn.session_id = None
+            self._cursor_profile.bind_session(None)
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id, expected_runtime=expected_runtime)
 
@@ -344,7 +351,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         missing reply."""
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
+            turn.closed = True
             turn.session_id = None
+            self._cursor_profile.bind_session(None)
             turn.tools.turn.settle()
         self._cancel_room_decisions(room_id)
 
@@ -356,7 +365,15 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
-        if request.tool_call.name in self._own_tool_names:
+        call = request.tool_call
+        is_band = (
+            call.mcp_server == BAND_MCP_SERVER_NAME
+            and call.name in self._own_tool_names
+        ) or (
+            call.mcp_server is None
+            and is_cursor_band_tool(call.title or "", self._own_tool_names)
+        )
+        if is_band:
             if self._active_turn_for(request.room_id, request.session_id) is None:
                 return None
             once = option_id_of_kind(request.options, ALLOW_ONCE_KIND)
@@ -661,7 +678,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn = self._active_turn
         return (
             turn
-            if turn and (turn.room_id, turn.session_id) == (room_id, session_id)
+            if turn
+            and not turn.closed
+            and (turn.room_id, turn.session_id) == (room_id, session_id)
             else None
         )
 

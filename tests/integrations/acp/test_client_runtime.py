@@ -1397,3 +1397,40 @@ class TestTCPSpawnProcess:
                     raise RuntimeError("boom")
 
             assert captured["writer"].is_closing()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage",
+    [
+        ExitStage.NEW_SESSION_PROTOCOL_ERROR,
+        ExitStage.LOAD_SESSION_PROTOCOL_ERROR,
+        ExitStage.CONFIG_PROTOCOL_ERROR,
+    ],
+)
+async def test_session_operation_protocol_failure_retains_crash_diagnostics(
+    stdio_runtime: StdioRuntimeFactory,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    stage: ExitStage,
+) -> None:
+    lines = ["fatal session operation"]
+    with caplog.at_level(logging.WARNING, logger=RUNTIME_LOGGER):
+        async with stdio_runtime(stage, lines) as runtime:
+            await runtime.start()
+            with pytest.raises(ConnectionError, match="Connection closed"):
+                match stage:
+                    case ExitStage.NEW_SESSION_PROTOCOL_ERROR:
+                        await runtime.create_session(cwd=str(tmp_path), mcp_servers=[])
+                    case ExitStage.LOAD_SESSION_PROTOCOL_ERROR:
+                        await runtime.load_session(
+                            cwd=str(tmp_path), session_id="persisted", mcp_servers=[]
+                        )
+                    case ExitStage.CONFIG_PROTOCOL_ERROR:
+                        session_id = await runtime.create_session(
+                            cwd=str(tmp_path), mcp_servers=[]
+                        )
+                        await runtime.set_config_option(
+                            session_id=session_id, config_id="model", value="model"
+                        )
+    assert_crash_report(caplog, lines)
