@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolReturnPart,
@@ -78,21 +79,32 @@ logger = logging.getLogger(__name__)
 _PROVIDER = "pydantic_ai"
 
 
+def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
+    """A current-run decline ends the loop when every tool result in its batch succeeded."""
+    declined = False
+    for part in request.parts:
+        if isinstance(part, RetryPromptPart):
+            return False
+        if not isinstance(part, ToolReturnPart):
+            continue
+        if part.outcome != "success" or is_failed_tool_output(part.content):
+            return False
+        if part.tool_name == BandTool.NO_REPLY:
+            declined = True
+    return declined
+
+
 def _finish_explicit_decline(
     ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
 ) -> ModelRequestContext:
-    """Finish after the current run's successful decline and complete tool batch."""
+    """Finish after a successful current-run decline whose tool batch succeeded."""
     if not request_context.messages:
         return request_context
     request = request_context.messages[-1]
-    if not isinstance(request, ModelRequest) or request.run_id != ctx.run_id:
-        return request_context
-    if any(
-        isinstance(part, ToolReturnPart)
-        and part.tool_name == BandTool.NO_REPLY
-        and part.outcome == "success"
-        and not is_failed_tool_output(part.content)
-        for part in request.parts
+    if (
+        isinstance(request, ModelRequest)
+        and request.run_id == ctx.run_id
+        and _explicit_decline_is_terminal(request)
     ):
         raise SkipModelRequest(ModelResponse(parts=[]))
     return request_context

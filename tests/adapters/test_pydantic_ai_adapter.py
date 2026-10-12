@@ -1017,6 +1017,86 @@ class TestExplicitDecline:
         assert reported_failures(tools) == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure", "shown"),
+        [
+            ("raised", "Error executing band_send_message: post failed"),
+            ("returned_failure", "{'ok': False}"),
+            ("invalid_arguments", "Invalid arguments for band_send_message"),
+        ],
+    )
+    async def test_a_failed_sibling_keeps_the_decline_batch_open(
+        self, sample_message: PlatformMessage, failure: str, shown: str
+    ) -> None:
+        """A successful decline leaves the loop running when another tool in the same response failed."""
+        tools = FakeAgentTools()
+        if failure != "invalid_arguments":
+            send_message = tools.send_message
+
+            async def fail_named_post(
+                content: str,
+                mentions: list[str] | list[dict[str, str]] | None = None,
+            ) -> Any:
+                if content != "Will fail":
+                    return await send_message(content, mentions)
+                if failure == "raised":
+                    raise RuntimeError("post failed")
+                return {"ok": False}
+
+            tools.send_message = fail_named_post
+
+        requests = 0
+        followup: list[ModelMessage] = []
+        send_arguments: dict[str, Any] = (
+            {"content": "Will fail", "mentions": "alice"}
+            if failure == "invalid_arguments"
+            else _reply_arguments(sample_message, "Will fail")
+        )
+
+        async def batch(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                yield {
+                    0: DeltaToolCall(
+                        name=BandTool.NO_REPLY,
+                        json_args=json.dumps({"reason": "Settled"}),
+                        tool_call_id="decline",
+                    ),
+                    1: DeltaToolCall(
+                        name=BandTool.SEND_MESSAGE,
+                        json_args=json.dumps(send_arguments),
+                        tool_call_id="reply",
+                    ),
+                }
+                return
+            if requests == 2:
+                followup.extend(messages)
+                yield {
+                    0: DeltaToolCall(
+                        name=BandTool.SEND_MESSAGE,
+                        json_args=json.dumps(
+                            _reply_arguments(sample_message, "Recovered")
+                        ),
+                        tool_call_id="recovered",
+                    )
+                }
+                return
+            yield ""
+
+        adapter = PydanticAIAdapter(llm=FunctionModel(stream_function=batch))
+        await adapter.on_started("Probe", "probe")
+        await _run_on_message(adapter, sample_message, tools)
+
+        assert requests == 3
+        assert shown in _tool_feedback(followup)
+        assert shown in _tool_feedback(adapter._message_history[tools.room_id])
+        assert tools.chat == ["Recovered"]
+        assert reported_failures(tools) == []
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("cancel", [False, True], ids=["continue", "cancel"])
     async def test_concurrent_room_keeps_its_lifecycle(
         self, sample_message: PlatformMessage, cancel: bool
@@ -1070,6 +1150,16 @@ class TestExplicitDecline:
 
 def _reply_arguments(message: PlatformMessage, content: str) -> dict[str, Any]:
     return {"content": content, "mentions": [message.sender_name]}
+
+
+def _tool_feedback(messages: list[ModelMessage]) -> str:
+    """Tool results and retry prompts a later model request can read."""
+    return "\n".join(
+        str(part.content)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart | RetryPromptPart)
+    )
 
 
 def _history_tool_returns(messages: list[ModelMessage]) -> list[tuple[str, str, Any]]:
