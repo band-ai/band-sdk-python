@@ -18,11 +18,12 @@ set -euo pipefail
 #
 # Rebuilt even without a proxy CA, so a start outside a sandbox never keeps
 # a previous session's CA.
+# A failed start must not leave a staged bundle behind to pile up across
+# restarts. Set before the mktemps so a failure between them is covered too;
+# after the rename below, the staged path no longer exists.
+trap 'rm -f "${proxy_ca:-}" "${staged:-}"' EXIT
 proxy_ca=$(mktemp)
 staged=$(mktemp "${BAND_CA_BUNDLE}.XXXXXX")
-# A failed start must not leave a staged bundle behind to pile up across
-# restarts. After the rename below, the staged path no longer exists.
-trap 'rm -f "${proxy_ca}" "${staged}"' EXIT
 if [[ -n "${PROXY_CA_CERT_B64:-}" ]]; then
   base64 -d <<<"${PROXY_CA_CERT_B64}" > "${proxy_ca}"
   # A base64 payload that decodes cleanly but isn't a PEM certificate would

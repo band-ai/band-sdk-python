@@ -392,14 +392,15 @@ as root. To verify the drop, inspect the process table (`docker top`, or
 
 The entrypoint exports `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and
 `GIT_SSL_CAINFO` pointing at `$BAND_CA_BUNDLE`, the *whole* root set plus the
-proxy CA. It sets them at start instead of baking them as image `ENV`,
-because `sbx` injects its own `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` into the
-process it starts and would override the image's values. A `docker exec` or
-`sbx exec` shell doesn't go through the entrypoint, so it doesn't get them. That
-way `httpx` (which otherwise trusts only its vendored certifi bundle), `uv`,
-`websockets` (via `ssl.create_default_context()`) and git's HTTPS transport
-(which ignores `SSL_CERT_FILE`) all see the proxy CA, and public TLS
-verification keeps working. Never override them to a narrower CA file.
+proxy CA. That way `httpx` (which otherwise trusts only its vendored certifi
+bundle), `uv`, `websockets` (via `ssl.create_default_context()`) and git's
+HTTPS transport (which ignores `SSL_CERT_FILE`) all see the proxy CA, and
+public TLS verification keeps working. Never override them to a narrower CA
+file. They are set at start instead of baked as image `ENV`, because `sbx`
+injects its own `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` into the process it
+starts and would override the image's values. A `docker exec` or `sbx exec`
+shell doesn't go through the entrypoint, so it keeps whatever the runtime
+set. Under `sbx` that's the system bundle, which also holds the proxy CA.
 
 The entrypoint never touches `/etc/ssl/certs`. `sbx` installs the proxy CA
 into the system store and regenerates that bundle on every sandbox start. A
