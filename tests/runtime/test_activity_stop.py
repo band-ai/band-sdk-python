@@ -230,27 +230,26 @@ async def test_fresh_activity_stop_after_play_cancels_the_same_turn(
     peer = ActivityPeer()
     handler = BlockingHandler(block=1)
     observer = AsyncMock()
-    async with activity_context(peer, handler, observer, enabled=False) as ctx:
-        turn = asyncio.create_task(
+    async with (
+        activity_context(peer, handler, observer, enabled=False) as ctx,
+        asyncio.TaskGroup() as tasks,
+    ):
+        turn = tasks.create_task(
             ctx._process_event(make_message_event(msg_id="trigger"))
         )
-        try:
-            await handler.started.wait()
+        await handler.started.wait()
+        await ctx.resume_room()
+        peer.stopped = True
+        assert await ctx._report_working_state(True)
+        if play_after_stop:
             await ctx.resume_room()
-            peer.stopped = True
-            assert await ctx._report_working_state(True)
-            if play_after_stop:
-                await ctx.resume_room()
-            await asyncio.sleep(0)
-            assert handler.cancelled.is_set()
-            await turn
-            if play_after_stop:
-                observer.assert_not_awaited()
-            else:
-                observer.assert_awaited_once_with(ROOM_ID, ControlMode.STOP)
-            assert peer.marked("processing") == ["trigger"]
-            assert peer.requested("processed") == []
-            assert peer.requested("failed") == []
-        finally:
-            turn.cancel()
-            await asyncio.gather(turn, return_exceptions=True)
+        await asyncio.sleep(0)
+        assert handler.cancelled.is_set()
+        await turn
+        if play_after_stop:
+            observer.assert_not_awaited()
+        else:
+            observer.assert_awaited_once_with(ROOM_ID, ControlMode.STOP)
+        assert peer.marked("processing") == ["trigger"]
+        assert peer.requested("processed") == []
+        assert peer.requested("failed") == []

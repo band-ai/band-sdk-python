@@ -22,6 +22,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
+from functools import partial
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -761,16 +762,13 @@ class ExecutionContext:
             self._queue_wait.reschedule(self._resync_schedule.due_at)
 
     def owns_scope(self, scope: TurnScope) -> bool:
-        return (
-            self.current_scope is scope
-            and scope.control_revision == self._control_revision
-        )
+        return self._owns_control_revision(scope, scope.control_revision)
 
     def owns_stop_observation(self, scope: TurnScope) -> bool:
-        return (
-            self.current_scope is scope
-            and scope.stop_revision == self._control_revision
-        )
+        return self._owns_control_revision(scope, scope.stop_revision)
+
+    def _owns_control_revision(self, scope: TurnScope, revision: int | None) -> bool:
+        return self.current_scope is scope and revision == self._control_revision
 
     def observe_platform_stop(
         self, scope: TurnScope, *, control_revision: int | None = None
@@ -1792,29 +1790,27 @@ class ExecutionContext:
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
-        scope = self.current_scope
-        revision = self._control_revision
-
-        def on_stopped() -> None:
-            if (
-                scope is not None
-                and self.current_scope is scope
-                and revision == self._control_revision
-                and not scope.stop_observed
-                and not self._closing
-            ):
-                logger.info(
-                    "Activity report observed stopped execution for room %s",
-                    self.room_id,
-                )
-                self.observe_platform_stop(scope, control_revision=revision)
-
         return await self.link.report_activity(
             self.room_id,
             working,
             timeout_seconds=self.config.working_request_timeout_seconds,
-            on_stopped=on_stopped,
+            on_stopped=partial(
+                self._observe_activity_stop, self.current_scope, self._control_revision
+            ),
         )
+
+    def _observe_activity_stop(self, scope: TurnScope | None, revision: int) -> None:
+        if (
+            scope is None
+            or not self._owns_control_revision(scope, revision)
+            or scope.stop_observed
+            or self._closing
+        ):
+            return
+        logger.info(
+            "Activity report observed stopped execution for room %s", self.room_id
+        )
+        self.observe_platform_stop(scope, control_revision=revision)
 
     async def _execute_message_cycle(self, event: PlatformEvent) -> None:
         """Run the adapter for a message reasoning cycle, bracketed by the
