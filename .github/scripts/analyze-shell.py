@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,12 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     debuggers = list(WINDOWS_KITS.glob("Debuggers/x64/cdb.exe"))
     exporters = list(WINDOWS_KITS.glob("**/xperf.exe"))
-    for dump in ARTIFACTS.glob("*.dmp"):
+    symbols = (ARTIFACTS / "symbols").resolve()
+    symbols.mkdir(parents=True, exist_ok=True)
+    dumps = list(ARTIFACTS.glob("*.dmp")) + list(
+        Path("artifacts/previous").glob("*.dmp")
+    )
+    for dump in dumps:
         if debuggers:
             run_report(
                 [
@@ -41,9 +47,11 @@ def main() -> None:
                     "-z",
                     str(dump),
                     "-y",
-                    "srv*artifacts/shell-diagnostic/symbols*https://msdl.microsoft.com/download/symbols",
+                    f"srv*{symbols}*https://msdl.microsoft.com/download/symbols",
+                    "-i",
+                    f"C:/Windows/System32;{sys.base_prefix}",
                     "-c",
-                    ".reload;~*kb;lm;q",
+                    ".reload /f;~*kb;lm;q",
                 ],
                 dump.with_suffix(".stacks.txt"),
             )

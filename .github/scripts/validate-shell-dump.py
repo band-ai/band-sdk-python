@@ -18,7 +18,11 @@ def main() -> None:
     dump = ARTIFACTS / "known-sleep.dmp"
     report = ARTIFACTS / "known-sleep.stacks.txt"
     ready = ARTIFACTS / "known-sleep.ready"
-    child_code = f"import pathlib,time; pathlib.Path({str(ready.resolve())!r}).touch(); time.sleep(60)"
+    child_code = (
+        "import ctypes,pathlib; sleep=ctypes.WinDLL('kernel32').Sleep; "
+        "sleep.argtypes=[ctypes.c_ulong]; sleep.restype=None; "
+        f"pathlib.Path({str(ready.resolve())!r}).touch(); sleep(60000)"
+    )
     child = subprocess.Popen(
         [sys.executable, "-c", child_code], stdin=subprocess.DEVNULL
     )
@@ -28,11 +32,11 @@ def main() -> None:
             time.sleep(0.01)
         assert ready.exists(), "known sleeping child did not initialize"
         with (ARTIFACTS / "known-sleep-capture.txt").open("wb") as output:
-            subprocess.run(
+            result = subprocess.run(
                 [
                     str(ARTIFACTS / "procdump64.exe"),
                     "-accepteula",
-                    "-mt",
+                    "-mm",
                     "-at",
                     "3",
                     str(child.pid),
@@ -40,12 +44,19 @@ def main() -> None:
                 ],
                 stdout=output,
                 stderr=subprocess.STDOUT,
-                check=True,
+                check=False,
                 timeout=10,
             )
+        (ARTIFACTS / "known-sleep-returncode.txt").write_text(str(result.returncode))
+        assert result.returncode in {0, 1}, "ProcDump returned an unexpected status"
+        assert dump.is_file() and dump.read_bytes()[:4] == b"MDMP", (
+            "ProcDump did not produce a valid dump"
+        )
     finally:
         child.terminate()
         child.wait(timeout=5)
+    symbols = (ARTIFACTS / "symbols").resolve()
+    symbols.mkdir(parents=True, exist_ok=True)
     with report.open("wb") as output:
         subprocess.run(
             [
@@ -53,9 +64,11 @@ def main() -> None:
                 "-z",
                 str(dump),
                 "-y",
-                "srv*artifacts/shell-diagnostic/symbols*https://msdl.microsoft.com/download/symbols",
+                f"srv*{symbols}*https://msdl.microsoft.com/download/symbols",
+                "-i",
+                f"C:/Windows/System32;{sys.base_prefix}",
                 "-c",
-                ".reload;~*kb;lm;q",
+                ".reload /f;~*kb;lm;q",
             ],
             stdout=output,
             stderr=subprocess.STDOUT,

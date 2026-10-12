@@ -1,16 +1,13 @@
-name: PR776 Windows shell startup hypothesis matrix
+name: PR776 Windows native diagnostic preflight
 on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [baseline, closed-stdin, noninteractive, both]
     defaults:
       run:
         shell: bash
@@ -37,18 +34,26 @@ jobs:
           wpr -start CPU
           wpr -status collectors -details > artifacts/shell-diagnostic/wpr-start.txt
       - name: Restore original inspected workflow before diagnostic measurements
-        run: git show 4a1abcaf:.github/workflows/python-core-coverage.yml > .github/workflows/python-core-coverage.yml
-      - name: Run one cold original pytest shell cell with explicit hypothesis
-        run: uv run --all-packages pytest 'tests/framework_conformance/test_approval_commands.py::test_approval_commands_write_and_append_with_host_shell[powershell]' -p tests.framework_conformance.shellmatrix --shell-probe-mode ${{ matrix.mode }} --log-file=artifacts/shell-diagnostic/cell.log --log-file-level=INFO
-      - name: Validate resolved native dump stacks after original cold sample
+        run: |
+          git fetch origin 4a1abcafc6d8ece85e578e9e1df65e0e3795bd61 --depth=1
+          git show 4a1abcafc6d8ece85e578e9e1df65e0e3795bd61:.github/workflows/python-core-coverage.yml > .github/workflows/python-core-coverage.yml
+          python -c "import subprocess,pathlib; original=subprocess.check_output(['git','show','4a1abcafc6d8ece85e578e9e1df65e0e3795bd61:.github/workflows/python-core-coverage.yml']); assert pathlib.Path('.github/workflows/python-core-coverage.yml').read_bytes()==original"
+      - name: Download prior blocked preflight dump for artifact-only analysis
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 38200464225
+          name: pr776-windows-shell-baseline
+          path: artifacts/previous
+      - name: Validate resolved native dump stacks without launching PowerShell
         if: always()
         run: python .github/scripts/validate-shell-dump.py
-      - name: Preserve recorder and validate wait tool after original suite
+      - name: Preserve bounded recorder after native preflight
         if: always()
         run: |
           wpr -status collectors -details > artifacts/shell-diagnostic/wpr-end.txt || true
           wpr -stop artifacts/shell-diagnostic/suite-end.etl "suite end" || true
-          uv run python -c "import subprocess; subprocess.run(['artifacts/shell-waits/ShellWaits.exe','--self-test'],check=True,timeout=15)"
+
       - name: Analyze captured native stacks and process timeline
         if: always()
         run: python .github/scripts/analyze-shell.py
@@ -56,6 +61,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pr776-windows-shell-${{ matrix.mode }}
-          path: artifacts/shell-diagnostic
+          name: pr776-native-preflight
+          path: |
+            artifacts/shell-diagnostic
+            artifacts/previous
           retention-days: 7
