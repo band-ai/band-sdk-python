@@ -405,6 +405,12 @@ class ExecutionContext:
         """Whether a received STOP control has paused this room."""
         return self._stopped
 
+    @property
+    def adapter_stop_notified(self) -> bool:
+        """Whether an observed STOP already notified the adapter for this turn."""
+        scope = self.current_scope
+        return scope is not None and scope.observer_task is not None
+
     def _set_state(self, new_state: ExecutionState) -> None:
         """
         Set the execution state and update the idle event accordingly.
