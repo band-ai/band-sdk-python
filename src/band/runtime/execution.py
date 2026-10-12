@@ -710,9 +710,6 @@ class ExecutionContext:
         if self._queue_wait is not None and not self._queue_wait.expired():
             self._queue_wait.reschedule(self._resync_schedule.due_at)
 
-    def owns_scope(self, scope: TurnScope) -> bool:
-        return self._owns_control_revision(scope, scope.control_revision)
-
     def owns_stop_observation(self, scope: TurnScope) -> bool:
         return self._owns_control_revision(scope, scope.stop_revision)
 
@@ -730,7 +727,6 @@ class ExecutionContext:
             scope.stop_revision = (
                 scope.control_revision if control_revision is None else control_revision
             )
-        scope.stop_observed = True
         scope.terminate(ControlMode.STOP, cooperative=cooperative, observed=True)
         if self.current_scope is not scope:
             return
@@ -754,6 +750,11 @@ class ExecutionContext:
             and previous.observer_task is not None
             and not await finished_within_grace(previous.observer_task)
         ):
+            logger.warning(
+                "ExecutionContext %s: platform-stop observer is still running; "
+                "deferring the next turn",
+                self.room_id,
+            )
             return None
         self.current_scope = TurnScope(self._control_revision)
         return self.current_scope
@@ -1641,7 +1642,7 @@ class ExecutionContext:
 
             # Call execution handler as a cancellable cycle (backlog messages
             # are always reasoning cycles, so the working signal is always
-            # reported via _execute_message_cycle inside _invoke_handler). A
+            # reported: started by _execute_message_cycle, stopped by _run_cycle). A
             # control signal can abort just this turn; when it does, status is
             # handled inside _run_cycle and we advance without sending
             # anything.
@@ -1729,9 +1730,10 @@ class ExecutionContext:
         """Coroutine wrapper around the execution handler so it can run as a
         cancellable ``asyncio.Task`` (the handler is typed ``Awaitable``).
 
-        Message-driven cycles are bracketed by the working-state signal via
-        ``_execute_message_cycle``; participant add/remove events are
-        housekeeping and skip it.
+        Message-driven cycles start the working-state signal in
+        ``_execute_message_cycle``, and ``_run_cycle`` stops it after the
+        handler drains; participant add/remove events are housekeeping and
+        skip it.
         """
         if isinstance(event, MessageEvent):
             await self._execute_message_cycle(event)
@@ -1766,7 +1768,7 @@ class ExecutionContext:
     async def _execute_message_cycle(self, event: PlatformEvent) -> None:
         await self._working_reporter.start()
         scope = self.current_scope
-        if scope is not None and scope.deadline is not None:
+        if scope is not None and scope.terminating:
             raise asyncio.CancelledError
         self._resync_handled_work = True
         self._reset_resync_interval()
@@ -1775,23 +1777,20 @@ class ExecutionContext:
     def _retain_detached_cycle_task(
         self, task: asyncio.Task[None], *, owner: TurnTask | None = None
     ) -> None:
-        """Keep a non-cooperative cancelled cycle alive until it finishes."""
+        """Keep a task that outlived its grace referenced until it finishes."""
         if task in self._detached_cycle_tasks:
             return
         self._detached_cycle_tasks[task] = owner or TurnTask(task)
         task.add_done_callback(self._finish_detached_cycle_task)
 
     def _finish_detached_cycle_task(self, task: asyncio.Task[None]) -> None:
-        """Release a detached cycle and retrieve any late exception."""
+        """Release a retained task and report any late failure."""
         self._detached_cycle_tasks.pop(task, None)
-        if task.cancelled():
-            return
-        error = task.exception()
-        if error is not None:
+        if not task.cancelled() and (error := task.exception()) is not None:
             logger.error(
-                "ExecutionContext %s: detached cycle ended with error: %s",
+                "ExecutionContext %s: retained task failed",
                 self.room_id,
-                error,
+                exc_info=error,
             )
 
     async def _drain_or_retain(self, owner: TurnTask) -> None:
@@ -1805,7 +1804,7 @@ class ExecutionContext:
             self._retain_detached_cycle_task(owner.task, owner=owner)
         elif not owner.task.cancelled() and (error := owner.task.exception()):
             logger.error(
-                "ExecutionContext %s: cancelled cycle cleanup failed",
+                "ExecutionContext %s: cancelled task cleanup failed",
                 self.room_id,
                 exc_info=error,
             )
@@ -1843,7 +1842,7 @@ class ExecutionContext:
             if not done and not owner.task.done():
                 timed_out = True
                 scope.terminate()
-            if scope.deadline is not None:
+            if scope.terminating:
                 await self._drain_or_retain(owner)
             else:
                 owner.task.result()
@@ -1879,7 +1878,7 @@ class ExecutionContext:
         task = asyncio.current_task()
         if scope is None or task is None or task is not self._active_cycle_task:
             raise RuntimeError("claim_message requires the active handler task")
-        if scope.deadline is not None or task.cancelling():
+        if scope.terminating or task.cancelling():
             raise asyncio.CancelledError
 
         try:
@@ -1893,9 +1892,8 @@ class ExecutionContext:
         if (
             self.current_scope is not scope
             or self._active_cycle_task is not task
-            or scope.stop_observed
             or task.cancelling()
-            or scope.deadline is not None
+            or scope.terminating
         ):
             raise asyncio.CancelledError
         return accepted

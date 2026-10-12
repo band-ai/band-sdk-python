@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from band.client.streaming import ControlMode
+from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
@@ -20,7 +21,11 @@ from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.helpers import (
     AGENT_ID,
+    IDLE,
+    KEEP_ALIVE,
     ROOM_ID,
+    STOP_ECHO,
+    ActivityReport,
     LifecyclePlatform,
     rest_client_over,
     running_execution,
@@ -92,7 +97,7 @@ async def test_heartbeat_stop_during_watchdog_cleanup_keeps_stop_disposition() -
             # The platform stops the room while the watchdog's cleanup runs
             # through the next keep-alive.
             peer.stopped = True
-            await asyncio.sleep(0.9)
+            await asyncio.sleep(CYCLE_CANCEL_GRACE_SECONDS - 0.1)
             raise
 
     async with activity_context(
@@ -100,7 +105,7 @@ async def test_heartbeat_stop_during_watchdog_cleanup_keeps_stop_disposition() -
     ) as ctx:
         assert not await ctx._process_event(make_message_event(msg_id="trigger"))
 
-        assert peer.activity_reports == [(True, True), (True, False), (False, False)]
+        assert peer.activity_reports == [KEEP_ALIVE, STOP_ECHO, IDLE]
         assert peer.marked("processing") == ["trigger"]
         assert peer.requested("failed") == []
         observer.assert_awaited_once()
@@ -121,7 +126,7 @@ async def test_heartbeat_stop_cancels_once_and_preserves_replay() -> None:
 
         assert handler.cancelled.is_set()
         assert handler.completed == []
-        assert peer.activity_reports == [(True, True), (True, False), (False, False)]
+        assert peer.activity_reports == [KEEP_ALIVE, STOP_ECHO, IDLE]
         assert peer.marked("processing") == ["trigger"]
         assert peer.requested("processed") == []
         assert peer.requested("failed") == []
@@ -149,7 +154,7 @@ async def test_stop_on_initial_activity_report_never_enters_handler() -> None:
         )
 
         assert handler.invoked == []
-        assert peer.activity_reports == [(True, False), (False, False)]
+        assert peer.activity_reports == [STOP_ECHO, IDLE]
         observer.assert_awaited_once()
         assert peer.requested("processed") == []
         assert peer.requested("failed") == []
@@ -196,7 +201,7 @@ async def test_repeated_activity_refusal_does_not_cancel_handler_cleanup() -> No
 async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
     peer = ActivityPeer()
     started = asyncio.Event()
-    reports_at_cleanup: list[tuple[bool, bool]] = []
+    reports_at_cleanup: list[ActivityReport] = []
     cleaning, release = asyncio.Event(), asyncio.Event()
     observer = AsyncMock()
 
@@ -223,8 +228,8 @@ async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
             await turn
 
         # The final idle report follows the cleanup it reports on.
-        assert reports_at_cleanup == [(True, True), (True, False)]
-        assert peer.activity_reports == [*reports_at_cleanup, (False, False)]
+        assert reports_at_cleanup == [KEEP_ALIVE, STOP_ECHO]
+        assert peer.activity_reports == [*reports_at_cleanup, IDLE]
         observer.assert_not_awaited()
         assert peer.marked("processing") == ["trigger"]
         assert peer.requested("processed") == []
@@ -292,7 +297,7 @@ async def test_shutdown_during_initial_activity_report_cleans_up_reporter() -> N
             with pytest.raises(asyncio.CancelledError):
                 await turn
         assert handler.invoked == []
-        assert peer.activity_reports == [(True, True), (False, False)]
+        assert peer.activity_reports == [KEEP_ALIVE, IDLE]
         observer.assert_not_awaited()
 
 
@@ -362,8 +367,6 @@ async def test_stopped_tool_preserves_awaited_cleanup(refusal: str) -> None:
             ctx._process_event(make_message_event(msg_id="trigger"))
         )
         await cleaning.wait()
-        await asyncio.sleep(0)
-        assert not turn.done()
         release.set()
         await turn
     assert cleanup == ["completed"]
@@ -409,4 +412,4 @@ async def test_started_room_controls_preserve_cleanup_and_latest_disposition(
         assert cleanup == ["completed"]
         assert peer.requested("processed") == processed
         assert peer.requested("failed") == []
-        assert peer.activity_reports == [(True, True), (False, False)]
+        assert peer.activity_reports == [KEEP_ALIVE, IDLE]

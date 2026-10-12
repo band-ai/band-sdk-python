@@ -181,3 +181,19 @@ def test_finished_work_can_be_drained_after_its_loop_closes() -> None:
 
     owner = TurnTask(asyncio.run(finished()))
     assert asyncio.run(owner.drain())
+
+
+async def test_worker_outcomes_are_retrieved_without_raising() -> None:
+    """A worker that fails after its message returned was already reported;
+    owning it must never raise, even for a cancelled worker."""
+
+    async def failing_turn() -> None:
+        raise RuntimeError("boom")
+
+    failed = asyncio.create_task(failing_turn())
+    cancelled = asyncio.create_task(asyncio.Event().wait())
+    cancelled.cancel()
+    await asyncio.wait([failed, cancelled])
+
+    for turn in (failed, cancelled):
+        assert await TurnTask(turn).drain()

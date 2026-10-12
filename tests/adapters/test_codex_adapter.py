@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -79,6 +78,7 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 from tests.adapters.dispatch import deliver_event, deliver_message
+from tests.conftest import eager_tasks, requires_eager_tasks
 from tests.framework_conformance.turnprobes import undeclared
 from tests.paths import host_absolute_path
 
@@ -7166,44 +7166,74 @@ async def test_restored_codex_thread_receives_the_mandatory_transport_contract()
     assert client.params_of(CodexRequestMethod.THREAD_RESUME)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 12), reason="eager task factories need Python 3.12"
-)
-async def test_cleanup_readmits_the_room_under_an_eager_task_factory() -> None:
-    asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
-    client = FakeCodexClient(events=[turn_completed(), turn_completed("turn-2")])
+class CountingCloseClient(FakeCodexClient):
+    """Counts physical closes, optionally holding each one open."""
+
+    def __init__(self, *, events: list[RpcEvent], hold: bool = False) -> None:
+        super().__init__(events=events)
+        self.closes = 0
+        self.closing = asyncio.Event()
+        self.finish_close = asyncio.Event()
+        self.close_finished = asyncio.Event()
+        if not hold:
+            self.finish_close.set()
+
+    async def close(self) -> None:
+        self.closes += 1
+        self.closing.set()
+        await self.finish_close.wait()
+        await super().close()
+        self.close_finished.set()
+
+
+@requires_eager_tasks
+async def test_cleanup_readmits_and_recloses_the_room_under_an_eager_task_factory() -> (
+    None
+):
+    client = CountingCloseClient(events=[turn_completed(), turn_completed("turn-2")])
+    adapter = make_codex_adapter(client)
+    with eager_tasks():
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await send_bootstrap(adapter)
+        await adapter.on_cleanup(ROOM_ID)
+        await send_bootstrap(adapter)
+        await adapter.on_cleanup(ROOM_ID)
+
+    assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+    assert client.closes == 2
+
+
+@pytest.mark.looptime
+async def test_concurrent_room_cleanups_share_one_close() -> None:
+    client = CountingCloseClient(events=[turn_completed()], hold=True)
     adapter = make_codex_adapter(client)
     await adapter.on_started("Codex Agent", "A coding agent")
     await send_bootstrap(adapter)
+    room_cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
+    await client.closing.wait()
+    every_cleanup = asyncio.create_task(adapter.cleanup_all())
+    # Fake time advances only once both cleanups are waiting on the close.
+    await asyncio.sleep(1)
+    client.finish_close.set()
 
-    await adapter.on_cleanup(ROOM_ID)
-    await send_bootstrap(adapter)
-
-    assert client.closed
-    assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+    await asyncio.gather(room_cleanup, every_cleanup)
+    assert client.closes == 1
 
 
 async def test_cleanup_cancelled_during_close_still_readmits_the_room() -> None:
-    closing, finish_close, closed = (asyncio.Event() for _ in range(3))
-
-    class SlowCloseClient(FakeCodexClient):
-        async def close(self) -> None:
-            closing.set()
-            await finish_close.wait()
-            await super().close()
-            closed.set()
-
-    client = SlowCloseClient(events=[turn_completed(), turn_completed("turn-2")])
+    client = CountingCloseClient(
+        events=[turn_completed(), turn_completed("turn-2")], hold=True
+    )
     adapter = make_codex_adapter(client)
     await adapter.on_started("Codex Agent", "A coding agent")
     await send_bootstrap(adapter)
     cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
-    await closing.wait()
+    await client.closing.wait()
     cleanup.cancel()
     with pytest.raises(asyncio.CancelledError):
         await cleanup
-    finish_close.set()
-    await closed.wait()
+    client.finish_close.set()
+    await client.close_finished.wait()
 
     await adapter.on_cleanup(ROOM_ID)
     await send_bootstrap(adapter)

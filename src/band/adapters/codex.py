@@ -42,7 +42,6 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -50,10 +49,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
-from band.core.retention import (
-    RoomRetentionConfig,
-    require_disabled_retention,
-)
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
@@ -924,12 +920,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        if room_id in self._closing_rooms:
-            raise InputNotAccepted("The room's Codex session is closing")
+        self._admit_turn(room_id, "Codex")
         self._room_client(room_id)
         self._active_room.set(room_id)
-        if self._turn_running(room_id):
-            raise InputNotAccepted("The room already has an active Codex turn")
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -1187,10 +1180,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         owner = self._turn_tasks.get(room_id)
         if owner is not None and owner.task is task:
             del self._turn_tasks[room_id]
-        # A turn that fails after release already reported to the room;
-        # retrieving the exception keeps asyncio from logging it as lost.
-        if not task.cancelled():
-            task.exception()
 
     async def _settle_turn(self, room_id: str) -> None:
         """Let the room's detached turn wind down, then force-cancel it.
@@ -1586,11 +1575,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         self._active_room.set(room_id)
-        self._closing_rooms.add(room_id)
-        self._clear_pending_approvals_for_room(room_id)
-        await self._settle_turn(room_id)
         # Physical transport closing has its own configured bound.
-        await self._retire_room(room_id, partial(self._close_room, room, room_id))
+        await self._retire_room(
+            room_id,
+            settle=self._settle_turn,
+            close=partial(self._close_room, room, room_id),
+        )
 
     async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:

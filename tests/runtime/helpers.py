@@ -126,6 +126,13 @@ def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
     return [post for post in failure_posts(link) if post[0] == TURN_FAILURE_PROVIDER]
 
 
+# An activity report as (requested working, platform recorded working).
+ActivityReport = tuple[bool, bool]
+KEEP_ALIVE: ActivityReport = (True, True)
+STOP_ECHO: ActivityReport = (True, False)
+IDLE: ActivityReport = (False, False)
+
+
 class LifecyclePlatform:
     """A controlled HTTP peer for the real Fern lifecycle and posting client."""
 
@@ -138,7 +145,7 @@ class LifecyclePlatform:
         self.processing_list_reads = 0
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
-        self.activity_reports: list[tuple[bool, bool]] = []
+        self.activity_reports: list[ActivityReport] = []
 
     def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(

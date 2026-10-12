@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from band.client.streaming import ControlMode
-from band.core.exceptions import CleanupIncompleteError
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.retention import task_failure
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
@@ -42,7 +42,6 @@ class TurnTask:
             task.add_done_callback(self._retrieve_result)
         self.deadline: float | None = None
         self._cancel_delivered = False
-        self._expiry: asyncio.TimerHandle | None = None
         self._timer: asyncio.Timeout | None = None
         self._cleanup_timer = False
 
@@ -54,13 +53,13 @@ class TurnTask:
     def terminate(
         self, *, deadline: float | None = None, cooperative: bool = False
     ) -> None:
-        """Start the cleanup grace once; later requests may only shorten it."""
-        bound = deadline if deadline is not None else terminal_deadline()
+        """Start the cleanup grace once; later requests never renew it."""
         if self.deadline is not None:
-            if bound < self.deadline:
-                self._expire_at(bound)
             return
-        self._expire_at(self._release_timer(bound))
+        bound = deadline if deadline is not None else terminal_deadline()
+        self.deadline = self._release_timer(bound)
+        # The owner enforces its own deadline: a detached worker may have no drainer.
+        asyncio.get_running_loop().call_at(self.deadline, self._cancel)
         if not cooperative:
             self._cancel()
 
@@ -76,13 +75,6 @@ class TurnTask:
         else:
             timer.reschedule(None)
         return bound
-
-    def _expire_at(self, deadline: float) -> None:
-        # The owner enforces its own deadline: a detached worker may have no drainer.
-        if self._expiry is not None:
-            self._expiry.cancel()
-        self.deadline = deadline
-        self._expiry = asyncio.get_running_loop().call_at(deadline, self._cancel)
 
     def _cancel(self) -> None:
         if not self._cancel_delivered and not self.task.done():
@@ -143,6 +135,13 @@ class ApprovalInterruptMixin:
         owner = self._turn_tasks.get(room_id)
         return owner is not None and not owner.task.done()
 
+    def _admit_turn(self, room_id: str, provider: str) -> None:
+        """Refuse new input while the room closes or its worker still runs."""
+        if room_id in self._closing_rooms:
+            raise InputNotAccepted(f"The room's {provider} session is closing")
+        if self._turn_running(room_id):
+            raise InputNotAccepted(f"The room already has an active {provider} turn")
+
     async def _cancel_turn(self, room_id: str) -> None:
         owner = self._turn_tasks.get(room_id)
         if owner is not None:
@@ -150,9 +149,19 @@ class ApprovalInterruptMixin:
             await owner.drain()
 
     async def _retire_room(
-        self, room_id: str, close: Callable[[], Awaitable[None]]
+        self,
+        room_id: str,
+        *,
+        settle: Callable[[str], Awaitable[None]],
+        close: Callable[[], Awaitable[None]],
     ) -> None:
-        """Join the room's one close once its worker finished; retry a failed close."""
+        """Fence the room, end its worker, then join the room's one close.
+
+        A failed close is retried; only a successful close readmits the room.
+        """
+        self._closing_rooms.add(room_id)
+        self._clear_pending_approvals_for_room(room_id)
+        await settle(room_id)
         if self._turn_running(room_id):
             raise CleanupIncompleteError(f"Room {room_id}: turn is still cleaning up")
         task = self._room_cleanup.get(room_id)

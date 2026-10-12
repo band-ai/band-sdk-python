@@ -12,8 +12,8 @@ from band.core.turn_lifecycle import TurnTask, terminal_deadline
 @dataclass(eq=False)
 class TurnScope:
     control_revision: int
-    stop_observed: bool = False
-    # A heartbeat begun after PLAY can observe STOP in the original turn.
+    # Revision at which a platform STOP was observed; a heartbeat begun after
+    # PLAY can observe STOP in the original turn.
     stop_revision: int | None = None
     observer_task: asyncio.Task[None] | None = None
     handler: TurnTask | None = None
@@ -27,15 +27,23 @@ class TurnScope:
     workers: set[TurnTask] = field(default_factory=set)
 
     @property
+    def stop_observed(self) -> bool:
+        return self.stop_revision is not None
+
+    @property
+    def terminating(self) -> bool:
+        return self.deadline is not None
+
+    @property
     def aborted(self) -> bool:
         # Detached workers can be stopped after the room has moved to another scope.
-        return self.deadline is not None or any(
+        return self.terminating or any(
             owner.deadline is not None for owner in self.workers
         )
 
     def bind(self, owner: TurnTask) -> None:
         self.workers.add(owner)
-        if self.deadline is not None:
+        if self.terminating:
             owner.terminate(deadline=self.deadline, cooperative=self.cooperative)
 
     def terminate(

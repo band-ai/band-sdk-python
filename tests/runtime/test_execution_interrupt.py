@@ -1023,6 +1023,7 @@ async def test_stopped_post_cancels_a_released_worker_at_its_grace(mock_link) ->
         await ctx._begin_scope()
         tools = AgentTools.from_context(ctx)
         refused = asyncio.Event()
+        refused_at: list[float] = []
 
         async def released_worker() -> None:
             # Provider tool calls post from their own task, so the refusal
@@ -1033,6 +1034,7 @@ async def test_stopped_post_cancels_a_released_worker_at_its_grace(mock_link) ->
                 )
             )
             await asyncio.wait({post})
+            refused_at.append(asyncio.get_running_loop().time())
             refused.set()
             await asyncio.Future[None]()
 
@@ -1043,6 +1045,10 @@ async def test_stopped_post_cancels_a_released_worker_at_its_grace(mock_link) ->
 
         assert peer.posts == ["messages"]
         assert worker.task.cancelled()
+        assert (
+            asyncio.get_running_loop().time() - refused_at[0]
+            == CYCLE_CANCEL_GRACE_SECONDS
+        )
 
 
 async def test_old_post_cannot_cancel_new_claim_window(mock_link) -> None:
