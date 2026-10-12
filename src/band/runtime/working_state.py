@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 ReportFn = Callable[[bool], Awaitable[object]]
 
 
+def _retrieve_task_error(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
 class WorkingStateReporter:
     """Manages the boolean working signal for one execution (agent + room)."""
 
@@ -57,6 +62,7 @@ class WorkingStateReporter:
         self._active = False
         self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
+        self._false_send: asyncio.Future[None] | None = None
         # Serializes every report() call (true / keep-alive / false) so they can
         # never overlap on the wire — guarantees the platform sees them in order
         # (boolean payload carries no sequence number to disambiguate).
@@ -75,6 +81,19 @@ class WorkingStateReporter:
             self._keep_alive(), name="working-state-keepalive"
         )
 
+    def defer_false_report(self) -> None:
+        """Start ``working: false`` and return without waiting for it.
+
+        A closing execution joins the cancelled cycle on a budget shorter than
+        the activity POST timeout. Waiting for the report on that cycle counts
+        a still-legal report as unfinished cleanup. ``stop`` finishes the send.
+        """
+        if not self._enabled or not self._active:
+            return
+        task = self._arm_false_report()
+        if task is not None:
+            task.add_done_callback(_retrieve_task_error)
+
     async def stop(self) -> None:
         """End the reasoning cycle: cancel keep-alive and send ``working: false``.
 
@@ -82,12 +101,13 @@ class WorkingStateReporter:
         (the caller is being cancelled), the authoritative ``false`` still lands
         instead of being swallowed by the propagating ``CancelledError``.
         """
-        if not self._enabled or not self._active:
+        if not self._enabled:
             return
-        self._active = False
-        task, self._task = self._task, None
+        if not self._active:
+            await self._finish_false_send()
+            return
+        task = self._arm_false_report()
         if task is not None and not task.done():
-            task.cancel()
             # ``gather(return_exceptions=True)`` swallows the keep-alive task's
             # own CancelledError (returned as a result) while still propagating a
             # cancellation aimed at *us* — the caller awaiting stop(). A bare
@@ -100,8 +120,20 @@ class WorkingStateReporter:
             # Already finished. Python 3.11's gather always schedules a done
             # callback on the task's loop, which raises once that loop has closed.
             task.exception()
+        await self._finish_false_send()
 
-        send = asyncio.ensure_future(self._safe_report(False))
+    def _arm_false_report(self) -> asyncio.Task[None] | None:
+        self._active = False
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+        self._false_send = asyncio.ensure_future(self._safe_report(False))
+        return task
+
+    async def _finish_false_send(self) -> None:
+        send = self._false_send
+        if send is None:
+            return
         try:
             await asyncio.shield(send)
         except asyncio.CancelledError:
@@ -114,6 +146,9 @@ class WorkingStateReporter:
             # explicitly — the double-cancel teardown window is vanishingly rare.
             await send
             raise
+        finally:
+            if send.done():
+                self._false_send = None
 
     async def _keep_alive(self) -> None:
         """Re-send ``working: true`` on cadence until stopped or capped."""

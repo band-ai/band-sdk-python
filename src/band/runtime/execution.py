@@ -1854,7 +1854,13 @@ class ExecutionContext:
             wake.cancel()
             await asyncio.gather(wake, return_exceptions=True)
             if isinstance(event, MessageEvent) and handler is None:
-                await self._working_reporter.stop()
+                # stop() joins this cycle inside the settlement budget, which is
+                # shorter than the activity POST. A closing execution finishes
+                # working:false after that join.
+                if self._closing:
+                    self._working_reporter.defer_false_report()
+                else:
+                    await self._working_reporter.stop()
             scope.settled = True
         if scope.shutdown:
             raise asyncio.CancelledError

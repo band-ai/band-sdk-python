@@ -293,7 +293,7 @@ class PlatformRuntime:
             True if stopped gracefully, False if cancelled mid-processing.
 
         Raises:
-            ExceptionGroup: Room cleanup remains incomplete. The runtime and
+            ExceptionGroup: Execution cleanup remains incomplete. The runtime and
                 its single-instance guard stay held; ``stop()`` retries.
         """
         self._running = False

@@ -27,9 +27,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# One operation settles in at most: join a running transition, wait for leases
-# to drain, run the pending release, and once more for a cause requested
-# meanwhile. Becoming resident: join a running transition, then acquire.
+# Circuit breaker. One step joins a transition, waits for leases, or runs one
+# release. Settle allows an in-flight join, a lease wait, that release, a
+# stronger cause recorded during it, a confirming pass, and one spare step.
+# Residency allows a join, one acquire, and the pass that sees the room resident.
 MAX_SETTLE_STEPS = 6
 MAX_RESIDENCY_STEPS = 3
 
@@ -40,6 +41,10 @@ def _hold(signal: asyncio.Event, active: bool) -> None:
         signal.set()
     else:
         signal.clear()
+
+
+def _failure_text(error: BaseException) -> str:
+    return f"{type(error).__name__}: {error}"
 
 
 class RetainedRoom:
@@ -383,11 +388,7 @@ class RetainedRoom:
             self._record_failure(error)
             raise
         else:
-            self._state = Residency.SUSPENDED
-            self._resume = self._resume or cause == ReleaseCause.IDLE
-            self._error = None
-            if self._cause != ReleaseCause.FINAL:
-                self._cause = None
+            self._commit_release(cause)
         finally:
             self._schedule(reset=True)
 
@@ -410,9 +411,22 @@ class RetainedRoom:
             self._state = Residency.CLEANUP_PENDING
         self._schedule()
 
+    def _commit_release(self, cause: ReleaseCause) -> None:
+        """A confirmed release. A stronger cause recorded during it stays pending."""
+        self._error = None
+        pending = self._cause
+        if pending is not None and stronger_cause(cause, pending) != cause:
+            self._state = Residency.CLEANUP_PENDING
+            self._resume = False
+            return
+        self._state = Residency.SUSPENDED
+        self._resume = self._resume or cause == ReleaseCause.IDLE
+        if self._cause != ReleaseCause.FINAL:
+            self._cause = None
+
     def _record_failure(self, error: BaseException) -> None:
         self._state = Residency.CLEANUP_PENDING
-        self._error = f"{type(error).__name__}: {error}"
+        self._error = _failure_text(error)
 
     def _schedule(self, *, reset: bool = False) -> None:
         """Re-arm the idle deadline and wake everything waiting on a change."""
@@ -511,7 +525,7 @@ class RetainedRoom:
             await self._dispose()
         except BaseException as error:
             self._state = Residency.SUSPENDED
-            self._error = f"{type(error).__name__}: {error}"
+            self._error = _failure_text(error)
             raise
         else:
             self._state = Residency.CLOSED

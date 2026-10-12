@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from band.core.exceptions import CleanupIncompleteError
 from band.runtime.oneshot import (
     OneShotInvoker,
 )
@@ -103,3 +104,21 @@ class TestStartupShutdownOwnership:
             await starting
         await stopping
         assert order == ["release started", "release finished"]
+
+    async def test_failed_start_whose_cleanup_fails_stays_pending(self) -> None:
+        adapter = make_adapter_mock()
+        adapter.on_started.side_effect = LookupError("boot failed")
+        adapter.cleanup_all.side_effect = RuntimeError("cleanup failed")
+        invoker = OneShotInvoker(
+            link=make_link_mock(), adapter=adapter, agent_id="agent-1"
+        )
+
+        with pytest.raises(LookupError, match="boot failed"):
+            await invoker.startup()
+        with pytest.raises(CleanupIncompleteError, match="cleanup is incomplete"):
+            await invoker.startup()
+
+        adapter.on_started.side_effect = None
+        adapter.cleanup_all.side_effect = None
+        await invoker.shutdown()
+        await invoker.startup()

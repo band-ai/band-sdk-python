@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.runtime.rooms import RoomExecutions
+from band.runtime.rooms import MAX_HELD_EVENTS, RoomExecutions
 from tests.runtime.helpers import RoomCleanup, StartGate
 from tests.runtime.rooms.kit import Phase, phase, settle
 
@@ -69,3 +69,42 @@ class TestAdmission:
         execution = await admitting
         assert execution.events == ["participant added", "message created"]
         assert execution.resyncs == 1
+
+    async def test_startup_delivery_keeps_events_that_arrive_while_a_full_queue_drains(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        delivered: list[object] = []
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class Execution:
+            async def start(self) -> None:
+                entered.set()
+                await release.wait()
+
+            async def on_event(self, event: object) -> None:
+                delivered.append(event)
+                await asyncio.sleep(0)
+                if isinstance(event, int):
+                    owner.hold("room-1", f"e{event}")
+                elif event == "e0":
+                    owner.hold("room-1", "a")
+                    owner.hold("room-1", "b")
+
+            async def stop(self, timeout: float | None = None) -> bool:
+                return True
+
+        async def release_room(room_id: str) -> None:
+            return None
+
+        owner = RoomExecutions(build=lambda room_id: Execution(), release=release_room)
+        admitting = asyncio.create_task(owner.admit("room-1"))
+        await entered.wait()
+        for index in range(MAX_HELD_EVENTS):
+            owner.hold("room-1", index)
+        release.set()
+        execution = await admitting
+        assert "e1" in delivered
+        assert "a" not in delivered and "b" not in delivered
+        assert any("dropping 2 held" in record.message for record in caplog.records)
+        assert owner.routed["room-1"] is execution
+        await owner.destroy("room-1")

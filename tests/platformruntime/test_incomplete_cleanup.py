@@ -16,7 +16,8 @@ class TestIncompleteCleanupOwnership:
     @staticmethod
     def fail_cleanup(mock_runtime: MagicMock) -> None:
         mock_runtime.stop.side_effect = ExceptionGroup(
-            "Room cleanup remains incomplete", [RuntimeError("room cleanup failed")]
+            "Execution cleanup remains incomplete",
+            [RuntimeError("room cleanup failed")],
         )
 
     @staticmethod

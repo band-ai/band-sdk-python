@@ -347,15 +347,44 @@ class RoomExecutions:
         Events arriving meanwhile are held too, so live routing begins only
         once the queue is empty. Delivery stops as soon as the admission is
         withdrawn; events held after a rejoin stay for the fresh execution.
+        Each batch leaves the bounded queue before any await, so a later
+        ``hold`` cannot evict an event already accepted for this admission.
+        A withdrawn admission drops the undelivered tail of that batch. The
+        tail lives only in the local list, so putting it back would deliver
+        it to the next execution.
         """
-        for _ in range(MAX_DELIVERY_STEPS):
-            if not (room.held and self._current(room, generation)):
+        delivered = 0
+        while room.held and self._current(room, generation):
+            if delivered >= MAX_DELIVERY_STEPS:
+                self._drop_held(room_id, room)
                 return
-            await execution.on_event(room.held.popleft())
+            batch = list(room.held)
+            room.held.clear()
+            for index, event in enumerate(batch):
+                if not self._current(room, generation):
+                    self._discard_undelivered(room_id, len(batch) - index)
+                    return
+                if delivered >= MAX_DELIVERY_STEPS:
+                    self._drop_held(room_id, room, len(batch) - index)
+                    return
+                await execution.on_event(event)
+                delivered += 1
+
+    def _discard_undelivered(self, room_id: str, count: int) -> None:
+        if count == 0:
+            return
+        logger.warning(
+            "Room %s left during startup delivery; discarding %d undelivered",
+            room_id,
+            count,
+        )
+
+    def _drop_held(self, room_id: str, room: Room, extra: int = 0) -> None:
+        pending = len(room.held) + extra
         logger.warning(
             "Room %s kept receiving events during startup; dropping %d held",
             room_id,
-            len(room.held),
+            pending,
         )
         room.held.clear()
 

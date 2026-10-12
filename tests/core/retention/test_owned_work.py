@@ -78,8 +78,12 @@ class TestOwnedWork:
         await resident.room.dispose()
         assert task.cancelled()
         assert resident.releases == [ReleaseCause.FINAL]
+        rejected = asyncio.create_task(resident.turn())
         with pytest.raises(RuntimeError, match="closing"):
-            resident.room.own(asyncio.create_task(resident.turn()))
+            resident.room.own(rejected)
+        with pytest.raises(asyncio.CancelledError):
+            await rejected
+        assert rejected.cancelled()
 
     async def test_cancellation_resistant_work_keeps_disposal_pending(
         self,
