@@ -1,5 +1,6 @@
 """Tests for PlatformRuntime."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +10,8 @@ from band.core.exceptions import AgentAlreadyRunningError, CleanupIncompleteErro
 from band.core.types import ConflictPolicy
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.types import AgentConfig, SessionConfig
+from band.runtime.types import AgentConfig, ContactEventConfig, SessionConfig
+from tests.runtime.conftest import chat_row, make_link_mock, wait_for_condition
 from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
@@ -40,7 +42,6 @@ def mock_runtime():
     runtime = MagicMock()
     runtime.start = AsyncMock()
     runtime.stop = AsyncMock()
-    runtime.cleanup_pending = False
     return runtime
 
 
@@ -626,12 +627,10 @@ class TestIncompleteCleanupOwnership:
         mock_runtime.stop.side_effect = ExceptionGroup(
             "Room cleanup remains incomplete", [RuntimeError("room cleanup failed")]
         )
-        mock_runtime.cleanup_pending = True
 
     @staticmethod
     def finish_cleanup(mock_runtime: MagicMock) -> None:
         mock_runtime.stop.side_effect = None
-        mock_runtime.cleanup_pending = False
 
     @pytest.mark.asyncio
     async def test_incomplete_stop_keeps_guard_and_blocks_restart(
@@ -695,3 +694,170 @@ class TestNoopCleanup:
     async def test_noop_cleanup_does_nothing(self):
         """The noop cleanup should not raise."""
         await PlatformRuntime._noop_cleanup("room-123")
+
+
+class RoomCleanups:
+    """The adapter's room cleanup, held or failed on demand."""
+
+    def __init__(self) -> None:
+        self.cleaned: list[str] = []
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.failing = False
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    async def __call__(self, room_id: str) -> None:
+        self.entered.set()
+        await self.release.wait()
+        if self.failing:
+            raise RuntimeError("room cleanup failed")
+        self.cleaned.append(room_id)
+
+
+def serving_link(*room_ids: str) -> MagicMock:
+    """A link whose presence admits ``room_ids`` and then delivers nothing."""
+    link = make_link_mock()
+    link.agent_id = "agent-123"
+    link.is_connected = True
+    link.subscribe_agent_rooms = AsyncMock()
+    link.subscribe_room = AsyncMock()
+    link.unsubscribe_room = AsyncMock()
+    link.subscribe_agent_contacts = AsyncMock()
+    link.unsubscribe_agent_contacts = AsyncMock()
+    link.rest.agent_api_chats.list_agent_chats = AsyncMock(
+        return_value=MagicMock(
+            data=[chat_row(room_id) for room_id in room_ids],
+            metadata=MagicMock(total_pages=1),
+        )
+    )
+
+    async def no_events():
+        await asyncio.Event().wait()
+        yield
+
+    link.__aiter__ = lambda _self: no_events()
+    return link
+
+
+ROOMS = ("room-1", "room-2")
+
+
+class TestInterruptedCleanupKeepsTheRuntime:
+    """A restart is refused until the previous runtime's whole stop succeeds."""
+
+    @pytest.fixture
+    def cleanups(self) -> RoomCleanups:
+        return RoomCleanups()
+
+    @pytest.fixture
+    def link(self) -> MagicMock:
+        return serving_link(*ROOMS)
+
+    @staticmethod
+    def platform(**kwargs: object) -> PlatformRuntime:
+        return PlatformRuntime(agent_id="agent-123", api_key="k", **kwargs)
+
+    @staticmethod
+    async def start(
+        platform: PlatformRuntime, link: MagicMock, cleanups: RoomCleanups
+    ) -> None:
+        with patch("band.runtime.platform_runtime.BandLink", return_value=link):
+            await platform.start(on_execute=AsyncMock(), on_cleanup=cleanups)
+
+    async def serving(
+        self, link: MagicMock, cleanups: RoomCleanups, **kwargs: object
+    ) -> PlatformRuntime:
+        platform = self.platform(**kwargs)
+        await self.start(platform, link, cleanups)
+        await wait_for_condition(lambda: set(platform.runtime.executions) == set(ROOMS))
+        return platform
+
+    async def assert_held_until_retried(
+        self, platform: PlatformRuntime, link: MagicMock, cleanups: RoomCleanups
+    ) -> None:
+        assert platform.cleanup_pending
+        with pytest.raises(CleanupIncompleteError):
+            await self.start(platform, link, cleanups)
+        with pytest.raises(AgentAlreadyRunningError):
+            await self.start(self.platform(), link, cleanups)
+
+        cleanups.failing = False
+        cleanups.release.set()
+        await platform.stop()
+        assert sorted(cleanups.cleaned) == list(ROOMS)
+        assert not platform.cleanup_pending
+        await self.start(self.platform(), serving_link(), cleanups)
+
+    async def test_cancelled_stop_leaves_a_serving_room_owned(self, link, cleanups):
+        platform = await self.serving(link, cleanups)
+        cleanups.hold()
+        stopping = asyncio.create_task(platform.stop())
+        await cleanups.entered.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+
+        cleanups.release.set()
+        await wait_for_condition(lambda: len(cleanups.cleaned) == 1)
+        assert len(platform.runtime.executions) == 1
+        await self.assert_held_until_retried(platform, link, cleanups)
+
+    async def test_stop_cancelled_before_any_room_is_fenced(self, link, cleanups):
+        platform = await self.serving(
+            link, cleanups, contact_config=ContactEventConfig(broadcast_changes=True)
+        )
+        unsubscribing, release = asyncio.Event(), asyncio.Event()
+
+        async def held_unsubscribe() -> None:
+            unsubscribing.set()
+            await release.wait()
+
+        link.unsubscribe_agent_contacts.side_effect = held_unsubscribe
+        stopping = asyncio.create_task(platform.stop())
+        await unsubscribing.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+
+        assert set(platform.runtime.executions) == set(ROOMS)
+        await self.assert_held_until_retried(platform, link, cleanups)
+
+    async def test_failed_presence_teardown_keeps_the_runtime(self, link, cleanups):
+        platform = await self.serving(link, cleanups)
+        presence = platform.runtime.presence
+        presence_stop = presence.stop
+        presence.stop = AsyncMock(side_effect=OSError("presence stop failed"))
+
+        with pytest.raises(OSError, match="presence stop failed"):
+            await platform.stop()
+        presence.stop = presence_stop
+        await self.assert_held_until_retried(platform, link, cleanups)
+
+    @pytest.mark.parametrize("unwind", ["fails", "is_cancelled"])
+    async def test_interrupted_failed_start_unwind_keeps_the_runtime(
+        self, link, cleanups, unwind: str
+    ):
+        link.subscribe_agent_contacts.side_effect = OSError("contacts down")
+        platform = self.platform(
+            contact_config=ContactEventConfig(broadcast_changes=True)
+        )
+        if unwind == "fails":
+            cleanups.failing = True
+            with pytest.raises(OSError, match="contacts down"):
+                await self.start(platform, link, cleanups)
+        else:
+            cleanups.hold()
+            starting = asyncio.create_task(self.start(platform, link, cleanups))
+            await cleanups.entered.wait()
+            starting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await starting
+            cleanups.release.set()
+            await wait_for_condition(lambda: len(cleanups.cleaned) == 1)
+
+        link.subscribe_agent_contacts.side_effect = None
+        await self.assert_held_until_retried(platform, link, cleanups)

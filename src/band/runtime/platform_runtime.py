@@ -71,7 +71,10 @@ class PlatformRuntime:
         self._on_participant_removed = on_participant_removed
 
         self._link: BandLink | None = None
+        # Held from creation until its stop() completes, so a restart can never
+        # replace a runtime whose rooms may still be serving or cleaning up.
         self._runtime: AgentRuntime | None = None
+        self._running = False
         self._instance_guard: SingleInstanceGuard | None = None
         # Only a guard ``start()`` claimed itself is released by this runtime;
         # a host that claimed it first releases it after its own cleanup.
@@ -133,8 +136,9 @@ class PlatformRuntime:
 
     @property
     def cleanup_pending(self) -> bool:
-        """Whether a stopped or failed runtime still owns unfinished cleanup."""
-        return self._runtime is not None and self._runtime.cleanup_pending
+        """Whether a runtime is held but not serving: its start is still in
+        progress, or a stop or failed start has not completed."""
+        return self._runtime is not None and not self._running
 
     @property
     def contact_config(self) -> ContactEventConfig:
@@ -203,6 +207,8 @@ class PlatformRuntime:
             raise CleanupIncompleteError(
                 "Platform runtime cleanup is incomplete; call stop() to retry it"
             )
+        if self._runtime is not None:
+            raise RuntimeError("Platform runtime is already started")
         # Duplicates corrupt message claiming, so refuse before any
         # processing starts. A failed start that cleaned up releases the
         # lock: the guard must never block a retry within this same process.
@@ -240,6 +246,7 @@ class PlatformRuntime:
         except BaseException:
             await self._unwind_failed_start()
             raise
+        self._running = True
 
         logger.info("Platform runtime started for agent: %s", self._agent_name)
 
@@ -248,10 +255,10 @@ class PlatformRuntime:
         keep the guard while that cleanup remains incomplete."""
         if self._runtime is not None:
             try:
-                await self._runtime.stop()
+                await self._stop_runtime(timeout=None)
             except Exception:
                 logger.exception("Failed to clean up a partially started runtime")
-        if self._owns_instance_guard and not self.cleanup_pending:
+        if self._owns_instance_guard and self._runtime is None:
             self.release_single_instance()
 
     def claim_single_instance(self) -> None:
@@ -293,6 +300,7 @@ class PlatformRuntime:
             ExceptionGroup: Room cleanup remains incomplete. The runtime and
                 its single-instance guard stay held; ``stop()`` retries.
         """
+        self._running = False
         graceful = True
         try:
             # Unsubscribe while the socket is still up; AgentRuntime.stop
@@ -305,8 +313,8 @@ class PlatformRuntime:
                     logger.exception("Failed to unsubscribe contacts before disconnect")
                 finally:
                     self._contacts_subscribed = False
-            if self._runtime:
-                graceful = await self._runtime.stop(timeout=timeout)
+            if self._runtime is not None:
+                graceful = await self._stop_runtime(timeout=timeout)
         finally:
             # Idempotent if AgentRuntime.stop already disconnected — with
             # install_signal_handlers=False disconnect is what wakes run_forever.
@@ -315,6 +323,14 @@ class PlatformRuntime:
         if self._owns_instance_guard:
             self.release_single_instance()
         logger.info("Platform runtime stopped")
+        return graceful
+
+    async def _stop_runtime(self, *, timeout: float | None) -> bool:
+        """Release the runtime only after its whole stop succeeds; a failed or
+        cancelled stop keeps it for the next retry."""
+        assert self._runtime is not None
+        graceful = await self._runtime.stop(timeout=timeout)
+        self._runtime = None
         return graceful
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:

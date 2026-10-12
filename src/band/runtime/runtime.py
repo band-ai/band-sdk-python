@@ -191,13 +191,15 @@ class AgentRuntime:
         return self.executions.copy()
 
     @property
-    def cleanup_pending(self) -> bool:
-        """Whether a room still owns an execution that is not serving it:
-        startup or cleanup that has not yet succeeded."""
-        return any(
-            record.execution is not None and not self._serving(room_id)
+    def unsettled_rooms(self) -> list[str]:
+        """Rooms owning an execution that is not serving them: startup or
+        cleanup not yet settled. Rooms still serving are not counted, so an
+        empty list does not mean the runtime has stopped."""
+        return [
+            room_id
             for room_id, record in self._rooms.items()
-        )
+            if record.execution is not None and not self._serving(room_id)
+        ]
 
     def _serving(self, room_id: str) -> bool:
         record = self._rooms.get(room_id)

@@ -522,14 +522,14 @@ class TestAgentRuntimeRoomCleanupOwnership:
         assert await runtime._create_execution("room-1") is None
         await runtime._on_room_event("room-1", make_message_event(room_id="room-1"))
         assert runtime.active_sessions == {}
-        assert runtime.cleanup_pending
+        assert runtime.unsettled_rooms == ["room-1"]
 
         room_cleanup.release.set()
         await leaving
         await asyncio.wait_for(_admitted(runtime, "room-1"), timeout=1)
         assert runtime.executions["room-1"] is not old
         assert not old.is_running
-        assert not runtime.cleanup_pending
+        assert runtime.unsettled_rooms == []
         mock_handler.assert_not_awaited()
 
     @pytest.mark.parametrize("retry", ["reconnect", "event", "rejoin"])
@@ -539,7 +539,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
         await _joined(runtime, "room-1")
         room_cleanup.failing = True
         await _left(runtime, "room-1")
-        assert runtime.cleanup_pending
+        assert runtime.unsettled_rooms == ["room-1"]
 
         await runtime._on_room_joined("room-1", {})
         await _settled(runtime, "room-1")
@@ -557,7 +557,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
                 await runtime._on_room_joined("room-1", {})
         await asyncio.wait_for(_admitted(runtime, "room-1"), timeout=1)
         assert room_cleanup.rooms == ["room-1"]
-        assert not runtime.cleanup_pending
+        assert runtime.unsettled_rooms == []
 
     async def test_newer_leave_invalidates_pending_admission(
         self, runtime: AgentRuntime, room_cleanup: RoomCleanup
@@ -585,12 +585,12 @@ class TestAgentRuntimeRoomCleanupOwnership:
             await runtime.stop()
         assert len(failures.value.exceptions) == 2
         mock_link.disconnect.assert_awaited()
-        assert runtime.cleanup_pending
+        assert sorted(runtime.unsettled_rooms) == ["room-1", "room-2"]
 
         room_cleanup.failing = False
         assert await runtime.stop()
         assert sorted(room_cleanup.rooms) == ["room-1", "room-2"]
-        assert not runtime.cleanup_pending
+        assert runtime.unsettled_rooms == []
 
     async def test_cancellation_resistant_execution_keeps_room_fenced(
         self, mock_link, room_cleanup: RoomCleanup, monkeypatch
@@ -613,7 +613,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
         await runtime._on_room_event("room-1", make_message_event(room_id="room-1"))
         await started.wait()
         await _left(runtime, "room-1")
-        assert runtime.cleanup_pending
+        assert runtime.unsettled_rooms == ["room-1"]
         assert room_cleanup.rooms == []
 
         await runtime._on_room_joined("room-1", {})
@@ -755,7 +755,7 @@ class TestAgentRuntimeStartupOwnership:
         start_gate.failures = 1
         await _joined(held_runtime, "room-1")
         assert held_runtime.active_sessions == {}
-        assert held_runtime.cleanup_pending
+        assert held_runtime.unsettled_rooms == ["room-1"]
 
         await held_runtime._on_room_event(
             "room-1", make_message_event(room_id="room-1")
@@ -764,7 +764,7 @@ class TestAgentRuntimeStartupOwnership:
         failed, admitted = start_gate.built
         assert failed.stopped and not failed.started
         assert held_runtime.executions["room-1"] is admitted
-        assert not held_runtime.cleanup_pending
+        assert held_runtime.unsettled_rooms == []
 
     async def test_rejoin_during_held_start_admits_a_fresh_execution(
         self, held_runtime: AgentRuntime, start_gate: StartGate
