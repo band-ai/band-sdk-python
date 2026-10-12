@@ -42,8 +42,9 @@ except PackageNotFoundError:
 class CleanupPhase(StrEnum):
     """Separately owned shutdown work an agent keeps until it succeeds.
 
-    Members run in declaration order: the runtime first, so no room still
-    runs when the adapter is disposed.
+    Members are attempted in declaration order, runtime first. A failed
+    phase does not skip later ones: the adapter is still disposed and the
+    runtime phase alone is retried.
     """
 
     RUNTIME = "runtime"

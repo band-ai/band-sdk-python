@@ -281,18 +281,15 @@ class AgentRuntime:
         self.rooms.withdraw(room_id)
 
     async def _on_room_event(self, room_id: str, event: PlatformEvent) -> None:
-        """Handle room event - forward to execution context.
+        """Forward a room event to its routed execution.
 
-        A room still waiting for old cleanup claims nothing; its admission
-        retries instead, and the new execution's /next resync recovers work.
+        A wanted room that is not routed yet holds the event for the execution
+        its admission starts, and the hold retries that admission.
         """
-        execution = self.executions.get(room_id)
-        if execution:
+        if (execution := self.executions.get(room_id)) is not None:
             await execution.on_event(event)
-        elif self.rooms.wanted(room_id):
-            self.rooms.converge(room_id)
         else:
-            logger.warning("No execution for room %s, event dropped", room_id)
+            self.rooms.hold(room_id, event)
 
     async def _on_reconnected(self) -> None:
         """Trigger /next resync on all active executions after WebSocket reconnect.

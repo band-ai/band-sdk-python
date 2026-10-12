@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -19,6 +20,7 @@ from typing import Any
 
 from band.core.exceptions import CleanupIncompleteError
 from band.core.retention.cleanup import task_failure
+from band.platform.event import PlatformEvent
 from band.runtime.execution import Execution
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,11 @@ logger = logging.getLogger(__name__)
 # Without a new signal a room needs at most: retire its old execution, start a
 # new one, and retire that start when a stop overtook it.
 MAX_STEPS_PER_SIGNAL = 3
+
+# Events a wanted room receives before its execution is routed. Messages are
+# also recovered by the /next resync; the rest (participants, room updates)
+# exist only here.
+MAX_HELD_EVENTS = 256
 
 
 class RoomState(StrEnum):
@@ -68,6 +75,9 @@ class Room:
     steps_left: int = MAX_STEPS_PER_SIGNAL
     step: asyncio.Task[None] | None = None
     convergence: Convergence | None = None
+    held: deque[PlatformEvent] = field(
+        default_factory=lambda: deque(maxlen=MAX_HELD_EVENTS)
+    )
 
 
 async def request_resync(room_id: str, execution: Execution) -> None:
@@ -162,6 +172,20 @@ class RoomExecutions:
         room.wanted = True
         return self._signal(room_id, room)
 
+    def hold(self, room_id: str, event: PlatformEvent) -> None:
+        """Keep an event for a wanted room until its execution is routed."""
+        if (room := self._rooms.get(room_id)) is None or not room.wanted:
+            logger.warning("No execution for room %s, event dropped", room_id)
+            return
+        if len(room.held) == room.held.maxlen:
+            logger.warning(
+                "Room %s held %d events before routing; dropping the oldest",
+                room_id,
+                MAX_HELD_EVENTS,
+            )
+        room.held.append(event)
+        self._signal(room_id, room)
+
     def withdraw(self, room_id: str) -> None:
         """Fence a wanted room at once and request its owned cleanup."""
         if (room := self._rooms.get(room_id)) is None or not room.wanted:
@@ -203,6 +227,7 @@ class RoomExecutions:
         room.wanted = False
         room.generation += 1
         room.stop_timeout = None
+        room.held.clear()
 
     def _signal(self, room_id: str, room: Room) -> asyncio.Future[bool] | None:
         room.steps_left = MAX_STEPS_PER_SIGNAL
@@ -211,7 +236,7 @@ class RoomExecutions:
 
     def _advance(self, room_id: str, room: Room) -> None:
         """Take the one step the room's state and intent call for, if any."""
-        match room.state, room.wanted and self.accepting, room.execution:
+        match room.state, self._admits(room), room.execution:
             case RoomState.STARTING | RoomState.RETIRING, _, _:
                 pass  # the step in flight advances the room when it ends
             case RoomState.SERVING, True, _:
@@ -255,11 +280,20 @@ class RoomExecutions:
 
     def _step_done(self, room_id: str, room: Room, step: asyncio.Task[None]) -> None:
         room.step = None
-        if (error := task_failure(step)) is not None:
-            room.state = RoomState.IDLE
-            self._fail(room_id, room, error)
+        if (error := task_failure(step)) is None:
+            self._advance(room_id, room)
             return
-        self._advance(room_id, room)
+        failed_step, room.state = room.state, RoomState.IDLE
+        if failed_step == RoomState.STARTING and not self._admits(room):
+            # Nobody wants this room any more; retiring what the failed start
+            # built is the outcome its waiters asked for.
+            logger.warning("Room %s start failed after withdrawal: %s", room_id, error)
+            self._advance(room_id, room)
+            return
+        self._fail(room_id, room, error)
+
+    def _admits(self, room: Room) -> bool:
+        return room.wanted and self.accepting
 
     def _settle(self, room: Room) -> None:
         if room.convergence is not None:
@@ -281,18 +315,38 @@ class RoomExecutions:
         """Start an owned execution; route it only if the membership intent it
         started under still stands.
 
-        Events arriving before routing are dropped unclaimed, so a routed
-        execution always resyncs /next to recover them. Startup has no time
-        bound here: leave and stop wait for it to settle, then retire it.
+        Events held during startup are delivered first, in order, and a routed
+        execution always resyncs /next for messages never pushed. Startup has
+        no time bound here: leave and stop wait for it to settle, then retire it.
         """
         generation = room.generation
         room.execution = execution = self._build(room_id)
         await execution.start()
-        if room.wanted and self.accepting and room.generation == generation:
+        if self._admits(room) and room.generation == generation:
+            await self._deliver_held(room_id, room, execution)
             self.routed[room_id] = execution
             logger.debug("Created execution for room %s", room_id)
             await request_resync(room_id, execution)
         room.state = RoomState.SERVING if self.serving(room_id) else RoomState.IDLE
+
+    async def _deliver_held(
+        self, room_id: str, room: Room, execution: Execution
+    ) -> None:
+        """Hand held events over oldest first; ones arriving meanwhile are held
+        too, so live routing begins only once the queue is empty."""
+        for _ in range(MAX_HELD_EVENTS):
+            if not room.held:
+                return
+            await execution.on_event(room.held.popleft())
+        logger.warning(
+            "Room %s kept receiving events during startup; routing with %d held",
+            room_id,
+            len(room.held),
+        )
+        late = list(room.held)
+        room.held.clear()
+        for event in late:
+            await execution.on_event(event)
 
     async def _retire(self, room_id: str, room: Room, *, execution: Execution) -> None:
         graceful = await execution.stop(timeout=room.stop_timeout)
