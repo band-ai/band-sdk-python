@@ -304,7 +304,7 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
 #   agno          tests/adapters/agno/test_adapter.py (agno.media.Image)
 #   strands       test_strands_adapter.py (ToolResultContent image block)
 #   copilot_sdk   copilot_sdk/test_tool_bridging.py (ToolBinaryResult)
-#   codex         test_codex_adapter.py ("inputImage" content item -- wire-shape
+#   codex         codex/ ("inputImage" content item -- wire-shape
 #                 verified against codex-cli's generated schema; whether
 #                 codex-rs accepts the data: URI isn't checkable from Python)
 #   pydantic_ai   test_pydantic_ai_adapter.py (messages.BinaryContent)
