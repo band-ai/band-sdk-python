@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Literal, Self
+from typing import ClassVar, Literal, Self
 
 from band_sdk_core import is_authorized_sender
 from pydantic import Field, PositiveFloat, PositiveInt, model_validator
@@ -100,6 +100,11 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
         decision_authorized_senders: Sender ids allowed to resolve decisions.
             ``None`` admits any room participant.
     """
+
+    retention_unavailable_reason: ClassVar[str] = (
+        "Cursor ACP subagent drainage does not establish whole-session inactivity "
+        "or safe shutdown for other background work"
+    )
 
     command: tuple[str, ...] = DEFAULT_CURSOR_ACP_COMMAND
     auth_method: CursorAuthMethod | None = None

@@ -69,9 +69,8 @@ async def ask_claude_sdk_status(tools: FakeAgentTools) -> None:
     )
     await adapter.on_started("Agent", "An agent under test")
     try:
-        await adapter.on_event(
-            turn_input(tools, user_message(f"/{ClaudeSDKCommand.STATUS}"))
-        )
+        control = user_message(f"/{ClaudeSDKCommand.STATUS}")
+        assert await adapter.try_handle_control(control, tools)
     finally:
         await adapter.cleanup_all()
 

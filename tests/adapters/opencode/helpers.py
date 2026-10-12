@@ -26,6 +26,7 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
+from tests.adapters.dispatch import deliver_message
 from tests.mcpbackends import BackendStarts
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
@@ -457,7 +458,8 @@ async def run_single_turn(
     content: str = "hello",
 ) -> None:
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content=content),
         tools_protocol(tools),
         OpencodeSessionState(),

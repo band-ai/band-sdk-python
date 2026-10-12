@@ -1595,9 +1595,8 @@ async def test_a_turn_still_running_at_cleanup_leaves_no_todos() -> None:
 
 @pytest.mark.asyncio
 async def test_a_cleanup_cancelled_mid_stop_still_releases_the_session() -> None:
-    """The room may rejoin and restore its session while the old runtime is
-    still exiting, so the bootstrap mark goes before the stop; the todos go
-    after it, even when the stop is cancelled."""
+    """A rejoined room gets fresh context while its old runtime is exiting;
+    cancellation still releases the retired session's todo state."""
     agent = FakeACPAgent().will_update_cursor_todos("ship it").will_say("ok")
     exiting = agent.exits_slowly()
     adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent"))
@@ -1608,10 +1607,13 @@ async def test_a_cleanup_cancelled_mid_stop_still_releases_the_session() -> None
         cleanup = asyncio.create_task(adapter.on_cleanup("room-1"))
         await exiting.received.wait()
 
-        assert adapter._claim_session_bootstrap(released)
+        await session.send("rejoin the room", room="room-1")
+        assert session.session_id("room-1") != released
+        assert "[System Context]" in agent.prompt_texts()[-1]
         cleanup.cancel()
         await asyncio.gather(cleanup, return_exceptions=True)
         assert released not in adapter._cursor_profile._todos_by_session
+        exiting.release.set()
 
 
 class SetupGatedAgent(FakeACPAgent):

@@ -20,7 +20,7 @@ from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.delivery import relay_reply
-from band.core.exceptions import BandConnectionError
+from band.core.exceptions import BandConnectionError, InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -415,6 +415,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             len(self._custom_tools),
         )
 
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        room_state = await self._get_or_create_room_state(msg.room_id)
+        if not await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
+            return False
+        tools.turn.settle()
+        return True
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -434,24 +443,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 agent_id or self.agent_name
             )
 
-        if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
-            tools.turn.settle()
-            return
-
         if room_state.turn and (
             not room_state.turn.turn_future.done()
             or room_state.approvals.awaiting_human()
         ):
-            await tools.send_event(
-                "OpenCode is still processing the previous request in this room.",
-                "error",
-            )
-            tools.turn.settle()
-            return
+            raise InputNotAccepted("The room already has an active OpenCode turn")
 
-        # Only a message that starts a turn rebinds the room's tools: the MCP
-        # backend resolves band tool calls through them, so a message consumed
-        # above must not take over the in-flight turn's tools.
+        # MCP calls keep the active turn's tools until that turn finishes.
         room_state.tools = tools
 
         await self._ensure_client_started()

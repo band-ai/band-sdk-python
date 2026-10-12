@@ -1,5 +1,7 @@
 """Tests for DefaultPreprocessor."""
 
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from band.client.streaming import MessageCreatedPayload, MessageMetadata
@@ -77,6 +79,7 @@ def make_mock_ctx(
     ctx.participants_changed = MagicMock(return_value=participants_changed)
     ctx.mark_llm_initialized = MagicMock()
     ctx.mark_participants_sent = MagicMock()
+    ctx.peek_pending_system_messages = MagicMock(return_value=[])
     ctx.get_context = AsyncMock(
         return_value=MagicMock(
             messages=history_messages or [],
@@ -355,8 +358,10 @@ class TestSessionBootstrap:
                 "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
-                await preprocessor.process(ctx, event, agent_id="agent-1")
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
 
+        ctx.mark_llm_initialized.assert_not_called()
+        result.commit_context()
         ctx.mark_llm_initialized.assert_called_once()
 
     async def test_does_not_mark_initialized_when_already_initialized(self):

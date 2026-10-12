@@ -495,7 +495,8 @@ class Preprocessor(Protocol):
     Converts platform events to AgentInput.
 
     Most users use DefaultPreprocessor.
-    Power users can implement custom preprocessing.
+    Power users can implement custom preprocessing. Stateful context must stay
+    owed until ``AgentInput.commit_context`` is called to support rejected input.
 
     Note: PlatformEvent is a tagged union type:
         PlatformEvent = MessageEvent | RoomAddedEvent | RoomRemovedEvent | ...
