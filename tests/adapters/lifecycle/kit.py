@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.adapters.codex import CodexAdapter
-from band.core.retention import Residency
+from band.core.retention import Residency, RetainedRoom
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.codex import CodexStdioClient
 from tests.adapters.claude_sdk.fakecli import Hold
@@ -54,7 +55,16 @@ class CodexPeer(CodexStdioClient):
 
 
 class ClaudePeer(WorkspacePeer):
+    """Inject a held start or a held close at the real transport."""
+
+    starting: Hold | None = None
     closing: Hold | None = None
+
+    async def connect(self) -> None:
+        await super().connect()
+        if self.starting is not None:
+            self.starting.reached.set()
+            await self.starting.released.wait()
 
     async def close(self) -> None:
         if self.closing is not None:
@@ -69,6 +79,8 @@ class RetentionHost:
     root: Path
     fail_startup: Path
     hold_startup: Path
+    # The room's retained residency, for adapters that retain rooms.
+    residency: Callable[[str], RetainedRoom | None]
     shared: bool = True
     children: list[CodexPeer | ClaudePeer] = field(default_factory=list)
     child_cwds: list[str | None] = field(default_factory=list)
@@ -120,12 +132,10 @@ class RetentionHost:
 
     async def settled(self, room_id: str) -> None:
         """Wait out the room's in-flight process transition, such as recovery."""
-        if not isinstance(self.adapter, CodexAdapter):
-            return
-        if (room := self.adapter._room_clients.get(room_id)) is None:
+        if (residency := self.residency(room_id)) is None:
             return
         for _ in range(MAX_SETTLE_POLLS):
-            if room.residency.snapshot.state not in IN_FLIGHT:
+            if residency.snapshot.state not in IN_FLIGHT:
                 return
             await asyncio.sleep(0.01)
         raise AssertionError(f"Room {room_id} never settled")

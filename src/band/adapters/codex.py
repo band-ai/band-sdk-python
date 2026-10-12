@@ -642,7 +642,8 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
     # Upper bound for letting a released, still-running turn wind down on its
-    # own during cleanup (see _let_turn_finish) before it's force-cancelled.
+    # own during cleanup (see _let_turn_finish) before it's force-cancelled,
+    # and for answering a finished turn's leftover native requests.
     # Deliberately not Optional like client_close_timeout_s above: that
     # field's "disable the bound" is a legacy allowance for a rarely-slow
     # transport close, not something a turn possibly stuck on real work
@@ -1763,6 +1764,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if (thread_id := self._room_threads.get(room.room_id)) is not None:
             await self._restore_thread(room, client, thread_id)
 
+    def _resume_params(self, room: RoomCodexClient, thread_id: str) -> dict[str, Any]:
+        """``thread/resume`` overrides pinning the thread to the room's workspace.
+
+        Without ``cwd`` Codex reports the thread's recorded cwd, which a later
+        strict restore would see as a changed setting.
+        """
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "cwd": room.workspace,
+            "personality": self.config.personality,
+        }
+        self._apply_thread_sandbox(params, room_id=room.room_id)
+        return params
+
     async def _restore_thread(
         self, room: RoomCodexClient, client: CodexClientProtocol, thread_id: str
     ) -> None:
@@ -1772,13 +1787,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ``history`` or tools, which resume silently ignores -- and never
         starts a new thread in its place.
         """
-        params: dict[str, Any] = {
-            "threadId": thread_id,
-            "cwd": room.workspace,
-            "personality": self.config.personality,
-        }
-        self._apply_thread_sandbox(params, room_id=room.room_id)
-        result = await client.request(CodexRequestMethod.THREAD_RESUME, params)
+        result = await client.request(
+            CodexRequestMethod.THREAD_RESUME, self._resume_params(room, thread_id)
+        )
         resumed = _result_id(result, "thread")
         if resumed != thread_id:
             raise CodexContinuityError(
@@ -1891,14 +1902,29 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         Whatever is still undelivered then belongs to no Band turn.
         """
-        client = self._resident_client(room)
-        room.turn = native = NativeTurn(client=client, generation=room.generation)
+        room.turn = native = NativeTurn(
+            client=self._resident_client(room), generation=room.generation
+        )
         try:
             yield native
         finally:
             room.turn = None
-            for event in _undelivered(native):
-                await self._refuse_unowned(room, client, event)
+            await self._refuse_undelivered(room, native)
+
+    async def _refuse_undelivered(
+        self, room: RoomCodexClient, native: NativeTurn
+    ) -> None:
+        """Refuse a finished turn's leftovers, within the turn's settle bound so
+        a process that stopped reading cannot hold the room's turn open."""
+        try:
+            async with asyncio.timeout(self.config.turn_settle_timeout_s):
+                for event in _undelivered(native):
+                    await self._refuse_unowned(room, native.client, event)
+        except TimeoutError:
+            logger.warning(
+                "Room %s: Codex stopped reading; left native requests unanswered",
+                room.room_id,
+            )
 
     async def _start_native_turn(
         self, room: RoomCodexClient, native: NativeTurn, params: dict[str, Any]
@@ -2026,9 +2052,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
         client = self._resident_client(room)
-        if is_session_bootstrap and history.has_thread():
+        if is_session_bootstrap and (named := history.thread_id):
             resumed = await self._resume_from_history(
-                room=room, client=client, history=history, tools=tools
+                room=room, client=client, named=named, tools=tools
             )
             if resumed is not None:
                 return resumed
@@ -2062,7 +2088,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         *,
         room: RoomCodexClient,
         client: CodexClientProtocol,
-        history: CodexSessionState,
+        named: str,
         tools: AgentToolsProtocol,
     ) -> str | None:
         """Resume the thread Band history names; None falls back to a new one."""
@@ -2070,22 +2096,19 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         try:
             result = await client.request(
                 CodexRequestMethod.THREAD_RESUME,
-                {"threadId": history.thread_id, "personality": self.config.personality},
+                self._resume_params(room, named),
             )
         except CodexJsonRpcError as exc:
             logger.warning(
                 "thread/resume failed for room %s thread %s: %s",
                 room_id,
-                history.thread_id,
+                named,
                 exc,
             )
             if self.config.inject_history_on_resume_failure:
                 self._needs_history_injection.add(room_id)
             return None
-        resumed = result.get("thread", {}) if isinstance(result, dict) else {}
-        thread_id = str(resumed.get("id") or history.thread_id or "")
-        if not thread_id:
-            return None
+        thread_id = _result_id(result, "thread") or named
         self._room_threads[room_id] = thread_id
         # Band history does not record which tools the thread was started with.
         room.registration = None

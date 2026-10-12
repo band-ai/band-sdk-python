@@ -1141,6 +1141,32 @@ class TestCodexAdapter:
         assert adapter._token_usage[thread_id] is usage
 
     @pytest.mark.asyncio
+    async def test_a_thread_resumed_from_history_survives_a_lost_process(
+        self,
+    ) -> None:
+        """A thread Band history names was recorded in another cwd; resuming
+        it pins the room's workspace, so a later strict restore agrees."""
+        client = FakeCodexClient(
+            events=[
+                event_notification(TRANSPORT_CLOSED, {"reason": "process exited"}),
+                turn_completed("turn-2"),
+            ],
+            recorded_cwd="/where/it/first/ran",
+        )
+        adapter = make_codex_adapter(client)
+        await adapter.on_started("Codex Agent", "A coding agent")
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(
+                adapter, history=CodexSessionState(thread_id="thr-history")
+            )
+
+        await send_bootstrap(adapter)
+
+        assert client.request_methods.count(CodexRequestMethod.THREAD_RESUME) == 2
+        assert CodexRequestMethod.THREAD_START not in client.request_methods
+        assert adapter._room_threads[ROOM_ID] == "thr-history"
+
+    @pytest.mark.asyncio
     async def test_transport_closed_after_error_does_not_double_report(self) -> None:
         """An "error" notification immediately followed by transport/closed for
         the same incident must report the failure once, not twice -- matching

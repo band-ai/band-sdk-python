@@ -24,12 +24,13 @@ from band.core.types import (
     HistoryProvider,
     PlatformMessage,
 )
-from band.integrations.codex import RpcEvent
+from band.integrations.codex import DYNAMIC_TOOL_CALL_METHOD, RpcEvent
 from band.integrations.codex.types import (
     CodexRequestMethod,
     CodexSessionState,
 )
 from band.runtime.decisions import DecisionRegistry
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -199,13 +200,14 @@ async def send_bootstrap(
     *,
     room_id: str = ROOM_ID,
     tools: FakeAgentTools | None = None,
+    history: CodexSessionState | None = None,
 ) -> None:
     """Deliver a room's session-bootstrap message to ``adapter``."""
     await deliver_message(
         adapter,
         make_platform_message(room_id=room_id),
         tools if tools is not None else ToolSchemaFakeTools(),
-        CodexSessionState(),
+        history or CodexSessionState(),
         participants_msg=None,
         contacts_msg=None,
         is_session_bootstrap=True,
@@ -378,3 +380,21 @@ class CompletesWhileRefusingClient(SlowTurnStartClient):
         self.emit(turn_completed())
         for _ in range(5):
             await asyncio.sleep(0)
+
+
+class StopsReadingAfterTurnClient(SlowTurnStartClient):
+    """An app-server that asks one more thing after its turn completes, then
+    never reads the answer."""
+
+    def _release_turn_events(self, turn_id: str) -> None:
+        super()._release_turn_events(turn_id)
+        self.emit(
+            event_request(
+                9,
+                DYNAMIC_TOOL_CALL_METHOD,
+                {"turnId": turn_id, "tool": BandTool.SEND_MESSAGE},
+            )
+        )
+
+    async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
+        await asyncio.Event().wait()

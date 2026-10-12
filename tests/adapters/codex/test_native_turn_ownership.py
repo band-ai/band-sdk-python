@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import pytest
 
 from band.adapters.codex import (
+    CodexAdapterConfig,
     CodexCommand,
     CodexContinuityError,
 )
@@ -26,6 +28,7 @@ from tests.adapters.codex.kit import (
     CodexRoom,
     CompletesWhileRefusingClient,
     SlowTurnStartClient,
+    StopsReadingAfterTurnClient,
     ToolSchemaFakeTools,
     answer_to,
     parked_on_approval,
@@ -173,6 +176,20 @@ class TestNativeTurnOwnership:
         await send_bootstrap(adapter, tools=tools)
 
         assert [e["content"] for e in events_of_type(tools, "thought")] == ["on time"]
+
+    @pytest.mark.asyncio
+    async def test_a_process_that_stops_reading_cannot_hold_a_finished_turn(
+        self,
+    ) -> None:
+        client = StopsReadingAfterTurnClient(events=[turn_completed()])
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(turn_settle_timeout_s=0.01)
+        )
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        await asyncio.wait_for(send_bootstrap(adapter), timeout=5)
+
+        assert adapter._room_clients[ROOM_ID].turn is None
 
     @pytest.mark.asyncio
     async def test_a_stale_process_loss_cannot_retire_its_replacement(self) -> None:

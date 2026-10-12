@@ -19,6 +19,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
 )
+from band.core.retention import RetainedRoom
 from band.integrations.claude_sdk import transport
 from tests.adapters.lifecycle.kit import (
     ClaudePeer,
@@ -64,6 +65,10 @@ async def host(
             return child
 
         monkeypatch.setattr("band.adapters.codex.CodexStdioClient", codex_child)
+
+        def residency(room_id: str) -> RetainedRoom | None:
+            room = adapter._room_clients.get(room_id)
+            return room.residency if room is not None else None
     else:
         adapter = ClaudeSDKAdapter(
             ClaudeSDKAdapterConfig(
@@ -77,11 +82,17 @@ async def host(
         def claude_child(*, prompt: str, options: ClaudeAgentOptions) -> ClaudePeer:
             child = ClaudePeer(prompt=prompt, options=options)
             child.arguments = arguments
+            child.starting, host.next_start = host.next_start, None
             host.spawned(child, str(options.cwd) if options.cwd else None)
             return child
 
         monkeypatch.setattr(transport, "SubprocessCLITransport", claude_child)
-    host = RetentionHost(adapter, tmp_path, failure, hold)
+
+        def residency(room_id: str) -> RetainedRoom | None:
+            # Claude does not retain rooms yet; its transitions finish inline.
+            return None
+
+    host = RetentionHost(adapter, tmp_path, failure, hold, residency)
     await adapter.on_started("Peer", "A subprocess under test")
     try:
         yield host
@@ -90,7 +101,7 @@ async def host(
         hold.unlink(missing_ok=True)
         for child in host.children:
             child.refuse_close = False
-            for barrier in (getattr(child, "starting", None), child.closing):
+            for barrier in (child.starting, child.closing):
                 if barrier is not None:
                     barrier.released.set()
         try:

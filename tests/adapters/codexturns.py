@@ -70,6 +70,7 @@ class FakeCodexClient(RecordedRequests):
         started_settings: dict[str, Any] | None = None,
         resumed_settings: dict[str, Any] | None = None,
         resumed_thread_id: str | None = None,
+        recorded_cwd: str | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -88,6 +89,8 @@ class FakeCodexClient(RecordedRequests):
         self._started_settings = started_settings or {}
         self._resumed_settings = resumed_settings or self._started_settings
         self._resumed_thread_id = resumed_thread_id
+        # The cwd a resumed thread reports when resume names none.
+        self._recorded_cwd = recorded_cwd
         self._thread_counter = 0
         self._turn_counter = 0
         self._released: deque[RpcEvent] = deque()
@@ -133,7 +136,12 @@ class FakeCodexClient(RecordedRequests):
                 if self._resume_error is not None:
                     raise self._resume_error
                 thread_id = self._resumed_thread_id or payload.get("threadId")
-                return {"thread": {"id": thread_id}, **self._resumed_settings}
+                cwd = payload.get("cwd") or self._recorded_cwd
+                return {
+                    "thread": {"id": thread_id},
+                    **({"cwd": cwd} if cwd else {}),
+                    **self._resumed_settings,
+                }
             case CodexRequestMethod.THREAD_START:
                 self._thread_counter += 1
                 thread_id = f"thr-{self._thread_counter}"
