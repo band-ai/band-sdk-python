@@ -93,6 +93,11 @@ class RoomExecutionStoppedError(BandError):
         self.room_id = room_id
 
 
+class CleanupIncompleteError(BandError):
+    """Owned work or resources outlived a cleanup attempt. Actionable by the
+    host: the owner keeps them and retries settlement on the next stop."""
+
+
 def _levenshtein(a: str, b: str) -> int:
     """Iterative Levenshtein distance. Pure Python, no dependencies."""
     if a == b:
