@@ -797,8 +797,7 @@ class ExecutionContext:
     async def _stop_retained_tasks(self, deadline: float) -> None:
         tasks = tuple(self._detached_cycle_tasks)
         for task in tasks:
-            if not task.cancelling():
-                task.cancel()
+            task.cancel()
         for task in tasks:
             await self._drain_cancelled_cycle_task(task, deadline=deadline)
         if unfinished := sum(not task.done() for task in self._detached_cycle_tasks):

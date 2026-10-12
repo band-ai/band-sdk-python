@@ -17,7 +17,7 @@ from tests.runtime.agentruntime.kit import (
     settled,
     until_admitted,
 )
-from tests.runtime.helpers import RoomCleanup
+from tests.runtime.helpers import RoomCleanup, resist_cancellation_until
 
 
 class TestAgentRuntimeRoomCleanupOwnership:
@@ -114,11 +114,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
 
         async def stubborn(ctx: ExecutionContext, event) -> None:
             started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                await finish.wait()
-                raise
+            await resist_cancellation_until(finish)
 
         runtime = AgentRuntime(
             mock_link, "agent-123", stubborn, on_session_cleanup=room_cleanup

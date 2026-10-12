@@ -12,6 +12,7 @@ from band.core.exceptions import CleanupIncompleteError
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event
+from tests.runtime.helpers import resist_cancellation_until
 
 
 class TestRoomShutdown:
@@ -80,6 +81,34 @@ class TestRoomShutdown:
         await ctx.stop()
         assert cancelled.is_set()
 
+    async def test_retried_stop_cancels_an_observer_that_swallowed_the_first(
+        self, mock_link, monkeypatch
+    ) -> None:
+        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+        entered, cancels = asyncio.Event(), 0
+
+        async def observer(ctx: ExecutionContext, scope: TurnScope) -> None:
+            nonlocal cancels
+            entered.set()
+            while True:
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cancels += 1
+                    if cancels == 2:
+                        raise
+
+        ctx = ExecutionContext(
+            "room-123", mock_link, AsyncMock(), on_platform_stop=observer
+        )
+        await ctx._begin_scope()
+        ctx.observe_platform_stop(ctx.current_scope)
+        await entered.wait()
+        with pytest.raises(CleanupIncompleteError):
+            await ctx.stop()
+        await ctx.stop()
+        assert cancels == 2
+
     async def test_cancellation_resistant_cycle_keeps_stop_pending_until_settled(
         self, mock_link, monkeypatch
     ) -> None:
@@ -88,11 +117,7 @@ class TestRoomShutdown:
 
         async def handler(ctx: ExecutionContext, event: Any) -> None:
             started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                await finish.wait()
-                raise
+            await resist_cancellation_until(finish)
 
         ctx = ExecutionContext("room-123", mock_link, handler)
         await ctx.start()
