@@ -393,3 +393,34 @@ asyncio.run(module.main())
     assert {path: path.read_text() for path in artifacts} == artifacts
     assert not events.exists()
     assert not (demo / ".demo" / "run").exists()
+
+
+@pytest.mark.parametrize(
+    "cleanup_fails,body_status,expected_status",
+    [(False, 0, 0), (True, 0, 1), (False, 71, 71)],
+)
+def test_demo_exit_trap_reports_failed_cleanup(
+    demo_shell: tuple[Path, dict[str, str], Path],
+    cleanup_fails: bool,
+    body_status: int,
+    expected_status: int,
+) -> None:
+    script, env, _ = demo_shell
+    for stage in ("runtime", "cli"):
+        descriptor = (
+            script.parent / ".demo" / "workloads" / stage / "band-workload.yaml"
+        )
+        descriptor.parent.mkdir(parents=True)
+        descriptor.touch()
+    result = shell(
+        script,
+        env | {"DEMO_HEADLESS": "1", "DEMO_POLICY_ERROR": "1" if cleanup_fails else ""},
+        "check_tools() { :; }\ncheck_keys() { :; }\n"
+        "check_attach_tool() { :; }\nassert_names_free() { :; }\n"
+        "provision() { printf '%s\\n' demo.band.test > \"$MF_POLICY\"; }\n"
+        "launch_all() { :; }\nannounce_attachments() { :; }\n"
+        f"run_conductor() {{ return {body_status}; }}\nup",
+    )
+    assert result.returncode == expected_status
+    assert (script.parent / ".demo" / "run").exists() is cleanup_fails
+    assert ("cleanup incomplete" in result.stdout) is cleanup_fails

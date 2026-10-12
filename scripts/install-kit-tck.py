@@ -22,10 +22,10 @@ def install(destination: Path) -> None:
     system = platform.system().lower()
     architecture = {
         "x86_64": "amd64",
-        "AMD64": "amd64",
+        "amd64": "amd64",
         "aarch64": "arm64",
         "arm64": "arm64",
-    }.get(platform.machine())
+    }.get(platform.machine().lower())
     if system not in {"linux", "darwin", "windows"} or architecture is None:
         raise ValueError("unsupported TCK platform")
     suffix = "zip" if system == "windows" else "tar.gz"
