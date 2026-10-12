@@ -138,10 +138,20 @@ def test_docs_drift_guard_rejects_broken_band_recipe(
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(KIT_DIR / relative, destination)
-    guide = tmp_path / "README.md"
+    guide = tmp_path / "echo-agent" / "README.md"
     guide.write_text(guide.read_text().replace(original, replacement))
     with pytest.raises(AssertionError, match=error):
         validate_documented_secret_bindings(tmp_path)
+
+
+def test_extracted_starter_keeps_its_local_documentation_links(tmp_path: Path) -> None:
+    workspace = tmp_path / "starter"
+    shutil.copytree(KIT_DIR / "echo-agent", workspace)
+    guide = workspace / "README.md"
+    for target in re.findall(r"\]\(([^)]+)\)", guide.read_text()):
+        path = target.split("#", 1)[0]
+        if path and "://" not in path:
+            assert (guide.parent / path).is_file(), f"Missing starter guide: {target}"
 
 
 async def test_written_anthropic_conversion_authenticates_with_custom_sentinel(

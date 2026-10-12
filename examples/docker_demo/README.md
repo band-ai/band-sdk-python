@@ -57,11 +57,14 @@ participant and can interject at any time by @mentioning an agent.
   instead; headless runs require `tmux`.
 - A Band Enterprise plan for registering agents and driving the meeting.
 - Put `BAND_API_KEY_USER`, `BAND_REST_URL` and `BAND_WS_URL` in repository-root
-  `.env.test`; this is the canonical Band identity/endpoints source.
+  `.env.test`; this is the canonical Band identity/endpoints source. Restrict
+  this host credential file with `chmod 600 .env.test` on macOS/Linux.
 - `ANTHROPIC_API_KEY` (PM) and `OPENAI_API_KEY` (Developer + Architect) in
   `.env.test`, the host environment or the optional demo settings file. These
   agents incur provider inference cost. Entitlement/provider/quota failures
   block live acceptance.
+  Generated `agent_config.yaml` and `.demo/agents.env` are created exclusively
+  with owner-only permissions on POSIX hosts; existing files are never overwritten.
 
 ## Run
 

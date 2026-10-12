@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shlex
 import sys
 from dataclasses import dataclass
@@ -50,6 +51,7 @@ AGENT_IDS = DEMO_DIR / "agent_ids.txt"
 ROOM_IDS = DEMO_DIR / "room_ids.txt"
 ROOM_DELETION_POLL_S = 1.0
 ROOM_DELETION_TIMEOUT_S = 60.0
+PRIVATE_FILE_MODE = 0o600
 # The generated client declares these statuses as Literal aliases, with no enum
 # to import; tests pin every value here to those aliases.
 FINISHED_JOB_STATUSES: Final[frozenset[BulkDeletionJobStatus]] = frozenset(
@@ -104,10 +106,16 @@ def make_client(settings: ProvisionSettings) -> AsyncRestClient:
 
 def require_fresh_run() -> None:
     for artifact in (CONFIG_PATH, AGENTS_ENV, AGENT_IDS, ROOM_IDS):
-        if artifact.exists():
+        if artifact.exists() or artifact.is_symlink():
             raise ValueError(
                 f"{artifact} already exists; run launch.sh down before provisioning"
             )
+
+
+def write_private_file(path: Path, content: str) -> None:
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, PRIVATE_FILE_MODE)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as credentials:
+        credentials.write(content)
 
 
 async def create(client: AsyncRestClient) -> None:
@@ -148,10 +156,8 @@ async def create(client: AsyncRestClient) -> None:
         )
         raise
 
-    CONFIG_PATH.write_text(
-        yaml.dump(keyed_config, default_flow_style=False), encoding="utf-8"
-    )
-    AGENTS_ENV.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
+    write_private_file(CONFIG_PATH, yaml.dump(keyed_config, default_flow_style=False))
+    write_private_file(AGENTS_ENV, "\n".join(env_lines) + "\n")
     logger.info("Wrote %s, %s, %s", CONFIG_PATH.name, AGENTS_ENV, AGENT_IDS)
 
 

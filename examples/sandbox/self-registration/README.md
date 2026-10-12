@@ -53,6 +53,8 @@ Use it after interruption or a host crash, once credentials/access are restored.
 It also looks up the exact run display name if provisioning was interrupted
 before the agent id was returned. Keep the ledger until cleanup succeeds. For
 older runs without a room ledger, inspect and remove their room manually in the
-Band UI. Removing a sandbox does not delete its host secret or Band resources.
+Band UI. Removing a sandbox deletes its scoped host secrets, but not Band
+agents or rooms. Cleanup also removes secrets independently when creation or
+sandbox removal failed.
 Never remove a pre-existing agent or room merely because it appeared in a failed
 validation run.

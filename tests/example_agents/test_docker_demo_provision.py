@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
@@ -122,6 +124,73 @@ async def test_existing_credential_directory_blocks_registration(
     with pytest.raises(ValueError, match="already exists"):
         await provision.create(rest)
     rest.human_api_agents.register_my_agent.assert_not_called()
+
+
+async def test_dangling_credential_symlink_blocks_registration(
+    provision_files: Path,
+) -> None:
+    target = provision_files / "unowned"
+    try:
+        provision.CONFIG_PATH.symlink_to(target)
+    except OSError:
+        pytest.skip("Host does not permit creating symlinks")
+    rest = AsyncMock()
+    with pytest.raises(ValueError, match="already exists"):
+        await provision.create(rest)
+    rest.human_api_agents.register_my_agent.assert_not_called()
+    assert not target.exists()
+
+
+@pytest.fixture
+def registered_agents() -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(
+            data=SimpleNamespace(
+                agent=SimpleNamespace(id=f"agent-{index}", name=spec.name),
+                credentials=SimpleNamespace(api_key=f"fixture-key-{index}"),
+            )
+        )
+        for index, spec in enumerate(provision.SPECS)
+    ]
+
+
+async def test_generated_credentials_are_private_under_permissive_umask(
+    provision_files: Path, registered_agents: list[SimpleNamespace]
+) -> None:
+    rest = AsyncMock()
+    rest.human_api_agents.register_my_agent.side_effect = registered_agents
+    previous_umask = os.umask(0)
+    try:
+        await provision.create(rest)
+    finally:
+        os.umask(previous_umask)
+    for path in (provision.CONFIG_PATH, provision.AGENTS_ENV):
+        assert "fixture-key-0" in path.read_text()
+        if os.name == "posix":
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("artifact", ["CONFIG_PATH", "AGENTS_ENV"])
+async def test_late_credential_collision_preserves_unowned_file_and_cleanup_ids(
+    provision_files: Path,
+    registered_agents: list[SimpleNamespace],
+    artifact: str,
+) -> None:
+    path = getattr(provision, artifact)
+    responses = iter(registered_agents)
+
+    async def register(**kwargs: Any) -> SimpleNamespace:
+        path.write_text("unowned credentials")
+        return next(responses)
+
+    rest = AsyncMock()
+    rest.human_api_agents.register_my_agent.side_effect = register
+    with pytest.raises(FileExistsError):
+        await provision.create(rest)
+    assert path.read_text() == "unowned credentials"
+    assert provision.AGENT_IDS.read_text().splitlines() == [
+        agent.data.agent.id for agent in registered_agents
+    ]
 
 
 async def test_partial_registration_keeps_created_agent_in_cleanup_ledger(

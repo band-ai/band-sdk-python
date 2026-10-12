@@ -332,8 +332,7 @@ cleanup() {
     done <"$MF_SANDBOXES"
   fi
 
-  # Scoped secrets persist in the host store after a sandbox is removed — a failed
-  # removal leaves a real key behind, so surface it loudly.
+  # Creation or removal may fail before sbx removes the scoped secrets.
   if [ -f "$MF_SECRETS" ]; then
     while IFS=$'\t' read -r sandbox placeholder; do
       [ -n "$sandbox" ] || continue
