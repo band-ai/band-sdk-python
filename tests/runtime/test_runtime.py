@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.exceptions import CleanupIncompleteError
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 
@@ -458,3 +459,174 @@ class TestAgentRuntimeRun:
         mock_link.disconnect.assert_awaited()
         # Host stop() plus run()'s finally both tear down.
         assert runtime.presence.stop.await_count >= 1
+
+
+class RoomCleanup:
+    """The adapter's room cleanup, held or failed on demand."""
+
+    def __init__(self) -> None:
+        self.rooms: list[str] = []
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.failing = False
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    async def __call__(self, room_id: str) -> None:
+        self.entered.set()
+        await self.release.wait()
+        if self.failing:
+            raise RuntimeError("room cleanup failed")
+        self.rooms.append(room_id)
+
+
+@pytest.fixture
+def room_cleanup() -> RoomCleanup:
+    return RoomCleanup()
+
+
+@pytest.fixture
+async def runtime(mock_link, mock_handler, room_cleanup):
+    runtime = AgentRuntime(
+        mock_link, "agent-123", mock_handler, on_session_cleanup=room_cleanup
+    )
+    yield runtime
+    room_cleanup.failing = False
+    room_cleanup.release.set()
+    await runtime.stop()
+
+
+class TestAgentRuntimeRoomCleanupOwnership:
+    """A retiring execution stays owned and fenced until its cleanup succeeds."""
+
+    async def test_held_cleanup_fences_rejoin_until_it_succeeds(
+        self, runtime: AgentRuntime, room_cleanup: RoomCleanup, mock_handler
+    ):
+        await runtime._on_room_joined("room-1", {})
+        old = runtime.executions["room-1"]
+        room_cleanup.hold()
+        leaving = asyncio.create_task(runtime._on_room_left("room-1"))
+        await room_cleanup.entered.wait()
+
+        assert await runtime._create_execution("room-1") is None
+        await runtime._on_room_event("room-1", make_message_event(room_id="room-1"))
+        assert runtime.active_sessions == {}
+        assert runtime.cleanup_pending
+
+        room_cleanup.release.set()
+        await leaving
+        await asyncio.wait_for(_admitted(runtime, "room-1"), timeout=1)
+        assert runtime.executions["room-1"] is not old
+        assert not old.is_running
+        assert not runtime.cleanup_pending
+        mock_handler.assert_not_awaited()
+
+    @pytest.mark.parametrize("retry", ["reconnect", "event", "rejoin"])
+    async def test_failed_cleanup_is_retained_and_retried_by_admission(
+        self, runtime: AgentRuntime, room_cleanup: RoomCleanup, retry: str
+    ):
+        await runtime._on_room_joined("room-1", {})
+        room_cleanup.failing = True
+        with pytest.raises(RuntimeError, match="room cleanup failed"):
+            await runtime._on_room_left("room-1")
+        assert runtime.cleanup_pending
+
+        await runtime._on_room_joined("room-1", {})
+        await _settled(runtime, "room-1")
+        assert "room-1" not in runtime.executions
+
+        room_cleanup.failing = False
+        match retry:
+            case "reconnect":
+                await runtime._on_reconnected()
+            case "event":
+                await runtime._on_room_event(
+                    "room-1", make_message_event(room_id="room-1")
+                )
+            case "rejoin":
+                await runtime._on_room_joined("room-1", {})
+        await asyncio.wait_for(_admitted(runtime, "room-1"), timeout=1)
+        assert room_cleanup.rooms == ["room-1"]
+        assert not runtime.cleanup_pending
+
+    async def test_newer_leave_invalidates_pending_admission(
+        self, runtime: AgentRuntime, room_cleanup: RoomCleanup
+    ):
+        await runtime._on_room_joined("room-1", {})
+        room_cleanup.hold()
+        leaving = asyncio.create_task(runtime._on_room_left("room-1"))
+        await room_cleanup.entered.wait()
+        await runtime._on_room_joined("room-1", {})
+        left_again = asyncio.create_task(runtime._on_room_left("room-1"))
+
+        room_cleanup.release.set()
+        await asyncio.gather(leaving, left_again)
+        await _settled(runtime, "room-1")
+        assert runtime.active_sessions == {}
+        assert room_cleanup.rooms == ["room-1"]
+
+    async def test_stop_attempts_every_room_and_retries_failed_cleanup(
+        self, runtime: AgentRuntime, room_cleanup: RoomCleanup, mock_link
+    ):
+        await runtime._on_room_joined("room-1", {})
+        await runtime._on_room_joined("room-2", {})
+        room_cleanup.failing = True
+        with pytest.raises(ExceptionGroup) as failures:
+            await runtime.stop()
+        assert len(failures.value.exceptions) == 2
+        mock_link.disconnect.assert_awaited()
+        assert runtime.cleanup_pending
+
+        room_cleanup.failing = False
+        assert await runtime.stop()
+        assert sorted(room_cleanup.rooms) == ["room-1", "room-2"]
+        assert not runtime.cleanup_pending
+
+    async def test_cancellation_resistant_execution_keeps_room_fenced(
+        self, mock_link, room_cleanup: RoomCleanup, monkeypatch
+    ):
+        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+        started, finish = asyncio.Event(), asyncio.Event()
+
+        async def stubborn(ctx: ExecutionContext, event) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await finish.wait()
+                raise
+
+        runtime = AgentRuntime(
+            mock_link, "agent-123", stubborn, on_session_cleanup=room_cleanup
+        )
+        await runtime._on_room_joined("room-1", {})
+        await runtime._on_room_event("room-1", make_message_event(room_id="room-1"))
+        await started.wait()
+        with pytest.raises(CleanupIncompleteError):
+            await runtime._on_room_left("room-1")
+        assert room_cleanup.rooms == []
+
+        await runtime._on_room_joined("room-1", {})
+        await _settled(runtime, "room-1")
+        assert "room-1" not in runtime.executions
+
+        finish.set()
+        await runtime._on_reconnected()
+        await asyncio.wait_for(_admitted(runtime, "room-1"), timeout=1)
+        assert room_cleanup.rooms == ["room-1"]
+        await runtime.stop()
+
+
+async def _settled(runtime: AgentRuntime, room_id: str) -> None:
+    """Let the room's owned lifecycle task finish, whatever its outcome."""
+    if (lifecycle := runtime._lifecycles.get(room_id)) is not None:
+        await asyncio.wait({lifecycle})
+
+
+async def _admitted(runtime: AgentRuntime, room_id: str) -> None:
+    while room_id not in runtime.executions:
+        await _settled(runtime, room_id)
+        await asyncio.sleep(0)

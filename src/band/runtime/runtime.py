@@ -7,6 +7,7 @@ Framework-light users can use RoomPresence or BandLink directly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -143,8 +144,13 @@ class AgentRuntime:
         # RoomPresence for cross-room management
         self.presence = RoomPresence(link, room_filter)
 
-        # Per-room executions
+        # Per-room executions. Only ``executions`` receives work and control;
+        # a retiring execution stays owned until its cleanup succeeds, and a
+        # room rejoined meanwhile waits in ``_admitting`` for that cleanup.
         self.executions: dict[str, Execution] = {}
+        self._retiring: dict[str, Execution] = {}
+        self._admitting: set[str] = set()
+        self._lifecycles: dict[str, asyncio.Task[bool]] = {}
         self._accepting_rooms = True
 
         # Control-signal dedup. The server does not deduplicate
@@ -167,6 +173,11 @@ class AgentRuntime:
     def active_sessions(self) -> dict[str, Execution]:
         """Get active execution contexts by room_id."""
         return self.executions.copy()
+
+    @property
+    def cleanup_pending(self) -> bool:
+        """Whether a room's execution or adapter cleanup has not yet succeeded."""
+        return bool(self._retiring)
 
     def set_hub_room_id(self, hub_room_id: str | None) -> None:
         """Register the hub-room ID so future executions can auto-enable contact tools.
@@ -205,25 +216,37 @@ class AgentRuntime:
             True if all executions stopped gracefully, False if any had to be
             cancelled mid-processing.
 
+        Raises:
+            ExceptionGroup: Some room cleanup failed after every room was
+                attempted. Those rooms stay owned and a later ``stop()``
+                retries them.
+
         1. Stops all execution contexts (with timeout)
         2. Stops RoomPresence
         3. Disconnects the link (wakes ``run(install_signal_handlers=False)``)
         """
         self._accepting_rooms = False
+        self._admitting.clear()
         logger.info("Stopping AgentRuntime for agent %s", self.agent_id)
 
-        # Stop all executions with timeout
         all_graceful = True
+        failures: list[Exception] = []
         try:
-            for room_id in list(self.executions.keys()):
-                graceful = await self._destroy_execution(room_id, timeout=timeout)
-                all_graceful = all_graceful and graceful
+            for room_id in dict.fromkeys([*self.executions, *self._retiring]):
+                try:
+                    graceful = await self._destroy_execution(room_id, timeout=timeout)
+                except Exception as error:  # noqa: BLE001 -- every room must be attempted; failures are raised together below
+                    failures.append(error)
+                else:
+                    all_graceful = all_graceful and graceful
 
             await self.presence.stop()
         finally:
             # presence.stop leaves the socket up for reuse; a full runtime stop
             # must disconnect so run_forever can return when signals are opted out.
             await self.link.disconnect()
+        if failures:
+            raise ExceptionGroup("Room cleanup remains incomplete", failures)
         return all_graceful
 
     async def run(self, *, install_signal_handlers: bool = True) -> None:
@@ -257,10 +280,16 @@ class AgentRuntime:
         await self._destroy_execution(room_id)
 
     async def _on_room_event(self, room_id: str, event: PlatformEvent) -> None:
-        """Handle room event - forward to execution context."""
+        """Handle room event - forward to execution context.
+
+        A room still waiting for old cleanup claims nothing; its admission
+        retries instead, and the new execution's /next resync recovers work.
+        """
         execution = self.executions.get(room_id)
         if execution:
             await execution.on_event(event)
+        elif room_id in self._admitting:
+            self._request_lifecycle(room_id)
         else:
             logger.warning("No execution for room %s, event dropped", room_id)
 
@@ -270,21 +299,27 @@ class AgentRuntime:
         Messages may have arrived while the socket was down. Each execution
         context re-polls /next to catch anything the server didn't push.
         """
+        for room_id in tuple(self._admitting):
+            self._request_lifecycle(room_id)
         logger.info(
             "AgentRuntime: Requesting /next resync for %d execution(s) after reconnect",
             len(self.executions),
         )
         for room_id, execution in list(self.executions.items()):
-            if not hasattr(execution, "request_resync"):
-                logger.debug(
-                    "Execution for room %s does not support request_resync, skipping",
-                    room_id,
-                )
-                continue
-            try:
-                await execution.request_resync()
-            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
-                logger.warning("Failed to request resync for room %s: %s", room_id, e)
+            await self._request_resync(room_id, execution)
+
+    @staticmethod
+    async def _request_resync(room_id: str, execution: Execution) -> None:
+        if not hasattr(execution, "request_resync"):
+            logger.debug(
+                "Execution for room %s does not support request_resync, skipping",
+                room_id,
+            )
+            return
+        try:
+            await execution.request_resync()
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
+            logger.warning("Failed to request resync for room %s: %s", room_id, e)
 
     # --- Control signals ---
 
@@ -391,14 +426,24 @@ class AgentRuntime:
 
     # --- Execution management ---
 
-    async def _create_execution(self, room_id: str) -> Execution:
-        """Create and start execution context for a room."""
+    async def _create_execution(self, room_id: str) -> Execution | None:
+        """Create and start execution context for a room.
+
+        Returns None while the room's previous execution is still being
+        cleaned up; admission completes once that cleanup succeeds.
+        """
         if not self._accepting_rooms:
             raise RuntimeError("Agent runtime is stopping or stopped")
         if room_id in self.executions:
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]
+        if room_id in self._retiring:
+            self._admitting.add(room_id)
+            self._request_lifecycle(room_id)
+            return None
+        return await self._start_execution(room_id)
 
+    async def _start_execution(self, room_id: str) -> Execution:
         # Use factory if provided, otherwise create ExecutionContext
         if self._execution_factory:
             try:
@@ -442,6 +487,10 @@ class AgentRuntime:
         """
         Stop and cleanup execution context for a room.
 
+        The execution leaves routing at once and stays owned until both its
+        settlement and the adapter's room cleanup succeed; a failure raises
+        and a later leave, rejoin, reconnect or stop retries it.
+
         Args:
             room_id: Room ID to destroy execution for.
             timeout: Optional seconds to wait for graceful stop.
@@ -449,10 +498,48 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        if room_id not in self.executions:
-            return True
+        self._admitting.discard(room_id)
+        if (execution := self.executions.pop(room_id, None)) is not None:
+            self._retiring[room_id] = execution
+        graceful = True
+        while room_id in self._retiring:
+            lifecycle = self._room_lifecycle(room_id, timeout=timeout)
+            graceful = await asyncio.shield(lifecycle) and graceful
+        return graceful
 
-        execution = self.executions.pop(room_id)
+    def _request_lifecycle(self, room_id: str) -> None:
+        """Start or join the room's owned cleanup without waiting for it."""
+        lifecycle = self._room_lifecycle(room_id, timeout=None)
+        lifecycle.add_done_callback(self._observe_lifecycle)
+
+    def _room_lifecycle(
+        self, room_id: str, *, timeout: float | None
+    ) -> asyncio.Task[bool]:
+        lifecycle = self._lifecycles.get(room_id)
+        if lifecycle is None or lifecycle.done():
+            lifecycle = asyncio.create_task(self._run_lifecycle(room_id, timeout))
+            self._lifecycles[room_id] = lifecycle
+        return lifecycle
+
+    @staticmethod
+    def _observe_lifecycle(lifecycle: asyncio.Task[bool]) -> None:
+        if not lifecycle.cancelled() and (error := lifecycle.exception()):
+            logger.warning("Room cleanup remains pending: %s", error)
+
+    async def _run_lifecycle(self, room_id: str, timeout: float | None) -> bool:
+        """Retire the old execution, then admit only a still-desired rejoin."""
+        graceful = True
+        if (execution := self._retiring.get(room_id)) is not None:
+            graceful = await self._retire(room_id, execution, timeout)
+        if room_id in self._admitting and self._accepting_rooms:
+            self._admitting.discard(room_id)
+            admitted = await self._start_execution(room_id)
+            await self._request_resync(room_id, admitted)
+        return graceful
+
+    async def _retire(
+        self, room_id: str, execution: Execution, timeout: float | None
+    ) -> bool:
         graceful = await execution.stop(timeout=timeout)
 
         # Durable completion state is safe to release with the room. Pending
@@ -460,12 +547,10 @@ class AgentRuntime:
         # retries only the ack instead of replaying handler side effects.
         self._claim_registry.discard_completed(room_id)
 
-        # Call cleanup callback (for adapter to clean up checkpointer, etc.)
+        # Adapter room cleanup (checkpointer, native sessions, etc.)
         if self._on_session_cleanup:
-            try:
-                await self._on_session_cleanup(room_id)
-            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
-                logger.warning("Session cleanup callback failed for %s: %s", room_id, e)
+            await self._on_session_cleanup(room_id)
 
+        del self._retiring[room_id]
         logger.debug("Destroyed execution for room %s", room_id)
         return graceful
