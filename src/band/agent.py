@@ -40,7 +40,11 @@ except PackageNotFoundError:
 
 
 class CleanupPhase(StrEnum):
-    """Separately owned shutdown work an agent keeps until it succeeds."""
+    """Separately owned shutdown work an agent keeps until it succeeds.
+
+    Members run in declaration order: the runtime first, so no room still
+    runs when the adapter is disposed.
+    """
 
     RUNTIME = "runtime"
     ADAPTER = "adapter"
@@ -404,24 +408,26 @@ class Agent:
         return graceful
 
     async def _run_cleanup(self, timeout: float | None) -> list[Exception]:
-        """Attempt every pending phase, runtime first so no room still runs."""
+        """Attempt every pending phase; a failed phase stays pending."""
         failures: list[Exception] = []
-        if CleanupPhase.RUNTIME in self._cleanup_pending:
+        for phase in CleanupPhase:
+            if phase not in self._cleanup_pending:
+                continue
             try:
-                graceful = await self._runtime.stop(timeout=timeout)
-            except Exception as error:  # noqa: BLE001 -- adapter cleanup must still be attempted; raised together by stop()
+                await self._run_phase(phase, timeout)
+            except Exception as error:  # noqa: BLE001 -- every phase must be attempted; raised together by stop()
                 failures.append(error)
             else:
-                self._stop_graceful = self._stop_graceful and graceful
-                self._cleanup_pending.discard(CleanupPhase.RUNTIME)
-        if CleanupPhase.ADAPTER in self._cleanup_pending:
-            try:
-                await dispose_adapter(self._adapter)
-            except Exception as error:  # noqa: BLE001 -- raised together by stop()
-                failures.append(error)
-            else:
-                self._cleanup_pending.discard(CleanupPhase.ADAPTER)
+                self._cleanup_pending.discard(phase)
         return failures
+
+    async def _run_phase(self, phase: CleanupPhase, timeout: float | None) -> None:
+        match phase:
+            case CleanupPhase.RUNTIME:
+                graceful = await self._runtime.stop(timeout=timeout)
+                self._stop_graceful = self._stop_graceful and graceful
+            case CleanupPhase.ADAPTER:
+                await dispose_adapter(self._adapter)
 
     async def _stop_during_unwind(self, timeout: float | None) -> None:
         """Stop while another error propagates; cleanup failure stays pending
