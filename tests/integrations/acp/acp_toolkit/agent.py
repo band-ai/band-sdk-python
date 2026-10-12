@@ -22,6 +22,7 @@ from acp.helpers import (
 )
 from acp.schema import (
     AgentCapabilities,
+    AllowedOutcome,
     ConfigOptionUpdate,
     InitializeResponse,
     LoadSessionResponse,
@@ -38,11 +39,11 @@ from acp.schema import (
 )
 from mcp.types import Tool
 
-from band.integrations.acp.client_runtime import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
+from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.session_config import SessionConfigOption, find_select
 from band.integrations.mcp import BandMCPTransport
 from tests.mcpclient import mcp_session
@@ -366,6 +367,7 @@ class FakeACPAgent:
         arguments: dict[str, Any],
         server: str = "band",
         title: str | None = None,
+        requires_approval: bool = False,
     ) -> FakeACPAgent:
         """Call an advertised MCP tool between ACP call and result updates.
 
@@ -388,6 +390,18 @@ class FakeACPAgent:
                 arguments=arguments,
             )
             await a.emit(sid, update_tool_call(tool_call_id, raw_output=result))
+
+        if requires_approval:
+            return self.will_execute_if_approved(_action)
+        self._script.append(_action)
+        return self
+
+    def will_execute_if_approved(self, action: PromptHandler) -> FakeACPAgent:
+        """Execute an action only when the preceding permission was granted."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            if a.approved is True:
+                await action(a, sid)
 
         self._script.append(_action)
         return self
@@ -455,9 +469,7 @@ class FakeACPAgent:
         tool_call_id: str = "tc-1",
         title: str | None = None,
         allow_option_id: str = "allow-1",
-        raw_input: Any = None,
         options: list[PermissionOption] | None = None,
-        tool_call: ToolCallUpdate | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
             offered = (
@@ -474,13 +486,14 @@ class FakeACPAgent:
             )
             resp = await a.ask_permission(
                 sid,
-                tool_call
-                or ToolCallUpdate(
-                    tool_call_id=tool_call_id, title=title, raw_input=raw_input
-                ),
+                ToolCallUpdate(tool_call_id=tool_call_id, title=title),
                 offered,
             )
-            selected = getattr(resp.outcome, "option_id", None)
+            selected = (
+                resp.outcome.option_id
+                if isinstance(resp.outcome, AllowedOutcome)
+                else None
+            )
             a.approved = any(
                 option.option_id == selected
                 and option.kind in (ALLOW_ONCE_KIND, ALLOW_ALWAYS_KIND)

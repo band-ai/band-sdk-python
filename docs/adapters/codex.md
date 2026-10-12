@@ -3,6 +3,9 @@
 `CodexAdapter` runs one Codex process per Band room over stdio, each in its own
 workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
 
+Automatic idle release is unavailable pending native safety qualification;
+see [idle room resource retention](../idle-room-release.md).
+
 For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgrading-from-sdk-4x-to-5x).
 
 - **Where settings go.** Runtime settings live in `CodexAdapterConfig`, which
@@ -49,3 +52,9 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   with `skills/extraRoots/set` before the room's thread starts. An older CLI
   rejects the request, and the room fails to start rather than running without
   the skills. Roots must be absolute paths; Codex accepts ones that don't exist.
+
+While an accepted turn awaits approval, newer ordinary room work remains
+outstanding. The runtime can deliver approval and status controls ahead of that
+pending work through Codex's existing authorization rules. The active turn keeps
+its original tools; an ordinary input rejected before provider invocation is
+retried by the shared room scheduler after that turn releases the session.

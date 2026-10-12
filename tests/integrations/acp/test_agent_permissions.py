@@ -8,7 +8,7 @@ import pytest
 from acp.schema import PermissionOption
 
 from band.integrations.acp.client_adapter import ACPClientAdapter, ACPPermissionRequest
-from band.integrations.acp.client_runtime import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
+from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.runtime.tools import BandTool
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import (

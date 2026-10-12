@@ -101,6 +101,8 @@ class AgentRuntime:
         session_config: SessionConfig | None = None,
         on_session_cleanup: Callable[[str], Awaitable[None]] | None = None,
         on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
+        on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
+        | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
     ):
@@ -129,6 +131,7 @@ class AgentRuntime:
         self._session_config = session_config or SessionConfig()
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
+        self._on_message_control = on_message_control
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
@@ -413,6 +416,7 @@ class AgentRuntime:
                 room_id=room_id,
                 link=self.link,
                 on_execute=self._on_execute,
+                on_message_control=self._on_message_control,
                 config=self._session_config,
                 agent_id=self.agent_id,
                 on_participant_added=self._on_participant_added,

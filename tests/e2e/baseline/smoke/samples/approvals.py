@@ -455,45 +455,31 @@ def cursor_test_adapter(
     workspace_for_room: WorkspaceResolver | None = None,
     custom_section: str = SHELL_PROMPT,
     capabilities: set[Capability] | None = None,
-    inject_band_tools: bool = True,
-    adapter_class: type[CursorACPAdapter] | None = None,
 ) -> CursorACPAdapter:
-    from band.adapters.cursor_acp import (  # noqa: PLC0415 -- ACP is optional outside the backends lane
+    from band.adapters.cursor_acp import (  # noqa: PLC0415
         CursorACPAdapter,
         CursorACPAdapterConfig,
     )
 
-    adapter_class = adapter_class or CursorACPAdapter
     config_kwargs: dict[str, Any] = {
         **cursor_config_kwargs(settings, prompt=custom_section),
         "approval_mode": approval_mode,
         "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
-        "inject_band_tools": inject_band_tools,
         # Cursor saves an "allow always" grant to its config dir, which would
         # let later cells run that command unasked.
         "env": {
             "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
         },
     }
-    return adapter_class(
+    return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         # Not ``cwd``: that roots a per-room child dir, while the cells read
         # their effects straight from ``setup.workdir``.
         workspace_for_room=workspace_for_room or (lambda _room_id: str(setup.workdir)),
         capabilities=capabilities,
     )
-
-
-def cursor_approval_adapter(
-    settings: BaselineSettings, setup: AgentSetup
-) -> CursorACPAdapter:
-    from tests.e2e.baseline.smoke.samples.cursorapproval import (  # noqa: PLC0415 -- ACP is optional outside the backends lane
-        CursorApprovalAdapter,
-    )
-
-    return cursor_test_adapter(settings, setup, adapter_class=CursorApprovalAdapter)
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:
@@ -630,7 +616,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         workdir_root=lambda settings: settings.backends.codex_cwd,
     ),
     Adapter.CURSOR_ACP: ApprovalDialect(
-        build=cursor_approval_adapter,
+        build=cursor_test_adapter,
         request=template_pattern(PERMISSION_REQUESTED_TEMPLATE),
         reply=_cursor_reply,
         notice=_cursor_notice,

@@ -21,11 +21,13 @@ from urllib.parse import urlsplit
 
 import pytest
 from acp import RequestError
+from acp.helpers import start_tool_call, update_tool_call
 from pydantic import BaseModel
 
 from band.adapters.copilot_acp import CopilotACPAdapter
 from band.adapters.cursor_acp import CursorACPAdapter
 from band.adapters.omp_acp import OmpACPAdapter
+from band.core.exceptions import InputNotAccepted
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
@@ -39,6 +41,7 @@ from band.integrations.mcp import BandMCPBackendStoppedError
 from band.runtime.formatters import build_participants_message
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, TURN_COMPLETION_GUIDANCE
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
+from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
@@ -46,6 +49,7 @@ from tests.integrations.acp.acp_toolkit import (
     live_line,
     started_acp_adapter,
 )
+from tests.integrations.acp.conftest import make_platform_message
 from tests.mcpbackends import backends_created_by
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
@@ -1331,3 +1335,105 @@ async def test_acp_mandatory_transport_contract_refreshes_first_prompt(
         await session.send("new message", history=history)
     assert agent.prompt_texts()[0].count(COMMUNICATION_INSTRUCTIONS) == 1
     assert agent.prompt_texts()[0].count(TURN_COMPLETION_GUIDANCE) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restored", [False, True])
+async def test_busy_first_prompt_preserves_session_context(restored: bool) -> None:
+    agent = FakeACPAgent(supports_session_load=True)
+    if restored:
+        agent.knows_session("session-1")
+    history = rehydration_history(
+        "[Marco]: My favorite color is blue.",
+        session="session-1" if restored else None,
+    )
+
+    @agent.on_prompt
+    async def reject_once(peer: FakeACPAgent, sid: str) -> None:
+        if len(peer.prompts) == 1:
+            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        await peer.say(sid, "Blue.")
+
+    async with acp_adapter(agent) as session:
+        with pytest.raises(InputNotAccepted):
+            await session.send(
+                "What is my favorite color?", bootstrap=True, history=history
+            )
+        assert session.last_reply.outline == []
+        reply = await session.send(
+            "What is my favorite color?", bootstrap=True, history=history
+        )
+        await session.send("Next question")
+
+    assert [request["session_id"] for request in agent.prompts] == [
+        agent.prompts[0]["session_id"]
+    ] * 3
+    rejected, accepted, subsequent = agent.prompt_texts()
+    assert COMMUNICATION_INSTRUCTIONS in rejected
+    assert COMMUNICATION_INSTRUCTIONS in accepted
+    assert COMMUNICATION_INSTRUCTIONS not in subsequent
+    assert (REPLAY_HEADER_LINE in accepted) is not restored
+    assert ("[Marco]:" in accepted) is not restored
+    assert REPLAY_HEADER_LINE not in subsequent
+    assert reply.thoughts == ["Blue."]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "data"),
+    [
+        (-32003, None),
+        (-32003, {"reason": "other"}),
+        (-32603, {"reason": "session_busy"}),
+    ],
+)
+async def test_only_exact_typed_busy_response_preserves_session(
+    code: int, data: dict[str, str] | None
+) -> None:
+    agent = FakeACPAgent()
+
+    @agent.on_prompt
+    async def fail_once(peer: FakeACPAgent, sid: str) -> None:
+        if len(peer.prompts) == 1:
+            raise RequestError(code, "Session is busy", data)
+        await peer.say(sid, "Recovered.")
+
+    async with acp_adapter(agent) as session:
+        with pytest.raises(RequestError):
+            await session.send("first")
+        assert "error" in session.last_reply.outline
+        await session.send("second")
+
+    assert len(agent.sessions) == 2
+
+
+@pytest.mark.asyncio
+async def test_rejected_acp_activity_cannot_complete_incoming_turn() -> None:
+    agent = FakeACPAgent()
+
+    @agent.on_prompt
+    async def autonomous_activity(peer: FakeACPAgent, sid: str) -> None:
+        await peer.emit(sid, start_tool_call("other-work", "band_no_reply"))
+        await peer.emit(
+            sid, update_tool_call("other-work", raw_output="Done", status="completed")
+        )
+        await peer.say(sid, "Autonomous final text")
+        raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+
+    tools = FakeAgentTools()
+    async with acp_adapter(agent) as session:
+        with pytest.raises(InputNotAccepted):
+            await session.adapter.on_message(
+                make_platform_message("Pending work", room_id="room-1"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+    assert not tools.turn.complete
+    assert not tools.turn.replied
+    assert tools.messages_sent == []
+    assert all(event["message_type"] != "error" for event in tools.events_sent)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Literal, Self, cast
+from typing import ClassVar, Literal, Self, cast
 
 from acp.schema import (
     AcceptElicitationResponse,
@@ -25,8 +25,8 @@ from band.integrations.acp.client_adapter import (
     PermissionResolver,
     SpawnProcess,
 )
-from band.integrations.acp.client_runtime import (
-    ACPCollectingClient,
+from band.integrations.acp.collecting import ACPCollectingClient
+from band.integrations.acp.permissions import (
     ElicitationHandler,
     ElicitationNarrator,
     elicitation_requested_schema,
@@ -111,6 +111,11 @@ class OmpACPAdapterConfig(ACPClientAdapterConfig):
         use_unstable_protocol: Always on: OMP asks for tool approval through
             unstable elicitation forms.
     """
+
+    retention_unavailable_reason: ClassVar[str] = (
+        "OMP ACP pending-work and prompt-idle signals omit suppressed or acknowledged "
+        "background jobs that shutdown cancels"
+    )
 
     approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND
