@@ -6,13 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from band.agent import DEFAULT_SHUTDOWN_TIMEOUT, Agent
+from band.agent import DEFAULT_SHUTDOWN_TIMEOUT, Agent, running_agents
 from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
     ParticipantAddedPayload,
     RoomAddedPayload,
 )
+from band.core.exceptions import CleanupIncompleteError
 from band.core.model_catalog import ModelSelection, ModelSelectionError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, Capability
@@ -48,6 +49,7 @@ def mock_runtime():
     runtime.start = AsyncMock()
     runtime.stop = AsyncMock()
     runtime.run_forever = AsyncMock()
+    runtime.cleanup_pending = False
     return runtime
 
 
@@ -430,16 +432,97 @@ class TestStop:
         mock_adapter.cleanup_all.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_cleanup_all_failure_does_not_mask_stop(
+    async def test_failed_adapter_cleanup_surfaces_and_stays_retryable(
         self, mock_runtime, mock_adapter
     ):
-        """A teardown failure is logged, not raised — stop still reports."""
+        """Explicit stop reports teardown failure and retries only that phase."""
         mock_runtime.stop.return_value = True
         mock_adapter.cleanup_all = AsyncMock(side_effect=Exception("teardown boom"))
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
-
         await agent.start()
+
+        with pytest.raises(ExceptionGroup, match="cleanup remains incomplete"):
+            await agent.stop()
+        mock_runtime.release_single_instance.assert_not_called()
+        assert agent in running_agents()
+        with pytest.raises(CleanupIncompleteError):
+            await agent.start()
+
+        mock_adapter.cleanup_all.side_effect = None
         assert await agent.stop() is True
+        mock_runtime.stop.assert_awaited_once()
+        assert mock_adapter.cleanup_all.await_count == 2
+        mock_runtime.release_single_instance.assert_called_once()
+        assert agent not in running_agents()
+
+    @pytest.mark.asyncio
+    async def test_runtime_cleanup_failure_still_disposes_the_adapter(
+        self, mock_runtime, mock_adapter
+    ):
+        mock_runtime.stop.side_effect = [ExceptionGroup("rooms", [OSError()]), True]
+        mock_adapter.cleanup_all = AsyncMock()
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+        await agent.start()
+
+        with pytest.raises(ExceptionGroup):
+            await agent.stop()
+        mock_adapter.cleanup_all.assert_awaited_once()
+        assert await agent.stop() is True
+        assert mock_runtime.stop.await_count == 2
+        mock_adapter.cleanup_all.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_cleanup_is_not_marked_clean(
+        self, mock_runtime, mock_adapter
+    ):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held_cleanup() -> None:
+            entered.set()
+            await release.wait()
+
+        mock_adapter.cleanup_all = AsyncMock(side_effect=held_cleanup)
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+        await agent.start()
+        stopping = asyncio.create_task(agent.stop())
+        await entered.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+        mock_runtime.release_single_instance.assert_not_called()
+
+        release.set()
+        await agent.stop()
+        mock_runtime.release_single_instance.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_body_error_survives_failed_cleanup(self, mock_runtime, mock_adapter):
+        mock_adapter.cleanup_all = AsyncMock(side_effect=Exception("teardown boom"))
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        with pytest.raises(LookupError, match="body failed"):
+            async with agent:
+                raise LookupError("body failed")
+        mock_runtime.release_single_instance.assert_not_called()
+        mock_adapter.cleanup_all.side_effect = None
+        await agent.stop()
+        mock_runtime.release_single_instance.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_startup_error_survives_failed_unwind_and_keeps_guard(
+        self, mock_runtime, mock_adapter
+    ):
+        mock_runtime.start.side_effect = RuntimeError("boot failed")
+        mock_adapter.cleanup_all = AsyncMock(side_effect=Exception("teardown boom"))
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        with pytest.raises(RuntimeError, match="boot failed"):
+            await agent.start()
+        mock_runtime.release_single_instance.assert_not_called()
+        mock_adapter.cleanup_all.side_effect = None
+        assert await agent.stop() is True
+        mock_runtime.stop.assert_not_awaited()
+        mock_runtime.release_single_instance.assert_called_once()
 
 
 class TestRun:

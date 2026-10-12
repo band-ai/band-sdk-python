@@ -57,6 +57,7 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import DeliveryStatus
 from band.core.exceptions import (
     BandConnectionError,
+    CleanupIncompleteError,
     InputNotAccepted,
     RoomExecutionStoppedError,
 )
@@ -77,7 +78,7 @@ from band.runtime.formatters import (
     replace_uuid_mentions,
 )
 from band.runtime.participants import participant_snapshot
-from band.runtime.startup import start_adapter
+from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
 from band.runtime.tools import AgentTools
 
 # BandLink.get_next_message returns this dataclass, not band.core.types'
@@ -171,6 +172,8 @@ class OneShotInvoker:
         self._agent_description: str = ""
         self._feature_flags: dict[str, bool] | None = None
         self._started = False
+        # Set from the adapter's start until its cleanup_all succeeds.
+        self._adapter_cleanup_pending = False
 
     @property
     def agent_name(self) -> str:
@@ -192,9 +195,17 @@ class OneShotInvoker:
         Mirrors the bootstrap half of ``Agent.start()``: sets the adapter's
         runtime agent id and calls ``on_started(name, description)``. Skips
         WebSocket connect and room subscriptions. Idempotent.
+
+        Raises:
+            CleanupIncompleteError: A previous shutdown has not finished
+                adapter cleanup; call ``shutdown()`` to retry it first.
         """
         if self._started:
             return
+        if self._adapter_cleanup_pending:
+            raise CleanupIncompleteError(
+                "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
+            )
 
         (
             self._agent_name,
@@ -208,12 +219,18 @@ class OneShotInvoker:
             "platform",
             self._link.to_platform_connection(self._agent_id),
         )
-        await start_adapter(
-            self._adapter,
-            agent_name=self._agent_name,
-            agent_description=self._agent_description,
-            feature_flags=self._feature_flags,
-        )
+        self._adapter_cleanup_pending = True
+        try:
+            await start_adapter(
+                self._adapter,
+                agent_name=self._agent_name,
+                agent_description=self._agent_description,
+                feature_flags=self._feature_flags,
+            )
+        except BaseException:
+            if await release_adapter(self._adapter):
+                self._adapter_cleanup_pending = False
+            raise
         self._started = True
         logger.info(
             "OneShotInvoker ready: agent_id=%s name=%s",
@@ -222,11 +239,22 @@ class OneShotInvoker:
         )
 
     async def shutdown(self) -> None:
-        """Disconnect the link (best-effort)."""
+        """Dispose the adapter, then disconnect the link (best-effort).
+
+        Raises:
+            Exception: The adapter's ``cleanup_all`` failed. The link is still
+                disconnected, and the next ``shutdown()`` retries the cleanup.
+        """
+        self._started = False
         try:
-            await self._link.disconnect()
-        except Exception:
-            logger.warning("Error during link disconnect", exc_info=True)
+            if self._adapter_cleanup_pending:
+                await dispose_adapter(self._adapter)
+                self._adapter_cleanup_pending = False
+        finally:
+            try:
+                await self._link.disconnect()
+            except Exception:
+                logger.warning("Error during link disconnect", exc_info=True)
 
     # --- Event entry point ---
 
@@ -300,12 +328,8 @@ class OneShotInvoker:
     # --- Internal: the lifecycle dance ---
 
     async def _cleanup_room(self, event_type: str, room_id: str) -> dict[str, Any]:
-        try:
-            await self._adapter.on_cleanup(room_id)
-        except Exception:
-            logger.warning(
-                "Adapter on_cleanup failed for room %s", room_id, exc_info=True
-            )
+        """A failed ``on_cleanup`` raises so the host retries the event."""
+        await self._adapter.on_cleanup(room_id)
         return {
             "status": OneShotStatus.CLEANED_UP,
             "event_type": event_type,

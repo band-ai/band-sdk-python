@@ -11,6 +11,7 @@ from band_rest.core.api_error import ApiError
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import ControlMode
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
+from band.core.exceptions import CleanupIncompleteError
 from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.platform.link import BandLink
@@ -72,6 +73,9 @@ class PlatformRuntime:
         self._link: BandLink | None = None
         self._runtime: AgentRuntime | None = None
         self._instance_guard: SingleInstanceGuard | None = None
+        # Only a guard ``start()`` claimed itself is released by this runtime;
+        # a host that claimed it first releases it after its own cleanup.
+        self._owns_instance_guard = False
         self._agent_name: str = ""
         self._agent_description: str = ""
         self._feature_flags: dict[str, bool] | None = None
@@ -126,6 +130,11 @@ class PlatformRuntime:
         if not self._runtime:
             raise RuntimeError("Runtime not started")
         return self._runtime
+
+    @property
+    def cleanup_pending(self) -> bool:
+        """Whether a stopped or failed runtime still owns unfinished cleanup."""
+        return self._runtime is not None and self._runtime.cleanup_pending
 
     @property
     def contact_config(self) -> ContactEventConfig:
@@ -187,11 +196,19 @@ class PlatformRuntime:
         Raises:
             AgentAlreadyRunningError: When a duplicate start is refused, by the
                 host lock or by the platform (see ``AgentConfig``).
+            CleanupIncompleteError: A previous runtime's cleanup has not yet
+                succeeded; ``stop()`` retries it.
         """
+        if self.cleanup_pending:
+            raise CleanupIncompleteError(
+                "Platform runtime cleanup is incomplete; call stop() to retry it"
+            )
         # Duplicates corrupt message claiming, so refuse before any
-        # processing starts. A failed start releases the lock: the guard
-        # must never block a retry within this same process.
-        self.claim_single_instance()
+        # processing starts. A failed start that cleaned up releases the
+        # lock: the guard must never block a retry within this same process.
+        if self._instance_guard is None:
+            self.claim_single_instance()
+            self._owns_instance_guard = True
         try:
             # Auto-initialize if not already done
             await self.initialize()
@@ -221,18 +238,30 @@ class PlatformRuntime:
             # Set up contact event handling after WebSocket is connected
             await self._setup_contact_handling()
         except BaseException:
-            self.release_single_instance()
+            await self._unwind_failed_start()
             raise
 
         logger.info("Platform runtime started for agent: %s", self._agent_name)
+
+    async def _unwind_failed_start(self) -> None:
+        """Stop a partially started runtime without replacing the start error;
+        keep the guard while that cleanup remains incomplete."""
+        if self._runtime is not None:
+            try:
+                await self._runtime.stop()
+            except Exception:
+                logger.exception("Failed to clean up a partially started runtime")
+        if self._owns_instance_guard and not self.cleanup_pending:
+            self.release_single_instance()
 
     def claim_single_instance(self) -> None:
         """Take this agent id's host-wide run lock (idempotent).
 
         ``start()`` claims it anyway; ``Agent.start()`` claims it earlier —
         before the adapter boots subprocesses or touches on-disk session
-        state — so a duplicate is refused before any side effects.
-        No-op when ``AgentConfig.single_instance`` is off.
+        state — so a duplicate is refused before any side effects. A caller
+        that claims the guard before ``start()`` owns its release, after all
+        of its own cleanup succeeds. No-op when ``single_instance`` is off.
 
         Raises:
             AgentAlreadyRunningError: When another process already holds the lock.
@@ -244,6 +273,7 @@ class PlatformRuntime:
 
     def release_single_instance(self) -> None:
         """Release the run lock (idempotent; safe in ``finally`` blocks)."""
+        self._owns_instance_guard = False
         if self._instance_guard is not None:
             self._instance_guard.release()
             self._instance_guard = None
@@ -258,6 +288,10 @@ class PlatformRuntime:
 
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
+
+        Raises:
+            ExceptionGroup: Room cleanup remains incomplete. The runtime and
+                its single-instance guard stay held; ``stop()`` retries.
         """
         graceful = True
         try:
@@ -276,11 +310,10 @@ class PlatformRuntime:
         finally:
             # Idempotent if AgentRuntime.stop already disconnected — with
             # install_signal_handlers=False disconnect is what wakes run_forever.
-            try:
-                if self._link:
-                    await self._link.disconnect()
-            finally:
-                self.release_single_instance()
+            if self._link:
+                await self._link.disconnect()
+        if self._owns_instance_guard:
+            self.release_single_instance()
         logger.info("Platform runtime stopped")
         return graceful
 

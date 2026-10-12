@@ -5,18 +5,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
+from enum import StrEnum
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.startup import release_adapter, start_adapter
+from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -36,6 +37,14 @@ try:
     _SDK_VERSION = _get_version("band-sdk")
 except PackageNotFoundError:
     _SDK_VERSION = "unknown"
+
+
+class CleanupPhase(StrEnum):
+    """Separately owned shutdown work an agent keeps until it succeeds."""
+
+    RUNTIME = "runtime"
+    ADAPTER = "adapter"
+
 
 # Default graceful shutdown timeout in seconds
 DEFAULT_SHUTDOWN_TIMEOUT: float = 30.0
@@ -104,6 +113,9 @@ class Agent:
         self._adapter = adapter
         self._preprocessor = preprocessor or DefaultPreprocessor()
         self._started = False
+        # Cleanup owned since start began; it outlives ``_started`` so a
+        # failed or cancelled stop stays retryable and blocks a restart.
+        self._cleanup_pending: set[CleanupPhase] = set()
         # A host's signal handler can stop the agent while ``__aexit__`` stops
         # it too; the second caller waits for the first instead of racing it.
         self._stop_lock = asyncio.Lock()
@@ -262,16 +274,24 @@ class Agent:
         If ``stop()`` ran while start was in flight, the pending stop is applied
         before return and the agent is left not running (``is_running`` is
         False). Callers that chain into ``run_forever`` must tolerate that.
+
+        Raises:
+            CleanupIncompleteError: A previous stop has not finished cleanup;
+                call ``stop()`` to retry it first.
         """
         if self._started:
             logger.warning("Agent already started")
             return
+        if self._cleanup_pending:
+            raise CleanupIncompleteError(
+                "Agent cleanup is incomplete; call stop() to retry it"
+            )
 
         self._starting = True
         try:
             # 0. Refuse a duplicate instance BEFORE the adapter boots anything
-            # (subprocesses, on-disk sessions). runtime.start() re-claims
-            # idempotently for callers driving PlatformRuntime directly.
+            # (subprocesses, on-disk sessions). The agent owns this guard and
+            # releases it only after runtime and adapter cleanup both succeed.
             self._runtime.claim_single_instance()
             try:
                 # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
@@ -281,6 +301,7 @@ class Agent:
                 # setattr rather than assignment: FrameworkAdapter is a Protocol, so
                 # a duck-typed adapter may not declare the attribute.
                 setattr(self._adapter, "platform", self._runtime.connection)  # noqa: B010
+                self._cleanup_pending.add(CleanupPhase.ADAPTER)
                 await start_adapter(
                     self._adapter,
                     agent_name=self._runtime.agent_name,
@@ -289,28 +310,21 @@ class Agent:
                 )
 
                 # 3. NOW start message processing (connects WebSocket)
-                try:
-                    await self._runtime.start(
-                        on_execute=self._on_execute,
-                        on_message_control=self._on_control,
-                        on_cleanup=self._adapter.on_cleanup,
-                        # A bare FrameworkAdapter predates on_interrupt and needn't
-                        # implement it -- degrade to a no-op signal like other
-                        # optional protocol additions (e.g. Execution.request_resync).
-                        on_control=getattr(self._adapter, "on_interrupt", None),
-                    )
-                except BaseException:
-                    # Adapter startup may have acquired resources (e.g. a CLI
-                    # runtime subprocess); a failed start must release them —
-                    # stop() won't run for an agent that never started.
-                    await release_adapter(self._adapter)
-                    raise
+                self._cleanup_pending.add(CleanupPhase.RUNTIME)
+                await self._runtime.start(
+                    on_execute=self._on_execute,
+                    on_message_control=self._on_control,
+                    on_cleanup=self._adapter.on_cleanup,
+                    # A bare FrameworkAdapter predates on_interrupt and needn't
+                    # implement it -- degrade to a no-op signal like other
+                    # optional protocol additions (e.g. Execution.request_resync).
+                    on_control=getattr(self._adapter, "on_interrupt", None),
+                )
             except BaseException:
                 # A stop requested during this failed start must not apply to a
                 # later successful start.
                 self._clear_pending_stop()
-                # Idempotent: a failure inside runtime.start() already released.
-                self._runtime.release_single_instance()
+                await self._unwind_failed_start()
                 raise
 
             self._started = True
@@ -325,6 +339,21 @@ class Agent:
         finally:
             self._starting = False
 
+    async def _unwind_failed_start(self) -> None:
+        """Release what a failed start acquired without replacing its error.
+
+        ``stop()`` won't run for an agent that never started, so cleanup that
+        fails here stays pending, with the guard, for an explicit ``stop()``.
+        """
+        if not self._runtime.cleanup_pending:
+            self._cleanup_pending.discard(CleanupPhase.RUNTIME)
+        if CleanupPhase.ADAPTER in self._cleanup_pending and await release_adapter(
+            self._adapter
+        ):
+            self._cleanup_pending.discard(CleanupPhase.ADAPTER)
+        if not self._cleanup_pending:
+            self._runtime.release_single_instance()
+
     async def stop(self, timeout: float | None = None) -> bool:
         """
         Stop agent with optional graceful timeout.
@@ -333,6 +362,10 @@ class Agent:
         message processing to complete before stopping. If timeout is None,
         stops immediately by cancelling any in-progress processing.
 
+        Every cleanup phase is attempted. One that fails or is cancelled stays
+        pending, with the single-instance guard, and the next ``stop()``
+        retries it.
+
         Args:
             timeout: Optional seconds to wait for graceful shutdown.
                      None means stop immediately.
@@ -340,28 +373,59 @@ class Agent:
         Returns:
             True if stopped gracefully (processing completed or was idle),
             False if had to cancel mid-processing after timeout.
+
+        Raises:
+            ExceptionGroup: Runtime or adapter cleanup remains incomplete.
         """
         async with self._stop_lock:
-            if not self._started:
-                if self._starting:
-                    self._stop_requested = True
-                    self._pending_stop_timeout = timeout
+            if self._starting and not self._started:
+                self._stop_requested = True
+                self._pending_stop_timeout = timeout
+                return True
+            if not self._started and not self._cleanup_pending:
                 return True
 
             self._clear_pending_stop()
-            try:
-                graceful = await self._runtime.stop(timeout=timeout)
-            finally:
-                # Always release adapter-wide resources (e.g. a CLI runtime
-                # subprocess, a self-hosted MCP server, an external
-                # registration), even when the runtime fails to stop cleanly.
-                await release_adapter(self._adapter)
-                self._started = False
-                _running_agents.discard(self)
+            self._started = False
+            graceful, failures = await self._run_cleanup(timeout)
+            if failures:
+                raise ExceptionGroup("Agent cleanup remains incomplete", failures)
+            self._runtime.release_single_instance()
+            _running_agents.discard(self)
         logger.info(
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )
         return graceful
+
+    async def _run_cleanup(self, timeout: float | None) -> tuple[bool, list[Exception]]:
+        """Attempt every pending phase, runtime first so no room still runs."""
+        graceful = True
+        failures: list[Exception] = []
+        if CleanupPhase.RUNTIME in self._cleanup_pending:
+            try:
+                graceful = await self._runtime.stop(timeout=timeout)
+            except Exception as error:  # noqa: BLE001 -- adapter cleanup must still be attempted; raised together by stop()
+                failures.append(error)
+            else:
+                self._cleanup_pending.discard(CleanupPhase.RUNTIME)
+        if CleanupPhase.ADAPTER in self._cleanup_pending:
+            try:
+                await dispose_adapter(self._adapter)
+            except Exception as error:  # noqa: BLE001 -- raised together by stop()
+                failures.append(error)
+            else:
+                self._cleanup_pending.discard(CleanupPhase.ADAPTER)
+        return graceful, failures
+
+    async def _stop_during_unwind(self, timeout: float | None) -> None:
+        """Stop while another error propagates; cleanup failure stays pending
+        and is logged so it cannot replace that error."""
+        try:
+            await self.stop(timeout=timeout)
+        except Exception:
+            logger.exception(
+                "Agent cleanup failed while unwinding; call stop() to retry"
+            )
 
     async def run(
         self,
@@ -384,8 +448,10 @@ class Agent:
             return
         try:
             await self.run_forever(install_signal_handlers=install_signal_handlers)
-        finally:
-            await self.stop(timeout=shutdown_timeout)
+        except BaseException:
+            await self._stop_during_unwind(shutdown_timeout)
+            raise
+        await self.stop(timeout=shutdown_timeout)
 
     # --- Async context manager ---
 
@@ -420,7 +486,10 @@ class Agent:
         else:
             # Cast is safe: at this point it's either float or None (not sentinel)
             timeout = cast(float | None, self._shutdown_timeout)
-        await self.stop(timeout=timeout)
+        if exc_type is None:
+            await self.stop(timeout=timeout)
+        else:
+            await self._stop_during_unwind(timeout)
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """

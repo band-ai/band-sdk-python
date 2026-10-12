@@ -23,7 +23,11 @@ from band_rest import (
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.exceptions import BandConnectionError, RoomExecutionStoppedError
+from band.core.exceptions import (
+    BandConnectionError,
+    CleanupIncompleteError,
+    RoomExecutionStoppedError,
+)
 from band.core.model_catalog import ModelSelection, ModelSelectionError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability
@@ -77,6 +81,7 @@ def _make_adapter_mock() -> MagicMock:
     adapter.on_started = AsyncMock()
     adapter.on_event = AsyncMock(side_effect=_capture)
     adapter.on_cleanup = AsyncMock()
+    adapter.cleanup_all = AsyncMock()
     return adapter
 
 
@@ -267,11 +272,33 @@ class TestStartup:
         with pytest.raises(RuntimeError, match="startup"):
             await invoker.handle_event(_msg_body())
 
-    async def test_shutdown_disconnects_link(self) -> None:
+    async def test_shutdown_disposes_adapter_and_disconnects_link(self) -> None:
         link = make_link_mock()
-        invoker = await _make_invoker(link)
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
         await invoker.shutdown()
+        adapter.cleanup_all.assert_awaited_once()
         link.disconnect.assert_awaited_once()
+
+    async def test_failed_shutdown_disconnects_and_retries_cleanup(self) -> None:
+        link = make_link_mock()
+        adapter = _make_adapter_mock()
+        adapter.cleanup_all.side_effect = RuntimeError("teardown boom")
+        invoker = await _make_invoker(link, adapter)
+
+        with pytest.raises(RuntimeError, match="teardown boom"):
+            await invoker.shutdown()
+        link.disconnect.assert_awaited_once()
+        with pytest.raises(CleanupIncompleteError):
+            await invoker.startup()
+
+        adapter.cleanup_all.side_effect = None
+        await invoker.shutdown()
+        assert adapter.cleanup_all.await_count == 2
+        await invoker.shutdown()
+        assert adapter.cleanup_all.await_count == 2
+        await invoker.startup()
+        assert adapter.on_started.await_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -336,17 +363,16 @@ class TestHandleEventRouting:
 
         adapter.on_cleanup.assert_awaited_once_with("r-payload")
 
-    async def test_room_removed_swallows_cleanup_errors(self) -> None:
+    async def test_room_removed_reports_failed_cleanup(self) -> None:
         link = make_link_mock()
         adapter = _make_adapter_mock()
         adapter.on_cleanup = AsyncMock(side_effect=RuntimeError("adapter blew up"))
         invoker = await _make_invoker(link, adapter)
 
-        # Must not raise — a flaky adapter cleanup can't kill the container.
-        result = await invoker.handle_event(
-            {"event_type": "room_removed", "room_id": "r1", "payload": {}}
-        )
-        assert result["status"] == "cleaned_up"
+        with pytest.raises(RuntimeError, match="adapter blew up"):
+            await invoker.handle_event(
+                {"event_type": "room_removed", "room_id": "r1", "payload": {}}
+            )
 
     async def test_room_removed_with_no_resolvable_room_id_raises_envelope_error(
         self,
