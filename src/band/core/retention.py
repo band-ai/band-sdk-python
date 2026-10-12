@@ -137,6 +137,8 @@ class RetainedRoom:
         self._generation = 0
         self._leases = 0
         self._owned: set[asyncio.Task[Any]] = set()
+        # Owned tasks that requested this room's cleanup and unwind themselves.
+        self._unwinding: set[asyncio.Task[Any]] = set()
         self._holders: Counter[asyncio.Task[Any] | None] = Counter()
         self._activity = ProviderActivity.UNKNOWN
         self._reason = UNKNOWN_ACTIVITY_REASON
@@ -215,6 +217,7 @@ class RetainedRoom:
 
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)
+        self._unwinding.discard(task)
         self._schedule()
 
     def recover(self, *, generation: int, reason: str) -> bool:
@@ -490,17 +493,29 @@ class RetainedRoom:
         """Whether ``task`` is accepted work this room's disposal would await."""
         return task in self._owned or task in self._holders
 
+    def _spare_requester(self) -> bool:
+        """Exempt enrolled work requesting cleanup from cancellation; it is
+        told cleanup is pending and still joined once it unwinds."""
+        current = asyncio.current_task()
+        if not self.enrolls(current):
+            return False
+        if current is not None and current in self._owned:
+            self._unwinding.add(current)
+        return True
+
     async def dispose(self) -> None:
         """Close admission now; settle accepted work before physical disposal.
 
         The wait is bounded by ``transition_timeout_s`` and an unfinished
         disposal stays owned for a retry to join. Work enrolled here cannot
-        await its own disposal: it is told cleanup is pending and must unwind.
+        await its own disposal: it is told cleanup is pending, is not
+        cancelled by it, and is joined once it unwinds.
         """
+        requested_from_inside = self._spare_requester()
         disposal = self._begin_disposal()
         if disposal is None:
             return
-        if self.enrolls(asyncio.current_task()):
+        if requested_from_inside:
             raise CleanupIncompleteError(
                 f"Room {self.room_id} disposal waits for the calling work to finish"
             )
@@ -542,7 +557,7 @@ class RetainedRoom:
         """Cancel accepted tasks and interrupted startup once, then join all."""
         if not self._work_cancelled:
             self._work_cancelled = True
-            for task in self._owned:
+            for task in self._owned - self._unwinding:
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
                 self._transition.cancel()
@@ -622,8 +637,11 @@ class RoomRetention:
         """Dispose every room under one reporting deadline; retain failures.
 
         Work enrolled in a room cannot await this shutdown; it is told cleanup
-        is pending and must unwind so disposal can settle it.
+        is pending, is not cancelled by it, and is joined once it unwinds.
         """
+        requested_from_inside = [
+            room._spare_requester() for room in tuple(self._rooms.values())
+        ]
         self.stopping = True
         self.changed.set()
         if self._shutdown is None or (
@@ -632,8 +650,7 @@ class RoomRetention:
         ):
             self._shutdown = asyncio.create_task(self._run_stop())
             self._shutdown.add_done_callback(self._observe_shutdown)
-        current = asyncio.current_task()
-        if any(room.enrolls(current) for room in self._rooms.values()):
+        if any(requested_from_inside):
             raise CleanupIncompleteError(
                 "Room retention shutdown waits for the calling work to finish"
             )

@@ -827,3 +827,32 @@ async def test_failed_final_cleanup_retries_the_same_handle(
     expected = 2 if failure == "release" else 1
     assert resident.releases == [ReleaseCause.FINAL] * expected
     assert resident.identity is None
+
+
+@pytest.mark.parametrize("cleanup", ["dispose", "stop"])
+async def test_owned_task_requesting_cleanup_unwinds_without_cancellation(
+    host: ResidenceHost, cleanup: str
+) -> None:
+    resident = host.room()
+    await resident.turn()
+    requested, unwinding = asyncio.Event(), asyncio.Event()
+
+    async def leave_from_owned_work() -> None:
+        async with resident.room.use():
+            with pytest.raises(CleanupIncompleteError):
+                if cleanup == "dispose":
+                    await resident.room.dispose()
+                else:
+                    await host.owner.stop()
+            requested.set()
+            await unwinding.wait()
+
+    task = asyncio.create_task(leave_from_owned_work())
+    resident.room.own(task)
+    await requested.wait()
+    assert task.cancelling() == 0
+    assert resident.releases == []
+    unwinding.set()
+    await task
+    await resident.room.dispose()
+    assert resident.releases == [ReleaseCause.FINAL]
