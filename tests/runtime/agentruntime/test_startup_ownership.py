@@ -14,13 +14,12 @@ from tests.conftest import (
 )
 from tests.runtime.agentruntime.kit import (
     QueueLink,
-    StartGate,
     joined,
     settled,
     until_admitted,
 )
 from tests.runtime.conftest import wait_for_condition
-from tests.runtime.helpers import RoomCleanup
+from tests.runtime.helpers import RoomCleanup, StartGate
 
 
 class TestAgentRuntimeStartupOwnership:

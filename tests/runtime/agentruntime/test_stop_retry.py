@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from band.runtime.runtime import AgentRuntime
-from tests.runtime.agentruntime.kit import StartGate, joined
-from tests.runtime.helpers import RoomCleanup
+from tests.runtime.agentruntime.kit import joined
+from tests.runtime.helpers import RoomCleanup, StartGate
 
 
 class TestStopRetry:

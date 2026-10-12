@@ -317,3 +317,54 @@ class RoomCleanup:
         if self.failing or room_id in self.failing_rooms:
             raise RuntimeError("room cleanup failed")
         self.rooms.append(room_id)
+
+
+class HeldExecution:
+    """A custom execution whose start can be held or failed."""
+
+    def __init__(self, room_id: str, gate: StartGate) -> None:
+        self.room_id = room_id
+        self.gate = gate
+        self.started = False
+        self.stopped = False
+        self.resyncs = 0
+        self.events: list[object] = []
+
+    async def start(self) -> None:
+        self.gate.entered.set()
+        await self.gate.release.wait()
+        if self.gate.failures:
+            self.gate.failures -= 1
+            raise RuntimeError("execution start failed")
+        self.started = True
+
+    async def stop(self, timeout: float | None = None) -> bool:
+        self.stopped = True
+        return self.gate.graceful
+
+    async def on_event(self, event: object) -> None:
+        self.events.append(event)
+
+    async def request_resync(self) -> None:
+        self.resyncs += 1
+
+
+class StartGate:
+    """Builds ``HeldExecution``s; each start waits for ``release``."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.failures = 0
+        self.graceful = True
+        self.built: list[HeldExecution] = []
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    def __call__(self, room_id: str, link, *, hub_room_id=None) -> HeldExecution:
+        execution = HeldExecution(room_id, self)
+        self.built.append(execution)
+        return execution

@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.runtime import AgentRuntime
-from tests.runtime.agentruntime.kit import StartGate
-from tests.runtime.helpers import RoomCleanup
+from tests.runtime.helpers import RoomCleanup, StartGate
 
 
 @pytest.fixture

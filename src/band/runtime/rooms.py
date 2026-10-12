@@ -1,31 +1,73 @@
-"""Each room's owned execution: admission, routing and retirement."""
+"""Each room's owned execution: admission, routing and retirement.
+
+A room is a small state machine with at most one step in flight. A signal
+(join, leave, stop, reconnect, an event for an unserved room) or the end of
+that step advances it once; nothing polls. Waiters await the room's
+``Convergence``, which settles when the room matches its intent and fails
+when a step fails, leaving the execution owned for the next signal to retry.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Coroutine
+from dataclasses import dataclass, field
+from enum import StrEnum
+from functools import partial
+from typing import Any
 
+from band.core.exceptions import CleanupIncompleteError
+from band.core.retention.cleanup import task_failure
 from band.runtime.execution import Execution
 
 logger = logging.getLogger(__name__)
 
+# Without a new signal a room needs at most: retire its old execution, start a
+# new one, and retire that start when a stop overtook it.
+MAX_STEPS_PER_SIGNAL = 3
+
+
+class RoomState(StrEnum):
+    IDLE = "idle"
+    """No step in flight and not serving; may still own a failed execution."""
+    STARTING = "starting"
+    SERVING = "serving"
+    RETIRING = "retiring"
+
+
+def _new_future() -> asyncio.Future[bool]:
+    future = asyncio.get_running_loop().create_future()
+    # A failure nobody awaits is already logged; don't warn again on GC.
+    future.add_done_callback(lambda done: done.cancelled() or done.exception())
+    return future
+
 
 @dataclass
-class RoomLifecycle:
+class Convergence:
+    """One attempt to bring a room to its intent; waiters await ``done``."""
+
+    done: asyncio.Future[bool] = field(default_factory=_new_future)
+    graceful: bool = True
+
+
+@dataclass
+class Room:
     """One room's membership intent and the execution it owns.
 
-    ``execution`` stays owned from construction until its cleanup succeeds;
-    it receives work only while it is also the room's routed execution.
-    ``task`` is the room's single owned startup/retirement operation, and
-    ``intent`` counts withdrawals so a startup that outlived one is retired.
+    ``execution`` stays owned from construction until its cleanup succeeds.
+    ``generation`` counts withdrawals, so a start that outlived one is retired
+    instead of routed.
     """
 
     wanted: bool = False
-    intent: int = 0
+    generation: int = 0
+    state: RoomState = RoomState.IDLE
     execution: Execution | None = None
-    task: asyncio.Task[bool] | None = None
+    stop_timeout: float | None = None
+    steps_left: int = MAX_STEPS_PER_SIGNAL
+    step: asyncio.Task[None] | None = None
+    convergence: Convergence | None = None
 
 
 async def request_resync(room_id: str, execution: Execution) -> None:
@@ -57,29 +99,32 @@ class RoomExecutions:
     ) -> None:
         self.routed: dict[str, Execution] = {}
         self.accepting = True
-        self._rooms: dict[str, RoomLifecycle] = {}
+        self._rooms: dict[str, Room] = {}
         self._build = build
         # Room-scoped cleanup that runs after its execution stopped.
         self._release = release
-
-    def record(self, room_id: str) -> RoomLifecycle | None:
-        return self._rooms.get(room_id)
 
     def room_ids(self) -> list[str]:
         return list(self._rooms)
 
     def wanted(self, room_id: str) -> bool:
-        record = self._rooms.get(room_id)
-        return record is not None and record.wanted
+        room = self._rooms.get(room_id)
+        return room is not None and room.wanted
 
     def serving(self, room_id: str) -> bool:
-        record = self._rooms.get(room_id)
-        execution = self.routed.get(room_id)
+        room = self._rooms.get(room_id)
         return (
-            record is not None
-            and execution is not None
-            and execution is record.execution
+            room is not None
+            and room.execution is not None
+            and self.routed.get(room_id) is room.execution
         )
+
+    def pending(self, room_id: str) -> asyncio.Future[bool] | None:
+        """The room's unfinished convergence, if one is under way."""
+        room = self._rooms.get(room_id)
+        if room is None or room.convergence is None:
+            return None
+        return room.convergence.done
 
     @property
     def unsettled(self) -> list[str]:
@@ -88,16 +133,15 @@ class RoomExecutions:
         empty list does not mean every room has stopped."""
         return [
             room_id
-            for room_id, record in self._rooms.items()
-            if record.execution is not None and not self.serving(room_id)
+            for room_id, room in self._rooms.items()
+            if room.execution is not None and not self.serving(room_id)
         ]
 
     async def admit(self, room_id: str) -> Execution | None:
-        """Admit a room through its owned lifecycle.
+        """Admit a room and wait for its startup.
 
-        Waits for a fresh room's startup. Returns None without waiting when an
-        earlier execution must be cleaned up first; admission then completes
-        through the same owned operation once that cleanup succeeds.
+        Returns None without waiting when an earlier execution must be cleaned
+        up first; admission then completes in the same convergence.
         """
         if not self.accepting:
             raise RuntimeError("Agent runtime is stopping or stopped")
@@ -106,29 +150,35 @@ class RoomExecutions:
             return self.routed[room_id]
         previous = self._rooms.get(room_id)
         cleanup_first = previous is not None and previous.execution is not None
-        lifecycle = self.request_admission(room_id)
+        pending = self.request_admission(room_id)
         if cleanup_first:
             return None
-        await asyncio.shield(lifecycle)
+        if pending is not None:
+            await asyncio.shield(pending)
         return self.routed.get(room_id)
 
-    def request_admission(self, room_id: str) -> asyncio.Task[bool]:
-        record = self._rooms.setdefault(room_id, RoomLifecycle())
-        record.wanted = True
-        return self.converge(room_id)
+    def request_admission(self, room_id: str) -> asyncio.Future[bool] | None:
+        room = self._rooms.setdefault(room_id, Room())
+        room.wanted = True
+        return self._signal(room_id, room)
 
     def withdraw(self, room_id: str) -> None:
         """Fence a wanted room at once and request its owned cleanup."""
-        if not self.wanted(room_id):
+        if (room := self._rooms.get(room_id)) is None or not room.wanted:
             return
-        self._fence(room_id)
-        self.converge(room_id)
+        self._fence(room_id, room)
+        self._signal(room_id, room)
+
+    def converge(self, room_id: str) -> None:
+        """Retry a room toward its intent, e.g. after a failed step."""
+        if (room := self._rooms.get(room_id)) is not None:
+            self._signal(room_id, room)
 
     def converge_unserved(self) -> None:
         """Retry every room whose startup or cleanup has not settled."""
-        for room_id in self.room_ids():
+        for room_id, room in list(self._rooms.items()):
             if not self.serving(room_id):
-                self.converge(room_id)
+                self._signal(room_id, room)
 
     async def destroy(self, room_id: str, timeout: float | None = None) -> bool:
         """Withdraw a room and wait for its owned cleanup.
@@ -139,66 +189,95 @@ class RoomExecutions:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        record = self._fence(room_id)
-        graceful = True
-        while record is not None and self._rooms.get(room_id) is record:
-            lifecycle = self.converge(room_id, timeout=timeout)
-            graceful = await asyncio.shield(lifecycle) and graceful
-        return graceful
+        if (room := self._rooms.get(room_id)) is None:
+            return True
+        self._fence(room_id, room)
+        room.stop_timeout = timeout
+        if (pending := self._signal(room_id, room)) is None:
+            return True
+        return await asyncio.shield(pending)
 
-    def converge(
-        self, room_id: str, *, timeout: float | None = None
-    ) -> asyncio.Task[bool]:
-        """Join the room's owned operation, or start one after the last settled."""
-        record = self._rooms[room_id]
-        if record.task is None or record.task.done():
-            record.task = asyncio.create_task(self._reconcile(room_id, record, timeout))
-            record.task.add_done_callback(self._observe_lifecycle)
-        return record.task
-
-    def _fence(self, room_id: str) -> RoomLifecycle | None:
+    def _fence(self, room_id: str, room: Room) -> None:
         """Withdraw membership: no admission completes and no work routes."""
         self.routed.pop(room_id, None)
-        record = self._rooms.get(room_id)
-        if record is not None:
-            record.wanted = False
-            record.intent += 1
-        return record
+        room.wanted = False
+        room.generation += 1
+        room.stop_timeout = None
 
-    @staticmethod
-    def _observe_lifecycle(lifecycle: asyncio.Task[bool]) -> None:
-        if not lifecycle.cancelled() and (error := lifecycle.exception()):
-            logger.warning("Room lifecycle remains pending: %s", error)
+    def _signal(self, room_id: str, room: Room) -> asyncio.Future[bool] | None:
+        room.steps_left = MAX_STEPS_PER_SIGNAL
+        self._advance(room_id, room)
+        return room.convergence.done if room.convergence is not None else None
 
-    async def _reconcile(
-        self, room_id: str, record: RoomLifecycle, timeout: float | None
-    ) -> bool:
-        """Converge the room's execution to its current membership intent.
+    def _advance(self, room_id: str, room: Room) -> None:
+        """Take the one step the room's state and intent call for, if any."""
+        match room.state, room.wanted and self.accepting, room.execution:
+            case RoomState.STARTING | RoomState.RETIRING, _, _:
+                pass  # the step in flight advances the room when it ends
+            case RoomState.SERVING, True, _:
+                self._settle(room)
+            case _, False, None:
+                self._forget(room_id, room)
+            case _, True, None:
+                self._step(room_id, room, RoomState.STARTING, self._start)
+            case _, _, execution if execution is not None:
+                self.routed.pop(room_id, None)
+                self._step(
+                    room_id,
+                    room,
+                    RoomState.RETIRING,
+                    partial(self._retire, execution=execution),
+                )
 
-        Intent is re-read after every await, so a leave or stop during a held
-        startup retires that execution instead of publishing it.
-        """
-        graceful = True
-        while True:
-            admit = record.wanted and self.accepting
-            if self.serving(room_id):
-                if admit:
-                    return graceful
-                self.routed.pop(room_id)
-            if (execution := record.execution) is not None:
-                retired = await self._retire(room_id, record, execution, timeout)
-                graceful = retired and graceful
-            elif admit:
-                await self._admit(room_id, record)
-            else:
-                self._forget(room_id, record)
-                return graceful
+    def _step(
+        self,
+        room_id: str,
+        room: Room,
+        state: RoomState,
+        run: Callable[[str, Room], Coroutine[Any, Any, None]],
+    ) -> None:
+        if room.convergence is None:
+            room.convergence = Convergence()
+        if room.steps_left == 0:
+            self._fail(
+                room_id,
+                room,
+                CleanupIncompleteError(
+                    f"Room {room_id} lifecycle exceeded {MAX_STEPS_PER_SIGNAL} "
+                    "steps without a new signal"
+                ),
+            )
+            return
+        room.steps_left -= 1
+        room.state = state
+        room.step = asyncio.create_task(run(room_id, room))
+        room.step.add_done_callback(partial(self._step_done, room_id, room))
 
-    def _forget(self, room_id: str, record: RoomLifecycle) -> None:
-        if self._rooms.get(room_id) is record:
+    def _step_done(self, room_id: str, room: Room, step: asyncio.Task[None]) -> None:
+        room.step = None
+        if (error := task_failure(step)) is not None:
+            room.state = RoomState.IDLE
+            self._fail(room_id, room, error)
+            return
+        self._advance(room_id, room)
+
+    def _settle(self, room: Room) -> None:
+        if room.convergence is not None:
+            room.convergence.done.set_result(room.convergence.graceful)
+            room.convergence = None
+
+    def _fail(self, room_id: str, room: Room, error: BaseException) -> None:
+        logger.warning("Room %s lifecycle remains pending: %s", room_id, error)
+        if room.convergence is not None:
+            room.convergence.done.set_exception(error)
+            room.convergence = None
+
+    def _forget(self, room_id: str, room: Room) -> None:
+        if self._rooms.get(room_id) is room:
             del self._rooms[room_id]
+        self._settle(room)
 
-    async def _admit(self, room_id: str, record: RoomLifecycle) -> None:
+    async def _start(self, room_id: str, room: Room) -> None:
         """Start an owned execution; route it only if the membership intent it
         started under still stands.
 
@@ -206,25 +285,20 @@ class RoomExecutions:
         execution always resyncs /next to recover them. Startup has no time
         bound here: leave and stop wait for it to settle, then retire it.
         """
-        intent = record.intent
-        execution = self._build(room_id)
-        record.execution = execution
+        generation = room.generation
+        room.execution = execution = self._build(room_id)
         await execution.start()
-        if not (record.wanted and self.accepting and record.intent == intent):
-            return
-        self.routed[room_id] = execution
-        logger.debug("Created execution for room %s", room_id)
-        await request_resync(room_id, execution)
+        if room.wanted and self.accepting and room.generation == generation:
+            self.routed[room_id] = execution
+            logger.debug("Created execution for room %s", room_id)
+            await request_resync(room_id, execution)
+        room.state = RoomState.SERVING if self.serving(room_id) else RoomState.IDLE
 
-    async def _retire(
-        self,
-        room_id: str,
-        record: RoomLifecycle,
-        execution: Execution,
-        timeout: float | None,
-    ) -> bool:
-        graceful = await execution.stop(timeout=timeout)
+    async def _retire(self, room_id: str, room: Room, *, execution: Execution) -> None:
+        graceful = await execution.stop(timeout=room.stop_timeout)
         await self._release(room_id)
-        record.execution = None
+        room.execution = None
+        room.state = RoomState.IDLE
+        if room.convergence is not None:
+            room.convergence.graceful = room.convergence.graceful and graceful
         logger.debug("Destroyed execution for room %s", room_id)
-        return graceful
