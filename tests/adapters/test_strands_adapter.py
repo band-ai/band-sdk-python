@@ -217,6 +217,19 @@ class TestCustomToolWiring:
                 StrandsAdapterConfig(model="m"), additional_tools=[band_send_message]
             )
 
+    def test_duplicate_custom_tool_names_are_rejected(self):
+        """A repeated name would silently replace the earlier tool."""
+
+        @strands_tool
+        def lookup(code: str) -> str:
+            """Look a code up."""
+            return code
+
+        with pytest.raises(ValueError, match="unique.*lookup"):
+            StrandsAdapter(
+                StrandsAdapterConfig(model="m"), additional_tools=[lookup, lookup]
+            )
+
     def test_unnamed_custom_tool_is_rejected(self):
         unnamed = partial(lambda x: x, 1)
 

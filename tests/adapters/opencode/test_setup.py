@@ -15,6 +15,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     event_message_updated,
@@ -77,7 +78,8 @@ async def test_mcp_registration_uses_band_agent_id_before_startup() -> None:
 
     with backends_created_by(fake_backend):
         await adapter.on_started("Renameable Agent", "")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(IdentityTools()),
             OpencodeSessionState(),
@@ -124,7 +126,8 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
 
     with backends_created_by(fake_backend) as starts:
         await adapter.on_started("OpenCode Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -184,7 +187,8 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
 
     with backends_created_by(fake_backend):
         await adapter.on_started("OpenCode Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -228,7 +232,8 @@ async def test_mcp_registration_retries_until_connected() -> None:
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     for _ in range(3):
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -257,7 +262,8 @@ async def test_bootstrap_creates_session_relays_text_and_persists_task(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -292,7 +298,8 @@ async def test_reuses_persisted_session(make_adapter, tools) -> None:
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(
@@ -320,7 +327,8 @@ async def test_replaces_session_from_another_mcp_registration(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(
@@ -354,7 +362,8 @@ async def test_missing_session_replays_history_into_new_prompt(
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="Continue from before"),
         tools_protocol(tools),
         OpencodeSessionState(
@@ -391,7 +400,8 @@ async def test_capability_gating_controls_registered_tool_set(
             ),
         )
         await bare_adapter.on_started("OpenCode Agent", "A coding agent")
-        await bare_adapter.on_message(
+        await deliver_message(
+            bare_adapter,
             make_platform_message(),
             tools_protocol(FakeAgentTools()),
             OpencodeSessionState(),
@@ -409,7 +419,8 @@ async def test_capability_gating_controls_registered_tool_set(
             capabilities={Capability.MEMORY, Capability.CONTACTS},
         )
         await full_adapter.on_started("OpenCode Agent", "A coding agent")
-        await full_adapter.on_message(
+        await deliver_message(
+            full_adapter,
             make_platform_message(),
             tools_protocol(FakeAgentTools()),
             OpencodeSessionState(),

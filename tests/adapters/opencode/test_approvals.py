@@ -30,6 +30,7 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     ASK_DEADLINE_S,
     AskFactory,
@@ -700,7 +701,8 @@ async def test_manual_permission_reply_from_follow_up_message(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="Please continue"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -726,7 +728,8 @@ async def test_manual_permission_reply_from_follow_up_message(
     )
     assert approval_requested["mentions"]
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve req-1"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -771,7 +774,8 @@ async def test_manual_question_reply_from_follow_up_message(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="Need an answer"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -797,7 +801,8 @@ async def test_manual_question_reply_from_follow_up_message(
     )
     assert asked_question["mentions"]
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="Ship the adapter"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -844,7 +849,8 @@ async def test_auto_accept_approval_mode() -> None:
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -877,7 +883,8 @@ async def test_auto_decline_approval_mode() -> None:
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -902,7 +909,8 @@ async def test_auto_reject_question_mode() -> None:
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -950,7 +958,8 @@ async def test_a_turn_nobody_answers_expires_into_its_timeout_replies(
     tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -1177,7 +1186,8 @@ async def test_cleanup_with_pending_permission() -> None:
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -1221,7 +1231,8 @@ async def test_cleanup_with_pending_question() -> None:
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -1272,7 +1283,8 @@ async def test_always_permission_reply_from_follow_up_message(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="Please continue"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -1290,7 +1302,8 @@ async def test_always_permission_reply_from_follow_up_message(
     )
     await asyncio.wait([first_turn])
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="always req-always"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),
@@ -1477,7 +1490,8 @@ async def test_doom_loop_permission_still_relayed_in_manual_mode(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -1497,7 +1511,8 @@ async def test_doom_loop_permission_still_relayed_in_manual_mode(
     await asyncio.wait([first_turn])
     assert fake_client.permission_replies == []
 
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="approve perm-loop"),
         tools_protocol(tools),
         OpencodeSessionState(session_id="sess-1", room_id="room-1"),

@@ -861,6 +861,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_parlant.py::test_parlant_delivers_typed_custom_tool_arguments",
+      "adapter": "suite",
+      "lanes": [
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_parlant.py::test_parlant_executes_custom_tool",
+      "adapter": "suite",
+      "lanes": [
+        "parlant"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_parlant.py::test_parlant_replies",
       "adapter": "suite",
       "lanes": [
@@ -989,6 +1007,33 @@
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_only_an_authorized_member_decides_an_ask",
       "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "adapter": "opencode",
       "lanes": [
         "backends"
       ],
