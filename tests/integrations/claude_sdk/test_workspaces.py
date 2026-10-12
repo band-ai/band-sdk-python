@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
 from claude_agent_sdk.types import (
     CanUseTool,
     PermissionResult,
@@ -18,18 +18,22 @@ from claude_agent_sdk.types import (
 )
 
 from band.integrations.claude_sdk import transport
-from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeRoomSession,
+    ClaudeSessionManager,
+)
 from band.workspaces import RoomWorkspaces, create_room_workspace_resolver
+from tests.adapters.claude_sdk.helpers import exchange
 from tests.adapters.claude_sdk.process import WorkspacePeer
 
 
 async def file_operation(
-    client: ClaudeSDKClient, tool_name: str, **arguments: str
+    session: ClaudeRoomSession, tool_name: str, **arguments: str
 ) -> tuple[bool, str | None]:
-    await client.query(json.dumps({"tool_name": tool_name, "input": arguments}))
-    async for message in client.receive_response():
-        if isinstance(message, ResultMessage):
-            return message.is_error, message.result
+    request = json.dumps({"tool_name": tool_name, "input": arguments})
+    match await exchange(session, request):
+        case [*_, ResultMessage() as result]:
+            return result.is_error, result.result
     raise AssertionError("The child returned no result")
 
 
@@ -44,11 +48,11 @@ async def test_real_sdk_permissions_and_files_survive_room_restart(
         children.append(child)
         return child
 
-    def permissions(room_id: str) -> CanUseTool:
+    def permissions(session: ClaudeRoomSession, generation: int) -> CanUseTool:
         async def decide(
             tool_name: str, arguments: dict[str, Any], context: ToolPermissionContext
         ) -> PermissionResult:
-            requests.append((room_id, tool_name))
+            requests.append((session.room_id, tool_name))
             if arguments.get("content") == "denied":
                 return PermissionResultDeny(message="Refused by the host")
             updated = {**arguments}
@@ -71,13 +75,11 @@ async def test_real_sdk_permissions_and_files_survive_room_restart(
     manager = new_manager()
     try:
         for room_id in ("room-a", "room-b"):
-            client = await manager.get_or_create_session(room_id)
             assert await file_operation(
-                client, "Write", file_path="notes.txt", content=room_id
+                manager.room(room_id), "Write", file_path="notes.txt", content=room_id
             ) == (False, room_id.upper())
-        client = await manager.get_or_create_session("room-a")
         assert await file_operation(
-            client, "Write", file_path="notes.txt", content="denied"
+            manager.room("room-a"), "Write", file_path="notes.txt", content="denied"
         ) == (True, "denied")
         assert len(children) == 2
         assert all(not child.exited for child in children)
@@ -89,8 +91,9 @@ async def test_real_sdk_permissions_and_files_survive_room_restart(
 
         manager = new_manager()
         for room_id in ("room-a", "room-b"):
-            client = await manager.get_or_create_session(room_id)
-            assert await file_operation(client, "Read", file_path="notes.txt") == (
+            assert await file_operation(
+                manager.room(room_id), "Read", file_path="notes.txt"
+            ) == (
                 False,
                 room_id.upper(),
             )

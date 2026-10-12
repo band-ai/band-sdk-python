@@ -10,12 +10,15 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+from claude_agent_sdk.types import Message
+
 from band.adapters.claude_sdk import (
     ClaudeApprovalOptions,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
 from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
+from band.core.retention import RetentionSnapshot
 from band.core.turn import Turn
 from band.core.types import (
     AgentInput,
@@ -24,6 +27,7 @@ from band.core.types import (
     MessageType,
     PlatformMessage,
 )
+from band.integrations.claude_sdk.session_manager import ClaudeRoomSession
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude
@@ -37,6 +41,14 @@ SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 MISSING_REPLY_TEXT = MISSING_REPLY_FAILURE[1]
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
+
+
+async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
+    """One leased query through the room's single reader, up to its result."""
+    async with session.using() as client:
+        with session.listening() as stream:
+            await client.query(prompt)
+            return [message async for message in stream.until_result()]
 
 
 def with_approvals(
@@ -173,6 +185,15 @@ class ClaudeRoom:
     def session_band_ports(self) -> list[int | None]:
         """The Band MCP port each CLI session (any room) was started with, in order."""
         return [urlsplit(url).port for url in self.session_band_urls]
+
+    @property
+    def residency(self) -> RetentionSnapshot:
+        """The room's residency as its owner reports it."""
+        manager = self.adapter._session_manager
+        session = manager.session(self.room_id) if manager else None
+        if session is None:
+            raise AssertionError(f"{self.room_id} has no Claude session")
+        return session.retained.snapshot
 
     async def crash_band_server(self) -> None:
         """The adapter's Band MCP server dies on its own, between turns."""

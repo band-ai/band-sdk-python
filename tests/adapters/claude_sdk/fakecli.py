@@ -14,7 +14,7 @@ import itertools
 import json
 import re
 from collections import deque
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from types import TracebackType
@@ -59,6 +59,30 @@ class EndTurn:
 
 
 @dataclass(frozen=True)
+class Remember:
+    """The model keeps a private note in its session; the room never sees it."""
+
+    note: str
+
+
+@dataclass(frozen=True)
+class Recall:
+    """The model answers from every note its session holds; a session that
+    lost its conversation answers with none."""
+
+    answer: Callable[[str], ModelDecision]
+
+
+@dataclass(frozen=True)
+class AfterResult:
+    """A message the CLI emits after the turn's result, as background work
+    finishing between turns does; ``gate`` delays it until set."""
+
+    message: dict[str, Any]
+    gate: asyncio.Event | None = None
+
+
+@dataclass(frozen=True)
 class Hangup:
     """The CLI process dies: the stream ends with no result."""
 
@@ -91,7 +115,18 @@ class Hold:
         self.released.set()
 
 
-Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup | StreamFails
+Step = (
+    ModelDecision
+    | Thinking
+    | Raw
+    | Hold
+    | EndTurn
+    | Remember
+    | Recall
+    | AfterResult
+    | Hangup
+    | StreamFails
+)
 Turn = Sequence[Step]
 
 
@@ -103,12 +138,16 @@ class FakeClaude:
         self._session_ids = itertools.count(1)
         self.sessions: list[FakeCLISession] = []
         self.prompts: list[str] = []
+        # The CLI's session store: each conversation's private notes outlive
+        # the process that wrote them and come back with a resume.
+        self.notes: dict[str, list[str]] = {}
         self.unresumable: set[str] = set()
         # permissions.ask rules in the project's settings file, which the CLI
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
-        # Parks every connect, e.g. to land a shutdown while a session starts.
+        # Parks the next connect, e.g. to land a shutdown while a session
+        # starts; the session that reaches it takes it.
         self.connecting: Hold | None = None
         # Modes the account or model can't run; the CLI falls back to
         # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
@@ -118,6 +157,7 @@ class FakeClaude:
         self.ignore_interrupt = False
         self.interrupted = asyncio.Event()
         self.errors: list[BaseException] = []
+        # Parks the next close; the session that reaches it takes it.
         self.closing: Hold | None = None
         self.refuse_close = False
 
@@ -162,17 +202,21 @@ class FakeCLISession(Transport):
         self.options = options
         self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
+        self.notes = claude.notes.setdefault(self.session_id, [])
+        self.close_calls = 0
         self._outbox: asyncio.Queue[dict[str, Any] | Exception | None] = asyncio.Queue()
         self._awaiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._hooks: dict[str, list[dict[str, Any]]] = {}
         self._served: dict[str, set[str]] = {}
         self._turn: asyncio.Task[None] | None = None
+        self._background: set[asyncio.Task[None]] = set()
         self.alive = True
         self.refuse_close = False
 
     async def connect(self) -> None:
         if (hold := self.claude.connecting) is not None:
+            self.claude.connecting = None
             hold.reached.set()
             await hold.released.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
@@ -184,7 +228,9 @@ class FakeCLISession(Transport):
     async def end_input(self) -> None: ...
 
     async def close(self) -> None:
+        self.close_calls += 1
         if (hold := self.claude.closing) is not None:
+            self.claude.closing = None
             hold.reached.set()
             await hold.released.wait()
         if self.claude.refuse_close or self.refuse_close:
@@ -256,6 +302,7 @@ class FakeCLISession(Transport):
     async def _play(self, turn: Turn) -> None:
         denials: list[dict[str, Any]] = []
         ending = EndTurn()
+        later: list[AfterResult] = []
         try:
             self._emit(type="system", subtype="init", session_id=self.session_id)
             if self.permission_mode in self.claude.unavailable_modes:
@@ -283,6 +330,12 @@ class FakeCLISession(Transport):
                         await step.released.wait()
                     case EndTurn():
                         ending = step
+                    case Remember(note=note):
+                        self.notes.append(note)
+                    case Recall(answer=answer):
+                        denials += await self._decide(answer(" ".join(self.notes)))
+                    case AfterResult():
+                        later.append(step)
                     case Hangup():
                         self.alive = False
                         self._outbox.put_nowait(None)
@@ -296,6 +349,15 @@ class FakeCLISession(Transport):
             self.claude.errors.append(error)
             ending = EndTurn(is_error=True, result=str(error))
         self._emit_result(ending, denials)
+        for step in later:
+            task = asyncio.create_task(self._emit_after(step))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+
+    async def _emit_after(self, step: AfterResult) -> None:
+        if step.gate is not None:
+            await step.gate.wait()
+        self._outbox.put_nowait(step.message)
 
     def _emit_result(
         self, ending: EndTurn, denials: list[dict[str, Any]] | None = None
