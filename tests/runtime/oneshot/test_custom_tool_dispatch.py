@@ -9,17 +9,10 @@ from band_rest import (
     CreateAgentChatMessageResponse,
     MessageSentResponse,
 )
-from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
 from tests.runtime.conftest import make_link_mock, platform_msg
-from tests.runtime.oneshot.kit import make_invoker, msg_body
-
-
-class VaultCodeInput(BaseModel):
-    """Look up the vault code for a topic."""
-
-    topic: str = Field(description="Topic to look up")
+from tests.runtime.oneshot.kit import VaultCodeInput, make_invoker, msg_body
 
 
 class TestCustomToolDispatch:

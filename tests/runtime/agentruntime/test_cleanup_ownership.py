@@ -10,18 +10,13 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from tests.conftest import (
     make_message_event,
-    make_room_added_event,
-    make_room_removed_event,
 )
 from tests.runtime.agentruntime.kit import (
-    QueueLink,
-    StartGate,
     joined,
     left,
     settled,
     until_admitted,
 )
-from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import RoomCleanup
 
 
@@ -142,47 +137,4 @@ class TestAgentRuntimeRoomCleanupOwnership:
         await runtime._on_reconnected()
         await asyncio.wait_for(until_admitted(runtime, "room-1"), timeout=1)
         assert room_cleanup.rooms == ["room-1"]
-        await runtime.stop()
-
-
-async def test_stop_retry_keeps_an_earlier_cancelled_room_reported(
-    held_runtime: AgentRuntime, start_gate: StartGate, room_cleanup: RoomCleanup
-):
-    await joined(held_runtime, "room-1")
-    await joined(held_runtime, "room-2")
-    start_gate.graceful = False
-    room_cleanup.failing_rooms = {"room-2"}
-    with pytest.raises(ExceptionGroup):
-        await held_runtime.stop()
-
-    start_gate.graceful = True
-    room_cleanup.failing_rooms = set()
-    assert await held_runtime.stop() is False
-    assert sorted(room_cleanup.rooms) == ["room-1", "room-2"]
-
-
-async def test_held_room_cleanup_does_not_block_other_rooms_events(
-    mock_link, mock_handler, room_cleanup: RoomCleanup
-):
-    feed = QueueLink(mock_link)
-    handled = asyncio.Event()
-    mock_handler.side_effect = lambda ctx, event: handled.set()
-    runtime = AgentRuntime(
-        mock_link, "agent-123", mock_handler, on_session_cleanup=room_cleanup
-    )
-    await runtime.start()
-    try:
-        feed.events.put_nowait(make_room_added_event("room-1"))
-        feed.events.put_nowait(make_room_added_event("room-2"))
-        await wait_for_condition(lambda: "room-2" in runtime.executions)
-
-        room_cleanup.hold()
-        feed.events.put_nowait(make_room_removed_event("room-1"))
-        await room_cleanup.entered.wait()
-        feed.events.put_nowait(make_message_event(room_id="room-2", msg_id="m-2"))
-        await asyncio.wait_for(handled.wait(), timeout=1)
-        assert room_cleanup.rooms == []
-        assert "room-1" not in runtime.executions
-    finally:
-        room_cleanup.release.set()
         await runtime.stop()

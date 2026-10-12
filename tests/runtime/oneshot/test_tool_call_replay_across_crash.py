@@ -6,13 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from anthropic.types import ToolUseBlock
-from pydantic import BaseModel
 
 from band.adapters.anthropic import AnthropicAdapter
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
 from tests.runtime.conftest import make_link_mock, platform_msg
-from tests.runtime.oneshot.kit import make_invoker, msg_body
+from tests.runtime.oneshot.kit import SendEmailInput, make_invoker, msg_body
 
 # ---------------------------------------------------------------------------
 # Tool-call replay across a container crash.
@@ -26,12 +25,6 @@ from tests.runtime.oneshot.kit import make_invoker, msg_body
 # band_sdk_core.ClaimRegistry, both of which state the same
 # cross-process boundary is out of the SDK's reach).
 # ---------------------------------------------------------------------------
-
-
-class SendEmailInput(BaseModel):
-    """Send an email to an address."""
-
-    to: str
 
 
 class TestToolCallReplayAcrossCrash:

@@ -10,63 +10,12 @@ import pytest
 from band.core.exceptions import (
     CleanupIncompleteError,
 )
-from band.runtime.oneshot import (
-    OneShotInvoker,
+from tests.runtime.oneshot.kit import (
+    ROOM_REMOVED,
+    AcceptedWork,
+    msg_body,
+    run_ready_callbacks,
 )
-from tests.runtime.conftest import make_link_mock, platform_msg
-from tests.runtime.oneshot.kit import make_adapter_mock, msg_body
-
-
-class AcceptedWork:
-    """An invoker whose adapter work is held, with every effect ordered."""
-
-    def __init__(self, *, turns: int = 1) -> None:
-        self.order: list[str] = []
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-        self.turns = turns
-        self.link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
-        self.link.mark_processed.side_effect = self.record("ack")
-        self.link.disconnect.side_effect = self.record("disconnect")
-        self.adapter = make_adapter_mock()
-        self.adapter.on_event.side_effect = self.held("turn")
-        self.adapter.on_cleanup.side_effect = self.held("room cleanup")
-        self.adapter.cleanup_all.side_effect = self.record("cleanup_all")
-        self.invoker = OneShotInvoker(
-            link=self.link, adapter=self.adapter, agent_id="agent-1"
-        )
-        self._entered = 0
-
-    def record(self, name: str):
-        async def effect(*args: object, **kwargs: object) -> bool:
-            self.order.append(name)
-            return True
-
-        return effect
-
-    def held(self, name: str):
-        async def effect(*args: object, **kwargs: object) -> None:
-            self.order.append(f"{name} start")
-            self._entered += 1
-            if self._entered == self.turns:
-                self.started.set()
-            await self.release.wait()
-            self.order.append(f"{name} end")
-
-        return effect
-
-    def accept(self, body: dict[str, Any]) -> asyncio.Task[dict[str, Any]]:
-        return asyncio.create_task(self.invoker.handle_event(body))
-
-
-ROOM_REMOVED = {"event_type": "room_removed", "room_id": "r1", "payload": {}}
-
-
-async def run_ready_callbacks() -> None:
-    """Yield without wall-clock delay, long enough for an unblocked shutdown
-    to reach disposal."""
-    for _ in range(20):
-        await asyncio.sleep(0)
 
 
 class TestShutdownDrainsAcceptedWork:

@@ -10,25 +10,7 @@ from band.runtime.oneshot import (
     OneShotInvoker,
 )
 from tests.runtime.conftest import make_link_mock
-from tests.runtime.oneshot.kit import make_adapter_mock, msg_body
-
-
-class HeldCall:
-    """An awaited call that waits for ``release`` and records its order."""
-
-    def __init__(self, name: str, order: list[str], *, result: object = None):
-        self.name = name
-        self.order = order
-        self.result = result
-        self.entered = asyncio.Event()
-        self.release = asyncio.Event()
-
-    async def call(self, *args: object, **kwargs: object) -> object:
-        self.entered.set()
-        self.order.append(f"{self.name} started")
-        await self.release.wait()
-        self.order.append(f"{self.name} finished")
-        return self.result
+from tests.runtime.oneshot.kit import HeldCall, make_adapter_mock, msg_body
 
 
 class TestStartupShutdownOwnership:

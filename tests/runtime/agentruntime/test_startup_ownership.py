@@ -105,32 +105,31 @@ class TestAgentRuntimeStartupOwnership:
         assert withdrawn.stopped
         assert held_runtime.executions["room-1"] is admitted
 
+    async def test_leave_behind_a_held_start_is_consumed_and_wins(
+        self, mock_link, mock_handler, room_cleanup: RoomCleanup, start_gate: StartGate
+    ):
+        feed = QueueLink(mock_link)
+        runtime = AgentRuntime(
+            mock_link,
+            "agent-123",
+            mock_handler,
+            execution_factory=start_gate,
+            on_session_cleanup=room_cleanup,
+        )
+        await runtime.start()
+        try:
+            start_gate.hold()
+            feed.events.put_nowait(make_room_added_event("room-1"))
+            await start_gate.entered.wait()
+            feed.events.put_nowait(make_room_removed_event("room-1"))
+            await wait_for_condition(lambda: not runtime.rooms.wanted("room-1"))
 
-async def test_leave_behind_a_held_start_is_consumed_and_wins(
-    mock_link, mock_handler, room_cleanup: RoomCleanup, start_gate: StartGate
-):
-    feed = QueueLink(mock_link)
-    runtime = AgentRuntime(
-        mock_link,
-        "agent-123",
-        mock_handler,
-        execution_factory=start_gate,
-        on_session_cleanup=room_cleanup,
-    )
-    await runtime.start()
-    try:
-        start_gate.hold()
-        feed.events.put_nowait(make_room_added_event("room-1"))
-        await start_gate.entered.wait()
-        feed.events.put_nowait(make_room_removed_event("room-1"))
-        await wait_for_condition(lambda: not runtime.rooms.wanted("room-1"))
-
-        start_gate.release.set()
-        await settled(runtime, "room-1")
-        (execution,) = start_gate.built
-        assert execution.started and execution.stopped
-        assert runtime.active_sessions == {}
-        assert room_cleanup.rooms == ["room-1"]
-    finally:
-        start_gate.release.set()
-        await runtime.stop()
+            start_gate.release.set()
+            await settled(runtime, "room-1")
+            (execution,) = start_gate.built
+            assert execution.started and execution.stopped
+            assert runtime.active_sessions == {}
+            assert room_cleanup.rooms == ["room-1"]
+        finally:
+            start_gate.release.set()
+            await runtime.stop()

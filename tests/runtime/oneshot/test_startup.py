@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 
@@ -11,7 +10,6 @@ from band.core.exceptions import (
     CleanupIncompleteError,
 )
 from band.core.model_catalog import ModelSelection, ModelSelectionError
-from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.oneshot import (
@@ -19,16 +17,12 @@ from band.runtime.oneshot import (
 )
 from tests.catalogs import CatalogAdapter
 from tests.runtime.conftest import make_link_mock
-from tests.runtime.oneshot.kit import make_adapter_mock, make_invoker, msg_body
-
-
-class FilesAdapter(SimpleAdapter):
-    """Bare SimpleAdapter declaring only Capability.FILES support."""
-
-    SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
-
-    async def on_message(self, *args: Any, **kwargs: Any) -> None:
-        pass
+from tests.runtime.oneshot.kit import (
+    FilesAdapter,
+    make_adapter_mock,
+    make_invoker,
+    msg_body,
+)
 
 
 class TestStartup:
