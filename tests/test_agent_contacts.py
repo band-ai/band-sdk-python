@@ -239,7 +239,7 @@ class TestPlatformRuntimeContactSetup:
         runtime._runtime = mock_internal
 
         # Call setup directly
-        await runtime._setup_contact_handling()
+        await runtime._setup_contact_handling(runtime._link, runtime._runtime)
 
         # Verify subscription
         mock_link.subscribe_agent_contacts.assert_called_once_with("test-agent-id")
@@ -276,7 +276,7 @@ class TestPlatformRuntimeContactSetup:
         mock_internal.executions = {}
         runtime._runtime = mock_internal
 
-        await runtime._setup_contact_handling()
+        await runtime._setup_contact_handling(runtime._link, runtime._runtime)
 
         mock_link.subscribe_agent_contacts.assert_called_once()
         assert runtime.is_contacts_subscribed is True
@@ -301,7 +301,7 @@ class TestPlatformRuntimeContactSetup:
         mock_link.subscribe_agent_contacts = AsyncMock()
         runtime._link = mock_link
 
-        await runtime._setup_contact_handling()
+        await runtime._setup_contact_handling(runtime._link, runtime._runtime)
 
         mock_link.subscribe_agent_contacts.assert_not_called()
         assert runtime.is_contacts_subscribed is False
@@ -328,7 +328,7 @@ class TestPlatformRuntimeContactSetup:
         mock_internal.presence = MagicMock()
         runtime._runtime = mock_internal
 
-        await runtime._setup_contact_handling()
+        await runtime._setup_contact_handling(runtime._link, runtime._runtime)
 
         mock_link.subscribe_agent_contacts.assert_called_once()
         assert runtime.is_contacts_subscribed is True
@@ -424,15 +424,14 @@ class TestStartupOrder:
             # Wrap _setup_contact_handling to track order
             original_setup = runtime._setup_contact_handling
 
-            async def track_setup():
+            async def track_setup(*args):
                 call_order.append("contact_setup")
-                await original_setup()
+                await original_setup(*args)
 
             runtime._setup_contact_handling = track_setup
 
-            # Skip initialize since we mocked the link
-            with patch.object(runtime, "initialize", new_callable=AsyncMock):
-                await runtime.start(on_execute=AsyncMock())
+            # initialize() returns the link already set above
+            await runtime.start(on_execute=AsyncMock())
 
         # Verify order: runtime_start MUST come before contact_setup
         assert call_order == ["runtime_start", "contact_setup"], (
@@ -493,8 +492,7 @@ class TestStartupOrder:
             mock_runtime_instance.executions = {}
             MockAgentRuntime.return_value = mock_runtime_instance
 
-            with patch.object(runtime, "initialize", new_callable=AsyncMock):
-                await runtime.start(on_execute=AsyncMock())
+            await runtime.start(on_execute=AsyncMock())
 
         # Verify WebSocket was connected when subscription happened
         assert ws_connected_at_subscribe is True, (

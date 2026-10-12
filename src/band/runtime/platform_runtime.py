@@ -150,7 +150,7 @@ class PlatformRuntime:
         """Check if subscribed to contact events channel."""
         return self._contacts_subscribed
 
-    async def initialize(self) -> None:
+    async def initialize(self) -> BandLink:
         """
         Initialize link and fetch agent metadata without starting message processing.
 
@@ -164,7 +164,7 @@ class PlatformRuntime:
         WebSocket connection happens later in start() when RoomPresence starts.
         """
         if self._link:
-            return  # Already initialized
+            return self._link
 
         self._link = BandLink(
             agent_id=self._agent_id,
@@ -176,6 +176,7 @@ class PlatformRuntime:
 
         await self._fetch_agent_metadata()
         logger.debug("Platform runtime initialized for agent: %s", self._agent_name)
+        return self._link
 
     async def start(
         self,
@@ -216,14 +217,9 @@ class PlatformRuntime:
             self.claim_single_instance()
             self._owns_instance_guard = True
         try:
-            # Auto-initialize if not already done
-            await self.initialize()
-
-            # Type narrowing: initialize() guarantees _link is set
-            assert self._link is not None
-
-            self._runtime = AgentRuntime(
-                link=self._link,
+            link = await self.initialize()
+            self._runtime = runtime = AgentRuntime(
+                link=link,
                 agent_id=self._agent_id,
                 on_execute=on_execute,
                 session_config=self._session_config,
@@ -237,12 +233,12 @@ class PlatformRuntime:
             # Route preemptive control signals (interrupt/stop/play) to the
             # runtime BEFORE starting (which connects the WebSocket), so the
             # hook is live as soon as the agent_control channel is joined.
-            self._link.on_control = self._runtime.handle_control
+            link.on_control = runtime.handle_control
 
-            await self._runtime.start()
+            await runtime.start()
 
             # Set up contact event handling after WebSocket is connected
-            await self._setup_contact_handling()
+            await self._setup_contact_handling(link, runtime)
         except BaseException:
             await self._unwind_failed_start()
             raise
@@ -255,7 +251,7 @@ class PlatformRuntime:
         keep the guard while that cleanup remains incomplete."""
         if self._runtime is not None:
             try:
-                await self._stop_runtime(timeout=None)
+                await self._stop_runtime(self._runtime, timeout=None)
             except Exception:
                 logger.exception("Failed to clean up a partially started runtime")
         if self._owns_instance_guard and self._runtime is None:
@@ -314,7 +310,7 @@ class PlatformRuntime:
                 finally:
                     self._contacts_subscribed = False
             if self._runtime is not None:
-                graceful = await self._stop_runtime(timeout=timeout)
+                graceful = await self._stop_runtime(self._runtime, timeout=timeout)
         finally:
             # Idempotent if AgentRuntime.stop already disconnected — with
             # install_signal_handlers=False disconnect is what wakes run_forever.
@@ -325,11 +321,12 @@ class PlatformRuntime:
         logger.info("Platform runtime stopped")
         return graceful
 
-    async def _stop_runtime(self, *, timeout: float | None) -> bool:
+    async def _stop_runtime(
+        self, runtime: AgentRuntime, *, timeout: float | None
+    ) -> bool:
         """Release the runtime only after its whole stop succeeds; a failed or
         cancelled stop keeps it for the next retry."""
-        assert self._runtime is not None
-        graceful = await self._runtime.stop(timeout=timeout)
+        graceful = await runtime.stop(timeout=timeout)
         self._runtime = None
         return graceful
 
@@ -387,7 +384,9 @@ class PlatformRuntime:
     async def _noop_cleanup(room_id: str) -> None:
         pass
 
-    async def _setup_contact_handling(self) -> None:
+    async def _setup_contact_handling(
+        self, link: BandLink, runtime: AgentRuntime
+    ) -> None:
         """Set up contact event handling based on config."""
         if (
             self._contact_config.strategy == ContactEventStrategy.DISABLED
@@ -396,9 +395,6 @@ class PlatformRuntime:
             logger.debug("Contact handling disabled")
             return
         # Even if DISABLED, we may want broadcasts
-
-        assert self._link is not None
-        assert self._runtime is not None
 
         # Create handler with broadcast callback if enabled
         broadcast_fn = None
@@ -414,17 +410,17 @@ class PlatformRuntime:
 
         self._contact_handler = ContactEventHandler(
             config=self._contact_config,
-            link=self._link,
+            link=link,
             on_broadcast=broadcast_fn,
             on_hub_event=hub_event_fn,
             on_hub_init=hub_init_fn,
         )
 
         # Set up contact event callback on presence
-        self._runtime.presence.on_contact_event = self._on_contact_event
+        runtime.presence.on_contact_event = self._on_contact_event
 
         # Subscribe to contacts channel
-        await self._link.subscribe_agent_contacts(self._agent_id)
+        await link.subscribe_agent_contacts(self._agent_id)
         self._contacts_subscribed = True
 
         # For HUB_ROOM strategy, create hub room at startup
@@ -436,7 +432,7 @@ class PlatformRuntime:
             # Forward to AgentRuntime so the hub-room ExecutionContext gets it
             # at construction time, which lets AgentTools auto-enable contact
             # tools for that room.
-            self._runtime.set_hub_room_id(hub_room_id)
+            runtime.set_hub_room_id(hub_room_id)
             logger.info("Hub room initialized at startup: %s", hub_room_id)
 
         logger.info(

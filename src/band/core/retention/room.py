@@ -309,7 +309,9 @@ class RetainedRoom:
         ):
             self._start_release(ReleaseCause.RECOVERY, automatic=False)
 
-    def _start_release(self, cause: ReleaseCause, *, automatic: bool) -> None:
+    def _start_release(
+        self, cause: ReleaseCause, *, automatic: bool
+    ) -> asyncio.Task[None]:
         if cause == ReleaseCause.RECOVERY:
             self._recover_when_unleased = False
         self._request(cause)
@@ -319,6 +321,7 @@ class RetainedRoom:
         self._transition = self._spawn(
             self._run_release(cause, previous, automatic=automatic)
         )
+        return self._transition
 
     async def _run_release(
         self, cause: ReleaseCause, previous: Residency, *, automatic: bool
@@ -470,9 +473,7 @@ class RetainedRoom:
         if self._transition is not None:
             await asyncio.wait({self._transition})
         if self._state != Residency.SUSPENDED:
-            self._start_release(ReleaseCause.FINAL, automatic=False)
-            assert self._transition is not None
-            await self._transition
+            await self._start_release(ReleaseCause.FINAL, automatic=False)
         self._state = Residency.DISPOSING
         try:
             await self._dispose()

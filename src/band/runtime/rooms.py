@@ -185,8 +185,9 @@ class RoomExecutions:
                 if admit:
                     return graceful
                 self.routed.pop(room_id)
-            if record.execution is not None:
-                graceful = await self._retire(room_id, record, timeout) and graceful
+            if (execution := record.execution) is not None:
+                retired = await self._retire(room_id, record, execution, timeout)
+                graceful = retired and graceful
             elif admit:
                 await self._admit(room_id, record)
             else:
@@ -216,10 +217,13 @@ class RoomExecutions:
         await request_resync(room_id, execution)
 
     async def _retire(
-        self, room_id: str, record: RoomLifecycle, timeout: float | None
+        self,
+        room_id: str,
+        record: RoomLifecycle,
+        execution: Execution,
+        timeout: float | None,
     ) -> bool:
-        assert record.execution is not None
-        graceful = await record.execution.stop(timeout=timeout)
+        graceful = await execution.stop(timeout=timeout)
         await self._release(room_id)
         record.execution = None
         logger.debug("Destroyed execution for room %s", room_id)

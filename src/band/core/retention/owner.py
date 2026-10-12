@@ -83,22 +83,21 @@ class RoomRetention:
         ]
         self.stopping = True
         self.changed.set()
-        if self._shutdown_needs_start():
-            self._shutdown = asyncio.create_task(self._run_stop())
-            self._shutdown.add_done_callback(self._observe_shutdown)
+        shutdown = self._owned_shutdown()
         if any(requested_from_inside):
             raise CleanupIncompleteError(
                 "Room retention shutdown waits for the calling work to finish"
             )
-        assert self._shutdown is not None
-        await report_owned(self._shutdown, self.config.transition_timeout_s)
+        await report_owned(shutdown, self.config.transition_timeout_s)
 
-    def _shutdown_needs_start(self) -> bool:
-        """No shutdown has run, or the last one ended without settling."""
+    def _owned_shutdown(self) -> asyncio.Task[None]:
+        """Join the running or settled shutdown; restart one that failed."""
         shutdown = self._shutdown
-        return shutdown is None or (
-            shutdown.done() and task_failure(shutdown) is not None
-        )
+        if shutdown is None or (shutdown.done() and task_failure(shutdown) is not None):
+            shutdown = asyncio.create_task(self._run_stop())
+            shutdown.add_done_callback(self._observe_shutdown)
+            self._shutdown = shutdown
+        return shutdown
 
     @staticmethod
     def _observe_shutdown(task: asyncio.Task[None]) -> None:
