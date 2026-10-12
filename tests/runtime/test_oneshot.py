@@ -73,6 +73,7 @@ def _make_adapter_mock() -> MagicMock:
     async def _capture(inp: Any) -> None:
         adapter.received_input = inp
 
+    adapter.try_handle_control = AsyncMock(return_value=False)
     adapter.on_started = AsyncMock()
     adapter.on_event = AsyncMock(side_effect=_capture)
     adapter.on_cleanup = AsyncMock()

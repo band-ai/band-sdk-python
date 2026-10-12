@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import httpx
 
+from band.agent import Agent
 from band.client.rest import AsyncRestClient
 from band.core.memory_types import (
     MemorySegment,
@@ -21,7 +22,6 @@ from band.core.memory_types import (
 from band.core.protocols import TURN_FAILURE_PROVIDER
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
-from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
@@ -74,19 +74,15 @@ def run_through(
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:
-    preprocessor = DefaultPreprocessor()
-
-    async def handler(ctx: ExecutionContext, event: Any) -> None:
-        inp = await preprocessor.process(ctx=ctx, event=event, agent_id=AGENT_ID)
-        if inp is not None:
-            await adapter.on_event(inp)
+    agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
 
     return ExecutionContext(
         ROOM_ID,
         link,
-        handler,
+        agent._on_execute,
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
+        on_message_control=agent._on_control,
     )
 
 
@@ -140,13 +136,14 @@ class LifecyclePlatform:
         self.posts: list[str] = []
         self.processing_list_reads = 0
         self.next_reads: list[float] = []
+        self.actionable_cursors: list[str | None] = []
 
-    def add_message(self, message_id: str) -> None:
+    def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(
             {
                 "id": message_id,
                 "chat_room_id": ROOM_ID,
-                "content": "hello",
+                "content": content,
                 "sender_id": "user-1",
                 "sender_type": "User",
                 "sender_name": "User",
@@ -160,10 +157,45 @@ class LifecyclePlatform:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
-        if tail == "messages" and request.method == "GET":
-            self.processing_list_reads += 1
+        if tail == "me":
             return httpx.Response(
-                200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                200,
+                json={
+                    "data": {
+                        "id": AGENT_ID,
+                        "name": "Agent",
+                        "handle": "agent",
+                        "owner_uuid": "user-1",
+                        "feature_flags": {},
+                        "inserted_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                    }
+                },
+            )
+        if tail == "messages" and request.method == "GET":
+            if request.url.params.get("status") == "processing":
+                self.processing_list_reads += 1
+                return httpx.Response(
+                    200, json={"data": self.messages, "metadata": {"total_pages": 1}}
+                )
+            cursor = request.url.params.get("cursor")
+            self.actionable_cursors.append(cursor)
+            start = next(
+                (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
+            )
+            limit = int(request.url.params.get("limit", "100"))
+            page = self.messages[start : start + limit]
+            has_more = start + limit < len(self.messages)
+            return httpx.Response(
+                200,
+                json={
+                    "data": page,
+                    "metadata": {
+                        "limit": limit,
+                        "has_more": has_more,
+                        "next_cursor": page[-1]["id"] if has_more else None,
+                    },
+                },
             )
         if tail == "next":
             self.next_reads.append(asyncio.get_running_loop().time())
