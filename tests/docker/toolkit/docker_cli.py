@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from band.docker.sbx_process import run_sbx_subprocess as run_cli_subprocess
 from tests.loaders import load_script_module
 from tests.paths import KIT_DIR, REPO_ROOT
 
@@ -128,13 +129,7 @@ class OciLayout:
             if target:
                 command += ["--target", target]
             command.append(str(REPO_ROOT))
-            subprocess.run(
-                command,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=BUILD_TIMEOUT_S,
-            )
+            run_cli_subprocess(command, timeout=BUILD_TIMEOUT_S)
             layout = destination / "layout"
             layout.mkdir()
             with tarfile.open(archive) as contents:
@@ -164,11 +159,8 @@ class OciLayout:
             version=self.version,
             revision=self.revision,
         )
-        subprocess.run(
+        run_cli_subprocess(
             [str(tck), "validate", "--layout", str(self.directory), self.tag],
-            check=True,
-            capture_output=True,
-            text=True,
             timeout=120,
         )
 

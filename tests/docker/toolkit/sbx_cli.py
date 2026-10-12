@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import select
+import selectors
 import shlex
 import shutil
 import subprocess
@@ -360,23 +360,23 @@ def attached_run(name: str) -> Iterator[None]:
     stopping = threading.Event()
 
     def drain_output() -> None:
-        while not stopping.is_set():
-            try:
-                readable, _, _ = select.select(
-                    [controller_fd], [], [], ATTACH_READ_POLL_S
-                )
-                if stopping.is_set():
+        with selectors.DefaultSelector() as selector:
+            selector.register(controller_fd, selectors.EVENT_READ)
+            while not stopping.is_set():
+                try:
+                    readable = selector.select(ATTACH_READ_POLL_S)
+                    if stopping.is_set():
+                        return
+                    if not readable:
+                        continue
+                    output = os.read(controller_fd, 65536)
+                except OSError:
                     return
-                if not readable:
-                    continue
-                output = os.read(controller_fd, 65536)
-            except OSError:
-                return
-            if not output:
-                return
-            logger.debug(
-                "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
-            )
+                if not output:
+                    return
+                logger.debug(
+                    "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
+                )
 
     reader = threading.Thread(target=drain_output, daemon=True)
     reader.start()

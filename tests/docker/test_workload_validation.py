@@ -4,68 +4,16 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.docker.toolkit import docker_cli
+from tests.docker.toolkit.docker_cli import OciLayout
 from tests.loaders import load_script_module
 
 validator = load_script_module("scripts/validate-workload.py", "workload_validation")
-
-
-@pytest.fixture
-def graph() -> dict[str, dict[str, Any]]:
-    descriptor = json.dumps(
-        {"schemaVersion": "3", "kind": "workload", "capabilities": []}
-    )
-    documents: dict[str, dict[str, Any]] = {"root": {"manifests": []}}
-    for architecture in ("amd64", "arm64"):
-        digest = f"sha256:{architecture}"
-        documents["root"]["manifests"].append(
-            {
-                "digest": digest,
-                "platform": {"os": "linux", "architecture": architecture},
-            }
-        )
-        documents[digest] = {
-            "annotations": {validator.DESCRIPTOR: descriptor},
-            "config": {"digest": f"sha256:{architecture}-config"},
-        }
-        documents[f"sha256:{architecture}-config"] = {
-            "config": {
-                "User": "agent",
-                "Entrypoint": [
-                    "/bin/bash",
-                    "-c",
-                    'exec "$BAND_SDK_PYTHON" -m band.docker.launcher',
-                ],
-                "Labels": {
-                    "org.opencontainers.image.source": "https://github.com/band-ai/band-sdk-python",
-                    "org.opencontainers.image.version": "1.5.0",
-                    "org.opencontainers.image.revision": "frozen-revision",
-                },
-            }
-        }
-        documents["root"]["manifests"].append(
-            {
-                "digest": f"sha256:{architecture}-attestation",
-                "platform": {"os": "unknown", "architecture": "unknown"},
-                "annotations": {
-                    "vnd.docker.reference.type": "attestation-manifest",
-                    "vnd.docker.reference.digest": digest,
-                },
-            }
-        )
-        documents[f"sha256:{architecture}-attestation"] = {
-            "layers": [
-                {"annotations": {"in-toto.io/predicate-type": predicate}}
-                for predicate in (
-                    "https://slsa.dev/provenance/v0.2",
-                    "https://spdx.dev/Document",
-                )
-            ]
-        }
-    return documents
 
 
 def validate(graph: dict[str, dict[str, Any]], *, version: str = "1.5.0") -> None:
@@ -198,3 +146,44 @@ def test_registry_failure_preserves_the_cli_diagnostic() -> None:
     ]
     with pytest.raises(RuntimeError, match="manifest unknown for candidate"):
         validator.fetch_json(command)
+
+
+def test_layout_failure_exposes_tck_diagnostic(
+    tmp_path: Path, graph: dict[str, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blobs = tmp_path / "blobs" / "sha256"
+    blobs.mkdir(parents=True)
+    (tmp_path / "index.json").write_text(
+        json.dumps({"manifests": [{"digest": "sha256:root"}]})
+    )
+    for digest, document in graph.items():
+        (blobs / digest.removeprefix("sha256:")).write_text(json.dumps(document))
+    (tmp_path / "validate").write_text(
+        "import sys; sys.stderr.write('TCK: staged descriptor disagrees'); sys.exit(9)"
+    )
+    monkeypatch.chdir(tmp_path)
+    layout = OciLayout(tmp_path, "validation", "1.5.0", "frozen-revision")
+    with pytest.raises(RuntimeError, match="TCK: staged descriptor disagrees"):
+        layout.validate(tck=Path(sys.executable))
+
+
+def test_oci_build_failure_exposes_builder_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = docker_cli.subprocess.run
+
+    def builder_peer(command: list[str], **kwargs: Any) -> Any:
+        if command[:3] == ["docker", "buildx", "build"]:
+            command = [
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('Buildx: frontend rejected descriptor'); sys.exit(8)",
+            ]
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(docker_cli.subprocess, "run", builder_peer)
+    with (
+        pytest.raises(RuntimeError, match="Buildx: frontend rejected descriptor"),
+        OciLayout.build(),
+    ):
+        pytest.fail("failed build must not yield a layout")

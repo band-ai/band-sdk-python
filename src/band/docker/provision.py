@@ -21,8 +21,7 @@ overwritten — that combination means `--name` collides with somebody else's
 sandbox, not a resumed run of this one.
 
 Exit codes:
-    0 — success (prints the agent id to stdout; the agent key is never printed
-        except as a last-resort recovery banner if persisting it fails)
+    0 — success (writes the agent id to stdout; the agent key is never printed)
     1 — failure (prints error message to stderr)
 """
 

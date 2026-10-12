@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -149,3 +153,74 @@ def test_source_guard_executes_before_publication(
     assert (result.returncode == 0) is accepted
     if not accepted:
         assert "ineligible: source must contain a v3 workload" in result.stderr
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="Publisher uses Bash and executable POSIX CLI peers"
+)
+@pytest.mark.parametrize("tck_accepts", [False, True])
+def test_mirror_recovery_rejects_tck_invalid_source_before_writes(
+    tmp_path: Path,
+    graph: dict[str, dict[str, Any]],
+    tck_accepts: bool,
+) -> None:
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    (tmp_path / "graph.json").write_text(json.dumps(graph))
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copyfile(
+        REPO_ROOT / "scripts" / "validate-workload.py", scripts / "validate-workload.py"
+    )
+    peers = {
+        "python3": f"import os,sys; os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])",
+        "kit-tck": f"import sys; sys.stderr.write('TCK rejects staged descriptor'); sys.exit({0 if tck_accepts else 9})",
+        "oras": r"""import json,sys
+from pathlib import Path
+args = sys.argv[1:]
+if args[:2] in (['manifest','fetch'], ['blob','fetch']):
+    graph = json.loads(Path('graph.json').read_text())
+    print(json.dumps(graph[args[-1].partition('@')[2] or 'root']))
+elif args[0] == 'resolve':
+    print('sha256:root')
+elif args[:2] == ['cp','--recursive']:
+    Path('target-published').write_text(args[-1])
+else:
+    sys.exit(5)
+""",
+    }
+    for name, source in peers.items():
+        executable = binary / name
+        executable.write_text(f"#!{sys.executable}\n{source}\n")
+        executable.chmod(0o755)
+    repair = next(
+        step
+        for step in publishing_steps()
+        if step.get("name") == "Complete a partial image publish"
+    )
+    values = {
+        "steps.image_state.outputs.image_exists": "true",
+        "inputs.version": "1.5.0",
+        "steps.source.outputs.revision": "frozen-revision",
+    }
+    script = re.sub(
+        r"\$\{\{\s*(.*?)\s*\}\}", lambda match: values[match.group(1)], repair["run"]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
+            "IMAGE_REF": "ghcr.test/workload:1.5.0",
+            "HUB_IMAGE_REF": "hub.test/workload:1.5.0",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert (result.returncode == 0) is tck_accepts
+    assert (tmp_path / "target-published").exists() is tck_accepts
+    if not tck_accepts:
+        assert "TCK rejects staged descriptor" in result.stderr

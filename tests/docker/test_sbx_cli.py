@@ -4,6 +4,7 @@ pty-attached process lifecycle."""
 
 from __future__ import annotations
 
+import json
 import os
 import select
 import signal
@@ -13,6 +14,7 @@ import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +27,7 @@ from tests.docker.toolkit.sbx_cli import (
     attached_run,
     run_redacting_secret,
 )
+from tests.paths import REPO_ROOT
 
 
 @contextmanager
@@ -323,3 +326,46 @@ def test_owned_session_waits_for_reader_before_releasing_its_pty(
         owner.join(timeout=5)
     assert not owner.is_alive()
     assert errors == []
+
+
+@markers.requires_posix_pty
+def test_owned_session_drains_output_with_high_descriptor(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            r"""
+import fcntl
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from tests.docker.toolkit import sbx_cli
+original_spawn = sbx_cli._spawn_pty_process
+marker = Path(sys.argv[1])
+child = "import os,sys,time; os.write(1,b'x'*2000000); open(sys.argv[1],'w').write('drained'); time.sleep(60)"
+spawned = []
+def spawn(argv):
+    process, fd = original_spawn([sys.executable, "-c", child, str(marker)])
+    high_fd = fcntl.fcntl(fd, fcntl.F_DUPFD, 1100)
+    os.close(fd)
+    spawned.append(process)
+    return process, high_fd
+sbx_cli._spawn_pty_process = spawn
+with sbx_cli.attached_run("local-peer"):
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    drained = marker.exists()
+print(json.dumps({"output_drained": drained, "owner_stopped": spawned[0].poll() is not None}))
+""",
+            str(tmp_path / "drained"),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
+    assert json.loads(result.stdout) == {"output_drained": True, "owner_stopped": True}

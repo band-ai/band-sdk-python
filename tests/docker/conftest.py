@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from band_rest import AsyncRestClient
@@ -128,3 +130,59 @@ async def resource_manager(
         yield resources
     finally:
         await resources.reap_all(strict=True)
+
+
+@pytest.fixture
+def graph() -> dict[str, dict[str, Any]]:
+    validator = load_script_module("scripts/validate-workload.py", "graph_validator")
+    descriptor = json.dumps(
+        {"schemaVersion": "3", "kind": "workload", "capabilities": []}
+    )
+    documents: dict[str, dict[str, Any]] = {"root": {"manifests": []}}
+    for architecture in ("amd64", "arm64"):
+        digest = f"sha256:{architecture}"
+        documents["root"]["manifests"].append(
+            {
+                "digest": digest,
+                "platform": {"os": "linux", "architecture": architecture},
+            }
+        )
+        documents[digest] = {
+            "annotations": {validator.DESCRIPTOR: descriptor},
+            "config": {"digest": f"sha256:{architecture}-config"},
+        }
+        documents[f"sha256:{architecture}-config"] = {
+            "config": {
+                "User": "agent",
+                "Entrypoint": [
+                    "/bin/bash",
+                    "-c",
+                    'exec "$BAND_SDK_PYTHON" -m band.docker.launcher',
+                ],
+                "Labels": {
+                    "org.opencontainers.image.source": "https://github.com/band-ai/band-sdk-python",
+                    "org.opencontainers.image.version": "1.5.0",
+                    "org.opencontainers.image.revision": "frozen-revision",
+                },
+            }
+        }
+        documents["root"]["manifests"].append(
+            {
+                "digest": f"sha256:{architecture}-attestation",
+                "platform": {"os": "unknown", "architecture": "unknown"},
+                "annotations": {
+                    "vnd.docker.reference.type": "attestation-manifest",
+                    "vnd.docker.reference.digest": digest,
+                },
+            }
+        )
+        documents[f"sha256:{architecture}-attestation"] = {
+            "layers": [
+                {"annotations": {"in-toto.io/predicate-type": predicate}}
+                for predicate in (
+                    "https://slsa.dev/provenance/v0.2",
+                    "https://spdx.dev/Document",
+                )
+            ]
+        }
+    return documents
