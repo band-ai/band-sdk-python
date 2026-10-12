@@ -323,9 +323,10 @@ class HeldExecution:
     """A custom execution whose start and event delivery can be held, and
     whose start can fail."""
 
-    def __init__(self, room_id: str, gate: StartGate) -> None:
+    def __init__(self, room_id: str, gate: StartGate, number: int) -> None:
         self.room_id = room_id
         self.gate = gate
+        self.number = number
         self.started = False
         self.stopped = False
         self.resyncs = 0
@@ -338,9 +339,11 @@ class HeldExecution:
             self.gate.failures -= 1
             raise RuntimeError("execution start failed")
         self.started = True
+        self.gate.journal.append(f"start {self.number}")
 
     async def stop(self, timeout: float | None = None) -> bool:
         self.stopped = True
+        self.gate.journal.append(f"stop {self.number}")
         return self.gate.graceful
 
     async def on_event(self, event: object) -> None:
@@ -366,6 +369,8 @@ class StartGate:
         self.failures = 0
         self.graceful = True
         self.built: list[HeldExecution] = []
+        # Lifecycle of every execution built, numbered in build order.
+        self.journal: list[str] = []
 
     def hold(self) -> None:
         self.entered.clear()
@@ -376,6 +381,6 @@ class StartGate:
         self.deliver.clear()
 
     def __call__(self, room_id: str, link, *, hub_room_id=None) -> HeldExecution:
-        execution = HeldExecution(room_id, self)
+        execution = HeldExecution(room_id, self, number=len(self.built) + 1)
         self.built.append(execution)
         return execution

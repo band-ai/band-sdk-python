@@ -33,6 +33,9 @@ MAX_STEPS_PER_SIGNAL = 3
 # also recovered by the /next resync; the rest (participants, room updates)
 # exist only here.
 MAX_HELD_EVENTS = 256
+# A full queue plus as many arrivals during its delivery; beyond that the
+# room is flooded and the remainder is dropped for /next to recover messages.
+MAX_DELIVERY_STEPS = 2 * MAX_HELD_EVENTS
 
 
 class RoomState(StrEnum):
@@ -316,20 +319,19 @@ class RoomExecutions:
         self._settle(room)
 
     async def _start(self, room_id: str, room: Room) -> None:
-        """Start an owned execution; route it only if the membership intent it
-        started under still stands.
+        """Start an owned execution; route it only if the admission it started
+        under still stands.
 
-        Events held during startup are delivered first, in order, and a routed
-        execution always resyncs /next for messages never pushed. Startup has
-        no time bound here: leave and stop wait for it to settle, then retire it.
+        Every await here can outlive a leave, stop or rejoin, so the admission
+        is re-read after each one, and routing follows its last check with no
+        await between. A start that loses its admission is left unrouted for
+        this owner to retire before any replacement starts. Startup has no
+        time bound here: leave and stop wait for it to settle, then retire it.
         """
         generation = room.generation
         room.execution = execution = self._build(room_id)
         await execution.start()
-        if self._current(room, generation):
-            await self._deliver_held(room_id, room, execution)
-        # Delivery awaits the execution, so a leave or rejoin can land during
-        # it: intent is re-read with no await between the check and routing.
+        await self._deliver_held(room_id, room, execution, generation)
         if self._current(room, generation):
             self.routed[room_id] = execution
             logger.debug("Created execution for room %s", room_id)
@@ -337,23 +339,25 @@ class RoomExecutions:
         room.state = RoomState.SERVING if self.serving(room_id) else RoomState.IDLE
 
     async def _deliver_held(
-        self, room_id: str, room: Room, execution: Execution
+        self, room_id: str, room: Room, execution: Execution, generation: int
     ) -> None:
-        """Hand held events over oldest first; ones arriving meanwhile are held
-        too, so live routing begins only once the queue is empty."""
-        for _ in range(MAX_HELD_EVENTS):
-            if not room.held:
+        """Hand held events to the starting execution, oldest first, while its
+        admission stands.
+
+        Events arriving meanwhile are held too, so live routing begins only
+        once the queue is empty. Delivery stops as soon as the admission is
+        withdrawn; events held after a rejoin stay for the fresh execution.
+        """
+        for _ in range(MAX_DELIVERY_STEPS):
+            if not (room.held and self._current(room, generation)):
                 return
             await execution.on_event(room.held.popleft())
         logger.warning(
-            "Room %s kept receiving events during startup; routing with %d held",
+            "Room %s kept receiving events during startup; dropping %d held",
             room_id,
             len(room.held),
         )
-        late = list(room.held)
         room.held.clear()
-        for event in late:
-            await execution.on_event(event)
 
     async def _retire(self, room_id: str, room: Room, *, execution: Execution) -> None:
         graceful = await execution.stop(timeout=room.stop_timeout)

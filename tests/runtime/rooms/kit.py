@@ -6,6 +6,7 @@ import asyncio
 from enum import StrEnum
 
 from band.runtime.rooms import RoomExecutions
+from tests.runtime.helpers import StartGate
 
 
 class Phase(StrEnum):
@@ -33,3 +34,19 @@ async def settle(rooms: RoomExecutions, room_id: str) -> None:
     """Let the room's convergence finish, whatever its outcome."""
     if (pending := rooms.pending(room_id)) is not None:
         await asyncio.wait({pending})
+
+
+async def deliver_first_of_two(
+    rooms: RoomExecutions, start_gate: StartGate
+) -> asyncio.Task[object]:
+    """Start a room holding two events and pause while the first is being
+    delivered; returns the admission still waiting on it."""
+    start_gate.hold()
+    admitting = asyncio.create_task(rooms.admit("room-1"))
+    await start_gate.entered.wait()
+    rooms.hold("room-1", "early")
+    rooms.hold("room-1", "second")
+    start_gate.hold_delivery()
+    start_gate.release.set()
+    await start_gate.delivering.wait()
+    return admitting
