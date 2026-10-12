@@ -19,7 +19,7 @@ from band.core.exceptions import InvalidToolArgumentsError
 from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
 
-# Bytes become base64: pydantic's default UTF-8 fails on binary content.
+# URL-safe base64 preserves binary bytes, including non-UTF-8 content.
 _JSON_VALUE = TypeAdapter(Any, config=ConfigDict(ser_json_bytes="base64"))
 
 
@@ -227,6 +227,8 @@ def serialize_tool_result(result: Any) -> Any:
     payload adapters receive. Test fakes that mirror the dispatch boundary
     (e.g. the baseline ``BaselineTools``) must use this same helper so their
     output shape cannot drift from the real one.
+
+    Model bytes use padded URL-safe base64, including UTF-8 bytes.
     """
     if hasattr(result, "model_dump"):
         return _JSON_VALUE.dump_python(result.model_dump(), mode="json")
@@ -241,7 +243,10 @@ def serialize_tool_result(result: Any) -> Any:
 
 
 def tool_result_text(result: Any) -> str:
-    """A tool result as the text a model reads: a string verbatim, else JSON."""
+    """A tool result as text: a string verbatim, else JSON.
+
+    Bytes, including nested model bytes, use padded URL-safe base64.
+    """
     if isinstance(result, str):
         return result
     # The python pass turns nested models into plain data, so the JSON pass

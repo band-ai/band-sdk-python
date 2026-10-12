@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from base64 import urlsafe_b64decode
 from datetime import UTC, date, datetime
 from typing import get_type_hints
 
@@ -34,6 +35,10 @@ class _Thumbnail(BaseModel):
     png: bytes = b"\x89PNG"
 
 
+class BinaryResult(BaseModel):
+    payload: bytes
+
+
 class _Opaque:
     def __str__(self) -> str:
         return "opaque"
@@ -45,6 +50,18 @@ class _MemoryResult(BaseModel):
 
 
 class TestSerializeToolResult:
+    @pytest.mark.parametrize("payload", [b"hello", b"\xfb\xff"])
+    @pytest.mark.parametrize("as_list", [False, True], ids=["model", "model-list"])
+    def test_model_bytes_round_trip_as_url_safe_base64(
+        self, payload: bytes, as_list: bool
+    ) -> None:
+        model = BinaryResult(payload=payload)
+        result = serialize_tool_result([model] if as_list else model)
+        encoded = result[0]["payload"] if as_list else result["payload"]
+
+        assert urlsafe_b64decode(encoded) == payload
+        assert not any(char in encoded for char in "+/")
+
     def test_model_becomes_a_plain_dict(self) -> None:
         assert serialize_tool_result(_Result(id="r1")) == {"id": "r1", "sub": None}
 
@@ -76,6 +93,12 @@ class TestSerializeToolResult:
         ("already text", "already text"),
         ({date(2026, 5, 4): 2}, '{"2026-05-04": 2}'),
         ({"png": b"\x89PNG"}, '{"png": "iVBORw=="}'),
+        ({"bytes": b"\xfb\xff"}, '{"bytes": "-_8="}'),
+        ({"bytes": b"hello"}, '{"bytes": "aGVsbG8="}'),
+        (
+            {"nested": BinaryResult(payload=b"\xfb\xff")},
+            '{"nested": {"payload": "-_8="}}',
+        ),
         ({"thumb": _Thumbnail()}, '{"thumb": {"png": "iVBORw=="}}'),
         ({"odd": _Opaque()}, '{"odd": "opaque"}'),
     ],
@@ -83,6 +106,9 @@ class TestSerializeToolResult:
         "text",
         "non-text-keys",
         "binary-bytes",
+        "url-safe-alphabet",
+        "utf8-bytes",
+        "url-safe-bytes-in-a-nested-model",
         "binary-bytes-in-a-nested-model",
         "unserializable-object",
     ],
