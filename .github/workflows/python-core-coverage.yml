@@ -26,7 +26,8 @@ jobs:
           mkdir -p artifacts/shell-diagnostic
           dotnet publish .github/scripts/shellwaits/ShellWaits.csproj -c Release -r win-x64 --self-contained false -o artifacts/shell-waits
           python -c "import urllib.request,zipfile,io; data=urllib.request.urlopen('https://download.sysinternals.com/files/Procdump.zip').read(); zipfile.ZipFile(io.BytesIO(data)).extractall('artifacts/shell-diagnostic')"
-          artifacts/shell-diagnostic/procdump64.exe -accepteula -? > artifacts/shell-diagnostic/procdump-help.txt
+          python -c "import subprocess,pathlib; r=subprocess.run(['artifacts/shell-diagnostic/procdump64.exe','-accepteula','-?'],capture_output=True); text=r.stdout.decode('utf-16-le'); pathlib.Path('artifacts/shell-diagnostic/procdump-help.txt').write_text(text); assert '-mt' in text and '-at' in text; pathlib.Path('artifacts/shell-diagnostic/procdump-help-exit.txt').write_text(str(r.returncode))"
+          python -c "import pathlib; p=pathlib.Path('C:/Program Files (x86)/Windows Kits/10'); pathlib.Path('artifacts/shell-diagnostic/debugger-inventory.txt').write_text('\\n'.join(str(f) for pattern in ('**/cdb.exe','**/wpaexporter.exe','**/xperf.exe') for f in p.glob(pattern)))"
           wpr -profiles > artifacts/shell-diagnostic/wpr-profiles.txt
           wpr -exportprofile CPU artifacts/shell-diagnostic/cpu-profile.wprp
           wpr -start CPU
