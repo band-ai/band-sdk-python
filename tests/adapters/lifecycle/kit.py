@@ -71,6 +71,7 @@ class RetentionHost:
     hold_startup: Path
     shared: bool = True
     children: list[CodexPeer | ClaudePeer] = field(default_factory=list)
+    child_cwds: list[str | None] = field(default_factory=list)
     # Children started while an earlier child in the same workspace still ran.
     overlaps: int = 0
     next_start: Hold | None = None
@@ -80,10 +81,11 @@ class RetentionHost:
 
     def spawned(self, child: CodexPeer | ClaudePeer, cwd: str | None) -> None:
         self.overlaps += any(
-            not earlier.exited and getattr(earlier, "cwd", None) == cwd
-            for earlier in self.children
+            not earlier.exited and earlier_cwd == cwd
+            for earlier, earlier_cwd in zip(self.children, self.child_cwds, strict=True)
         )
         self.children.append(child)
+        self.child_cwds.append(cwd)
 
     async def send(self, room_id: str, content: str) -> list[str]:
         tools = DispatchingFakeTools(room_id=room_id)

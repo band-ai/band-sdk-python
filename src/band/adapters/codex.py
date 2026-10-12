@@ -446,6 +446,12 @@ class NativeTurn:
         return native == self.turn_id
 
 
+def _result_id(result: Any, key: str) -> str:
+    """The ``id`` of ``result[key]``, or "" when Codex returned none."""
+    entry = result.get(key) if isinstance(result, dict) else None
+    return str(entry.get("id") or "") if isinstance(entry, dict) else ""
+
+
 def _undelivered(native: NativeTurn) -> list[RpcEvent]:
     """Events still waiting for the native turn when its Band turn ends."""
     queued = [native.events.get_nowait() for _ in range(native.events.qsize())]
@@ -1773,8 +1779,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         }
         self._apply_thread_sandbox(params, room_id=room.room_id)
         result = await client.request(CodexRequestMethod.THREAD_RESUME, params)
-        thread = result.get("thread") if isinstance(result, dict) else None
-        resumed = str(thread.get("id") or "") if isinstance(thread, dict) else ""
+        resumed = _result_id(result, "thread")
         if resumed != thread_id:
             raise CodexContinuityError(
                 f"Codex resumed thread {resumed or 'none'!r} instead of {thread_id!r}"
@@ -1900,16 +1905,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     ) -> None:
         """Start the native turn and claim the events that arrived before its id."""
         started = await native.client.request(CodexRequestMethod.TURN_START, params)
-        turn = started.get("turn") if isinstance(started, dict) else None
-        turn_id = str(turn.get("id") or "") if isinstance(turn, dict) else ""
+        turn_id = _result_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
         native.turn_id = turn_id
         early, native.early = native.early, []
+        # Queue owned events before any await, or the reader could queue
+        # newer ones ahead of them.
         for event in early:
             if native.owns(event):
                 native.events.put_nowait(event)
-            else:
+        for event in early:
+            if not native.owns(event):
                 await self._refuse_unowned(room, native.client, event)
 
     async def _release(
@@ -2123,8 +2130,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
         started = await client.request(CodexRequestMethod.THREAD_START, start_params)
-        thread = started.get("thread") if isinstance(started, dict) else {}
-        thread_id = str((thread or {}).get("id") or "")
+        thread_id = _result_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")
 

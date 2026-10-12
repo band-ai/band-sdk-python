@@ -24,6 +24,7 @@ from band.testing import (
 from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
+    CompletesWhileRefusingClient,
     SlowTurnStartClient,
     ToolSchemaFakeTools,
     answer_to,
@@ -150,6 +151,28 @@ class TestNativeTurnOwnership:
         assert [e["content"] for e in events_of_type(tools, "thought")] == ["on time"]
         assert (await answer_to(client, 7))["success"] is False
         assert tools.tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_early_events_stay_ahead_of_events_sent_while_refusing_others(
+        self,
+    ) -> None:
+        client = CompletesWhileRefusingClient(
+            events=[
+                event_request(
+                    7,
+                    "item/tool/call",
+                    {"turnId": "someone-else", "tool": BandTool.SEND_MESSAGE},
+                ),
+                final_text("on time"),
+            ]
+        )
+        adapter = make_codex_adapter(client)
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        await send_bootstrap(adapter, tools=tools)
+
+        assert [e["content"] for e in events_of_type(tools, "thought")] == ["on time"]
 
     @pytest.mark.asyncio
     async def test_a_stale_process_loss_cannot_retire_its_replacement(self) -> None:

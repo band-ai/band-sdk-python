@@ -36,6 +36,7 @@ from tests.adapters.codexturns import (
     await_released_turn,
     event_request,
     make_codex_adapter,
+    turn_completed,
 )
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.paths import host_absolute_path
@@ -366,3 +367,14 @@ class SlowTurnStartClient(FakeCodexClient):
             for _ in range(5):
                 await asyncio.sleep(0)
         return result
+
+
+class CompletesWhileRefusingClient(SlowTurnStartClient):
+    """An app-server that completes its turn while the adapter answers a
+    request no turn owns."""
+
+    async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
+        await super().respond(request_id, result)
+        self.emit(turn_completed())
+        for _ in range(5):
+            await asyncio.sleep(0)

@@ -77,7 +77,7 @@ async def host(
         def claude_child(*, prompt: str, options: ClaudeAgentOptions) -> ClaudePeer:
             child = ClaudePeer(prompt=prompt, options=options)
             child.arguments = arguments
-            host.spawned(child, None)
+            host.spawned(child, str(options.cwd) if options.cwd else None)
             return child
 
         monkeypatch.setattr(transport, "SubprocessCLITransport", claude_child)
