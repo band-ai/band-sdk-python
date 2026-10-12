@@ -295,6 +295,10 @@ class RoomExecutions:
     def _admits(self, room: Room) -> bool:
         return room.wanted and self.accepting
 
+    def _current(self, room: Room, generation: int) -> bool:
+        """The intent a start began under still stands."""
+        return self._admits(room) and room.generation == generation
+
     def _settle(self, room: Room) -> None:
         if room.convergence is not None:
             room.convergence.done.set_result(room.convergence.graceful)
@@ -322,8 +326,11 @@ class RoomExecutions:
         generation = room.generation
         room.execution = execution = self._build(room_id)
         await execution.start()
-        if self._admits(room) and room.generation == generation:
+        if self._current(room, generation):
             await self._deliver_held(room_id, room, execution)
+        # Delivery awaits the execution, so a leave or rejoin can land during
+        # it: intent is re-read with no await between the check and routing.
+        if self._current(room, generation):
             self.routed[room_id] = execution
             logger.debug("Created execution for room %s", room_id)
             await request_resync(room_id, execution)

@@ -96,3 +96,45 @@ class TestWithdrawal:
         await admitting
         await settle(rooms, "room-1")
         assert [execution.events for execution in start_gate.built] == [[], []]
+
+    async def test_a_leave_and_rejoin_during_held_event_delivery_replaces_the_start(
+        self, rooms: RoomExecutions, start_gate: StartGate, room_cleanup: RoomCleanup
+    ) -> None:
+        start_gate.hold()
+        admitting = asyncio.create_task(rooms.admit("room-1"))
+        await start_gate.entered.wait()
+        rooms.hold("room-1", "early")
+        start_gate.hold_delivery()
+        start_gate.release.set()
+        await start_gate.delivering.wait()
+
+        rooms.withdraw("room-1")
+        rooms.request_admission("room-1")
+        start_gate.deliver.set()
+        await admitting
+        await settle(rooms, "room-1")
+
+        stale, fresh = start_gate.built
+        assert stale.stopped and room_cleanup.rooms == ["room-1"]
+        assert rooms.routed["room-1"] is fresh
+        assert phase(rooms, "room-1") == Phase.SERVING
+
+    async def test_a_leave_during_held_event_delivery_retires_the_start(
+        self, rooms: RoomExecutions, start_gate: StartGate, room_cleanup: RoomCleanup
+    ) -> None:
+        start_gate.hold()
+        admitting = asyncio.create_task(rooms.admit("room-1"))
+        await start_gate.entered.wait()
+        rooms.hold("room-1", "early")
+        start_gate.hold_delivery()
+        start_gate.release.set()
+        await start_gate.delivering.wait()
+
+        rooms.withdraw("room-1")
+        start_gate.deliver.set()
+
+        assert await admitting is None
+        (stale,) = start_gate.built
+        assert stale.resyncs == 0, "a withdrawn start was routed"
+        assert stale.stopped and room_cleanup.rooms == ["room-1"]
+        assert phase(rooms, "room-1") == Phase.ABSENT
