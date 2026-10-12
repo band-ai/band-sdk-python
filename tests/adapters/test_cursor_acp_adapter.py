@@ -42,7 +42,11 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
 from band.runtime.tools.types import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
+from tests.integrations.acp.acp_toolkit.agent import (
+    FakeACPAgent,
+    Gate,
+    allow_or_reject,
+)
 from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
     launch_for,
@@ -1280,7 +1284,7 @@ class TestCursorACPAdapterDecisions:
         ExecutionContext does, to a real ACP turn."""
         room = await cursor_room(
             FakeACPAgent()
-            .will_ask_permission(title="shell", allow_option_id="allow-once")
+            .will_ask_permission(title="shell", options=allow_or_reject("allow-once"))
             .will_call_mcp_tool(
                 "reply",
                 "band_send_message",
@@ -1309,7 +1313,7 @@ class TestCursorACPAdapterDetachedTurn:
     ) -> None:
         room = await cursor_room(
             FakeACPAgent().will_ask_permission(
-                title="shell", allow_option_id="allow-once"
+                title="shell", options=allow_or_reject("allow-once")
             )
         )
 
@@ -1332,7 +1336,7 @@ class TestCursorACPAdapterDetachedTurn:
         in for the parked turn's answer, which still relays there."""
         room = await cursor_room(
             FakeACPAgent()
-            .will_ask_permission(title="shell", allow_option_id="allow-once")
+            .will_ask_permission(title="shell", options=allow_or_reject("allow-once"))
             .will_call_mcp_tool(
                 "reply",
                 "band_send_message",
@@ -1357,7 +1361,7 @@ class TestCursorACPAdapterDetachedTurn:
     ) -> None:
         room = await cursor_room(
             FakeACPAgent().will_ask_permission(
-                title="shell", allow_option_id="allow-once"
+                title="shell", options=allow_or_reject("allow-once")
             )
         )
         turn = await room.send("run it")
@@ -1375,7 +1379,7 @@ class TestCursorACPAdapterDetachedTurn:
         """A room /stop ends the parked turn; the adapter settled it."""
         room = await cursor_room(
             FakeACPAgent().will_ask_permission(
-                title="shell", allow_option_id="allow-once"
+                title="shell", options=allow_or_reject("allow-once")
             )
         )
         turn = await room.send("run it")
@@ -1391,7 +1395,7 @@ class TestCursorACPAdapterDetachedTurn:
     ) -> None:
         room = await cursor_room(
             FakeACPAgent().will_ask_permission(
-                title="shell", allow_option_id="allow-once"
+                title="shell", options=allow_or_reject("allow-once")
             )
         )
         turn = await room.send("run it")
