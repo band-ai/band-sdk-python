@@ -398,3 +398,80 @@ def test_reader_start_failure_releases_child_and_pty(
     finally:
         if process.poll() is None:
             _stop_pty_process(process, controller)
+
+
+@markers.requires_posix_pty
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_selector_initialization_failure_does_not_yield_broken_session(
+    tmp_path: Path,
+    exhausted: bool,
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            r"""
+import errno
+import json
+import os
+import resource
+import sys
+import time
+from pathlib import Path
+from tests.docker.toolkit import sbx_cli
+marker = Path(sys.argv[1])
+exhausted = sys.argv[2] == 'True'
+process, controller = sbx_cli._spawn_pty_process([
+    sys.executable, '-c',
+    "import os,sys,time; os.write(1,b'x'*2000000); open(sys.argv[1],'w').write('done'); time.sleep(60)",
+    str(marker),
+])
+sbx_cli._spawn_pty_process = lambda argv: (process, controller)
+limits = resource.getrlimit(resource.RLIMIT_NOFILE)
+fillers = []
+yielded = False
+initialization_failed = False
+try:
+    if exhausted:
+        ceiling = 128 if limits[1] == resource.RLIM_INFINITY else min(128, limits[1])
+        resource.setrlimit(resource.RLIMIT_NOFILE, (ceiling, limits[1]))
+        while True:
+            try:
+                fillers.append(os.open('/dev/null', os.O_RDONLY))
+            except OSError as error:
+                assert error.errno == errno.EMFILE
+                break
+    try:
+        with sbx_cli.attached_run('local-peer'):
+            yielded = True
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+    except OSError as error:
+        initialization_failed = error.errno == errno.EMFILE
+finally:
+    for descriptor in fillers:
+        os.close(descriptor)
+    resource.setrlimit(resource.RLIMIT_NOFILE, limits)
+print(json.dumps({
+    'owner_yielded': yielded,
+    'initialization_failed': initialization_failed,
+    'output_completed': marker.exists(),
+    'child_stopped': process.poll() is not None,
+}))
+""",
+            str(tmp_path / "drained"),
+            str(exhausted),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
+    assert json.loads(result.stdout) == {
+        "owner_yielded": not exhausted,
+        "initialization_failed": exhausted,
+        "output_completed": not exhausted,
+        "child_stopped": True,
+    }

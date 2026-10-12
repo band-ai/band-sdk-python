@@ -359,26 +359,26 @@ def attached_run(name: str) -> Iterator[None]:
     process, controller_fd = _spawn_pty_process([SBX, "run", "--name", name])
     with ExitStack() as ownership:
         ownership.callback(_stop_pty_process, process, controller_fd)
+        selector = ownership.enter_context(selectors.DefaultSelector())
+        selector.register(controller_fd, selectors.EVENT_READ)
         stopping = threading.Event()
 
         def drain_output() -> None:
-            with selectors.DefaultSelector() as selector:
-                selector.register(controller_fd, selectors.EVENT_READ)
-                while not stopping.is_set():
-                    try:
-                        readable = selector.select(ATTACH_READ_POLL_S)
-                        if stopping.is_set():
-                            return
-                        if not readable:
-                            continue
-                        output = os.read(controller_fd, 65536)
-                    except OSError:
+            while not stopping.is_set():
+                try:
+                    readable = selector.select(ATTACH_READ_POLL_S)
+                    if stopping.is_set():
                         return
-                    if not output:
-                        return
-                    logger.debug(
-                        "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
-                    )
+                    if not readable:
+                        continue
+                    output = os.read(controller_fd, 65536)
+                except OSError:
+                    return
+                if not output:
+                    return
+                logger.debug(
+                    "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
+                )
 
         reader = threading.Thread(target=drain_output, daemon=True)
         reader.start()

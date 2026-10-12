@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import importlib
 import re
+import shlex
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -40,6 +43,8 @@ DEFAULT_ALLOWLIST_HOSTS = {
     "pypi.org",
     "files.pythonhosted.org",
 }
+
+SECRET_RECIPE_DOCS = ("README.md", "echo-agent/README.md", "spec.yaml")
 
 
 def load_spec() -> dict[str, Any]:
@@ -74,24 +79,69 @@ def test_allowlist_matches_immutable_baseline() -> None:
     assert kit_baseline_hosts(KIT_DIR) == DEFAULT_ALLOWLIST_HOSTS
 
 
+def validate_documented_secret_bindings(kit: Path) -> None:
+    band_bindings = 0
+    for relative in SECRET_RECIPE_DOCS:
+        doc = kit / relative
+        source = doc.read_text(encoding="utf-8").replace("\\\n", " ")
+        bindings: set[str] = set()
+        cleanups: set[str] = set()
+        for action, command in re.findall(
+            r"sbx secret (set-custom|rm)\s+([^\n]+)", source
+        ):
+            arguments = shlex.split(command)
+            if "--placeholder" not in arguments:
+                continue
+            placeholder = arguments[arguments.index("--placeholder") + 1]
+            if action == "rm":
+                cleanups.add(placeholder)
+                continue
+            bindings.add(placeholder)
+            if (
+                "--env" in arguments
+                and arguments[arguments.index("--env") + 1] == "BAND_API_KEY"
+            ):
+                band_bindings += 1
+                assert placeholder == PROXY_MANAGED_API_KEY, (
+                    f"Incorrect Band sentinel in {doc}"
+                )
+        assert bindings == cleanups, f"Secret binding/cleanup mismatch in {doc}"
+    assert band_bindings, "No documented Band binding found"
+
+
 def test_kit_docs_placeholder_matches_the_sdk_sentinel() -> None:
-    """The `sbx secret set-custom --placeholder` value in the shipped kit docs
-    must equal the SDK's PROXY_MANAGED_API_KEY — the single origin of the
-    sentinel. YAML/shell can't import the constant, so this guard fails CI if a
-    doc mirror drifts from it. spec.yaml's comment block carries the same
-    command, so it is scanned too."""
-    docs = [
-        KIT_DIR / "README.md",
-        KIT_DIR / "echo-agent" / "README.md",
-        KIT_DIR / "spec.yaml",
-    ]
-    placeholders: set[str] = set()
-    for doc in docs:
-        placeholders |= set(
-            re.findall(r"--placeholder\s+(\S+)", doc.read_text(encoding="utf-8"))
-        )
-    assert placeholders, "expected at least one --placeholder in the kit docs"
-    assert PROXY_MANAGED_API_KEY in placeholders, placeholders
+    validate_documented_secret_bindings(KIT_DIR)
+
+
+@pytest.mark.parametrize(
+    "original,replacement,error",
+    [
+        (
+            "--env BAND_API_KEY --placeholder proxy-managed",
+            "--env BAND_API_KEY --placeholder incorrect-band-sentinel",
+            "Incorrect Band sentinel",
+        ),
+        (
+            "secret rm --placeholder proxy-managed",
+            "secret rm --placeholder incorrect-band-sentinel",
+            "binding/cleanup mismatch",
+        ),
+    ],
+)
+def test_docs_drift_guard_rejects_broken_band_recipe(
+    tmp_path: Path,
+    original: str,
+    replacement: str,
+    error: str,
+) -> None:
+    for relative in SECRET_RECIPE_DOCS:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(KIT_DIR / relative, destination)
+    guide = tmp_path / "README.md"
+    guide.write_text(guide.read_text().replace(original, replacement))
+    with pytest.raises(AssertionError, match=error):
+        validate_documented_secret_bindings(tmp_path)
 
 
 async def test_written_anthropic_conversion_authenticates_with_custom_sentinel(

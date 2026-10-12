@@ -153,6 +153,10 @@ async def _ping_and_await_echo(
         return await capture.wait_for_reply(mid, agent_id)
 
 
+def run_display_name(name: str) -> str:
+    return f"Self-registration demo ({name})"
+
+
 def ledger_path(name: str) -> Path:
     if not re.fullmatch(r"band-selfreg-demo-[A-Za-z0-9-]+", name):
         raise ValueError("Cleanup requires the printed band-selfreg-demo run name")
@@ -246,7 +250,7 @@ async def cleanup_by_name(name: str) -> None:
     if not registration_known:
         try:
             response = await client.human_api_agents.list_my_agents(
-                name=f"Self-registration demo ({name})", page=1, page_size=100
+                name=run_display_name(name), page=1, page_size=100
             )
         except ValidationError:
             logger.exception("Invalid agent listing; continuing sandbox cleanup")
@@ -257,7 +261,7 @@ async def cleanup_by_name(name: str) -> None:
         else:
             registration_known = True
             for agent in response.data or []:
-                if agent.name == f"Self-registration demo ({name})":
+                if agent.name == run_display_name(name):
                     record_resource(name, "agents", agent.id)
                     agent_ids.append(agent.id)
     for kind, ids, reap in (
@@ -319,7 +323,7 @@ async def run(kit: str) -> None:
     # Embeds `name` (already unique) rather than a fixed literal: the platform
     # rejects a duplicate agent name (422), so re-running this demo against
     # the same account would collide with a still-registered prior run.
-    agent_name = f"Self-registration demo ({name})"
+    agent_name = run_display_name(name)
     logger.info("Run name: %s", name)
 
     room_id: str | None = None
@@ -357,7 +361,7 @@ async def run(kit: str) -> None:
                 with attached_run(name):
                     logger.info("Step 3/5: creating room and adding the agent")
                     room_id = await resource_manager.provision_room(
-                        title=f"Self-registration demo ({name})"
+                        title=run_display_name(name)
                     )
                     record_resource(name, "rooms", room_id)
                     await resource_manager.user_ops.add_participant(room_id, agent_id)
