@@ -284,16 +284,16 @@ class FakeCLISession(Transport):
             self._interrupt()
 
     def _interrupt(self) -> None:
-        """Stop the running turn; like the real CLI it still ends with a result."""
+        """Stop the running turn; like the real CLI it still ends with a result
+        unless the process exits instead."""
         self.claude.interrupted.set()
         if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
             return
-        if self.claude.exit_on_interrupt:
-            self._turn.cancel()
-            self.die()
-            return
         self._turn.cancel()
-        self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
+        if self.claude.exit_on_interrupt:
+            self.die()
+        else:
+            self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
 
     def _emit(self, **message: Any) -> None:
         self._outbox.put_nowait(message)

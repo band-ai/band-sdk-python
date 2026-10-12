@@ -270,17 +270,12 @@ class ClaudeRoomSession:
                     )
         except Exception as failure:  # noqa: BLE001 -- the listening turn re-raises it
             error = failure
+        reason = f"CLI output ended outside a turn: {error}"
         if (turn := self._listener(generation)) is not None:
             turn.end(error)
-        elif self.retained.recover(
-            generation=generation, reason=f"CLI output ended outside a turn: {error}"
-        ):
+        elif self.retained.recover(generation=generation, reason=reason):
             # No later turn would ever see this end, so retire the CLI now.
-            logger.warning(
-                "Room %s: CLI output ended outside a turn (%s); retiring its CLI",
-                self.room_id,
-                error,
-            )
+            logger.warning("Room %s: %s; retiring its CLI", self.room_id, reason)
         else:
             logger.debug("Room %s: CLI output ended (%s)", self.room_id, error)
 
