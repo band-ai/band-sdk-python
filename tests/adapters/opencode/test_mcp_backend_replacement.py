@@ -13,6 +13,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
+from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     event_session_idle,
@@ -42,7 +43,8 @@ async def test_a_crashed_server_is_re_registered_on_its_new_port(
     await adapter.on_started("OpenCode Agent", "A coding agent")
 
     async def send(content: str, *, bootstrap: bool) -> None:
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(content=content),
             tools_protocol(tools),
             OpencodeSessionState(),

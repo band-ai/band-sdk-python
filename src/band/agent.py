@@ -11,6 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, cast
 
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
@@ -25,6 +26,7 @@ from band.runtime.types import (
 )
 
 if TYPE_CHECKING:
+    from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
 
@@ -290,6 +292,7 @@ class Agent:
                 try:
                     await self._runtime.start(
                         on_execute=self._on_execute,
+                        on_message_control=self._on_control,
                         on_cleanup=self._adapter.on_cleanup,
                         # A bare FrameworkAdapter predates on_interrupt and needn't
                         # implement it -- degrade to a no-op signal like other
@@ -457,7 +460,26 @@ class Agent:
             agent_id=self._runtime.agent_id,
         )
 
-        if inp is None:
+        if inp is None or await self._try_control(inp):
             return
 
-        await self._adapter.on_event(inp)
+        rejected = False
+        try:
+            await self._adapter.on_event(inp)
+        except InputNotAccepted:
+            rejected = True
+            raise
+        finally:
+            if not rejected and inp.commit_context is not None:
+                inp.commit_context()
+
+    async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
+        """Handle controls with their delivery tools, preserving active ownership."""
+        inp = await self._preprocessor.process(
+            ctx=ctx, event=event, agent_id=self._runtime.agent_id
+        )
+        return await self._try_control(inp) if inp is not None else False
+
+    async def _try_control(self, inp: AgentInput) -> bool:
+        handler = getattr(self._adapter, "try_handle_control", None)
+        return await handler(inp.msg, inp.tools) if handler is not None else False

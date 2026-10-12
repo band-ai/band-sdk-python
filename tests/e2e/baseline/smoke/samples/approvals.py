@@ -455,7 +455,6 @@ def cursor_test_adapter(
     workspace_for_room: WorkspaceResolver | None = None,
     custom_section: str = SHELL_PROMPT,
     capabilities: set[Capability] | None = None,
-    inject_band_tools: bool = True,
 ) -> CursorACPAdapter:
     from band.adapters.cursor_acp import (  # noqa: PLC0415
         CursorACPAdapter,
@@ -468,7 +467,6 @@ def cursor_test_adapter(
         "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
-        "inject_band_tools": inject_band_tools,
         # Cursor saves an "allow always" grant to its config dir, which would
         # let later cells run that command unasked.
         "env": {
@@ -482,13 +480,6 @@ def cursor_test_adapter(
         workspace_for_room=workspace_for_room or (lambda _room_id: str(setup.workdir)),
         capabilities=capabilities,
     )
-
-
-def cursor_approval_adapter(
-    settings: BaselineSettings, setup: AgentSetup
-) -> CursorACPAdapter:
-    # Band MCP replies need a separate Cursor permission after the shell decision.
-    return cursor_test_adapter(settings, setup, inject_band_tools=False)
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:
@@ -625,7 +616,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         workdir_root=lambda settings: settings.backends.codex_cwd,
     ),
     Adapter.CURSOR_ACP: ApprovalDialect(
-        build=cursor_approval_adapter,
+        build=cursor_test_adapter,
         request=template_pattern(PERMISSION_REQUESTED_TEMPLATE),
         reply=_cursor_reply,
         notice=_cursor_notice,

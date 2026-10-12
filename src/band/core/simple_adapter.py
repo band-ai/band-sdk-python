@@ -12,7 +12,7 @@ from typing_extensions import Unpack
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.model_catalog import (
     ModelCatalog,
     ModelSelection,
@@ -380,6 +380,12 @@ class SimpleAdapter(ABC, Generic[H]):
         """
         return True
 
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        """Consume an active-turn control without starting or rebinding work."""
+        return False
+
     async def on_event(self, inp: AgentInput) -> None:
         """Implements FrameworkAdapter.on_event().
 
@@ -432,15 +438,19 @@ class SimpleAdapter(ABC, Generic[H]):
         )
         # Positional, as ``on_message`` declares them: an override may rename
         # its positional parameters.
-        await self.on_message(
-            msg,
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
+        try:
+            await self.on_message(
+                msg,
+                tools,
+                history,
+                participants_msg,
+                contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
+                room_id=room_id,
+            )
+        except InputNotAccepted:
+            turn.judged = False
+            raise
         if (
             turn.judged
             and not turn.detached
