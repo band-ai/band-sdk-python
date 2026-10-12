@@ -1800,11 +1800,13 @@ class ExecutionContext:
         )
 
     def _observe_activity_stop(self, scope: TurnScope | None, revision: int) -> None:
+        task = self._active_cycle_task
         if (
             scope is None
             or not self._owns_control_revision(scope, revision)
             or scope.stop_observed
             or self._closing
+            or (task is not None and task.cancelling())
         ):
             return
         logger.info(

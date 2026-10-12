@@ -150,6 +150,42 @@ async def test_repeated_activity_refusal_does_not_cancel_handler_cleanup() -> No
         assert peer.requested("failed") == []
 
 
+@pytest.mark.looptime
+async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
+    peer = ActivityPeer()
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+    observer = AsyncMock()
+
+    async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+        started.set()
+        try:
+            await asyncio.Future[None]()
+        finally:
+            await asyncio.sleep(
+                ctx.config.working_keep_alive_seconds
+                + ctx.config.working_request_timeout_seconds
+            )
+            cleaned_up.set()
+
+    async with activity_context(peer, handler, observer) as ctx:
+        async with asyncio.TaskGroup() as tasks:
+            turn = tasks.create_task(
+                ctx._process_event(make_message_event(msg_id="trigger"))
+            )
+            await started.wait()
+            peer.stopped = True
+            ctx.stop_room()
+            await turn
+
+        assert cleaned_up.is_set()
+        assert peer.activity_reports == [(True, True), (True, False), (False, False)]
+        observer.assert_not_awaited()
+        assert peer.marked("processing") == ["trigger"]
+        assert peer.requested("processed") == []
+        assert peer.requested("failed") == []
+
+
 @pytest.mark.parametrize("boundary", ["play", "replacement", "shutdown"])
 async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
     boundary: str,
