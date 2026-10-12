@@ -613,9 +613,10 @@ class ExecutionContext:
             await self._stop_retained_tasks(deadline)
         finally:
             # Finishes working:false outside the settlement budget, which may
-            # already be spent. A closing cycle defers that POST; this await
-            # is idle when the reporter is already inactive. The POST itself
-            # is bounded by working_request_timeout_seconds.
+            # already be spent. A closing cycle defers that POST and clears
+            # the reporter; this await joins it, and returns at once only
+            # when no false send is in flight. The POST itself is bounded
+            # by working_request_timeout_seconds.
             await self._working_reporter.stop()
         return graceful
 
