@@ -48,12 +48,18 @@ class TurnTask:
             self.deadline = min(self.deadline, bound)
             return
         timer = self._timer
-        if timer is not None:
-            if self._cleanup_timer and (timer_bound := timer.when()) is not None:
-                bound = min(bound, timer_bound)
-            if timer.expired():
+        if (
+            timer is not None
+            and self._cleanup_timer
+            and (timer_bound := timer.when()) is not None
+        ):
+            bound = min(bound, timer_bound)
+        match timer:
+            case None:
+                pass
+            case timer if timer.expired():
                 self._cancel_delivered = True
-            else:
+            case timer:
                 timer.reschedule(None)
         self.deadline = bound
         if not cooperative:
@@ -66,11 +72,13 @@ class TurnTask:
 
     async def drain(self) -> bool:
         """Wait within the original terminal grace without cancelling a waiter."""
-        if self.task.done():
-            return True
-        if self.deadline is None:
-            raise RuntimeError("Turn draining requires termination")
-        remaining = max(0.0, self.deadline - asyncio.get_running_loop().time())
+        match self.deadline:
+            case _ if self.task.done():
+                return True
+            case None:
+                raise RuntimeError("Turn draining requires termination")
+            case deadline:
+                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
         await asyncio.wait({self.task}, timeout=remaining)
         if not self.task.done():
             self._cancel()
