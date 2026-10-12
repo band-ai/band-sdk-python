@@ -112,10 +112,19 @@ class RoomExecutions:
     ) -> None:
         self.routed: dict[str, Execution] = {}
         self.accepting = True
+        # The grace every retirement gets once the owner stops accepting.
+        self._closing_timeout: float | None = None
         self._rooms: dict[str, Room] = {}
         self._build = build
         # Room-scoped cleanup that runs after its execution stopped.
         self._release = release
+
+    def close(self, *, timeout: float | None) -> None:
+        """Stop admitting rooms. Every retirement from now on, including one
+        a finishing start triggers before its room is destroyed, waits up to
+        ``timeout``."""
+        self.accepting = False
+        self._closing_timeout = timeout
 
     def room_ids(self) -> list[str]:
         return list(self._rooms)
@@ -389,7 +398,8 @@ class RoomExecutions:
         room.held.clear()
 
     async def _retire(self, room_id: str, room: Room, *, execution: Execution) -> None:
-        graceful = await execution.stop(timeout=room.stop_timeout)
+        timeout = room.stop_timeout if self.accepting else self._closing_timeout
+        graceful = await execution.stop(timeout=timeout)
         await self._release(room_id)
         room.execution = None
         room.state = RoomState.IDLE
