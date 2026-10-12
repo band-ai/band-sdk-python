@@ -71,7 +71,7 @@ class TestAdmission:
         assert execution.resyncs == 1
 
     async def test_startup_delivery_keeps_events_that_arrive_while_a_full_queue_drains(
-        self,
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         delivered: list[object] = []
         entered, release = asyncio.Event(), asyncio.Event()
@@ -102,7 +102,9 @@ class TestAdmission:
         for index in range(MAX_HELD_EVENTS):
             owner.hold("room-1", index)
         release.set()
-        await admitting
+        execution = await admitting
         assert "e1" in delivered
-        assert "a" in delivered and "b" in delivered
+        assert "a" not in delivered and "b" not in delivered
+        assert any("dropping 2 held" in record.message for record in caplog.records)
+        assert owner.routed["room-1"] is execution
         await owner.destroy("room-1")
