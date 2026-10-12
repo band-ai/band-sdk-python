@@ -200,7 +200,8 @@ class ClaudeRoomSession:
         try:
             await self._connect(generation)
         except Exception as error:
-            if resume or self.session_id is None or self.closing:
+            # A CLI whose failed startup did not close stays held for recovery.
+            if resume or self.session_id is None or self.closing or self.client:
                 raise
             logger.warning(
                 "Room %s: Session resume failed (session_id=%s): %s. "
@@ -271,6 +272,15 @@ class ClaudeRoomSession:
             error = failure
         if (turn := self._listener(generation)) is not None:
             turn.end(error)
+        elif self.retained.recover(
+            generation=generation, reason=f"CLI output ended outside a turn: {error}"
+        ):
+            # No later turn would ever see this end, so retire the CLI now.
+            logger.warning(
+                "Room %s: CLI output ended outside a turn (%s); retiring its CLI",
+                self.room_id,
+                error,
+            )
         else:
             logger.debug("Room %s: CLI output ended (%s)", self.room_id, error)
 

@@ -289,6 +289,50 @@ async def test_failed_startup_cleanup_is_retried_on_the_same_process(
     assert [cli.alive for cli in claude.sessions] == [False, False]
 
 
+async def test_a_cli_that_exits_between_turns_is_retired_by_its_reader(
+    claude: FakeClaude,
+) -> None:
+    """No turn is listening when the output ends, so the reader itself hands
+    the dead CLI to the room's owner, which closes it."""
+    manager = new_manager()
+    session = manager.room("room-a")
+    claude.script(thinking("hi"))
+    await exchange(session, "hi")
+    closing = claude.closing = Hold()
+
+    [cli] = claude.sessions
+    cli.die()
+    async with closing:
+        retired = session.speaks_for(1)
+    await manager.stop()
+
+    assert retired is False
+    assert cli.close_calls >= 1
+
+
+async def test_a_failed_resume_that_could_not_close_is_never_replaced(
+    claude: FakeClaude,
+) -> None:
+    """The bootstrap fallback only starts a new CLI once the failed one is
+    closed; otherwise the failed CLI stays held for recovery."""
+    manager = new_manager()
+    session = manager.room("room-a")
+    session.session_id = "sess-gone"
+    claude.unresumable.add("sess-gone")
+    claude.refuse_close = True
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await session.acquire(1, False)
+    [cli] = claude.sessions
+    held = (session.client is not None, session.session_id)
+    claude.refuse_close = False
+    await session.release(ReleaseCause.FINAL)
+
+    assert held == (True, "sess-gone")
+    assert claude.resumed == ["sess-gone"]
+    assert not cli.alive
+
+
 async def test_an_unfinished_disposal_stays_owned_and_a_retry_joins_it(
     claude: FakeClaude,
 ) -> None:

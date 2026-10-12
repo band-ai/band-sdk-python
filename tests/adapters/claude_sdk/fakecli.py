@@ -156,6 +156,8 @@ class FakeClaude:
         # neither stops nor ends.
         self.ignore_interrupt = False
         self.interrupted = asyncio.Event()
+        # The process exits when interrupted, before the turn's result.
+        self.exit_on_interrupt = False
         self.errors: list[BaseException] = []
         # Parks the next close; the session that reaches it takes it.
         self.closing: Hold | None = None
@@ -285,6 +287,10 @@ class FakeCLISession(Transport):
         """Stop the running turn; like the real CLI it still ends with a result."""
         self.claude.interrupted.set()
         if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
+            return
+        if self.claude.exit_on_interrupt:
+            self._turn.cancel()
+            self.die()
             return
         self._turn.cancel()
         self._emit_result(EndTurn(is_error=True, result="Request interrupted"))

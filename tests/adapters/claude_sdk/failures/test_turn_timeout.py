@@ -129,3 +129,22 @@ async def test_stop_retains_worker_until_session_cleanup_finishes(
         closing.released.set()
         work.released.set()
         await asyncio.gather(sending, return_exceptions=True)
+
+
+async def test_a_cli_that_exits_when_interrupted_is_replaced(
+    claude_room: OpenRoom,
+) -> None:
+    """The interrupted CLI exits without the turn's result; draining that end
+    retires it, so the next message starts a new session instead of writing
+    to a dead process."""
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+    room.claude.exit_on_interrupt = True
+    room.claude.script([Hold()], [room.model_reply("Fresh start.")])
+
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("take forever")
+    await room.send("and now?")
+
+    assert room.failures == [f"Claude turn timed out after {TURN_TIMEOUT_S}s"]
+    assert room.chat == ["Fresh start."]
+    assert room.claude.resumed == [None, None]

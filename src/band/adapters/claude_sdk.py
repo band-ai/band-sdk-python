@@ -881,8 +881,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # early (see _resolve_manual_approval / _release_turn) so on_message
         # can return and Band's strictly-sequential per-room message loop can
         # dispatch the reply that will eventually resolve the approval. When
-        # nothing needs a human, the turn finishes before release fires and
-        # this is equivalent to the previous synchronous await.
+        # nothing needs a human, the turn finishes before release fires.
         loop = asyncio.get_running_loop()
         release_future: asyncio.Future[None] = loop.create_future()
         # An eager task factory runs the turn before create_task returns.
@@ -908,8 +907,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
             if turn_task.done():
                 # The turn finished before release fired (the common, no-approval
-                # case) -- await it so a failure still propagates through
-                # on_message exactly as it did before this turn ran detached.
+                # case) -- await it so a failure propagates through on_message.
                 await turn_task
         except asyncio.CancelledError:
             await self._cancel_turn(room_id)
@@ -1157,8 +1155,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         try:
             async with owner.timed(_TIMEOUT_DRAIN_SECONDS, cleanup=True):
                 await client.interrupt()
-                async for _ in stream.until_result():
+                last = None
+                async for last in stream.until_result():
                     pass
+                if not isinstance(last, ResultMessage):
+                    raise CLIConnectionError(self._stream_ended_without_result_error())
         except CLIConnectionError:
             logger.warning(
                 "Room %s: timed-out Claude turn's CLI is gone; retiring session",
