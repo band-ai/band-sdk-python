@@ -181,6 +181,12 @@ async def test_known_stop_recovers_without_play_push(
     baseline_settings: BaselineSettings,
     reply_capture: CaptureFactory,
 ) -> None:
+    """STOP then PLAY settle the turn whichever way each control arrives.
+
+    Native pushes are the immediate path, but a missed STOP is recovered from
+    the activity keep-alive and a missed PLAY from reconciliation, so the cell
+    asserts the turn's outcome rather than native receipt of either push.
+    """
     agent = await resource_manager.provision_agent("missedplay")
     room_id = await resource_manager.provision_room(participants=[agent.id])
     timeout = baseline_settings.e2e_timeout
@@ -194,7 +200,6 @@ async def test_known_stop_recovers_without_play_push(
             forwarded_control_modes=frozenset(
                 {ControlMode.STOP, ControlMode.INTERRUPT}
             ),
-            enable_working_state=False,
         ) as control,
     ):
         await control.wait_for_startup_sync(deadline_s=timeout)
@@ -210,13 +215,12 @@ async def test_known_stop_recovers_without_play_push(
         )
         await user_ops.stop_agent(room_id)
         await control.wait_for_cancellation(deadline_s=timeout)
-        assert ControlMode.STOP in control.received_control_modes
+        assert control.cancelled_message_ids == [mid]
         assert control.completed_message_ids == []
         statuses = await capture.durable_delivery_statuses((mid,), agent.id)
         assert statuses[mid] is DeliveryStatus.PROCESSING
 
         await user_ops.play_agent(room_id)
-        await control.wait_for_control(ControlMode.PLAY, deadline_s=timeout)
         await capture.wait_for_processed(mid, agent.id)
         assert control.invoked_message_ids == [mid, mid]
         assert control.completed_message_ids == [mid]
