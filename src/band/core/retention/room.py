@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.retention.cleanup import report_owned
+from band.core.retention.cleanup import report_owned, spawn_owned
 from band.core.retention.states import (
     BUSY_ACTIVITY_REASON,
     UNKNOWN_ACTIVITY_REASON,
@@ -294,16 +294,9 @@ class RetainedRoom:
         self._cause = stronger_cause(self._cause, cause)
 
     def _spawn(self, operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
-        task = asyncio.create_task(operation)
-        task.add_done_callback(self._observe_failure)
+        task = spawn_owned(operation, label=f"Room {self.room_id} residency transition")
+        task.add_done_callback(lambda _: self._start_requested_recovery())
         return task
-
-    def _observe_failure(self, task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and (error := task.exception()) is not None:
-            logger.warning(
-                "Room %s residency transition failed: %s", self.room_id, error
-            )
-        self._start_requested_recovery()
 
     def _start_acquire(self) -> asyncio.Task[None]:
         self._generation += 1

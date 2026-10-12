@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import Self
 
 from band.core.exceptions import CleanupIncompleteError
+from band.core.retention.cleanup import spawn_owned
 from band.integrations.mcp.engine import (
     RoomToolResolver,
     build_resolved_band_mcp_tool_registrations,
@@ -224,15 +225,10 @@ class SharedBandMCPBackend:
             if (closing := self._claim_closing()) is None:
                 return None
             if self._stopping is None or self._stopping.done():
-                self._stopping = asyncio.create_task(self._stop_closing(closing))
-                self._stopping.add_done_callback(self._observe_stop)
+                self._stopping = spawn_owned(
+                    self._stop_closing(closing), label="Band MCP final close"
+                )
             return self._stopping
-
-    def _observe_stop(self, task: asyncio.Task[None]) -> None:
-        if task.cancelled():
-            return
-        if (error := task.exception()) is not None:
-            logger.warning("Band MCP final close failed: %s", error)
 
     def _claim_closing(self) -> BandMCPBackend | None:
         """A pending final close keeps its backend; otherwise it takes the
