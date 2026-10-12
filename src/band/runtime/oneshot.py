@@ -41,8 +41,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
-from collections.abc import Coroutine
+from collections import Counter, deque
+from collections.abc import Coroutine, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, cast
@@ -178,6 +179,11 @@ class OneShotInvoker:
         self._adapter_cleanup_pending = False
         self._startup: asyncio.Task[None] | None = None
         self._shutdown: asyncio.Task[None] | None = None
+        # Tasks inside an accepted handle_event; shutdown disposes only once
+        # every one has settled.
+        self._operations: Counter[asyncio.Task[Any] | None] = Counter()
+        self._operations_settled = asyncio.Event()
+        self._operations_settled.set()
 
     @property
     def agent_name(self) -> str:
@@ -260,12 +266,15 @@ class OneShotInvoker:
     async def shutdown(self) -> None:
         """Dispose the adapter, then disconnect the link (best-effort).
 
-        Shutdown stops an in-flight startup from becoming ready and waits for
-        it to settle, so cleanup never overlaps startup. Concurrent callers
-        join one owned shutdown, and a cancelled caller leaves it running.
-        Only a settled shutdown is retried.
+        Shutdown refuses new events at once, stops an in-flight startup from
+        becoming ready, and waits for that startup and every accepted event
+        to settle, so cleanup never runs beneath them. Concurrent callers join
+        one owned shutdown, and a cancelled caller leaves it running. Only a
+        settled shutdown is retried.
 
         Raises:
+            CleanupIncompleteError: Called from an accepted event, which the
+                shutdown waits for; it continues once that event unwinds.
             Exception: The adapter's ``cleanup_all`` failed. The link is still
                 disconnected, and the next ``shutdown()`` retries the cleanup.
         """
@@ -273,11 +282,16 @@ class OneShotInvoker:
         if not self._running(self._shutdown):
             self._shutdown = self._owned(self._run_shutdown())
         assert self._shutdown is not None
+        if asyncio.current_task() in self._operations:
+            raise CleanupIncompleteError(
+                "OneShotInvoker shutdown waits for the calling event to finish"
+            )
         await asyncio.shield(self._shutdown)
 
     async def _run_shutdown(self) -> None:
         if self._startup is not None:
             await asyncio.wait({self._startup})
+        await self._operations_settled.wait()
         try:
             if self._adapter_cleanup_pending:
                 await dispose_adapter(self._adapter)
@@ -287,6 +301,19 @@ class OneShotInvoker:
                 await self._link.disconnect()
             except Exception:
                 logger.warning("Error during link disconnect", exc_info=True)
+
+    @contextmanager
+    def _accepted_operation(self) -> Iterator[None]:
+        """Hold one accepted event until it settles, cancellation included."""
+        task = asyncio.current_task()
+        self._operations[task] += 1
+        self._operations_settled.clear()
+        try:
+            yield
+        finally:
+            self._operations -= Counter({task: 1})
+            if not self._operations:
+                self._operations_settled.set()
 
     @staticmethod
     def _running(task: asyncio.Task[None] | None) -> bool:
@@ -319,11 +346,15 @@ class OneShotInvoker:
                 missing/empty ``room_id`` or ``payload.id`` for a
                 ``message_created`` or room-cleanup event, or a
                 ``message_created`` payload missing a required field.
-            RuntimeError: ``startup()`` was not called first.
+            RuntimeError: ``startup()`` was not called first, or
+                ``shutdown()`` has begun.
         """
         if not self._started:
-            raise RuntimeError("OneShotInvoker.startup() not called")
+            raise RuntimeError("OneShotInvoker.startup() not called, or shut down")
+        with self._accepted_operation():
+            return await self._handle_accepted_event(body)
 
+    async def _handle_accepted_event(self, body: dict[str, Any]) -> dict[str, Any]:
         event_type: str = body.get("event_type") or ""
         payload = body.get("payload") or {}
         try:
