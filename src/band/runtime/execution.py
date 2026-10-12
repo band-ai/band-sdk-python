@@ -1133,6 +1133,21 @@ class ExecutionContext:
 
     # --- Internal processing ---
 
+    def _discard_nonshutdown_cancel(self) -> None:
+        """Drop a pending cancel that is not room shutdown.
+
+        ``stop`` sets ``_closing`` before cancelling this task. Any other
+        pending cancel — the resync deadline's, when it is not converted to
+        ``TimeoutError`` — must not end the loop.
+        """
+        task = asyncio.current_task()
+        if task is None or not task.cancelling():
+            return
+        if self._closing:
+            raise asyncio.CancelledError
+        while task.cancelling():
+            task.uncancel()
+
     async def _process_loop(self) -> None:
         """Synchronize startup, then serialize queued events and due recovery."""
         try:
@@ -1149,16 +1164,26 @@ class ExecutionContext:
             loop = asyncio.get_running_loop()
             self._resync_schedule.start(loop.time())
             while True:
+                self._discard_nonshutdown_cancel()
                 deadline = self._resync_schedule.due_at
                 if deadline is not None and deadline <= loop.time():
                     await self._reconcile()
                     continue
                 try:
-                    # Keep cancellation on the owner task so shutdown cannot
-                    # be lost in a child queue-wait task on Windows.
-                    async with asyncio.timeout_at(deadline) as self._queue_wait:
-                        event = await self.queue.get()
+                    # A queued event is taken without arming the deadline.
+                    # The empty-queue wait stays on this task so shutdown
+                    # cannot be lost in a child queue-wait task on Windows.
+                    if self.queue.empty():
+                        async with asyncio.timeout_at(deadline) as self._queue_wait:
+                            event = await self.queue.get()
+                    else:
+                        event = self.queue.get_nowait()
                 except TimeoutError:
+                    continue
+                except asyncio.CancelledError:
+                    if self._closing:
+                        raise
+                    self._discard_nonshutdown_cancel()
                     continue
                 finally:
                     self._queue_wait = None

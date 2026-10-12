@@ -225,6 +225,24 @@ class TestExecutionContextEvents:
 
         await ctx.stop()
 
+    async def test_stray_cancel_still_delivers_a_queued_message(
+        self, mock_link, mock_handler
+    ):
+        """A cancel that is not shutdown must not drop a queued message."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        await ctx.start()
+        await wait_for_condition(lambda: ctx._queue_wait is not None)
+
+        task = ctx._process_loop_task
+        assert task is not None
+        task.cancel()
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-1"))
+
+        await wait_for_condition(lambda: mock_handler.call_count >= 1)
+        assert not task.done()
+
+        await ctx.stop()
+
 
 class TestExecutionContextParticipants:
     """Test participant management."""
