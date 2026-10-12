@@ -138,6 +138,9 @@ class AuxiliaryClaimRuntime(ControlRuntime):
                     self.auxiliary_ids.append(mid)
                 else:
                     mid = self.auxiliary_ids[index]
+                # Replay may enter on an auxiliary already owned as the turn's trigger.
+                if mid == event.payload.id or ctx.claims.is_completed(ctx.room_id, mid):
+                    continue
                 assert ctx.claims.try_claim(ctx.room_id, mid), "auxiliary already owned"
                 self.owned_ids.add(mid)
                 if first and index == 1:
@@ -145,6 +148,8 @@ class AuxiliaryClaimRuntime(ControlRuntime):
                 assert await ctx.claim_message(mid), "auxiliary claim failed"
             self.downstream_started.set()
             for mid in self.auxiliary_ids:
+                if mid not in self.owned_ids:
+                    continue
                 ctx.claims.remember_ack_pending(ctx.room_id, mid)
                 assert await ctx.link.mark_processed(ctx.room_id, mid)
                 ctx.claims.remember_completed(ctx.room_id, mid)

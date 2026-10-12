@@ -327,3 +327,4 @@ async def test_refused_auxiliary_claim_aborts_and_replays(
         for mid in (trigger, first, second):
             await capture.wait_for_processed(mid, agent.id)
         assert control.downstream_started.is_set()
+        assert control.invoked_message_ids == [trigger, *control.completed_message_ids]
