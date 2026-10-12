@@ -14,10 +14,12 @@ from band.runtime.tools.agent import (
     MAX_INLINE_IMAGE_BYTES,
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
+    MISSING_MENTIONS_ERROR,
     PREVIEWABLE_IMAGE_CONTENT_TYPES,
     AgentTools,
     AttachmentCache,
     ParticipantAddResult,
+    ParticipantAddStatus,
     ParticipantRemoveResult,
     append_available_mention_handles,
     append_mention_handles_hint,
@@ -125,6 +127,7 @@ from band.runtime.tools.registry import (
     mcp_tool_spelling,
     redact_tool_call_args,
     resolve_capabilities,
+    withheld_tool_names,
 )
 from band.runtime.tools.schema import (
     ToolCallOutcome,
@@ -137,6 +140,7 @@ from band.runtime.tools.schema import (
     platform_tool,
     resolve_tool_model,
     serialize_tool_result,
+    tool_result_text,
     validate_tool_arguments,
 )
 from band.runtime.tools.types import (
@@ -173,6 +177,7 @@ __all__ = [
     "MAX_SEND_CONTENT_BYTES",
     "MCP_TOOL_PREFIX",
     "MEMORY_TOOL_NAMES",
+    "MISSING_MENTIONS_ERROR",
     "PREVIEWABLE_IMAGE_CONTENT_TYPES",
     "READ_ONLY_TOOL_NAMES",
     "TASK_TOOL_NAMES",
@@ -219,6 +224,7 @@ __all__ = [
     "LookupPeersInput",
     "NoReplyInput",
     "ParticipantAddResult",
+    "ParticipantAddStatus",
     "ParticipantRemoveResult",
     "ReadRoomFileInput",
     "RegisterMyAgentInput",
@@ -275,6 +281,8 @@ __all__ = [
     "resolve_tool_model",
     "serialize_tool_result",
     "strip_handle_prefix",
+    "tool_result_text",
     "turn_effect",
     "validate_tool_arguments",
+    "withheld_tool_names",
 ]

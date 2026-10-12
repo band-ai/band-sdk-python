@@ -60,6 +60,13 @@ def test_detection_finds_the_tests_that_only_the_parlant_venv_can_run() -> None:
     pattern = vjc.needs_venv_pattern(frozenset(_PARLANT_ONLY_MODULES.values()))
     needed = vjc.tests_needing_venv(pattern)
     assert needed == {
+        Path("tests/integrations/parlant/test_catalog.py"),
+        Path("tests/integrations/parlant/test_chattools.py"),
+        Path("tests/integrations/parlant/test_contacttools.py"),
+        Path("tests/integrations/parlant/test_customtools.py"),
+        Path("tests/integrations/parlant/test_filetools.py"),
+        Path("tests/integrations/parlant/test_guard.py"),
         Path("tests/integrations/parlant/test_server.py"),
-        Path("tests/integrations/parlant/test_tools.py"),
+        Path("tests/integrations/parlant/test_tasktools.py"),
+        Path("tests/integrations/parlant/test_vocabulary.py"),
     }
