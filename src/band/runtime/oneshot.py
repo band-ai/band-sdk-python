@@ -46,7 +46,7 @@ from collections.abc import Coroutine, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 from band_sdk_core import (
     ClaimRegistry,
@@ -214,14 +214,14 @@ class OneShotInvoker:
         """
         if self._started:
             return
-        if not self._running(self._startup):
+        startup = self._startup
+        if not self._running(startup):
             if self._running(self._shutdown) or self._adapter_cleanup_pending:
                 raise CleanupIncompleteError(
                     "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
                 )
-            self._startup = self._owned(self._run_startup())
-        assert self._startup is not None
-        await asyncio.shield(self._startup)
+            startup = self._startup = self._owned(self._run_startup())
+        await asyncio.shield(startup)
 
     async def _run_startup(self) -> None:
         """Start the adapter unless shutdown was requested; a failed start
@@ -279,14 +279,14 @@ class OneShotInvoker:
                 disconnected, and the next ``shutdown()`` retries the cleanup.
         """
         self._started = False
-        if not self._running(self._shutdown):
-            self._shutdown = self._owned(self._run_shutdown())
-        assert self._shutdown is not None
+        shutdown = self._shutdown
+        if not self._running(shutdown):
+            shutdown = self._shutdown = self._owned(self._run_shutdown())
         if asyncio.current_task() in self._operations:
             raise CleanupIncompleteError(
                 "OneShotInvoker shutdown waits for the calling event to finish"
             )
-        await asyncio.shield(self._shutdown)
+        await asyncio.shield(shutdown)
 
     async def _run_shutdown(self) -> None:
         if self._startup is not None:
@@ -316,7 +316,7 @@ class OneShotInvoker:
                 self._operations_settled.set()
 
     @staticmethod
-    def _running(task: asyncio.Task[None] | None) -> bool:
+    def _running(task: asyncio.Task[None] | None) -> TypeGuard[asyncio.Task[None]]:
         return task is not None and not task.done()
 
     @staticmethod
@@ -391,7 +391,7 @@ class OneShotInvoker:
                 # entries is ``adapter.on_cleanup``. Without this hookup the
                 # cache grows unbounded — and for adapters that spawn
                 # subprocesses per room, those subprocesses leak too. Mirrors
-                # ``AgentRuntime._destroy_execution``'s cleanup-callback hook
+                # ``RoomExecutions.destroy``'s cleanup-callback hook
                 # in the long-running path.
                 return await self._cleanup_room(event_type, cast(str, room_id))
             case {"decision": "skip_self", "message_id": message_id}:

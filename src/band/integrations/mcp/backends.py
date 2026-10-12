@@ -217,13 +217,18 @@ class SharedBandMCPBackend:
     async def _final_stop(self) -> asyncio.Task[None] | None:
         async with self._lock:
             self._closed = True
-            if self._closing is None:
-                self._closing, self._backend = self._backend, None
-            if self._closing is None:
+            if (closing := self._claim_closing()) is None:
                 return None
             if self._stopping is None or self._stopping.done():
-                self._stopping = asyncio.create_task(self._stop_closing(self._closing))
+                self._stopping = asyncio.create_task(self._stop_closing(closing))
             return self._stopping
+
+    def _claim_closing(self) -> BandMCPBackend | None:
+        """A pending final close keeps its backend; otherwise it takes the
+        current one."""
+        if self._closing is None:
+            self._closing, self._backend = self._backend, None
+        return self._closing
 
     async def _stop_closing(self, backend: BandMCPBackend) -> None:
         await backend.stop()

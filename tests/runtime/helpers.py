@@ -310,6 +310,91 @@ class ResponseGate:
         return response
 
 
+class RoomCleanup:
+    """The adapter's room cleanup, held or failed on demand."""
+
+    def __init__(self) -> None:
+        self.rooms: list[str] = []
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.failing = False
+        self.failing_rooms: set[str] = set()
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    async def __call__(self, room_id: str) -> None:
+        self.entered.set()
+        await self.release.wait()
+        if self.failing or room_id in self.failing_rooms:
+            raise RuntimeError("room cleanup failed")
+        self.rooms.append(room_id)
+
+
+class HeldExecution:
+    """A custom execution whose start and event delivery can be held, and
+    whose start can fail."""
+
+    def __init__(self, room_id: str, gate: StartGate) -> None:
+        self.room_id = room_id
+        self.gate = gate
+        self.started = False
+        self.stopped = False
+        self.resyncs = 0
+        self.events: list[object] = []
+
+    async def start(self) -> None:
+        self.gate.entered.set()
+        await self.gate.release.wait()
+        if self.gate.failures:
+            self.gate.failures -= 1
+            raise RuntimeError("execution start failed")
+        self.started = True
+
+    async def stop(self, timeout: float | None = None) -> bool:
+        self.stopped = True
+        return self.gate.graceful
+
+    async def on_event(self, event: object) -> None:
+        self.gate.delivering.set()
+        await self.gate.deliver.wait()
+        self.events.append(event)
+
+    async def request_resync(self) -> None:
+        self.resyncs += 1
+
+
+class StartGate:
+    """Builds ``HeldExecution``s; each start waits for ``release`` and each
+    event delivery for ``deliver``."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.delivering = asyncio.Event()
+        self.deliver = asyncio.Event()
+        self.deliver.set()
+        self.failures = 0
+        self.graceful = True
+        self.built: list[HeldExecution] = []
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    def hold_delivery(self) -> None:
+        self.delivering.clear()
+        self.deliver.clear()
+
+    def __call__(self, room_id: str, link, *, hub_room_id=None) -> HeldExecution:
+        execution = HeldExecution(room_id, self)
+        self.built.append(execution)
+        return execution
+
+
 @asynccontextmanager
 async def running_execution(ctx: ExecutionContext) -> AsyncIterator[ExecutionContext]:
     """Exercise admission, handler supervision and shutdown through the room loop."""

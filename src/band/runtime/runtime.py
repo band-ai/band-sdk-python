@@ -7,20 +7,19 @@ Framework-light users can use RoomPresence or BandLink directly.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
+from band.runtime.control import ControlDeduplicator, apply_control, control_targets
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
 from band.runtime.presence import RoomPresence
+from band.runtime.rooms import RoomExecutions, request_resync
 from band.runtime.types import (
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
@@ -50,22 +49,6 @@ class ExecutionFactory(Protocol):
         *,
         hub_room_id: str | None = None,
     ) -> Execution: ...
-
-
-@dataclass
-class RoomLifecycle:
-    """One room's membership intent and the execution it owns.
-
-    ``execution`` stays owned from construction until its cleanup succeeds;
-    it receives work only while it is also the room's routed execution.
-    ``task`` is the room's single owned startup/retirement operation, and
-    ``intent`` counts withdrawals so a startup that outlived one is retired.
-    """
-
-    wanted: bool = False
-    intent: int = 0
-    execution: Execution | None = None
-    task: asyncio.Task[bool] | None = None
 
 
 class AgentRuntime:
@@ -161,19 +144,12 @@ class AgentRuntime:
         # RoomPresence for cross-room management
         self.presence = RoomPresence(link, room_filter)
 
-        # Only ``executions`` receives work and control. ``_rooms`` owns every
-        # execution, routed or not, until its cleanup succeeds.
-        self.executions: dict[str, Execution] = {}
-        self._rooms: dict[str, RoomLifecycle] = {}
-        self._accepting_rooms = True
+        self.rooms = RoomExecutions(
+            build=self._build_execution, release=self._release_room
+        )
         # Accumulates across stop() retries so a cancelled room stays reported.
         self._stop_graceful = True
-
-        # Control-signal dedup. The server does not deduplicate
-        # agent.control pushes, so we drop repeats by correlation_id. Bounded
-        # LRU; only touched from the WebSocket receive task.
-        self._seen_control_ids: OrderedDict[str, bool] = OrderedDict()
-        self._max_seen_control_ids: int = 256
+        self._control_ids = ControlDeduplicator()
 
         # Shared by default contexts so a room/message pair executes at most
         # once per runtime, including across context recreation.
@@ -186,29 +162,19 @@ class AgentRuntime:
         self.presence.on_reconnected = self._on_reconnected
 
     @property
+    def executions(self) -> dict[str, Execution]:
+        """Routed executions by room_id: the only ones receiving work."""
+        return self.rooms.routed
+
+    @property
     def active_sessions(self) -> dict[str, Execution]:
         """Get active execution contexts by room_id."""
         return self.executions.copy()
 
     @property
     def unsettled_rooms(self) -> list[str]:
-        """Rooms owning an execution that is not serving them: startup or
-        cleanup not yet settled. Rooms still serving are not counted, so an
-        empty list does not mean the runtime has stopped."""
-        return [
-            room_id
-            for room_id, record in self._rooms.items()
-            if record.execution is not None and not self._serving(room_id)
-        ]
-
-    def _serving(self, room_id: str) -> bool:
-        record = self._rooms.get(room_id)
-        execution = self.executions.get(room_id)
-        return (
-            record is not None
-            and execution is not None
-            and execution is record.execution
-        )
+        """Rooms owning an execution that is not serving them."""
+        return self.rooms.unsettled
 
     def set_hub_room_id(self, hub_room_id: str | None) -> None:
         """Register the hub-room ID so future executions can auto-enable contact tools.
@@ -228,12 +194,12 @@ class AgentRuntime:
         2. Creates execution contexts for existing rooms
         """
         logger.info("Starting AgentRuntime for agent %s", self.agent_id)
-        self._accepting_rooms = True
+        self.rooms.accepting = True
         self._stop_graceful = True
         try:
             await self.presence.start()
         except BaseException:
-            self._accepting_rooms = False
+            self.rooms.accepting = False
             raise
 
     async def stop(self, timeout: float | None = None) -> bool:
@@ -257,14 +223,14 @@ class AgentRuntime:
         2. Stops RoomPresence
         3. Disconnects the link (wakes ``run(install_signal_handlers=False)``)
         """
-        self._accepting_rooms = False
+        self.rooms.accepting = False
         logger.info("Stopping AgentRuntime for agent %s", self.agent_id)
 
         failures: list[Exception] = []
         try:
-            for room_id in list(self._rooms):
+            for room_id in self.rooms.room_ids():
                 try:
-                    graceful = await self._destroy_execution(room_id, timeout=timeout)
+                    graceful = await self.rooms.destroy(room_id, timeout=timeout)
                 except Exception as error:  # noqa: BLE001 -- every room must be attempted; failures are raised together below
                     failures.append(error)
                 else:
@@ -303,8 +269,8 @@ class AgentRuntime:
     async def _on_room_joined(self, room_id: str, payload: dict) -> None:
         """Record membership and request owned admission without waiting, so
         a slow startup never holds up the presence consumer."""
-        if self._accepting_rooms:
-            self._request_admission(room_id)
+        if self.rooms.accepting:
+            self.rooms.request_admission(room_id)
 
     async def _on_room_left(self, room_id: str) -> None:
         """Fence the room at once and request its owned cleanup.
@@ -312,26 +278,18 @@ class AgentRuntime:
         Physical teardown is not awaited, so a slow cleanup never holds up
         the presence consumer; a failure stays owned for a later retry.
         """
-        record = self._rooms.get(room_id)
-        if record is None or not record.wanted:
-            return
-        self._fence(room_id)
-        self._lifecycle(room_id)
+        self.rooms.withdraw(room_id)
 
     async def _on_room_event(self, room_id: str, event: PlatformEvent) -> None:
-        """Handle room event - forward to execution context.
+        """Forward a room event to its routed execution.
 
-        A room still waiting for old cleanup claims nothing; its admission
-        retries instead, and the new execution's /next resync recovers work.
+        A wanted room that is not routed yet holds the event for the execution
+        its admission starts, and the hold retries that admission.
         """
-        execution = self.executions.get(room_id)
-        record = self._rooms.get(room_id)
-        if execution:
+        if (execution := self.executions.get(room_id)) is not None:
             await execution.on_event(event)
-        elif record is not None and record.wanted:
-            self._lifecycle(room_id)
         else:
-            logger.warning("No execution for room %s, event dropped", room_id)
+            self.rooms.hold(room_id, event)
 
     async def _on_reconnected(self) -> None:
         """Trigger /next resync on all active executions after WebSocket reconnect.
@@ -339,28 +297,13 @@ class AgentRuntime:
         Messages may have arrived while the socket was down. Each execution
         context re-polls /next to catch anything the server didn't push.
         """
-        for room_id in list(self._rooms):
-            if not self._serving(room_id):
-                self._lifecycle(room_id)
+        self.rooms.converge_unserved()
         logger.info(
             "AgentRuntime: Requesting /next resync for %d execution(s) after reconnect",
             len(self.executions),
         )
         for room_id, execution in list(self.executions.items()):
-            await self._request_resync(room_id, execution)
-
-    @staticmethod
-    async def _request_resync(room_id: str, execution: Execution) -> None:
-        if not hasattr(execution, "request_resync"):
-            logger.debug(
-                "Execution for room %s does not support request_resync, skipping",
-                room_id,
-            )
-            return
-        try:
-            await execution.request_resync()
-        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
-            logger.warning("Failed to request resync for room %s: %s", room_id, e)
+            await request_resync(room_id, execution)
 
     # --- Control signals ---
 
@@ -379,257 +322,61 @@ class AgentRuntime:
         raised here are swallowed-and-logged by the channel handler, so this
         method must not rely on propagating errors to signal anything.
         """
-        cid = payload.correlation_id
-        if cid is not None:
-            if cid in self._seen_control_ids:
-                logger.debug("Duplicate control signal %s ignored", cid)
-                return
-            self._seen_control_ids[cid] = True
-            self._seen_control_ids.move_to_end(cid)
-            if len(self._seen_control_ids) > self._max_seen_control_ids:
-                self._seen_control_ids.popitem(last=False)
-        else:
-            logger.debug(
-                "Control signal mode=%s has no correlation_id; not deduped",
-                payload.mode,
-            )
-
-        # Resolve target executions.
-        if payload.room_id is not None:
-            execution = self.executions.get(payload.room_id)
-            if execution is None:
-                logger.info(
-                    "Control signal (mode=%s) for unknown room %s; no-op",
-                    payload.mode,
-                    payload.room_id,
-                )
-                return
-            targets = [execution]
-        elif payload.scope == "agent":
-            targets = list(self.executions.values())
-        else:
-            logger.warning(
-                "Control signal scope=%s with no room_id; no-op", payload.scope
-            )
+        if not self._control_ids.first_sighting(payload):
             return
-
+        targets = control_targets(payload, self.executions)
+        if not targets:
+            return
         logger.info(
             "Applying control mode=%s scope=%s to %d room(s) "
             "(correlation_id=%s execution_id=%s)",
             payload.mode,
             payload.scope,
             len(targets),
-            cid,
+            payload.correlation_id,
             payload.execution_id,
         )
-
         for execution in targets:
-            await self._apply_control(execution, payload.mode)
-
-    async def _apply_control(self, execution: Execution, mode: ControlMode) -> None:
-        """Dispatch one control mode to one execution, degrading gracefully.
-
-        Custom ``Execution`` implementations that omit the control methods are
-        skipped with a log (mirrors how ``request_resync`` degrades).
-
-        INTERRUPT/STOP also notify ``on_control`` (the adapter's own
-        ``on_interrupt``), unconditionally -- the execution's own method only
-        reaches the task that's still running the handler; it cannot cancel
-        work an adapter has already returned from and kept running detached
-        (e.g. a turn parked on a human decision).
-        """
-        match mode:
-            case ControlMode.INTERRUPT | ControlMode.STOP:
-                attr = "interrupt" if mode == ControlMode.INTERRUPT else "stop_room"
-                fn = getattr(execution, attr, None)
-                if fn is None:
-                    logger.debug(
-                        "Execution for room %s has no %s(); skipping",
-                        getattr(execution, "room_id", "?"),
-                        attr,
-                    )
-                else:
-                    fn()
-                room_id = getattr(execution, "room_id", None)
-                if self._on_control is not None and room_id is not None:
-                    await self._on_control(room_id, mode)
-            case ControlMode.PLAY:
-                fn = getattr(execution, "resume_room", None)
-                if fn is None:
-                    logger.debug(
-                        "Execution for room %s has no resume_room(); skipping",
-                        getattr(execution, "room_id", "?"),
-                    )
-                    return
-                await fn()
-            case _:
-                logger.warning("Unknown control mode %r; ignoring", mode)
+            await apply_control(execution, payload.mode, self._on_control)
 
     # --- Execution management ---
 
-    async def _create_execution(self, room_id: str) -> Execution | None:
-        """Admit a room through its owned lifecycle.
-
-        Waits for a fresh room's startup. Returns None without waiting when an
-        earlier execution must be cleaned up first; admission then completes
-        through the same owned operation once that cleanup succeeds.
-        """
-        if not self._accepting_rooms:
-            raise RuntimeError("Agent runtime is stopping or stopped")
-        if self._serving(room_id):
-            logger.debug("Execution already exists for room %s", room_id)
-            return self.executions[room_id]
-        previous = self._rooms.get(room_id)
-        cleanup_first = previous is not None and previous.execution is not None
-        lifecycle = self._request_admission(room_id)
-        if cleanup_first:
-            return None
-        await asyncio.shield(lifecycle)
-        return self.executions.get(room_id)
-
-    def _request_admission(self, room_id: str) -> asyncio.Task[bool]:
-        record = self._rooms.setdefault(room_id, RoomLifecycle())
-        record.wanted = True
-        return self._lifecycle(room_id)
-
     def _build_execution(self, room_id: str) -> Execution:
-        # Use factory if provided, otherwise create ExecutionContext
-        if self._execution_factory:
-            try:
-                execution = self._execution_factory(
-                    room_id,
-                    self.link,
-                    hub_room_id=self._hub_room_id,
-                )
-            except TypeError:
-                # Backward compatibility: support legacy factories that
-                # accept only (room_id, link).
-                execution = self._execution_factory(room_id, self.link)
-        else:
-            execution = ExecutionContext(
-                room_id=room_id,
-                link=self.link,
-                on_execute=self._on_execute,
-                on_message_control=self._on_message_control,
-                config=self._session_config,
-                agent_id=self.agent_id,
-                on_participant_added=self._on_participant_added,
-                on_participant_removed=self._on_participant_removed,
-                hub_room_id=self._hub_room_id,
-                claim_registry=self._claim_registry,
-                on_platform_stop=self._on_platform_stop,
+        if self._execution_factory is None:
+            return self._default_execution(room_id)
+        try:
+            return self._execution_factory(
+                room_id, self.link, hub_room_id=self._hub_room_id
             )
-        return execution
+        except TypeError:
+            # Legacy factories accept only (room_id, link).
+            return self._execution_factory(room_id, self.link)
+
+    def _default_execution(self, room_id: str) -> ExecutionContext:
+        return ExecutionContext(
+            room_id=room_id,
+            link=self.link,
+            on_execute=self._on_execute,
+            on_message_control=self._on_message_control,
+            config=self._session_config,
+            agent_id=self.agent_id,
+            on_participant_added=self._on_participant_added,
+            on_participant_removed=self._on_participant_removed,
+            hub_room_id=self._hub_room_id,
+            claim_registry=self._claim_registry,
+            on_platform_stop=self._on_platform_stop,
+        )
 
     async def _on_platform_stop(self, ctx: ExecutionContext, scope: TurnScope) -> None:
         if ctx.owns_stop_observation(scope) and self._on_control is not None:
             await self._on_control(ctx.room_id, ControlMode.STOP)
 
-    async def _destroy_execution(
-        self, room_id: str, timeout: float | None = None
-    ) -> bool:
-        """
-        Stop and clean up a room's execution, waiting for its owned cleanup.
-
-        A failure raises; the execution stays owned and a later leave,
-        rejoin, reconnect or stop retries it.
-
-        Args:
-            room_id: Room ID to destroy execution for.
-            timeout: Optional seconds to wait for graceful stop.
-
-        Returns:
-            True if stopped gracefully, False if cancelled mid-processing.
-        """
-        record = self._fence(room_id)
-        graceful = True
-        while record is not None and self._rooms.get(room_id) is record:
-            lifecycle = self._lifecycle(room_id, timeout=timeout)
-            graceful = await asyncio.shield(lifecycle) and graceful
-        return graceful
-
-    def _fence(self, room_id: str) -> RoomLifecycle | None:
-        """Withdraw membership: no admission completes and no work routes."""
-        self.executions.pop(room_id, None)
-        record = self._rooms.get(room_id)
-        if record is not None:
-            record.wanted = False
-            record.intent += 1
-        return record
-
-    def _lifecycle(
-        self, room_id: str, *, timeout: float | None = None
-    ) -> asyncio.Task[bool]:
-        """Join the room's owned operation, or start one after the last settled."""
-        record = self._rooms[room_id]
-        if record.task is None or record.task.done():
-            record.task = asyncio.create_task(self._reconcile(room_id, record, timeout))
-            record.task.add_done_callback(self._observe_lifecycle)
-        return record.task
-
-    @staticmethod
-    def _observe_lifecycle(lifecycle: asyncio.Task[bool]) -> None:
-        if not lifecycle.cancelled() and (error := lifecycle.exception()):
-            logger.warning("Room lifecycle remains pending: %s", error)
-
-    async def _reconcile(
-        self, room_id: str, record: RoomLifecycle, timeout: float | None
-    ) -> bool:
-        """Converge the room's execution to its current membership intent.
-
-        Intent is re-read after every await, so a leave or stop during a held
-        startup retires that execution instead of publishing it.
-        """
-        graceful = True
-        while True:
-            execution = record.execution
-            admit = record.wanted and self._accepting_rooms
-            if self._serving(room_id):
-                if admit:
-                    return graceful
-                self.executions.pop(room_id)
-            if execution is not None:
-                graceful = await self._retire(room_id, record, timeout) and graceful
-            elif not admit:
-                if self._rooms.get(room_id) is record:
-                    del self._rooms[room_id]
-                return graceful
-            else:
-                await self._admit(room_id, record)
-
-    async def _admit(self, room_id: str, record: RoomLifecycle) -> None:
-        """Start an owned execution; route it only if the membership intent it
-        started under still stands.
-
-        Events arriving before routing are dropped unclaimed, so a routed
-        execution always resyncs /next to recover them. Startup has no time
-        bound here: leave and stop wait for it to settle, then retire it.
-        """
-        intent = record.intent
-        execution = self._build_execution(room_id)
-        record.execution = execution
-        await execution.start()
-        if not (record.wanted and self._accepting_rooms and record.intent == intent):
-            return
-        self.executions[room_id] = execution
-        logger.debug("Created execution for room %s", room_id)
-        await self._request_resync(room_id, execution)
-
-    async def _retire(
-        self, room_id: str, record: RoomLifecycle, timeout: float | None
-    ) -> bool:
-        assert record.execution is not None
-        graceful = await record.execution.stop(timeout=timeout)
-
+    async def _release_room(self, room_id: str) -> None:
+        """Room-scoped cleanup once its execution has stopped."""
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
         # retries only the ack instead of replaying handler side effects.
         self._claim_registry.discard_completed(room_id)
-
         # Adapter room cleanup (checkpointer, native sessions, etc.)
         if self._on_session_cleanup:
             await self._on_session_cleanup(room_id)
-
-        record.execution = None
-        logger.debug("Destroyed execution for room %s", room_id)
-        return graceful
