@@ -109,6 +109,7 @@ def capture_shell_waits(pid: int) -> None:
 class ShellPhase(StrEnum):
     CREATED = "created"
     TIMEOUT = "timeout"
+    COMPLETED = "completed"
 
 
 class ShellProbeProcess(subprocess.Popen[bytes]):
@@ -116,17 +117,31 @@ class ShellProbeProcess(subprocess.Popen[bytes]):
         started = time.monotonic()
         super().__init__(*args, **kwargs)
         logger.info(
-            "Shell process created: pid=%s launch_s=%s",
+            "Shell process created: pid=%s launch_s=%s args=%s stdin=%s",
             self.pid,
             time.monotonic() - started,
+            self.args,
+            "closed" if kwargs.get("stdin") == subprocess.DEVNULL else "inherited",
             extra={SHELL_PHASE_FIELD: ShellPhase.CREATED},
         )
 
     def communicate(
         self, input: bytes | None = None, timeout: float | None = None
     ) -> tuple[bytes, bytes]:
+        started = time.monotonic()
         try:
-            return super().communicate(input=input, timeout=timeout)
+            result = super().communicate(input=input, timeout=timeout)
+            logger.info(
+                "Shell communication completed: pid=%s elapsed_s=%s returncode=%s",
+                self.pid,
+                time.monotonic() - started,
+                self.returncode,
+                extra={
+                    SHELL_PHASE_FIELD: ShellPhase.COMPLETED,
+                    SHELL_RETURNCODE_FIELD: self.returncode,
+                },
+            )
+            return result
         except subprocess.TimeoutExpired:
             # On Windows, communicate waits for pipe EOF before waiting for exit.
             # run() kills the child next, obscuring whether it had already exited.
