@@ -581,7 +581,6 @@ class AgentRuntime:
         startup retires that execution instead of publishing it.
         """
         graceful = True
-        readmission = record.execution is not None
         while True:
             execution = record.execution
             admit = record.wanted and self._accepting_rooms
@@ -596,13 +595,16 @@ class AgentRuntime:
                     del self._rooms[room_id]
                 return graceful
             else:
-                await self._admit(room_id, record, resync=readmission)
+                await self._admit(room_id, record)
 
-    async def _admit(
-        self, room_id: str, record: RoomLifecycle, *, resync: bool
-    ) -> None:
+    async def _admit(self, room_id: str, record: RoomLifecycle) -> None:
         """Start an owned execution; route it only if the membership intent it
-        started under still stands."""
+        started under still stands.
+
+        Events arriving before routing are dropped unclaimed, so a routed
+        execution always resyncs /next to recover them. Startup has no time
+        bound here: leave and stop wait for it to settle, then retire it.
+        """
         intent = record.intent
         execution = self._build_execution(room_id)
         record.execution = execution
@@ -611,8 +613,7 @@ class AgentRuntime:
             return
         self.executions[room_id] = execution
         logger.debug("Created execution for room %s", room_id)
-        if resync:
-            await self._request_resync(room_id, execution)
+        await self._request_resync(room_id, execution)
 
     async def _retire(
         self, room_id: str, record: RoomLifecycle, timeout: float | None

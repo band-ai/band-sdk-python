@@ -272,13 +272,12 @@ class TestAgentRuntimeExecutionManagement:
         original.claims.remember_completed("room-a", "msg-completed")
         original.claims.remember_ack_pending("room-a", "msg-ack-pending")
 
+        mock_link.mark_processed = AsyncMock(return_value=True)
         await _left(runtime, "room-a")
         recreated = await runtime._create_execution("room-a")
 
         assert not recreated.claims.is_completed("room-a", "msg-completed")
-
-        mock_link.mark_processed = AsyncMock(return_value=True)
-        assert await recreated._retry_pending_processed_acks()
+        await wait_for_condition(lambda: mock_link.mark_processed.await_count == 1)
         mock_link.mark_processed.assert_awaited_once_with("room-a", "msg-ack-pending")
 
         await runtime.stop()
@@ -660,6 +659,7 @@ class HeldExecution:
         self.gate = gate
         self.started = False
         self.stopped = False
+        self.resyncs = 0
         self.events: list[object] = []
 
     async def start(self) -> None:
@@ -676,6 +676,9 @@ class HeldExecution:
 
     async def on_event(self, event: object) -> None:
         self.events.append(event)
+
+    async def request_resync(self) -> None:
+        self.resyncs += 1
 
 
 class StartGate:
@@ -738,16 +741,36 @@ class TestAgentRuntimeStartupOwnership:
 
         if withdrawal == "leave":
             await held_runtime._on_room_left("room-1")
-            withdrawn = _settled(held_runtime, "room-1")
+            withdrawn = asyncio.ensure_future(_settled(held_runtime, "room-1"))
         else:
-            withdrawn = held_runtime.stop()
+            withdrawn = asyncio.create_task(held_runtime.stop())
+        await wait_for_condition(lambda: not held_runtime._rooms["room-1"].wanted)
+        (execution,) = start_gate.built
+        assert not withdrawn.done() and not execution.stopped
+
         start_gate.release.set()
         await asyncio.gather(joining, withdrawn)
-
-        (execution,) = start_gate.built
         assert execution.started and execution.stopped
+        assert execution.resyncs == 0
         assert held_runtime.active_sessions == {}
         assert room_cleanup.rooms == ["room-1"]
+
+    async def test_event_before_first_startup_is_recovered_by_resync(
+        self, held_runtime: AgentRuntime, start_gate: StartGate
+    ):
+        start_gate.hold()
+        await held_runtime._on_room_joined("room-1", {})
+        await start_gate.entered.wait()
+        await held_runtime._on_room_event(
+            "room-1", make_message_event(room_id="room-1")
+        )
+
+        start_gate.release.set()
+        await _settled(held_runtime, "room-1")
+        (execution,) = start_gate.built
+        assert held_runtime.executions["room-1"] is execution
+        assert execution.events == []
+        assert execution.resyncs == 1
 
     async def test_failed_start_is_not_routed_and_is_retried(
         self, held_runtime: AgentRuntime, start_gate: StartGate
