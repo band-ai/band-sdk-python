@@ -324,10 +324,12 @@ class Agent:
                     on_control=getattr(self._adapter, "on_interrupt", None),
                 )
             except BaseException:
-                # A stop requested during this failed start must not apply to a
-                # later successful start.
-                self._clear_pending_stop()
-                await self._unwind_failed_start()
+                try:
+                    await self._unwind_failed_start()
+                finally:
+                    # A stop requested during this failed start, its unwind
+                    # included, must not apply to a later successful start.
+                    self._clear_pending_stop()
                 raise
 
             self._started = True

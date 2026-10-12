@@ -393,6 +393,34 @@ class TestStop:
         assert agent.is_running
 
     @pytest.mark.asyncio
+    async def test_stop_during_failed_start_unwind_does_not_leak(
+        self, mock_runtime, mock_adapter
+    ):
+        """A stop requested while a failed start is still unwinding must not
+        tear down the next successful start."""
+        unwinding, release = asyncio.Event(), asyncio.Event()
+
+        async def held_cleanup() -> None:
+            unwinding.set()
+            await release.wait()
+
+        mock_runtime.start.side_effect = [RuntimeError("boot failed"), None]
+        mock_adapter.cleanup_all = AsyncMock(side_effect=held_cleanup)
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        starting = asyncio.create_task(agent.start())
+        await unwinding.wait()
+        assert await agent.stop(timeout=7.0) is True
+        release.set()
+        with pytest.raises(RuntimeError, match="boot failed"):
+            await starting
+
+        mock_adapter.cleanup_all.side_effect = None
+        await agent.start()
+        assert agent.is_running
+        mock_runtime.stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_run_returns_cleanly_after_stop_during_start(
         self, mock_runtime, mock_adapter
     ):
