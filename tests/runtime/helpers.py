@@ -294,3 +294,26 @@ class ResponseGate:
             self.entered.set()
             await self.release.wait()
         return response
+
+
+class RoomCleanup:
+    """The adapter's room cleanup, held or failed on demand."""
+
+    def __init__(self) -> None:
+        self.rooms: list[str] = []
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.failing = False
+        self.failing_rooms: set[str] = set()
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    async def __call__(self, room_id: str) -> None:
+        self.entered.set()
+        await self.release.wait()
+        if self.failing or room_id in self.failing_rooms:
+            raise RuntimeError("room cleanup failed")
+        self.rooms.append(room_id)
