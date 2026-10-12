@@ -25,8 +25,8 @@ from band.integrations.acp.client_adapter import (
     PermissionResolver,
     SpawnProcess,
 )
-from band.integrations.acp.client_runtime import (
-    ACPCollectingClient,
+from band.integrations.acp.collecting import ACPCollectingClient
+from band.integrations.acp.permissions import (
     ElicitationHandler,
     ElicitationNarrator,
     elicitation_requested_schema,
