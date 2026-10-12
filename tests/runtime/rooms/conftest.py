@@ -22,8 +22,12 @@ def room_cleanup() -> RoomCleanup:
 async def rooms(
     start_gate: StartGate, room_cleanup: RoomCleanup
 ) -> AsyncIterator[RoomExecutions]:
+    async def release(room_id: str) -> None:
+        await room_cleanup(room_id)
+        start_gate.journal.append(f"cleanup {room_id}")
+
     rooms = RoomExecutions(
-        build=lambda room_id: start_gate(room_id, None), release=room_cleanup
+        build=lambda room_id: start_gate(room_id, None), release=release
     )
     yield rooms
     start_gate.release.set()
