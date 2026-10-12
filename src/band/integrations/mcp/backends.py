@@ -173,8 +173,11 @@ class SharedBandMCPBackend:
 
     @property
     def current(self) -> BandMCPBackend | None:
-        """The backend held right now, running or dead; ``None`` before the
-        first start and after ``close``."""
+        """The servable backend, or ``None`` when none is.
+
+        ``None`` before the first start, after a non-final detach, and while
+        a final close still owns the previous backend until that stop succeeds.
+        """
         return self._backend
 
     async def ensure(self) -> BandMCPBackend:
@@ -200,12 +203,13 @@ class SharedBandMCPBackend:
             return backend
 
     async def close(self, *, final: bool) -> None:
-        """Detach and stop the backend; the stop runs outside the lock, so a
-        slow one never holds up the next ``ensure()``.
+        """Stop the backend outside the lock, so a slow stop never holds up
+        the next ``ensure()``.
 
-        A final close keeps its backend and stop task until the stop succeeds:
-        a cancelled caller leaves the stop running, a retry joins it, and a
-        retry after a failure stops that same backend again.
+        ``final=False`` detaches the backend and the caller waits on that
+        stop. A final close keeps the backend and its stop task until the
+        stop succeeds: a cancelled caller leaves the stop running, a retry
+        joins it, and a retry after a failure stops that same backend again.
         """
         if not final:
             if (backend := await self.detach(final=False)) is not None:
@@ -221,7 +225,14 @@ class SharedBandMCPBackend:
                 return None
             if self._stopping is None or self._stopping.done():
                 self._stopping = asyncio.create_task(self._stop_closing(closing))
+                self._stopping.add_done_callback(self._observe_stop)
             return self._stopping
+
+    def _observe_stop(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        if (error := task.exception()) is not None:
+            logger.warning("Band MCP final close failed: %s", error)
 
     def _claim_closing(self) -> BandMCPBackend | None:
         """A pending final close keeps its backend; otherwise it takes the

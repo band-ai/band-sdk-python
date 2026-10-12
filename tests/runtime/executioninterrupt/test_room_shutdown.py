@@ -105,3 +105,27 @@ class TestRoomShutdown:
         finish.set()
         assert await ctx.stop(timeout=60) is False
         assert not ctx.is_running
+
+    async def test_stop_finishes_a_slow_working_false_outside_settlement(
+        self, mock_link, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.05)
+        started = asyncio.Event()
+
+        async def handler(ctx: ExecutionContext, event: Any) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        async def report_activity(
+            room_id: str, working: bool, **kwargs: object
+        ) -> bool:
+            if not working:
+                await asyncio.sleep(0.2)
+            return True
+
+        mock_link.report_activity = report_activity
+        ctx = ExecutionContext("room-123", mock_link, handler)
+        await ctx.start()
+        await ctx.on_event(make_message_event(msg_id="working-false"))
+        await started.wait()
+        assert await ctx.stop() is True

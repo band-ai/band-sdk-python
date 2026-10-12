@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 ReportFn = Callable[[bool], Awaitable[object]]
 
 
+def _retrieve_task_error(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
 class WorkingStateReporter:
     """Manages the boolean working signal for one execution (agent + room)."""
 
@@ -57,6 +62,7 @@ class WorkingStateReporter:
         self._active = False
         self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
+        self._false_send: asyncio.Future[None] | None = None
         # Serializes every report() call (true / keep-alive / false) so they can
         # never overlap on the wire — guarantees the platform sees them in order
         # (boolean payload carries no sequence number to disambiguate).
@@ -75,6 +81,22 @@ class WorkingStateReporter:
             self._keep_alive(), name="working-state-keepalive"
         )
 
+    def defer_false_report(self) -> None:
+        """Start ``working: false`` and return without waiting for it.
+
+        A closing execution joins the cancelled cycle on a budget shorter than
+        the activity POST timeout. Waiting for the report on that cycle counts
+        a still-legal report as unfinished cleanup. ``stop`` finishes the send.
+        """
+        if not self._enabled or not self._active:
+            return
+        self._active = False
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            task.add_done_callback(_retrieve_task_error)
+        self._false_send = asyncio.ensure_future(self._safe_report(False))
+
     async def stop(self) -> None:
         """End the reasoning cycle: cancel keep-alive and send ``working: false``.
 
@@ -82,7 +104,10 @@ class WorkingStateReporter:
         (the caller is being cancelled), the authoritative ``false`` still lands
         instead of being swallowed by the propagating ``CancelledError``.
         """
-        if not self._enabled or not self._active:
+        if not self._enabled:
+            return
+        if not self._active:
+            await self._finish_false_send()
             return
         self._active = False
         task, self._task = self._task, None
@@ -97,7 +122,13 @@ class WorkingStateReporter:
             # where scheduling makes the race routine).
             await asyncio.gather(task, return_exceptions=True)
 
-        send = asyncio.ensure_future(self._safe_report(False))
+        self._false_send = asyncio.ensure_future(self._safe_report(False))
+        await self._finish_false_send()
+
+    async def _finish_false_send(self) -> None:
+        send = self._false_send
+        if send is None:
+            return
         try:
             await asyncio.shield(send)
         except asyncio.CancelledError:
@@ -110,6 +141,9 @@ class WorkingStateReporter:
             # explicitly — the double-cancel teardown window is vanishingly rare.
             await send
             raise
+        finally:
+            if send.done():
+                self._false_send = None
 
     async def _keep_alive(self) -> None:
         """Re-send ``working: true`` on cadence until stopped or capped."""

@@ -128,3 +128,20 @@ class TestRecovery:
         await resident.turn()
         assert resident.releases == [ReleaseCause.RECOVERY]
         assert resident.resume_requests == [False, False]
+
+    async def test_recovery_during_an_idle_release_is_not_a_strict_resume(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        resident.closing = Barrier()
+        await host.clock.advance(10)
+        await resident.closing.reached.wait()
+        generation = resident.room.snapshot.generation
+        assert resident.room.recover(generation=generation, reason="crashed") is True
+        resident.closing.released.set()
+        await resident.suspended.get()
+        await asyncio.sleep(0)
+        await resident.turn()
+        assert resident.releases == [ReleaseCause.IDLE, ReleaseCause.RECOVERY]
+        assert resident.resume_requests == [False, False]

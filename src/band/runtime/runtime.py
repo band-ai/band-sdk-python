@@ -242,7 +242,7 @@ class AgentRuntime:
             # must disconnect so run_forever can return when signals are opted out.
             await self.link.disconnect()
         if failures:
-            raise ExceptionGroup("Room cleanup remains incomplete", failures)
+            raise ExceptionGroup("Execution cleanup remains incomplete", failures)
         return self._stop_graceful
 
     async def run(self, *, install_signal_handlers: bool = True) -> None:

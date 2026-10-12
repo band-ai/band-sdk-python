@@ -1790,10 +1790,11 @@ class ExecutionContext:
         """Run the adapter for a message reasoning cycle, bracketed by the
         working-state signal.
 
-        ``start()`` emits working:true (+ keep-alive); ``stop()`` in the finally
-        emits the authoritative working:false on success, exception, and cancel —
-        mirroring the final idle-state transition. The reporter is a no-op
-        when disabled or for the hub room, so call sites need no extra gating.
+        ``start()`` emits working:true (+ keep-alive). The finally emits
+        working:false, except when the execution is already closing: that
+        report is finished by ``stop`` after the settlement join. The reporter
+        is a no-op when disabled or for the hub room, so call sites need no
+        extra gating.
         """
         await self._working_reporter.start()
         try:
@@ -1801,7 +1802,13 @@ class ExecutionContext:
             self._reset_resync_interval()
             await self._on_execute(self, event)
         finally:
-            await self._working_reporter.stop()
+            # stop() joins this cycle inside the settlement budget, which is
+            # shorter than the activity POST. A closing execution finishes
+            # working:false after that join.
+            if self._closing:
+                self._working_reporter.defer_false_report()
+            else:
+                await self._working_reporter.stop()
 
     def _take_interrupt_kind(self, scope: TurnScope | None) -> ControlMode | None:
         """Read-and-clear ``_interrupt_kind`` atomically (no ``await`` between
