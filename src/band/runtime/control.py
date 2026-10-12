@@ -26,8 +26,7 @@ class ControlDeduplicator:
     Bounded LRU, only touched from the WebSocket receive task.
     """
 
-    def __init__(self, capacity: int = MAX_SEEN_CONTROL_IDS) -> None:
-        self._capacity = capacity
+    def __init__(self) -> None:
         self._seen: OrderedDict[str, None] = OrderedDict()
 
     def first_sighting(self, payload: AgentControlPayload) -> bool:
@@ -42,7 +41,7 @@ class ControlDeduplicator:
             logger.debug("Duplicate control signal %s ignored", cid)
             return False
         self._seen[cid] = None
-        if len(self._seen) > self._capacity:
+        if len(self._seen) > MAX_SEEN_CONTROL_IDS:
             self._seen.popitem(last=False)
         return True
 
