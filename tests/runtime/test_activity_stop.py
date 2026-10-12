@@ -15,9 +15,16 @@ from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
+from band.runtime.tools.agent import AgentTools
 from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
-from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
+from tests.runtime.helpers import (
+    AGENT_ID,
+    ROOM_ID,
+    LifecyclePlatform,
+    rest_client_over,
+    running_execution,
+)
 
 
 class ActivityPeer(LifecyclePlatform):
@@ -143,6 +150,7 @@ async def test_repeated_activity_refusal_does_not_cancel_handler_cleanup() -> No
             await ctx._report_working_state(True)
             finish.set()
             await turn
+            await cleaned_up.wait()
 
         assert cleaned_up.is_set()
         observer.assert_awaited_once()
@@ -155,6 +163,7 @@ async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
     peer = ActivityPeer()
     started = asyncio.Event()
     cleaned_up = asyncio.Event()
+    cleaning, release = asyncio.Event(), asyncio.Event()
     observer = AsyncMock()
 
     async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
@@ -162,10 +171,8 @@ async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
         try:
             await asyncio.Future[None]()
         finally:
-            await asyncio.sleep(
-                ctx.config.working_keep_alive_seconds
-                + ctx.config.working_request_timeout_seconds
-            )
+            cleaning.set()
+            await release.wait()
             cleaned_up.set()
 
     async with activity_context(peer, handler, observer) as ctx:
@@ -176,6 +183,9 @@ async def test_activity_refusal_preserves_native_stop_cleanup() -> None:
             await started.wait()
             peer.stopped = True
             ctx.stop_room()
+            await cleaning.wait()
+            await ctx._report_working_state(True)
+            release.set()
             await turn
 
         assert cleaned_up.is_set()
@@ -289,3 +299,69 @@ async def test_fresh_activity_stop_after_play_cancels_the_same_turn(
         assert peer.marked("processing") == ["trigger"]
         assert peer.requested("processed") == []
         assert peer.requested("failed") == []
+
+
+@pytest.mark.parametrize("refusal", ["post", "claim"])
+async def test_stopped_tool_preserves_awaited_cleanup(refusal: str) -> None:
+    peer = ActivityPeer()
+    cleanup: list[str] = []
+
+    async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+        peer.stopped = True
+        try:
+            if refusal == "claim":
+                await ctx.claim_message("auxiliary")
+            else:
+                await AgentTools.from_context(ctx).send_message(
+                    "reply", mentions=[{"id": "user-1", "type": "user"}]
+                )
+        finally:
+            await asyncio.sleep(0)
+            cleanup.append("completed")
+
+    async with activity_context(peer, handler, AsyncMock(), enabled=False) as ctx:
+        await ctx._process_event(make_message_event(msg_id="trigger"))
+    assert cleanup == ["completed"]
+    assert peer.requested("processed") == []
+    assert peer.requested("failed") == []
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "processed"),
+    [
+        (ControlMode.STOP, ControlMode.STOP, []),
+        (ControlMode.STOP, ControlMode.INTERRUPT, ["trigger"]),
+        (ControlMode.INTERRUPT, ControlMode.STOP, []),
+    ],
+)
+async def test_started_room_controls_preserve_cleanup_and_latest_disposition(
+    first: ControlMode, second: ControlMode, processed: list[str]
+) -> None:
+    peer = ActivityPeer()
+    started, cleaning, release, finished = (asyncio.Event() for _ in range(4))
+    cleanup: list[str] = []
+
+    async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+        started.set()
+        try:
+            await asyncio.Future[None]()
+        finally:
+            cleaning.set()
+            await release.wait()
+            cleanup.append("completed")
+            finished.set()
+
+    async with activity_context(peer, handler, AsyncMock()) as ctx:
+        async with running_execution(ctx):
+            await ctx.on_event(make_message_event(msg_id="trigger"))
+            await started.wait()
+            ctx.interrupt(kind=first)
+            await cleaning.wait()
+            ctx.interrupt(kind=second)
+            release.set()
+            await finished.wait()
+            await ctx._idle_event.wait()
+        assert cleanup == ["completed"]
+        assert peer.requested("processed") == processed
+        assert peer.requested("failed") == []
+        assert peer.activity_reports == [(True, True), (False, False)]

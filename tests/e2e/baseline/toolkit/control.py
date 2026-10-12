@@ -117,13 +117,17 @@ class ControlRuntime:
 class AuxiliaryClaimRuntime(ControlRuntime):
     """Select two auxiliary messages, holding the second claim for a real STOP."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, hold_cleanup: bool = False) -> None:
         super().__init__(block_cycles=0)
         self.auxiliaries: asyncio.Queue[str] = asyncio.Queue()
         self.auxiliary_ids: list[str] = []
         self.release_claim = asyncio.Event()
         self.downstream_started = asyncio.Event()
         self.owned_ids: set[str] = set()
+        self.cleanup_started = asyncio.Event()
+        self.release_cleanup = asyncio.Event()
+        if not hold_cleanup:
+            self.release_cleanup.set()
 
     async def on_execute(self, ctx: ExecutionContext, event: PlatformEvent) -> None:
         assert isinstance(event, MessageEvent)
@@ -158,6 +162,9 @@ class AuxiliaryClaimRuntime(ControlRuntime):
             cancelled = True
             raise
         finally:
+            if cancelled:
+                self.cleanup_started.set()
+                await self.release_cleanup.wait()
             for mid in self.owned_ids:
                 ctx.claims.release(ctx.room_id, mid)
             self.owned_ids.clear()

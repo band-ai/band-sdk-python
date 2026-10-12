@@ -82,17 +82,21 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
-from band.core.retention import RoomRetentionConfig, require_disabled_retention
+from band.core.retention import (
+    RoomRetentionConfig,
+    require_disabled_retention,
+    task_failure,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin
+from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
 from band.core.types import (
     ApprovalMode,
     Capability,
@@ -655,7 +659,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         # {room_id: the current turn's background task}, so on_message can
         # refuse to start a second concurrent turn on the same client.
-        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
+        self._turn_tasks: dict[str, TurnTask] = {}
+        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
+        self._closing_rooms: set[str] = set()
+        self._closing_all = False
 
     @property
     def _approvals(self) -> ClaudeApprovalOptions:
@@ -740,6 +747,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         can_use_tool_factory = (
             self._make_can_use_tool if self.config.approvals is not None else None
         )
+        self._closing_all = False
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
@@ -827,8 +835,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
+        if room_id in self._closing_rooms:
+            raise InputNotAccepted("The room's Claude session is closing")
         running_turn = self._turn_tasks.get(room_id)
-        if running_turn is not None and not running_turn.done():
+        if running_turn is not None and not running_turn.task.done():
             raise InputNotAccepted("The room already has an active Claude turn")
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
@@ -923,6 +933,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # dispatch the reply that will eventually resolve the approval. When
         # nothing needs a human, the turn finishes before release fires and
         # this is equivalent to the previous synchronous await.
+        if self._closing_all:
+            raise ClaudeSessionManagerStoppedError("Claude adapter is stopping")
         release_future: asyncio.Future[None] = (
             asyncio.get_running_loop().create_future()
         )
@@ -930,10 +942,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         turn_task = asyncio.create_task(
             self._run_turn(client, room_id, tools, full_message, msg.id, release_future)
         )
-        self._turn_tasks[room_id] = turn_task
+        self._turn_tasks[room_id] = bind_turn_task(tools, turn_task)
         turn_task.add_done_callback(self._log_turn_task_exception)
         try:
-            await release_future
+            await asyncio.wait(
+                {release_future, turn_task}, return_when=asyncio.FIRST_COMPLETED
+            )
             if turn_task.done():
                 # The turn finished before release fired (the common, no-approval
                 # case) -- await it so a failure still propagates through
@@ -946,9 +960,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
 
-    @staticmethod
     async def _open_session(
-        manager: ClaudeSessionManager, room_id: str, resume_session_id: str | None
+        self, manager: ClaudeSessionManager, room_id: str, resume_session_id: str | None
     ) -> ClaudeSDKClient:
         """The room's client, starting a fresh session when the resume fails."""
         try:
@@ -967,6 +980,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 resume_session_id,
                 resume_exc,
             )
+        if self._closing_all:
+            raise ClaudeSessionManagerStoppedError("Claude adapter is stopping")
         return await manager.get_or_create_session(room_id, resume_session_id=None)
 
     async def _run_turn(
@@ -1018,7 +1033,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             logger.debug("Message %s processed successfully", msg_id)
         finally:
             self._release_turn(room_id, release_future)
-            if self._turn_tasks.get(room_id) is asyncio.current_task():
+            owner = self._turn_tasks.get(room_id)
+            if owner is not None and owner.task is asyncio.current_task():
                 del self._turn_tasks[room_id]
 
     def _release_turn(
@@ -1051,14 +1067,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         A ``TimeoutError`` raised by the SDK itself, not by the deadline,
         propagates as an ordinary turn failure.
         """
-        deadline = asyncio.timeout(self.config.turn_timeout_s)
+        owner = self._turn_tasks[room_id]
+        deadline: asyncio.Timeout | None = None
         try:
-            async with deadline:
+            async with owner.timed(self.config.turn_timeout_s) as deadline:
                 await client.query(full_message)
                 # MCP tools handle execution; this dispatches the stream.
                 await self._process_response(client, room_id, tools)
         except TimeoutError:
-            if not deadline.expired():
+            if deadline is None or not deadline.expired():
                 raise
             detail = await self._abandon_timed_out_turn(client, room_id)
             await tools.send_failure(
@@ -1083,7 +1100,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             self.config.turn_timeout_s,
         )
         try:
-            async with asyncio.timeout(_TIMEOUT_DRAIN_SECONDS):
+            async with self._turn_tasks[room_id].timed(
+                _TIMEOUT_DRAIN_SECONDS, cleanup=True
+            ):
                 await client.interrupt()
                 async for sdk_message in client.receive_response():
                     if isinstance(sdk_message, ResultMessage):
@@ -1103,19 +1122,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
             await self._retire_client(room_id)
         return f"Claude turn timed out after {self.config.turn_timeout_s}s"
-
-    async def _cancel_turn(self, room_id: str) -> None:
-        """Cancel and await a detached turn before its session is closed."""
-        turn_task = self._turn_tasks.get(room_id)
-        if turn_task is None or turn_task.done():
-            return
-        turn_task.cancel()
-        try:
-            await turn_task
-        except asyncio.CancelledError:
-            pass
-        if self._turn_tasks.get(room_id) is turn_task:
-            del self._turn_tasks[room_id]
 
     def _log_turn_task_exception(self, task: asyncio.Task[None]) -> None:
         """Retrieve a turn task's exception so asyncio doesn't log it as
@@ -1573,8 +1579,25 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     # --- Copied from BandClaudeSDKAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up Claude SDK session and stored tools when agent leaves a room."""
+        self._closing_rooms.add(room_id)
         self._clear_pending_approvals_for_room(room_id)
         await self._cancel_turn(room_id)
+        owner = self._turn_tasks.get(room_id)
+        if owner is not None and not owner.task.done():
+            raise CleanupIncompleteError(
+                f"Room {room_id}: Claude turn is still cleaning up"
+            )
+        close = self._room_cleanup.get(room_id)
+        if close is None or (close.done() and task_failure(close) is not None):
+            close = asyncio.create_task(self._close_room(room_id))
+            close.add_done_callback(task_failure)
+            self._room_cleanup[room_id] = close
+        await asyncio.shield(close)
+        if self._room_cleanup.get(room_id) is close:
+            del self._room_cleanup[room_id]
+        self._closing_rooms.discard(room_id)
+
+    async def _close_room(self, room_id: str) -> None:
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         self._room_tools.pop(room_id, None)
@@ -1589,11 +1612,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
     async def cleanup_all(self) -> None:
         """Cleanup all sessions (call on stop)."""
+        self._closing_all = True
         # Decline all pending approvals across rooms
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        for room_id in list(self._turn_tasks):
-            await self._cancel_turn(room_id)
+        rooms = set(self._room_tools) | set(self._turn_tasks) | self._closing_rooms
+        results = await asyncio.gather(
+            *(self.on_cleanup(room_id) for room_id in rooms), return_exceptions=True
+        )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise BaseExceptionGroup("Claude session cleanup failed", errors)
         if self._session_manager:
             await self._session_manager.stop()
         await self._mcp.close(final=True)

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -75,7 +74,7 @@ async def _assert_fresh_cycle_still_propagates_shutdown_cancel(
 
     ctx._on_execute = block
     shutdown = asyncio.create_task(
-        ctx._run_cycle(make_message_event(msg_id=msg_id), msg_id)
+        ctx._process_event(make_message_event(msg_id=msg_id))
     )
     await started.wait()
     shutdown.cancel()
@@ -119,7 +118,6 @@ class TestInterruptInFlightCycle:
         # Consumed: durable mark + local dedupe.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "msg-1")
         assert "msg-1" in ctx.claims.completed_ids(ctx.room_id)
-        assert ctx._interrupt_kind is None  # flag cleared
         assert ctx._active_cycle_task is None
 
         # Loop still alive: a fresh message processes normally.
@@ -158,7 +156,6 @@ class TestInterruptInFlightCycle:
         flag (which would mis-flag the next cycle)."""
         ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
         assert ctx.interrupt() is False
-        assert ctx._interrupt_kind is None
 
         # Next cycle runs normally.
         result = await ctx._process_event(make_message_event(msg_id="m1"))
@@ -201,13 +198,12 @@ class TestShutdownVsInterrupt:
             "room-123", mock_link, swallow_cancel, agent_id="agent-123"
         )
         first = asyncio.create_task(
-            ctx._run_cycle(make_message_event(msg_id="swallow"), "swallow")
+            ctx._process_event(make_message_event(msg_id="swallow"))
         )
         await first_started.wait()
 
         assert ctx.interrupt() is True
         assert await first is True
-        assert ctx._interrupt_kind is None
 
         await _assert_fresh_cycle_still_propagates_shutdown_cancel(ctx, "shutdown")
 
@@ -460,8 +456,6 @@ class TestControlSignalInClaimWindow:
         assert handler.invoked == []  # handler never ran
         mock_link.mark_processed.assert_awaited_once_with("room-123", "w1")  # consumed
         assert "w1" in ctx.claims.completed_ids(ctx.room_id)
-        assert ctx._pending_interrupt is None
-        assert ctx._cycle_armed is False
 
     async def test_stop_in_window_leaves_message_actionable(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
@@ -510,7 +504,6 @@ class TestControlSignalInClaimWindow:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
         assert ctx.interrupt() is False
-        assert ctx._pending_interrupt is None
 
         # The next message runs to completion, unaffected.
         result = await ctx._process_event(make_message_event(msg_id="n1"))
@@ -783,12 +776,17 @@ class TestCycleWatchdog:
         # Simulate the race deterministically rather than chasing real timing:
         # an interrupt() landed on this same task right as the watchdog also
         # independently expired.
-        ctx._interrupt_kind = ControlMode.INTERRUPT
+        async def interrupted_cleanup(ctx, event):
+            try:
+                await asyncio.Future[None]()
+            finally:
+                ctx.interrupt()
+                await asyncio.sleep(0)
 
+        ctx._on_execute = interrupted_cleanup
         result = await ctx._process_event(make_message_event(msg_id="race-1"))
 
         assert result is True
-        assert ctx._interrupt_kind is None  # cleared, not leaked to the next cycle
         # The interrupt won, not the watchdog: consumed/acked, not failed.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "race-1")
         mock_link.mark_failed.assert_not_awaited()
@@ -796,52 +794,24 @@ class TestCycleWatchdog:
         await _assert_fresh_cycle_still_propagates_shutdown_cancel(ctx, "race-2")
 
     async def test_child_completing_at_the_deadline_boundary_is_not_misreported(
-        self, mock_link, caplog
+        self, mock_link
     ):
-        """CPython's Task/Timeout interaction can fire the deadline's cancel on
-        the *outer* task after the child has already completed successfully in
-        the same event-loop tick, fabricating a CancelledError for the outer
-        task's own resumption and discarding the child's real result --
-        without the child itself ever actually being cancel-requested (its
-        ``cancelling()`` count stays 0). The watchdog must recover the child's
-        real outcome in that case rather than reporting a cycle that
-        genuinely finished in time as a failure."""
-        handler = BlockingHandler(block=False)
+        completed: list[str] = []
+
+        async def finish_at_deadline(ctx, event):
+            completed.append("reply")
+
         ctx = ExecutionContext(
             "room-123",
             mock_link,
-            handler,
+            finish_at_deadline,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=_AMPLE_CYCLE_BUDGET_SECONDS),
+            config=SessionConfig(max_cycle_seconds=1e-9),
         )
-
-        class _FakeExpiredDeadline:
-            def expired(self) -> bool:
-                return True
-
-        @contextlib.asynccontextmanager
-        async def fake_timeout(_seconds: float) -> AsyncIterator[_FakeExpiredDeadline]:
-            # Stands in for the exact race: expired() reports True even though
-            # nothing was ever actually cancelled.
-            yield _FakeExpiredDeadline()
-
-        with (
-            patch("band.runtime.execution.asyncio_timeout", fake_timeout),
-            caplog.at_level(logging.DEBUG, logger="band.runtime.execution"),
-        ):
-            result = await ctx._process_event(make_message_event(msg_id="boundary"))
-
-        assert result is True
+        assert await ctx._process_event(make_message_event(msg_id="boundary"))
+        assert completed == ["reply"]
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
         mock_link.mark_failed.assert_not_awaited()
-        # The outcome above is also what a normal, un-raced completion looks
-        # like -- assert the recovery branch itself actually ran (not just a
-        # fall-through that never hit it), or a regression that silently
-        # removes the recovery logic would still pass this test.
-        assert any(
-            "deadline boundary; recovering its real result" in r.message
-            for r in caplog.records
-        )
 
     async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
         self, mock_link
@@ -867,7 +837,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        with patch("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
+        with patch("band.runtime.cycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
             result = await asyncio.wait_for(
                 ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
                 timeout=0.2,
@@ -1646,3 +1616,14 @@ async def test_cancellation_resistant_cycle_keeps_stop_pending_until_settled(
     finish.set()
     assert await ctx.stop(timeout=60) is False
     assert not ctx.is_running
+
+
+async def test_restart_gets_its_own_graceful_stop_result(mock_link) -> None:
+    handler = BlockingHandler()
+    ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+    await ctx.start()
+    await ctx.on_event(make_message_event(msg_id="first"))
+    await handler.started.wait()
+    assert await ctx.stop(timeout=0) is False
+    await ctx.start()
+    assert await ctx.stop() is True

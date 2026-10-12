@@ -278,7 +278,7 @@ async def test_refused_auxiliary_claim_aborts_and_replays(
 ) -> None:
     agent = await resource_manager.provision_agent("auxiliaryclaim")
     room_id = await resource_manager.provision_room(participants=[agent.id])
-    control = AuxiliaryClaimRuntime()
+    control = AuxiliaryClaimRuntime(hold_cleanup=True)
     async with (
         reply_capture(room_id) as capture,
         running_control_runtime(
@@ -313,6 +313,12 @@ async def test_refused_auxiliary_claim_aborts_and_replays(
         control.auxiliaries.put_nowait(second)
         await user_ops.stop_agent(room_id)
         control.release_claim.set()
+        try:
+            await asyncio.wait_for(
+                control.cleanup_started.wait(), timeout=baseline_settings.e2e_timeout
+            )
+        finally:
+            control.release_cleanup.set()
         await control.wait_for_cancellation(deadline_s=baseline_settings.e2e_timeout)
         assert not control.downstream_started.is_set()
         assert not control.owned_ids

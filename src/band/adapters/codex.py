@@ -41,7 +41,7 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -49,11 +49,15 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
-from band.core.retention import RoomRetentionConfig, require_disabled_retention
+from band.core.retention import (
+    RoomRetentionConfig,
+    require_disabled_retention,
+    task_failure,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin
+from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -671,7 +675,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # on_message: Band dispatches one message per room at a time, so the
         # reply that resolves the approval arrives only after on_message returns.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
-        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
+        self._turn_tasks: dict[str, TurnTask] = {}
+        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -919,10 +924,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        if room_id in self._closing_rooms:
+            raise InputNotAccepted("The room's Codex session is closing")
         self._room_client(room_id)
         self._active_room.set(room_id)
         running = self._turn_tasks.get(room_id)
-        if running is not None and not running.done():
+        if running is not None and not running.task.done():
             raise InputNotAccepted("The room already has an active Codex turn")
         command = self._extract_local_command(msg.content)
 
@@ -940,7 +947,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 command=command,
             )
         )
-        self._turn_tasks[room_id] = turn
+        self._turn_tasks[room_id] = bind_turn_task(tools, turn)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
         try:
             await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
@@ -1178,7 +1185,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             release.set_result(None)
 
     def _forget_turn(self, room_id: str, task: asyncio.Task[None]) -> None:
-        if self._turn_tasks.get(room_id) is task:
+        owner = self._turn_tasks.get(room_id)
+        if owner is not None and owner.task is task:
             del self._turn_tasks[room_id]
         # A turn that fails after release already reported to the room;
         # retrieving the exception keeps asyncio from logging it as lost.
@@ -1197,26 +1205,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if turn is None:
             return
         done, _pending = await asyncio.wait(
-            {turn}, timeout=self.config.turn_settle_timeout_s
+            {turn.task},
+            timeout=(self.config.turn_settle_timeout_s if turn.deadline is None else 0),
         )
-        if turn not in done:
+        if turn.task not in done:
             logger.warning(
                 "Room %s: turn still running after %ss; cancelling it",
                 room_id,
                 self.config.turn_settle_timeout_s,
             )
         await self._cancel_turn(room_id)
-
-    async def _cancel_turn(self, room_id: str) -> None:
-        """Cancel and await the room's detached turn, if one is running."""
-        turn = self._turn_tasks.get(room_id)
-        if turn is None or turn.done():
-            return
-        turn.cancel()
-        try:
-            await turn
-        except asyncio.CancelledError:
-            pass
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1589,14 +1587,23 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return
         self._active_room.set(room_id)
         self._closing_rooms.add(room_id)
-        try:
-            # A turn parked on a human holds _rpc_lock; declining its pending
-            # approvals (and any it raises from now on) lets it finish.
-            self._clear_pending_approvals_for_room(room_id)
-            await self._settle_turn(room_id)
-            await self._close_room(room, room_id)
-        finally:
-            self._closing_rooms.discard(room_id)
+        self._clear_pending_approvals_for_room(room_id)
+        await self._settle_turn(room_id)
+        owner = self._turn_tasks.get(room_id)
+        if owner is not None and not owner.task.done():
+            raise CleanupIncompleteError(
+                f"Room {room_id}: Codex turn is still cleaning up"
+            )
+        close = self._room_cleanup.get(room_id)
+        if close is None or (close.done() and task_failure(close) is not None):
+            close = asyncio.create_task(self._close_room(room, room_id))
+            close.add_done_callback(task_failure)
+            self._room_cleanup[room_id] = close
+        # Physical transport closing has its own configured bound.
+        await asyncio.shield(close)
+        if self._room_cleanup.get(room_id) is close:
+            del self._room_cleanup[room_id]
+        self._closing_rooms.discard(room_id)
 
     async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:

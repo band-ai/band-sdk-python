@@ -301,3 +301,13 @@ class ResponseGate:
             self.entered.set()
             await self.release.wait()
         return response
+
+
+@asynccontextmanager
+async def running_execution(ctx: ExecutionContext) -> AsyncIterator[ExecutionContext]:
+    """Exercise admission, handler supervision and shutdown through the room loop."""
+    await ctx.start()
+    try:
+        yield ctx
+    finally:
+        await ctx.stop()

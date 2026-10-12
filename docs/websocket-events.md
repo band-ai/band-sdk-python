@@ -75,3 +75,18 @@ Controls use the same duplicate checks and accepted processing gate before an
 adapter handles them. A control consumed behind pending work acknowledges only
 its own delivery; an ordinary candidate is left outstanding. Runtime recovery
 never interprets approval syntax or drains model context for a control.
+
+## Control settlement
+
+Room admission and control revisions belong to the execution context; a turn
+scope owns termination intent and delivery disposition. Each concrete task has
+one cancellation owner, including explicitly bound Codex/Claude workers.
+Shutdown takes precedence; otherwise the latest accepted native STOP/INTERRUPT
+before settlement determines delivery. An observed REST refusal cannot replace
+an accepted native disposition. PLAY advances admission without reviving an
+aborted scope, and observer callbacks remain fenced by request-time revision.
+
+The supervisor finishes the old turn's authoritative idle report before the next
+working report. Cleanup surviving its bounded grace cannot later stop a newer
+turn's activity reporter. Durable completion still retries only its ACK, never
+handler effects.
