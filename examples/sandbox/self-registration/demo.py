@@ -58,6 +58,7 @@ AGENT_DESCRIPTION = "examples/sandbox/self-registration demo agent."
 BAND_HOST_PATTERN = DEFAULT_BAND_HOST
 LEDGER_DIR = EXAMPLES_ROOT / "sandbox" / "self-registration" / ".runs"
 DEFAULT_WORKLOAD = "band-python-kit:local"
+RUN_NAME_PREFIX = "band-selfreg-demo"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -158,8 +159,8 @@ def run_display_name(name: str) -> str:
 
 
 def ledger_path(name: str) -> Path:
-    if not re.fullmatch(r"band-selfreg-demo-[A-Za-z0-9-]+", name):
-        raise ValueError("Cleanup requires the printed band-selfreg-demo run name")
+    if not re.fullmatch(rf"{re.escape(RUN_NAME_PREFIX)}-[A-Za-z0-9-]+", name):
+        raise ValueError(f"Cleanup requires the printed {RUN_NAME_PREFIX} run name")
     return LEDGER_DIR / name
 
 
@@ -315,7 +316,7 @@ async def run(kit: str) -> None:
     settings = _require_settings()
     client = user_rest_client(settings)
 
-    name = sandbox_name(prefix="band-selfreg-demo")
+    name = sandbox_name(prefix=RUN_NAME_PREFIX)
     record_resource(name, "sandbox", name)
     resource_manager = ResourceManager(
         user_client=client, settings=settings, run_id=name
@@ -333,7 +334,7 @@ async def run(kit: str) -> None:
             local_workload(kit) if kit == DEFAULT_WORKLOAD else nullcontext(kit)
         )
         with (
-            tempfile.TemporaryDirectory(prefix="band-selfreg-demo-") as tmp_dir,
+            tempfile.TemporaryDirectory(prefix=f"{RUN_NAME_PREFIX}-") as tmp_dir,
             workload_context as workload,
         ):
             workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)

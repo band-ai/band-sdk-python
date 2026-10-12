@@ -261,3 +261,21 @@ async def test_failed_discovery_remains_unknown_on_cleanup_retry(
             await self_registration.cleanup_by_name(name)
     assert client.human_api_agents.list_my_agents.await_count == 2
     assert not (self_registration.ledger_path(name) / "agents").exists()
+
+
+@pytest.mark.parametrize("prefix", [None, "band-recovery-demo"])
+def test_generated_run_name_can_record_cleanup_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prefix: str | None
+) -> None:
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    prefix = prefix or self_registration.RUN_NAME_PREFIX
+    monkeypatch.setattr(self_registration, "RUN_NAME_PREFIX", prefix)
+    name = self_registration.sandbox_name(prefix=prefix)
+    self_registration.record_resource(name, "sandbox", name)
+    assert self_registration.recorded_resources(name, "sandbox") == [name]
+
+
+@pytest.mark.parametrize("suffix", ["../outside", "a/b", ""])
+def test_cleanup_ledger_refuses_names_outside_its_run_namespace(suffix: str) -> None:
+    with pytest.raises(ValueError, match="printed"):
+        self_registration.ledger_path(f"{self_registration.RUN_NAME_PREFIX}-{suffix}")
