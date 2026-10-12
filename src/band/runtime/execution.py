@@ -615,6 +615,8 @@ class ExecutionContext:
             # Defensively clear any lingering working-state keep-alive so a
             # removed room can't leak its refresh task. Idempotent: a no-op if
             # not active (the per-cycle finally normally clears it already).
+            # Outside the settlement deadline, which may already be spent: the
+            # one working:false POST is bounded by working_request_timeout_seconds.
             await self._working_reporter.stop()
         return graceful
 

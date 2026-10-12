@@ -456,6 +456,20 @@ class TestStop:
         assert agent not in running_agents()
 
     @pytest.mark.asyncio
+    async def test_retry_keeps_the_first_attempts_cancelled_turns_reported(
+        self, mock_runtime, mock_adapter
+    ):
+        mock_runtime.stop.return_value = False
+        mock_adapter.cleanup_all = AsyncMock(side_effect=[Exception("boom"), None])
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+        await agent.start()
+
+        with pytest.raises(ExceptionGroup):
+            await agent.stop()
+        assert await agent.stop() is False
+        mock_runtime.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_runtime_cleanup_failure_still_disposes_the_adapter(
         self, mock_runtime, mock_adapter
     ):
