@@ -43,7 +43,7 @@ jobs:
           git show 4a1abcafc6d8ece85e578e9e1df65e0e3795bd61:.github/workflows/python-core-coverage.yml > .github/workflows/python-core-coverage.yml
           python -c "import subprocess,pathlib; original=subprocess.check_output(['git','show','4a1abcafc6d8ece85e578e9e1df65e0e3795bd61:.github/workflows/python-core-coverage.yml']); assert pathlib.Path('.github/workflows/python-core-coverage.yml').read_bytes()==original"
       - name: Run one cold original pytest shell cell with explicit hypothesis
-        run: uv run --all-packages pytest 'tests/framework_conformance/test_approval_commands.py::test_approval_commands_write_and_append_with_host_shell[powershell]' -p tests.framework_conformance.shellmatrix --shell-probe-mode ${{ matrix.mode }} --log-file=artifacts/shell-diagnostic/cell.log --log-file-level=INFO
+        run: uv run --all-packages python -m pytest 'tests/framework_conformance/test_approval_commands.py::test_approval_commands_write_and_append_with_host_shell[powershell]' -p tests.framework_conformance.shellmatrix --shell-probe-mode ${{ matrix.mode }} --log-file=artifacts/shell-diagnostic/cell.log --log-file-level=INFO
       - name: Validate resolved native dump stacks without launching PowerShell
         if: always()
         run: python .github/scripts/validate-shell-dump.py
