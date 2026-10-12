@@ -8,6 +8,7 @@ module-level pure helpers.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -297,6 +298,55 @@ class TestStartup:
         assert adapter.cleanup_all.await_count == 2
         await invoker.shutdown()
         assert adapter.cleanup_all.await_count == 2
+        await invoker.startup()
+        assert adapter.on_started.await_count == 2
+
+    async def test_concurrent_shutdowns_join_one_cleanup(self) -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held_cleanup() -> None:
+            entered.set()
+            await release.wait()
+
+        link = make_link_mock()
+        adapter = _make_adapter_mock()
+        adapter.cleanup_all.side_effect = held_cleanup
+        invoker = await _make_invoker(link, adapter)
+
+        first = asyncio.create_task(invoker.shutdown())
+        await entered.wait()
+        second = asyncio.create_task(invoker.shutdown())
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(first, second)
+        adapter.cleanup_all.assert_awaited_once()
+        link.disconnect.assert_awaited_once()
+
+    async def test_cancelled_shutdown_waiter_keeps_cleanup_owned(self) -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held_cleanup() -> None:
+            entered.set()
+            await release.wait()
+
+        link = make_link_mock()
+        adapter = _make_adapter_mock()
+        adapter.cleanup_all.side_effect = held_cleanup
+        invoker = await _make_invoker(link, adapter)
+
+        waiter = asyncio.create_task(invoker.shutdown())
+        await entered.wait()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        with pytest.raises(CleanupIncompleteError):
+            await invoker.startup()
+
+        retry = asyncio.create_task(invoker.shutdown())
+        await asyncio.sleep(0)
+        release.set()
+        await retry
+        adapter.cleanup_all.assert_awaited_once()
         await invoker.startup()
         assert adapter.on_started.await_count == 2
 

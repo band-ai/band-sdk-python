@@ -39,6 +39,7 @@ Example usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from datetime import UTC, datetime
@@ -174,6 +175,7 @@ class OneShotInvoker:
         self._started = False
         # Set from the adapter's start until its cleanup_all succeeds.
         self._adapter_cleanup_pending = False
+        self._shutdown: asyncio.Task[None] | None = None
 
     @property
     def agent_name(self) -> str:
@@ -202,7 +204,7 @@ class OneShotInvoker:
         """
         if self._started:
             return
-        if self._adapter_cleanup_pending:
+        if self._adapter_cleanup_pending or self._shutting_down:
             raise CleanupIncompleteError(
                 "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
             )
@@ -241,11 +243,26 @@ class OneShotInvoker:
     async def shutdown(self) -> None:
         """Dispose the adapter, then disconnect the link (best-effort).
 
+        Concurrent callers join one owned shutdown, and a cancelled caller
+        leaves it running. Only a settled shutdown is retried, so cleanup
+        never overlaps itself.
+
         Raises:
             Exception: The adapter's ``cleanup_all`` failed. The link is still
                 disconnected, and the next ``shutdown()`` retries the cleanup.
         """
         self._started = False
+        if not self._shutting_down:
+            self._shutdown = asyncio.create_task(self._run_shutdown())
+            self._shutdown.add_done_callback(self._observe_shutdown)
+        assert self._shutdown is not None
+        await asyncio.shield(self._shutdown)
+
+    @property
+    def _shutting_down(self) -> bool:
+        return self._shutdown is not None and not self._shutdown.done()
+
+    async def _run_shutdown(self) -> None:
         try:
             if self._adapter_cleanup_pending:
                 await dispose_adapter(self._adapter)
@@ -255,6 +272,11 @@ class OneShotInvoker:
                 await self._link.disconnect()
             except Exception:
                 logger.warning("Error during link disconnect", exc_info=True)
+
+    @staticmethod
+    def _observe_shutdown(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.warning("OneShotInvoker shutdown failed: %s", error)
 
     # --- Event entry point ---
 
