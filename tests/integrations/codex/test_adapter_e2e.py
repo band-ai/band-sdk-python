@@ -5,13 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import (
     AgentInput,
@@ -23,9 +22,10 @@ from band.core.types import (
 from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod, RpcEvent
 from band.testing import FakeAgentTools
 from tests.adapters.codexturns import (
-    RecordedRequests,
+    FakeCodexClient,
     await_released_turn,
     final_text,
+    make_codex_adapter,
     tool_call_request,
     turn_completed,
 )
@@ -87,106 +87,6 @@ class _ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
-class _FakeCodexClient(RecordedRequests):
-    def __init__(
-        self,
-        *,
-        events: list[RpcEvent] | None = None,
-        resume_error: Exception | None = None,
-    ) -> None:
-        self.requests: list[tuple[str, dict[str, Any]]] = []
-        self.responses: list[tuple[int | str, dict[str, Any]]] = []
-        self._events = deque(events or [])
-        self._resume_error = resume_error
-        self._thread_counter = 0
-        self._turn_counter = 0
-
-    async def connect(self) -> None:
-        return None
-
-    async def initialize(
-        self,
-        *,
-        client_name: str,
-        client_title: str,
-        client_version: str,
-        experimental_api: bool = False,
-        opt_out_notification_methods: list[str] | None = None,
-    ) -> dict[str, Any]:
-        return {"userAgent": f"{client_name}/{client_version}"}
-
-    async def request(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        retry_on_overload: bool = True,
-    ) -> dict[str, Any]:
-        payload = params or {}
-        self.requests.append((method, payload))
-
-        if method == CodexRequestMethod.MODEL_LIST:
-            return {"data": [{"id": "gpt-5.5", "hidden": False}]}
-        if method == CodexRequestMethod.THREAD_RESUME:
-            if self._resume_error is not None:
-                raise self._resume_error
-            return {"thread": {"id": str(payload.get("threadId") or "thr-resumed")}}
-        if method == CodexRequestMethod.THREAD_START:
-            self._thread_counter += 1
-            return {"thread": {"id": f"thr-{self._thread_counter}"}}
-        if method == CodexRequestMethod.TURN_START:
-            self._turn_counter += 1
-            return {
-                "turn": {
-                    "id": f"turn-{self._turn_counter}",
-                    "status": "inProgress",
-                    "items": [],
-                    "error": None,
-                }
-            }
-        return {}
-
-    async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
-        if not self._events:
-            raise TimeoutError()
-        return self._events.popleft()
-
-    async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
-        self.responses.append((request_id, result))
-
-    async def respond_error(
-        self,
-        request_id: int | str,
-        *,
-        code: int,
-        message: str,
-        data: Any | None = None,
-    ) -> None:
-        self.responses.append(
-            (request_id, {"error": {"code": code, "message": message}})
-        )
-
-    async def close(self) -> None:
-        return None
-
-
-def patch_codex_client(adapter: CodexAdapter, client: _FakeCodexClient) -> None:
-    def _build(_config: CodexAdapterConfig) -> _FakeCodexClient:
-        return client
-
-    adapter._build_client = _build  # type: ignore[method-assign]
-
-
-def make_codex_adapter(
-    client: _FakeCodexClient,
-    config: CodexAdapterConfig | None = None,
-    **kwargs: Any,
-) -> CodexAdapter:
-    adapter = CodexAdapter(config=config or CodexAdapterConfig(), **kwargs)
-    patch_codex_client(adapter, client)
-    return adapter
-
-
 def _notify(method: str, params: dict[str, Any]) -> RpcEvent:
     return RpcEvent(
         kind="notification",
@@ -218,7 +118,7 @@ def _answered_turn() -> list[RpcEvent]:
 
 async def test_on_event_uses_converter_history_to_resume_thread() -> None:
     tools = _ToolSchemaFakeTools()
-    fake_client = _FakeCodexClient(events=_answered_turn())
+    fake_client = FakeCodexClient(events=_answered_turn())
     adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
     await adapter.on_started("Codex Agent", "Integration test agent")
 
@@ -252,7 +152,7 @@ async def test_on_event_uses_converter_history_to_resume_thread() -> None:
 @pytest.mark.asyncio
 async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None:
     tools = _ToolSchemaFakeTools()
-    fake_client = _FakeCodexClient(
+    fake_client = FakeCodexClient(
         events=[
             _request(
                 7,
@@ -321,7 +221,7 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
 @pytest.mark.asyncio
 async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
     tools_first = _ToolSchemaFakeTools()
-    fake_client_first = _FakeCodexClient(events=_answered_turn())
+    fake_client_first = FakeCodexClient(events=_answered_turn())
     adapter_first = make_codex_adapter(fake_client_first, config=CodexAdapterConfig())
     await adapter_first.on_started("Codex Agent", "Integration test agent")
     await adapter_first.on_event(
@@ -336,7 +236,7 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
     persisted_history = list(tools_first.events_sent)
 
     tools_second = _ToolSchemaFakeTools()
-    fake_client_second = _FakeCodexClient(events=_answered_turn())
+    fake_client_second = FakeCodexClient(events=_answered_turn())
     adapter_second = make_codex_adapter(fake_client_second, config=CodexAdapterConfig())
     await adapter_second.on_started("Codex Agent", "Integration test agent")
     await adapter_second.on_event(
@@ -360,7 +260,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
     verify turn input contains history context."""
     # --- First session: produce some history ---
     tools_first = _ToolSchemaFakeTools()
-    fake_client_first = _FakeCodexClient(events=_answered_turn())
+    fake_client_first = FakeCodexClient(events=_answered_turn())
     adapter_first = make_codex_adapter(fake_client_first, config=CodexAdapterConfig())
     await adapter_first.on_started("Codex Agent", "Integration test agent")
     await adapter_first.on_event(
@@ -391,7 +291,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
 
     # --- Second session: resume fails, should inject history ---
     tools_second = _ToolSchemaFakeTools()
-    fake_client_second = _FakeCodexClient(
+    fake_client_second = FakeCodexClient(
         events=_answered_turn(),
         resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
     )
@@ -429,7 +329,7 @@ async def test_item_completed_forwards_internal_operations() -> None:
     """Full cycle: commandExecution + fileChange + agentMessage items all forwarded."""
 
     tools = _ToolSchemaFakeTools()
-    fake_client = _FakeCodexClient(
+    fake_client = FakeCodexClient(
         events=[
             _notify(
                 "item/completed",

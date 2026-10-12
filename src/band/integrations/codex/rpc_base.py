@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 JsonRpcId = int | str
 
+# The notification a client enqueues when its transport is gone.
+TRANSPORT_CLOSED = "transport/closed"
+
 
 class CodexJsonRpcError(RuntimeError):
     """JSON-RPC error returned by codex app-server."""
@@ -237,10 +240,10 @@ class BaseJsonRpcClient:
             self._events.put_nowait(
                 RpcEvent(
                     kind="notification",
-                    method="transport/closed",
+                    method=TRANSPORT_CLOSED,
                     params={"reason": reason},
                     id=None,
-                    raw={"method": "transport/closed", "params": {"reason": reason}},
+                    raw={"method": TRANSPORT_CLOSED, "params": {"reason": reason}},
                 )
             )
         except asyncio.QueueFull:

@@ -61,6 +61,9 @@ class CodexApprovalMethod(StrEnum):
 
 CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApprovalMethod)
 
+# The server request that runs one of the adapter's dynamic tools.
+DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
+
 
 class CodexRequestMethod(StrEnum):
     """Client-to-server request methods the SDK sends to ``codex app-server``."""

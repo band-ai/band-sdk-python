@@ -10,6 +10,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -20,16 +21,25 @@ from mcp.client.streamable_http import streamable_http_client
 from band.runtime.tools import BandTool
 
 WRITE_PREFIX = "WRITE="
+MEMO_PREFIX = "MEMO="
+PEER_PROVIDER = "peer"
 
 
 class PeerCommand(StrEnum):
     READ = "READ"
     LOSE_TRANSPORT = "LOSE_TRANSPORT"
     EXIT_PROCESS = "EXIT_PROCESS"
+    RECALL = "RECALL"
+    TOOLS = "TOOLS"
 
 
 def write_instruction(marker: str) -> str:
     return f"{WRITE_PREFIX}{marker}"
+
+
+def memo_instruction(marker: str) -> str:
+    """Keep ``marker`` only in the thread's private context."""
+    return f"{MEMO_PREFIX}{marker}"
 
 
 def emit(message: dict[str, Any]) -> None:
@@ -88,75 +98,159 @@ def initialize(failure: Path | None, hold: Path | None) -> bool:
     return failure is not None and failure.exists()
 
 
-def codex(
-    message: dict[str, Any], failure: Path | None, hold: Path | None, threads: set[str]
-) -> None:
-    match message["method"]:
-        case "initialize":
-            failed = initialize(failure, hold)
-            answer = (
-                {"error": {"code": -32000, "message": "startup failed"}}
-                if failed
-                else {"result": {}}
-            )
-            emit({"id": message["id"], **answer})
-        case "thread/start" | "thread/resume":
-            thread_id = f"peer-{os.getpid()}-{len(threads)}"
-            threads.add(thread_id)
-            emit({"id": message["id"], "result": {"thread": {"id": thread_id}}})
-        case "turn/start":
-            if message["params"]["threadId"] not in threads:
-                emit(
-                    {
-                        "id": message["id"],
-                        "error": {"code": -32000, "message": "unknown thread"},
-                    }
+class AppServer:
+    """A Codex app-server whose threads outlive the process, like rollouts.
+
+    A thread is saved under ``home`` from its first turn on: its tools and a
+    private memo that no Band message ever carries. Resuming restores both
+    and ignores tools sent with the request, as Codex does; resuming a
+    thread that was never saved fails with Codex's own refusal.
+    """
+
+    def __init__(self, home: Path, failure: Path | None, hold: Path | None) -> None:
+        self.home = home
+        self.failure = failure
+        self.hold = hold
+        self.loaded: dict[str, dict[str, Any]] = {}
+        self.turns = 0
+
+    def saved(self, thread_id: str) -> Path:
+        return self.home / f"{thread_id}.json"
+
+    def save(self, thread_id: str) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        self.saved(thread_id).write_text(json.dumps(self.loaded[thread_id]))
+
+    def answer(self, message: dict[str, Any], thread_id: str) -> None:
+        thread = self.loaded[thread_id]
+        emit(
+            {
+                "id": message["id"],
+                "result": {
+                    "thread": {"id": thread_id},
+                    "modelProvider": PEER_PROVIDER,
+                    "cwd": message["params"].get("cwd") or os.getcwd(),
+                    "tools": thread["tools"],
+                },
+            }
+        )
+
+    def handle(self, message: dict[str, Any]) -> None:
+        match message["method"]:
+            case "initialize":
+                failed = initialize(self.failure, self.hold)
+                answer = (
+                    {"error": {"code": -32000, "message": "startup failed"}}
+                    if failed
+                    else {"result": {}}
                 )
-                return
-            emit({"id": message["id"], "result": {"turn": {"id": "peer-turn"}}})
-            content = "\n".join(
-                item["text"]
-                for item in message["params"]["input"]
-                if item["type"] == "text"
-            )
-            if PeerCommand.EXIT_PROCESS in content:
-                os._exit(0)
-            if PeerCommand.LOSE_TRANSPORT in content:
-                lose_transport()
-            request = file_request(content)
-            result = perform(request["tool_name"], request["input"])
-            emit(
-                {
-                    "id": "peer-reply",
-                    "method": "item/tool/call",
-                    "params": {
-                        "tool": BandTool.SEND_MESSAGE,
-                        "arguments": {
-                            "content": reply_text(request["tool_name"], result),
-                            "mentions": ["@alice"],
-                        },
-                    },
-                }
-            )
-            response = json.loads(sys.stdin.readline())
-            if not response.get("result", {}).get("success"):
-                raise RuntimeError("The Band reply tool failed")
-            emit(
-                {
-                    "method": "turn/completed",
-                    "params": {
-                        "turn": {
-                            "id": "peer-turn",
-                            "status": "completed",
-                            "items": [],
-                            "error": None,
+                emit({"id": message["id"], **answer})
+            case "thread/start":
+                thread_id = f"peer-thread-{uuid.uuid4().hex[:12]}"
+                tools = [tool["name"] for tool in message["params"]["dynamicTools"]]
+                self.loaded[thread_id] = {"tools": tools, "memo": None}
+                self.answer(message, thread_id)
+            case "thread/resume":
+                thread_id = message["params"]["threadId"]
+                if not self.saved(thread_id).exists():
+                    emit(
+                        {
+                            "id": message["id"],
+                            "error": {
+                                "code": -32600,
+                                "message": f"no rollout found for thread id {thread_id}",
+                            },
                         }
-                    },
+                    )
+                    return
+                self.loaded[thread_id] = json.loads(self.saved(thread_id).read_text())
+                self.answer(message, thread_id)
+            case "turn/start":
+                self.turn(message)
+            case _:
+                if "id" in message:
+                    emit({"id": message["id"], "result": {}})
+
+    def turn(self, message: dict[str, Any]) -> None:
+        thread_id = message["params"]["threadId"]
+        if thread_id not in self.loaded:
+            emit(
+                {
+                    "id": message["id"],
+                    "error": {"code": -32000, "message": "unknown thread"},
                 }
             )
-        case _:
-            if "id" in message:
-                emit({"id": message["id"], "result": {}})
+            return
+        self.turns += 1
+        turn_id = f"{thread_id}-turn-{os.getpid()}-{self.turns}"
+        emit({"id": message["id"], "result": {"turn": {"id": turn_id}}})
+        self.save(thread_id)
+        content = "\n".join(
+            item["text"]
+            for item in message["params"]["input"]
+            if item["type"] == "text"
+        )
+        if PeerCommand.EXIT_PROCESS in content:
+            os._exit(0)
+        if PeerCommand.LOSE_TRANSPORT in content:
+            lose_transport()
+        reply = self.reply_to(content, thread_id)
+        self.call_tool(
+            thread_id,
+            turn_id,
+            BandTool.SEND_MESSAGE,
+            {"content": reply, "mentions": ["@alice"]},
+        )
+        emit(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": thread_id,
+                    "turn": {
+                        "id": turn_id,
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    },
+                },
+            }
+        )
+
+    def reply_to(self, content: str, thread_id: str) -> str:
+        thread = self.loaded[thread_id]
+        if (memo := re.search(rf"{MEMO_PREFIX}([a-zA-Z0-9-]+)", content)) is not None:
+            thread["memo"] = memo.group(1)
+            self.save(thread_id)
+            return "Noted."
+        if PeerCommand.RECALL in content:
+            return f"Recalled: {thread['memo']}"
+        if PeerCommand.TOOLS in content:
+            return f"Tools: {sorted(thread['tools'])}"
+        request = file_request(content)
+        return reply_text(
+            request["tool_name"], perform(request["tool_name"], request["input"])
+        )
+
+    def call_tool(
+        self, thread_id: str, turn_id: str, tool: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        emit(
+            {
+                "id": f"call-{turn_id}",
+                "method": "item/tool/call",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "callId": f"call-{turn_id}",
+                    "tool": tool,
+                    "arguments": arguments,
+                },
+            }
+        )
+        response = json.loads(sys.stdin.readline())
+        if not response.get("result", {}).get("success"):
+            raise RuntimeError(f"The Band tool {tool} failed: {response}")
+        return response
 
 
 def main() -> None:
@@ -165,13 +259,14 @@ def main() -> None:
     parser.add_argument("--hold-startup", type=Path)
     parser.add_argument("--stay", action="store_true")
     parser.add_argument("--band-url")
+    parser.add_argument("--home", type=Path, default=Path("codex-home"))
     options = parser.parse_args()
     tool_name = ""
-    threads: set[str] = set()
+    server = AppServer(options.home, options.fail_startup, options.hold_startup)
     for line in sys.stdin:
         message = json.loads(line)
         if "method" in message:
-            codex(message, options.fail_startup, options.hold_startup, threads)
+            server.handle(message)
             continue
         match message["type"]:
             case "control_request":

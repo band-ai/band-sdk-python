@@ -14,7 +14,7 @@ from collections import deque
 from typing import Any
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.integrations.codex import CodexRequestMethod, RpcEvent
+from band.integrations.codex import TRANSPORT_CLOSED, CodexRequestMethod, RpcEvent
 
 
 class RecordedRequests:
@@ -48,7 +48,14 @@ async def await_released_turn(
 
 
 class FakeCodexClient(RecordedRequests):
-    """Minimal fake transport client for adapter tests."""
+    """Minimal fake transport client for adapter tests.
+
+    Like a real app-server, it emits a turn's scripted events only once that
+    turn starts: each ``turn/start`` releases the events up to and including
+    the next ``turn/completed`` or transport close, and a scripted event that
+    names no turn is stamped with the started turn's id. Once released
+    events run out, the turn keeps working until something ends it.
+    """
 
     def __init__(
         self,
@@ -60,6 +67,9 @@ class FakeCodexClient(RecordedRequests):
         model_list_result: dict[str, Any] | None = None,
         model_list_error: Exception | None = None,
         skill_roots_error: Exception | None = None,
+        started_settings: dict[str, Any] | None = None,
+        resumed_settings: dict[str, Any] | None = None,
+        resumed_thread_id: str | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -74,8 +84,15 @@ class FakeCodexClient(RecordedRequests):
         self._model_list_result = model_list_result
         self._model_list_error = model_list_error
         self._skill_roots_error = skill_roots_error
+        # What thread/start and thread/resume report the thread runs with.
+        self._started_settings = started_settings or {}
+        self._resumed_settings = resumed_settings or self._started_settings
+        self._resumed_thread_id = resumed_thread_id
         self._thread_counter = 0
         self._turn_counter = 0
+        self._released: deque[RpcEvent] = deque()
+        self._emitted = asyncio.Event()
+        self.turn_started = asyncio.Event()
 
     async def connect(self) -> None:
         self.connected = True
@@ -115,10 +132,12 @@ class FakeCodexClient(RecordedRequests):
             case CodexRequestMethod.THREAD_RESUME:
                 if self._resume_error is not None:
                     raise self._resume_error
-                return {"thread": {"id": payload.get("threadId", "thr-resumed")}}
+                thread_id = self._resumed_thread_id or payload.get("threadId")
+                return {"thread": {"id": thread_id}, **self._resumed_settings}
             case CodexRequestMethod.THREAD_START:
                 self._thread_counter += 1
-                return {"thread": {"id": f"thr-{self._thread_counter}"}}
+                thread_id = f"thr-{self._thread_counter}"
+                return {"thread": {"id": thread_id}, **self._started_settings}
             case CodexRequestMethod.TURN_START:
                 if self._turn_start_error is not None:
                     err = self._turn_start_error
@@ -126,6 +145,8 @@ class FakeCodexClient(RecordedRequests):
                         self._turn_start_error = None
                     raise err
                 self._turn_counter += 1
+                self._release_turn_events(f"turn-{self._turn_counter}")
+                self.turn_started.set()
                 return {
                     "turn": {
                         "id": f"turn-{self._turn_counter}",
@@ -137,10 +158,24 @@ class FakeCodexClient(RecordedRequests):
 
         return {}
 
+    def _release_turn_events(self, turn_id: str) -> None:
+        while self._events:
+            event = self._events.popleft()
+            self._released.append(_attributed(event, turn_id))
+            if event.method in {"turn/completed", TRANSPORT_CLOSED}:
+                break
+        self._emitted.set()
+
+    def emit(self, *events: RpcEvent) -> None:
+        """Send events now, outside any scripted turn."""
+        self._released.extend(events)
+        self._emitted.set()
+
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
-        if not self._events:
-            raise TimeoutError
-        return self._events.popleft()
+        while not self._released:
+            self._emitted.clear()
+            await asyncio.wait_for(self._emitted.wait(), timeout=timeout_s)
+        return self._released.popleft()
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
         self.responses.append((request_id, result))
@@ -159,8 +194,23 @@ class FakeCodexClient(RecordedRequests):
         self.closed = True
 
 
+def _attributed(event: RpcEvent, turn_id: str) -> RpcEvent:
+    """``event`` naming ``turn_id`` when it names no turn of its own."""
+    params = event.params if isinstance(event.params, dict) else {}
+    if "turnId" in params or "turn" in params or event.method == TRANSPORT_CLOSED:
+        return event
+    params = {**params, "turnId": turn_id}
+    return RpcEvent(
+        kind=event.kind,
+        method=event.method,
+        params=params,
+        id=event.id,
+        raw={**event.raw, "params": params},
+    )
+
+
 def patch_codex_client(adapter: CodexAdapter, client: FakeCodexClient) -> None:
-    def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+    def _build(_workspace: str) -> FakeCodexClient:
         return client
 
     adapter._build_client = _build  # type: ignore[method-assign]
@@ -215,7 +265,6 @@ def agent_message_started(
         "item/started",
         {
             "threadId": "thr-1",
-            "turnId": "turn-1",
             "startedAtMs": 1,
             "item": {"type": "agentMessage", "id": item_id, "text": "", "phase": phase},
         },
@@ -225,7 +274,7 @@ def agent_message_started(
 def agent_message_delta(text: str, item_id: str = "m") -> RpcEvent:
     return event_notification(
         "item/agentMessage/delta",
-        {"threadId": "thr-1", "turnId": "turn-1", "itemId": item_id, "delta": text},
+        {"threadId": "thr-1", "itemId": item_id, "delta": text},
     )
 
 
@@ -236,7 +285,6 @@ def agent_message_completed(
         "item/completed",
         {
             "threadId": "thr-1",
-            "turnId": "turn-1",
             "completedAtMs": 2,
             "item": {
                 "type": "agentMessage",

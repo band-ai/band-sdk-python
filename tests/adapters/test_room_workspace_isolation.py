@@ -11,6 +11,7 @@ import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
 from band.core.protocols import AgentToolsProtocol
+from band.core.retention import ReleaseCause
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -134,22 +135,19 @@ async def test_model_override_survives_codex_client_rebuild() -> None:
 
     clients = [Client("auto-model-a"), Client("auto-model-b")]
 
-    def build_client(_config: object) -> Client:
+    def build_client(_workspace: str) -> Client:
         return clients.pop(0)
 
     adapter = CodexAdapter(CodexAdapterConfig(model=None))
     adapter._build_client = build_client  # type: ignore[method-assign]
-    adapter._room_client("room-a")
-    adapter._active_room.set("room-a")
-    state = adapter._require_active_client_state()
-    state.model_override = "room-model"
+    room = adapter._room_client("room-a")
+    room.model_override = "room-model"
 
-    await adapter._ensure_client_ready()
-    adapter._client = None
-    adapter._initialized = False
-    await adapter._ensure_client_ready()
+    await adapter._acquire(room, 1, False)
+    await adapter._release(room, ReleaseCause.RECOVERY)
+    await adapter._acquire(room, 2, False)
 
-    assert adapter._selected_model == "room-model"
+    assert room.selected_model == "room-model"
     assert clients == []
 
 
@@ -197,14 +195,12 @@ async def test_codex_starts_each_thread_in_its_room_workspace(tmp_path: Path) ->
     tools = cast(AgentToolsProtocol, FakeAgentTools())
     clients: list[Client] = []
     for room_id in ("room-a", "room-b"):
-        adapter._room_client(room_id)
-        adapter._active_room.set(room_id)
-        client = Client()
-        adapter._client = client  # type: ignore[assignment]
-        adapter._selected_model = "gpt-5.5"
+        room = adapter._room_client(room_id)
+        room.client = client = Client()  # type: ignore[assignment]
+        room.selected_model = "gpt-5.5"
         clients.append(client)
         await adapter._ensure_thread(
-            room_id=room_id,
+            room=room,
             history=CodexSessionState(),
             tools=tools,
             is_session_bootstrap=False,

@@ -28,6 +28,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
     CodexCommand,
+    CodexContinuityError,
     PendingApproval,
 )
 from band.client.streaming import ControlMode
@@ -37,13 +38,14 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
+from band.core.retention import Residency
 from band.core.types import (
     AgentInput,
     Emit,
     HistoryProvider,
     PlatformMessage,
 )
-from band.integrations.codex import CodexJsonRpcError, RpcEvent
+from band.integrations.codex import TRANSPORT_CLOSED, CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import (
     _MAX_ERROR_DETAIL_CHARS,
     CodexItemType,
@@ -159,7 +161,7 @@ def patch_codex_clients_by_room(
 ) -> None:
     """Give each room its own fake app-server, as the real adapter does."""
 
-    def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
+    def _build(_workspace: str) -> FakeCodexClient:
         room_id = adapter._active_room.get()
         assert room_id is not None
         return clients[room_id]
@@ -171,14 +173,23 @@ def wire_codex_room(
     adapter: CodexAdapter,
     client: FakeCodexClient,
     room_id: str = "room-1",
-    *,
-    initialized: bool = True,
 ) -> None:
-    adapter._room_client(room_id)
+    adapter._room_client(room_id).client = client
     adapter._active_room.set(room_id)
-    adapter._client = client  # type: ignore[assignment]
-    if initialized:
-        adapter._initialized = True
+
+
+async def start_room_process(adapter: CodexAdapter, room_id: str = "room-1") -> None:
+    """Bring up ``room_id``'s Codex process through a local command's lease."""
+    await deliver_message(
+        adapter,
+        make_platform_message(room_id=room_id, content=f"/{CodexCommand.MODEL}"),
+        ToolSchemaFakeTools(),
+        CodexSessionState(),
+        None,
+        None,
+        is_session_bootstrap=False,
+        room_id=room_id,
+    )
 
 
 @dataclass(frozen=True)
@@ -1378,115 +1389,35 @@ class TestCodexAdapter:
         assert "transport closed" in warning.getMessage()
 
     @pytest.mark.asyncio
-    async def test_transport_closed_resets_client_state(self) -> None:
-        """After transport/closed, _client and _initialized should be reset
-        so the next message rebuilds the client via _ensure_client_ready()."""
-        events = [
-            event_notification(
-                "transport/closed",
-                {"reason": "Codex process exited unexpectedly"},
-            )
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
-
-        await adapter.on_started("Codex Agent", "A coding agent")
-        with pytest.raises(TurnResultAlreadyReported):
-            await deliver_message(
-                adapter,
-                make_platform_message(),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-1",
-            )
-
-        # After transport/closed, client state should be reset
-        assert adapter._client is None
-        assert adapter._initialized is False
-
-    @pytest.mark.asyncio
-    async def test_transport_closed_clears_per_room_state(self) -> None:
-        """After transport/closed, per-room state (thread_id, raw_history,
-        pending approvals) must be cleared so the next turn does a fresh
-        thread/start instead of reusing a cached thread_id from the dead
-        session."""
-        events = [
-            event_notification(
-                "transport/closed",
-                {"reason": "Codex process exited unexpectedly"},
-            )
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Codex Agent", "A coding agent")
-
-        # Pre-populate per-room state to simulate an active session.
-        adapter._room_threads["room-1"] = "old-thread-id"
-        adapter._raw_history_by_room["room-1"] = [{"role": "user", "content": "hi"}]
-
-        with pytest.raises(TurnResultAlreadyReported):
-            await deliver_message(
-                adapter,
-                make_platform_message(),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
-
-        # Per-room state should be cleared so next turn starts fresh.
-        assert "room-1" not in adapter._room_threads
-        assert "room-1" not in adapter._raw_history_by_room
-
-    @pytest.mark.asyncio
-    async def test_transport_closed_drains_token_usage_for_dead_threads(
+    async def test_a_lost_process_is_retired_and_its_thread_restored_exactly(
         self,
     ) -> None:
-        """Token-usage entries keyed by dead thread ids must be dropped on
-        transport/closed; otherwise they leak past on_cleanup because the
-        thread id is no longer reachable through ``_room_threads``.
-        """
-
-        events = [
-            event_notification(
-                "transport/closed",
-                {"reason": "Codex process exited unexpectedly"},
-            )
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Codex Agent", "A coding agent")
-
-        # Pre-populate per-room state + token usage to simulate an active
-        # session with recorded usage.
-        adapter._room_threads["room-1"] = "old-thread-id"
-        adapter._token_usage["old-thread-id"] = CodexTokenUsage(
-            input_tokens=100, total_tokens=150
+        """Recovery closes a lost process but keeps the room's thread, usage
+        and settings: the next turn resumes exactly that thread on a new
+        process, sending only overrides resume supports, and never starts a
+        fresh one in its place."""
+        client = FakeCodexClient(
+            events=[
+                event_notification(TRANSPORT_CLOSED, {"reason": "process exited"}),
+                turn_completed("turn-2"),
+            ]
         )
-
+        adapter = make_codex_adapter(client)
+        await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await deliver_message(
-                adapter,
-                make_platform_message(),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+            await send_bootstrap(adapter)
+        thread_id = adapter._room_threads[ROOM_ID]
+        usage = adapter._token_usage[thread_id] = CodexTokenUsage(total_tokens=150)
 
-        # Dead thread's usage entry must be gone even without a matching
-        # on_cleanup (the room id can no longer look up the thread id).
-        assert "old-thread-id" not in adapter._token_usage
+        await send_bootstrap(adapter)
+
+        assert client.closed
+        assert client.request_methods.count(CodexRequestMethod.THREAD_START) == 1
+        (restore,) = client.params_of(CodexRequestMethod.THREAD_RESUME)
+        assert restore["threadId"] == thread_id
+        assert set(restore) == {"threadId", "cwd", "personality"}
+        assert adapter._room_threads[ROOM_ID] == thread_id
+        assert adapter._token_usage[thread_id] is usage
 
     @pytest.mark.asyncio
     async def test_transport_closed_after_error_does_not_double_report(self) -> None:
@@ -3209,11 +3140,9 @@ class TestHistoryInjection:
         )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
-        adapter._room_client("room-1")
-        adapter._active_room.set("room-1")
-        await adapter._ensure_client_ready()
+        await start_room_process(adapter)
 
-        assert adapter._selected_model == "gpt-5.6-sol"
+        assert adapter._room_clients["room-1"].selected_model == "gpt-5.6-sol"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:
@@ -3263,11 +3192,9 @@ class TestHistoryInjection:
         fake_client = FakeCodexClient(model_list_result={"data": []})
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
-        adapter._room_client("room-1")
-        adapter._active_room.set("room-1")
-        await adapter._ensure_client_ready()
+        await start_room_process(adapter)
 
-        assert adapter._selected_model == OPENAI_MODEL
+        assert adapter._room_clients["room-1"].selected_model == OPENAI_MODEL
 
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
@@ -3277,11 +3204,9 @@ class TestHistoryInjection:
         )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
         await adapter.on_started("Agent", "An agent")
-        adapter._room_client("room-1")
-        adapter._active_room.set("room-1")
-        await adapter._ensure_client_ready()
+        await start_room_process(adapter)
 
-        assert adapter._selected_model == OPENAI_MODEL
+        assert adapter._room_clients["room-1"].selected_model == OPENAI_MODEL
 
     @pytest.mark.asyncio
     async def test_non_model_error_propagates(self) -> None:
@@ -4991,12 +4916,13 @@ class TestReviewFixes:
 
     @pytest.mark.asyncio
     async def test_unexpected_recv_error_reports_and_fails_turn(self) -> None:
-        """When recv_event raises a non-timeout exception, the adapter reports
-        an AgentFailure and fails the turn instead of silently degrading to a
+        """When the event stream breaks mid-turn, the adapter reports an
+        AgentFailure and fails the turn instead of silently degrading to a
         plain chat reply with no structured signal at all."""
 
         class BrokenClient(FakeCodexClient):
             async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+                await self.turn_started.wait()
                 raise ConnectionError("transport died")
 
         fake_client = BrokenClient()
@@ -5026,6 +4952,7 @@ class TestReviewFixes:
 
         class RpcErrorClient(FakeCodexClient):
             async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+                await self.turn_started.wait()
                 raise rpc_error
 
         rpc_error_client = RpcErrorClient()
@@ -5595,17 +5522,6 @@ def parked_on_approval(*then: RpcEvent) -> tuple[RpcEvent, ...]:
     )
 
 
-class EndlessWorkClient(FakeCodexClient):
-    """A Codex server that, once its scripted events run out, keeps the
-    turn working forever."""
-
-    async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
-        if self._events:
-            return self._events.popleft()
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-
 class TestApprovalFromASequentialRoom:
     """Band hands a room its messages one at a time, so the reply resolving an
     approval is delivered only after the asking message's on_message returns.
@@ -5709,7 +5625,7 @@ class TestApprovalFromASequentialRoom:
         """Once released, the runtime can't cancel the turn; cleanup waits out
         the settle timeout, then cancels Codex work that never ends."""
         room = await codex_room(
-            client=EndlessWorkClient(events=list(parked_on_approval())),
+            client=FakeCodexClient(events=list(parked_on_approval())),
             approval_wait_timeout_s=3600,
         )
 
@@ -7163,3 +7079,207 @@ async def test_restored_codex_thread_receives_the_mandatory_transport_contract()
     inputs = client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
     assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
     assert client.params_of(CodexRequestMethod.THREAD_RESUME)
+
+
+async def answer_to(client: FakeCodexClient, request_id: int | str) -> dict[str, Any]:
+    """The response the adapter sent ``request_id``, once it has."""
+    for _ in range(MAX_ANSWER_POLLS):
+        for answered, result in client.responses:
+            if answered == request_id:
+                return result
+        await asyncio.sleep(0)
+    raise AssertionError(f"Request {request_id} was never answered")
+
+
+MAX_ANSWER_POLLS = 200
+
+
+class SlowTurnStartClient(FakeCodexClient):
+    """An app-server whose turn/start answer trails the turn's first events."""
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        result = await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+        if method == CodexRequestMethod.TURN_START:
+            for _ in range(5):
+                await asyncio.sleep(0)
+        return result
+
+
+class TestNativeTurnOwnership:
+    """Native callbacks reach only the Band turn that started their native
+    turn, on the process that sent them, and a room keeps its lease through
+    detached decisions."""
+
+    @pytest.mark.asyncio
+    async def test_a_parked_decision_keeps_its_turn_leased_until_it_finishes(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+        )
+        await room.send("run tests")
+        residency = room.adapter._room_clients[ROOM_ID].residency
+        assert (residency.snapshot.leases, residency.snapshot.accepted) == (1, 1)
+
+        await room.send(f"/{CodexCommand.APPROVE} req-10")
+        await room.settled()
+        assert (residency.snapshot.leases, residency.snapshot.accepted) == (0, 0)
+
+    @pytest.mark.asyncio
+    async def test_native_work_no_band_turn_started_never_gets_band_tools(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            tool_call_request(1, BandTool.NO_REPLY), turn_completed()
+        )
+        await room.send("hello")
+        autonomous = {"threadId": "thr-1", "turnId": "autonomous"}
+
+        room.client.emit(
+            event_request(
+                41,
+                "item/tool/call",
+                {
+                    **autonomous,
+                    "callId": "c-41",
+                    "tool": BandTool.SEND_MESSAGE,
+                    "arguments": {"content": "unasked", "mentions": ["@a"]},
+                },
+            ),
+            event_request(
+                42,
+                "item/commandExecution/requestApproval",
+                {**autonomous, "command": "x"},
+            ),
+        )
+
+        assert (await answer_to(room.client, 41))["success"] is False
+        assert await answer_to(room.client, 42) == {"decision": "decline"}
+        assert [call["tool_name"] for call in room.deliveries[0].tool_calls] == [
+            BandTool.NO_REPLY
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_late_item_is_not_charged_to_the_next_turn(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            tool_call_request(1, BandTool.NO_REPLY),
+            turn_completed("turn-1"),
+            tool_call_request(2, BandTool.NO_REPLY),
+            turn_completed("turn-2"),
+        )
+        await room.send("first")
+        room.client.emit(
+            event_notification(
+                "item/completed",
+                {
+                    "threadId": "thr-1",
+                    "turnId": "turn-1",
+                    "item": {
+                        "type": "commandExecution",
+                        "id": "late",
+                        "command": "make",
+                        "aggregatedOutput": "late output",
+                    },
+                },
+            )
+        )
+
+        await room.send("second")
+
+        assert "late output" not in json.dumps(room.deliveries[-1].events_sent)
+
+    @pytest.mark.asyncio
+    async def test_events_ahead_of_the_turn_start_answer_reach_their_turn(
+        self,
+    ) -> None:
+        client = SlowTurnStartClient(
+            events=[
+                final_text("on time"),
+                event_request(
+                    7,
+                    "item/tool/call",
+                    {"turnId": "someone-else", "tool": BandTool.SEND_MESSAGE},
+                ),
+                turn_completed(),
+            ]
+        )
+        adapter = make_codex_adapter(client)
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        await send_bootstrap(adapter, tools=tools)
+
+        assert [e["content"] for e in events_of_type(tools, "thought")] == ["on time"]
+        assert (await answer_to(client, 7))["success"] is False
+        assert tools.tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_stale_process_loss_cannot_retire_its_replacement(self) -> None:
+        client = FakeCodexClient(
+            events=[
+                event_notification(TRANSPORT_CLOSED, {"reason": "exited"}),
+                turn_completed("turn-2"),
+            ]
+        )
+        adapter = make_codex_adapter(client)
+        await adapter.on_started("Codex Agent", "A coding agent")
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter)
+        room = adapter._room_clients[ROOM_ID]
+        lost = room.generation
+        await send_bootstrap(adapter)
+
+        adapter._lose_process(
+            room, lost, event_notification(TRANSPORT_CLOSED, {"reason": "late"})
+        )
+
+        assert room.generation == lost + 1
+        assert room.residency.snapshot.state == Residency.RESIDENT
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("restore", "refusal"),
+        [
+            ({"resumed_settings": {"modelProvider": "other"}}, "model_provider"),
+            ({"resumed_thread_id": "thr-elsewhere"}, "thr-elsewhere"),
+            (
+                {
+                    "resume_error": CodexJsonRpcError(
+                        code=-32600, message="no rollout found for thread id thr-1"
+                    )
+                },
+                "no rollout found",
+            ),
+        ],
+        ids=["changed-settings", "other-thread", "no-rollout"],
+    )
+    async def test_a_refused_restore_keeps_the_thread_and_starts_no_other(
+        self, restore: dict[str, Any], refusal: str
+    ) -> None:
+        client = FakeCodexClient(
+            events=[event_notification(TRANSPORT_CLOSED, {"reason": "exited"})],
+            started_settings={"modelProvider": "openai"},
+            **restore,
+        )
+        adapter = make_codex_adapter(client)
+        await adapter.on_started("Codex Agent", "A coding agent")
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter)
+        tools = ToolSchemaFakeTools()
+
+        with pytest.raises((CodexContinuityError, CodexJsonRpcError), match=refusal):
+            await send_bootstrap(adapter, tools=tools)
+
+        assert adapter._room_threads[ROOM_ID] == "thr-1"
+        assert client.request_methods.count(CodexRequestMethod.THREAD_START) == 1
+        assert refusal in reported_failures(tools)[0]["message"]
