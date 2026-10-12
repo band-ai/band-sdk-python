@@ -172,6 +172,10 @@ agno = [
 strands = [
     "strands-agents[openai]>=1.40,<2",
 ]
+# NOOA supports Python 3.12 and 3.13 only; elsewhere the extra installs nothing.
+nooa = [
+    "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14'",
+]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai and parlant.
 # crewai is declared conflicting with both parlant and pydantic-ai (its pydantic
@@ -236,6 +240,8 @@ dev = [
     "agno>=2.6.0",
     # Include Strands Agents for testing
     "strands-agents[openai]>=1.40,<2",
+    # Include NOOA for testing (Python 3.12 and 3.13 only)
+    "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14'",
     # Include letta-client for testing
     "letta-client>=1.0.0",
     # Include bridge deps for testing

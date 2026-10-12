@@ -42,6 +42,26 @@ async def run_strands(script: TurnScript, tools: FakeAgentTools) -> None:
     await adapter.on_event(turn_input(tools))
 
 
+async def run_nooa(script: TurnScript, tools: FakeAgentTools) -> None:
+    pytest.importorskip("nooa")
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        NooaAdapter,
+    )
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        room_call,
+        scripted_llm,
+        scripted_room_agent,
+    )
+
+    # NOOA returns a typed result rather than text, so final_text has no channel.
+    llm = scripted_llm(
+        *(room_call(call.name, call.arguments) for call in script.tool_calls)
+    )
+    adapter = NooaAdapter(agent=scripted_room_agent(llm))
+    await adapter.on_started("Agent", "A test agent")
+    await adapter.on_event(turn_input(tools))
+
+
 async def run_pydantic_ai(script: TurnScript, tools: FakeAgentTools) -> None:
     pytest.importorskip("pydantic_ai")
     from pydantic_ai.models.function import (  # noqa: PLC0415 -- pydantic_ai extra, absent from some lane venvs
@@ -249,6 +269,7 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
 
 PROBES: dict[str, TurnOutcomeProbe] = {
     "strands": TurnOutcomeProbe(run=run_strands),
+    "nooa": TurnOutcomeProbe(run=run_nooa),
     "pydantic_ai": TurnOutcomeProbe(run=run_pydantic_ai),
     "agno": TurnOutcomeProbe(run=run_agno),
     "langgraph": TurnOutcomeProbe(run=run_langgraph),

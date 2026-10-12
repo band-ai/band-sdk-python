@@ -362,6 +362,45 @@ def _build_agno(
     )
 
 
+@adapter(Adapter.NOOA, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)
+def _build_nooa(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    # A NOOA agent's prompt is its class docstring, so steering goes into the
+    # adapter's custom section beside the Band instructions.
+    from nooa.unifiedllm.registry import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
+        get_llm_client,
+    )
+
+    from band.adapters.nooa import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
+        NooaAdapter,
+        NooaAdapterConfig,
+        NooaRoomAgent,
+    )
+
+    api_key = s.llm_credentials.anthropic_api_key
+    llm = get_llm_client(
+        f"anthropic/{s.llm_models.anthropic_model}",
+        **({"api_key": api_key} if api_key else {}),
+    )
+    agent = type(NooaRoomAgent)(
+        "BaselineAgent",
+        (NooaRoomAgent,),
+        {"__doc__": "You are a helpful participant in a Band chat room."},
+        llm=llm,
+    )
+    return NooaAdapter(
+        NooaAdapterConfig(custom_section=prompt),
+        agent=agent,
+        additional_tools=_custom_tool_defs(tools),
+        **feature_kwargs(features),
+    )
+
+
 @adapter(Adapter.CREWAI_FLOW, requires=[Dep.CREWAI], runs_tool_loop=False)
 def _build_crewai_flow(
     s: BaselineSettings,

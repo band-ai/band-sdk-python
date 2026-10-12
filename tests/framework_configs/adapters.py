@@ -8,6 +8,7 @@ run identical logic across all registered adapters.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
@@ -42,6 +43,9 @@ from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
+
+# NOOA supports Python 3.12 and 3.13 only, so the dev extra skips it elsewhere.
+_HAS_NOOA = importlib.util.find_spec("nooa") is not None
 
 __all__ = [
     "ADAPTER_CONFIGS",
@@ -172,6 +176,41 @@ async def _pydantic_ai_advertised_arg_text() -> dict[str, dict[str, str | None]]
             for arg, spec in schema.json_schema.get("properties", {}).items()
         }
         for name, schema in (await pydantic_ai_probe_tools()).items()
+    }
+
+
+def _docstring_arg_text(docstring: str) -> dict[str, str | None]:
+    """The ``Args:`` entries of a Google-style docstring, by argument name."""
+    _, _, args_section = docstring.partition("\nArgs:\n")
+    entries: dict[str, str | None] = {}
+    for line in args_section.splitlines():
+        name, separator, description = line.strip().partition(": ")
+        entries[name] = description if separator else None
+    return entries
+
+
+async def _nooa_advertised_arg_text() -> dict[str, dict[str, str | None]]:
+    """NOOA's model reads each tool as a method docstring, args included.
+
+    The docstring is rendered from the master model, so this reads back the
+    ``Args:`` section the model actually sees.
+    """
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        NooaAdapter,
+    )
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        scripted_llm,
+        scripted_room_agent,
+    )
+
+    adapter = NooaAdapter(
+        agent=scripted_room_agent(scripted_llm()), capabilities=ALL_CAPABILITIES
+    )
+    await adapter.on_started("Agent", "A test agent")
+    tools_class = adapter._room_tools_class
+    return {
+        name: _docstring_arg_text(getattr(tools_class, name).__doc__ or "")
+        for name in tools_class._specs
     }
 
 
@@ -323,6 +362,20 @@ def _agno_factory(**kw: Any) -> Any:
     if "agent" not in kw:
         kw["agent"] = MagicMock()
     return AgnoAdapter(**kw)
+
+
+def _nooa_factory(**kw: Any) -> Any:
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        NooaAdapter,
+    )
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        scripted_llm,
+        scripted_room_agent,
+    )
+
+    if "agent" not in kw:
+        kw["agent"] = scripted_room_agent(scripted_llm())
+    return NooaAdapter(**kw)
 
 
 def _gemini_factory(**kw: Any) -> Any:
@@ -689,6 +742,32 @@ def _build_agno_config() -> AdapterConfig:
     )
 
 
+def _build_nooa_config() -> AdapterConfig | None:
+    if not _HAS_NOOA:
+        return None  # optional dep not installed on this Python; skip
+
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+        NooaAdapterConfig,
+    )
+
+    custom = NooaAdapterConfig(custom_section="Be concise.")
+    return AdapterConfig(
+        framework_id="nooa",
+        display_name="NOOA",
+        adapter_factory=_nooa_factory,
+        expected_initial_values={
+            "config": NooaAdapterConfig(),
+            # The room tool surface depends on the effective features, so the
+            # agent class is specialized in on_started, not before.
+            "_room_agent_class": None,
+            "_agents": {},
+        },
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
+        advertised_arg_text=_nooa_advertised_arg_text,
+    )
+
+
 def _build_gemini_config() -> AdapterConfig:
     from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
         GeminiAdapterConfig,
@@ -723,6 +802,7 @@ def _build_gemini_config() -> AdapterConfig:
 # cannot share the framework-adapter conformance tests (same rationale as a2a/acp).
 # claude_sdk is excluded when claude-agent-sdk optional dep is not installed.
 # copilot_sdk is excluded when github-copilot-sdk optional dep is not installed.
+# nooa is excluded when the nooa optional dep is not installed (Python 3.11).
 
 _excluded = {
     "a2a",
@@ -737,6 +817,8 @@ if not _HAS_CLAUDE_SDK:
     _excluded = _excluded | {"claude_sdk"}
 if not _HAS_COPILOT_SDK:
     _excluded = _excluded | {"copilot_sdk"}
+if not _HAS_NOOA:
+    _excluded = _excluded | {"nooa"}
 ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)
 
 
@@ -774,6 +856,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_agno_config,
     _build_gemini_config,
     _build_google_adk_config,
+    _build_nooa_config,
 ]
 
 
