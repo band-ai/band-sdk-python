@@ -768,7 +768,7 @@ class ExecutionContext:
     async def _stop_retained_tasks(self, deadline: float) -> None:
         owners = tuple(self._detached_cycle_tasks.values())
         for owner in owners:
-            owner.terminate(deadline=deadline)
+            owner.retry(deadline=deadline)
         for owner in owners:
             await owner.drain()
         if unfinished := sum(not task.done() for task in self._detached_cycle_tasks):

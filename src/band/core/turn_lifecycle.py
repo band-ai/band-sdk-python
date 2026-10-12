@@ -63,6 +63,19 @@ class TurnTask:
         if not cooperative:
             self._cancel()
 
+    def retry(self, *, deadline: float) -> None:
+        """Cancel again within a fresh grace once the previous grace has expired.
+
+        A task that swallowed its cancel would otherwise stay unfinished on
+        every cleanup retry; within an unexpired grace this is ``terminate``.
+        """
+        if self.deadline is None or self.deadline > asyncio.get_running_loop().time():
+            self.terminate(deadline=deadline)
+            return
+        self.deadline = deadline
+        self._cancel_delivered = False
+        self._cancel()
+
     def _release_timer(self, bound: float) -> float:
         """Keep an attached provider timer from cancelling terminal cleanup."""
         timer = self._timer
