@@ -508,11 +508,12 @@ project_excludes = [
     "examples/**",              # Examples use local imports
     "band-bridge/**",        # Standalone bridge app, not in src/ import root
 ]
-# CrewAI is in a conflict group with parlant/pydantic-ai and not installed in
-# the default venv. Rather than excluding the files (which loses type coverage
-# in a dev-crewai venv), tell pyrefly to treat missing crewai modules as Any.
+# CrewAI and Parlant are each in a conflict group and not installed in the
+# default venv. Rather than excluding the files (which loses type coverage in
+# their own lane's venv), tell pyrefly to treat their missing modules as Any.
 ignore-missing-imports = [
     "crewai.*",
+    "parlant.*",
     "nest_asyncio",
 ]
 # Disable the default **/.[!/.]*/** exclude so pyrefly works inside
