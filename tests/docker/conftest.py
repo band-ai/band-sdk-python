@@ -96,7 +96,7 @@ def kit_tck(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def baseline_settings() -> BaselineSettings:
     """Live Docker checks always use the repository credential source."""
     load_dotenv(ENV_TEST_FILE, override=True)
-    return BaselineSettings()
+    return BaselineSettings.from_band_file(ENV_TEST_FILE)
 
 
 @pytest.fixture(scope="session")

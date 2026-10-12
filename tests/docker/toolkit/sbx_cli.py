@@ -357,37 +357,36 @@ def attached_run(name: str) -> Iterator[None]:
     hold this open the same way.
     """
     process, controller_fd = _spawn_pty_process([SBX, "run", "--name", name])
-    stopping = threading.Event()
+    with ExitStack() as ownership:
+        ownership.callback(_stop_pty_process, process, controller_fd)
+        stopping = threading.Event()
 
-    def drain_output() -> None:
-        with selectors.DefaultSelector() as selector:
-            selector.register(controller_fd, selectors.EVENT_READ)
-            while not stopping.is_set():
-                try:
-                    readable = selector.select(ATTACH_READ_POLL_S)
-                    if stopping.is_set():
+        def drain_output() -> None:
+            with selectors.DefaultSelector() as selector:
+                selector.register(controller_fd, selectors.EVENT_READ)
+                while not stopping.is_set():
+                    try:
+                        readable = selector.select(ATTACH_READ_POLL_S)
+                        if stopping.is_set():
+                            return
+                        if not readable:
+                            continue
+                        output = os.read(controller_fd, 65536)
+                    except OSError:
                         return
-                    if not readable:
-                        continue
-                    output = os.read(controller_fd, 65536)
-                except OSError:
-                    return
-                if not output:
-                    return
-                logger.debug(
-                    "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
-                )
+                    if not output:
+                        return
+                    logger.debug(
+                        "sandbox %s: %s", name, output.decode(errors="replace").rstrip()
+                    )
 
-    reader = threading.Thread(target=drain_output, daemon=True)
-    reader.start()
-    try:
+        reader = threading.Thread(target=drain_output, daemon=True)
+        reader.start()
+        ownership.callback(reader.join)
+        ownership.callback(stopping.set)
         yield
         if process.poll() is not None:
             raise RuntimeError(f"owned sbx run for {name} exited {process.returncode}")
-    finally:
-        stopping.set()
-        reader.join()
-        _stop_pty_process(process, controller_fd)
 
 
 NAME_PREFIX = "band-nevervm"

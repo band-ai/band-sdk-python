@@ -22,7 +22,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 from band_rest.core.api_error import ApiError
-from dotenv import dotenv_values, load_dotenv
+from dotenv import load_dotenv
 from httpx import HTTPStatusError
 
 # tests.* is dev-only source, not part of the published band-sdk package, so
@@ -83,19 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _require_settings() -> BaselineSettings:
     load_dotenv(ENV_TEST_FILE, override=True)
-    settings = BaselineSettings()
-    values = dotenv_values(ENV_TEST_FILE)
-    settings.credentials = settings.credentials.model_copy(
-        update={"api_key_user": values.get("BAND_API_KEY_USER") or ""}
-    )
-    settings.endpoints = settings.endpoints.model_copy(
-        update={
-            "rest_url": values.get("BAND_REST_URL")
-            or type(settings.endpoints).model_fields["rest_url"].default,
-            "ws_url": values.get("BAND_WS_URL")
-            or type(settings.endpoints).model_fields["ws_url"].default,
-        }
-    )
+    settings = BaselineSettings.from_band_file(ENV_TEST_FILE)
     if not settings.credentials.api_key_user:
         raise ValueError("BAND_API_KEY_USER is required (see .env.test)")
     return settings

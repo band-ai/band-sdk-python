@@ -32,6 +32,7 @@ BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "spec.yaml"
 # needs to add into its own @pytest.mark.timeout on top of the rest of its
 # body's budget — named so the two can't drift apart again.
 BUILD_TIMEOUT_S = 600
+WORKLOAD_REFERENCE = "band-workload:validation"
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ class OciLayout:
                 "-f",
                 str(BAND_PYTHON_KIT_DOCKERFILE),
                 "-t",
-                "band-workload:validation",
+                WORKLOAD_REFERENCE,
                 "--output",
                 f"type=oci,dest={archive}",
             ]
@@ -134,7 +135,7 @@ class OciLayout:
             layout.mkdir()
             with tarfile.open(archive) as contents:
                 contents.extractall(layout, filter="data")
-            yield cls(layout, "validation", version, revision)
+            yield cls(layout, WORKLOAD_REFERENCE.rpartition(":")[2], version, revision)
 
     def fetch(self, command: list[str]) -> dict[str, Any]:
         """Adapt registry inspection to the same content-addressed local graph."""
@@ -154,7 +155,7 @@ class OciLayout:
             "scripts/validate-workload.py", "workload_validator"
         )
         validator.validate_workload(
-            "band-workload:validation",
+            WORKLOAD_REFERENCE,
             fetch=self.fetch,
             version=self.version,
             revision=self.revision,

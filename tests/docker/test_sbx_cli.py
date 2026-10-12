@@ -369,3 +369,32 @@ print(json.dumps({"output_drained": drained, "owner_stopped": spawned[0].poll() 
         timeout=15,
     )
     assert json.loads(result.stdout) == {"output_drained": True, "owner_stopped": True}
+
+
+@markers.requires_posix_pty
+def test_reader_start_failure_releases_child_and_pty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process, controller = _spawn_pty_process(
+        [sys.executable, "-c", "import time; time.sleep(60)"]
+    )
+    monkeypatch.setattr(
+        sbx_cli, "_spawn_pty_process", lambda argv: (process, controller)
+    )
+
+    def fail_start(thread: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", fail_start)
+    try:
+        with (
+            pytest.raises(RuntimeError, match="can't start new thread"),
+            attached_run("local-peer"),
+        ):
+            pytest.fail("startup failure must not yield ownership")
+        assert process.poll() is not None
+        with pytest.raises(OSError):
+            os.fstat(controller)
+    finally:
+        if process.poll() is None:
+            _stop_pty_process(process, controller)

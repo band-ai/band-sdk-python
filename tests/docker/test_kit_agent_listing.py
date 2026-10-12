@@ -11,6 +11,8 @@ import httpx
 import pytest
 from band_rest.core.api_error import ApiError
 
+from tests.docker import conftest as docker_fixtures
+from tests.e2e.baseline.settings import BandEndpoints
 from tests.loaders import load_script_module
 
 docker_demo = load_script_module(
@@ -100,26 +102,71 @@ async def test_self_registration_cleanup_attempts_every_resource_and_keeps_unres
 
 
 def test_self_registration_ignores_inherited_endpoint_alias(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("BAND_BASE_URL", "https://stale.band.test")
-    monkeypatch.setenv("BAND_API_KEY_USER", "stale-user")
-    monkeypatch.setattr(self_registration, "load_dotenv", Mock())
-    monkeypatch.setattr(
-        self_registration,
-        "dotenv_values",
-        Mock(
-            return_value={
-                "BAND_REST_URL": "https://canonical.band.test",
-                "BAND_WS_URL": "wss://canonical.band.test/socket",
-                "BAND_API_KEY_USER": "canonical-user",
-            }
-        ),
+    env_file = tmp_path / ".env.test"
+    env_file.write_text(
+        "BAND_REST_URL=https://canonical.band.test\n"
+        "BAND_WS_URL=wss://canonical.band.test/socket\n"
+        "BAND_API_KEY_USER=canonical-user\n"
     )
+    monkeypatch.setenv("BAND_BASE_URL", "https://stale.band.test")
+    monkeypatch.setenv("BAND_REST_URL", "https://stale.band.test")
+    monkeypatch.setenv("BAND_WS_URL", "wss://stale.band.test/socket")
+    monkeypatch.setenv("BAND_API_KEY_USER", "stale-user")
+    monkeypatch.setattr(self_registration, "ENV_TEST_FILE", env_file)
     settings = self_registration._require_settings()
     assert settings.endpoints.rest_url == "https://canonical.band.test"
     assert settings.endpoints.ws_url == "wss://canonical.band.test/socket"
     assert settings.credentials.api_key_user == "canonical-user"
+
+
+@pytest.mark.parametrize("key", ["canonical-user", "", None])
+def test_docker_live_settings_are_exclusively_file_sourced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str | None,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    contents = "BAND_REST_URL=https://canonical.band.test\n"
+    if key is not None:
+        contents += f"BAND_API_KEY_USER={key}\n"
+    env_file.write_text(contents)
+    for variable, value in {
+        "BAND_BASE_URL": "https://stale.band.test",
+        "BAND_REST_URL": "https://stale.band.test",
+        "BAND_WS_URL": "wss://stale.band.test/socket",
+        "BAND_API_KEY": "stale-agent-key",
+        "BAND_API_KEY_USER": "stale-user-key",
+        "BAND_API_KEY_USER_2": "stale-second-user-key",
+        "E2E_TIMEOUT": "321",
+    }.items():
+        monkeypatch.setenv(variable, value)
+    monkeypatch.setattr(docker_fixtures, "ENV_TEST_FILE", env_file)
+    settings = docker_fixtures.baseline_settings.__wrapped__()
+    assert settings.endpoints.rest_url == "https://canonical.band.test"
+    assert settings.endpoints.ws_url == BandEndpoints.model_fields["ws_url"].default
+    assert settings.credentials.model_dump() == {
+        "api_key": "",
+        "api_key_user": key or "",
+        "api_key_user_2": "",
+    }
+    assert settings.e2e_timeout == 321
+
+
+def test_docker_live_settings_accept_endpoint_alias_from_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text("BAND_BASE_URL=https://canonical.band.test\n")
+    monkeypatch.setenv("BAND_BASE_URL", "https://stale.band.test")
+    monkeypatch.setattr(docker_fixtures, "ENV_TEST_FILE", env_file)
+    assert (
+        docker_fixtures.baseline_settings.__wrapped__().endpoints.rest_url
+        == "https://canonical.band.test"
+    )
 
 
 @pytest.mark.parametrize(
