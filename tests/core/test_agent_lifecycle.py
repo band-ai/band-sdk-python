@@ -7,18 +7,25 @@ resources (e.g. a CLI runtime subprocess) don't outlive the agent.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from band.agent import Agent
 
 
-def make_agent(adapter: object) -> Agent:
+def make_runtime() -> AsyncMock:
     runtime = AsyncMock()
     runtime.stop.return_value = True
-    agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
-    agent._started = True
+    runtime.cleanup_pending = False
+    runtime.claim_single_instance = MagicMock()
+    runtime.release_single_instance = MagicMock()
+    return runtime
+
+
+async def make_agent(adapter: object) -> Agent:
+    agent = Agent(runtime=make_runtime(), adapter=adapter)  # type: ignore[arg-type]
+    await agent.start()
     return agent
 
 
@@ -27,7 +34,7 @@ class TestStartFailureCleansUpAdapter:
     async def test_runtime_start_failure_rolls_back_adapter(self):
         """on_started may spawn resources; a failed runtime.start must free them."""
         adapter = AsyncMock()
-        runtime = AsyncMock()
+        runtime = make_runtime()
         runtime.start.side_effect = RuntimeError("websocket refused")
         agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
 
@@ -41,7 +48,7 @@ class TestStopCleansUpAdapter:
     @pytest.mark.asyncio
     async def test_stop_calls_adapter_cleanup_all(self):
         adapter = AsyncMock()
-        agent = make_agent(adapter)
+        agent = await make_agent(adapter)
 
         assert await agent.stop() is True
 
@@ -51,22 +58,25 @@ class TestStopCleansUpAdapter:
     async def test_stop_cleans_up_adapter_even_when_runtime_stop_raises(self):
         """A broken websocket close must not leak adapter-owned resources."""
         adapter = AsyncMock()
-        agent = make_agent(adapter)
+        agent = await make_agent(adapter)
         agent._runtime.stop.side_effect = RuntimeError("close failed")
 
-        with pytest.raises(RuntimeError, match="close failed"):
+        with pytest.raises(ExceptionGroup) as failures:
             await agent.stop()
+        assert failures.group_contains(RuntimeError, match="close failed")
 
         adapter.cleanup_all.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_stop_survives_cleanup_all_failure(self):
-        """A failing adapter cleanup must not break shutdown."""
+    async def test_stop_reports_cleanup_all_failure(self):
+        """A failing adapter cleanup is surfaced, never reported as clean."""
         adapter = AsyncMock()
         adapter.cleanup_all.side_effect = RuntimeError("runtime already gone")
-        agent = make_agent(adapter)
+        agent = await make_agent(adapter)
 
-        assert await agent.stop() is True
+        with pytest.raises(ExceptionGroup) as failures:
+            await agent.stop()
+        assert failures.group_contains(RuntimeError, match="runtime already gone")
 
     @pytest.mark.asyncio
     async def test_stop_tolerates_adapter_without_cleanup_all(self):
@@ -77,6 +87,6 @@ class TestStopCleansUpAdapter:
             async def on_cleanup(self, room_id: str) -> None: ...
             async def on_started(self, name: str, description: str) -> None: ...
 
-        agent = make_agent(MinimalAdapter())
+        agent = await make_agent(MinimalAdapter())
 
         assert await agent.stop() is True

@@ -67,6 +67,23 @@ new session. Only final disposal releases room ownership. Failed or cancelled
 cleanup must retain concrete resource ownership, and a failed release must retry
 after the configured idle interval without waiting for another room message.
 
+Accepted work enters one ready-I/O passage: `RetainedRoom.own(task)` enrolls a
+detached task before its first await, and `use(prepare)` settles any earlier
+transition, leases active I/O, binds the operation, then acquires or strictly
+restores the room. Every physical retirement carries one `ReleaseCause`
+(`IDLE`, `RECOVERY`, `FINAL`). An idle release may return `ReleaseOutcome.BUSY`
+only when nothing was torn down; a raised error leaves cleanup pending with its
+cause and handles retained. A crashed or abandoned residency goes through
+`recover()`, which revokes its event authority and releases once the reporting
+operation unwinds. `transition_timeout_s` bounds how long a caller waits to
+learn an outcome; an unfinished transition stays owned and is never treated as
+closed.
+
+These ownership rules hold with retention disabled. Room, execution, adapter and
+shared MCP cleanup that fails or is cancelled stays owned, with the agent's
+single-instance guard, and the next `stop()` or `shutdown()` retries it instead
+of reporting success.
+
 The shared mechanics do not certify a provider's release callback. Production
 integration still needs authoritative native inactivity or a demonstrated
 non-cancelling drain, uninterrupted background event handling, strict resume,
