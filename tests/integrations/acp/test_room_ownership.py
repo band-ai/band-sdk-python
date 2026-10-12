@@ -2,7 +2,8 @@
 
 Each test drives a real adapter over real ACP JSON-RPC: an in-process fake
 agent, or the stdio peer subprocess where the process boundary itself is under
-test. Barriers hold the exact step a race needs; nothing sleeps for time.
+test. Barriers hold the exact step a race needs; only a transition's own
+time bound is ever waited out.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from acp import RequestError
 from acp.schema import SessionConfigOptionSelect
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
+from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError
 from band.core.model_catalog import ModelSelection
 from band.core.retention import ReleaseCause, Residency, RoomRetentionConfig
@@ -43,7 +45,7 @@ from tests.integrations.acp.acp_toolkit import (
     started_acp_adapter,
 )
 from tests.integrations.acp.acp_toolkit.agent import MODEL_OPTION_ID, Gate
-from tests.integrations.acp.acp_toolkit.harness import TranscriptTools
+from tests.integrations.acp.acp_toolkit.harness import RELEASE_TURNS, TranscriptTools
 from tests.integrations.acp.acp_toolkit.peer import ExitStage, stdio_peer_config
 from tests.integrations.acp.conftest import make_platform_message
 from tests.mcpbackends import backends_created_by
@@ -113,6 +115,7 @@ class TestDeliberateWake:
             room = await recover(session)
             await crash_backend(session.adapter._mcp)
             agent.knows_session(retained).advertises(model_select("a", "a", "b"))
+            switched = len(agent.config_selections(retained))
 
             async with woken(session.adapter, room):
                 assert room.live_session is not None
@@ -121,7 +124,7 @@ class TestDeliberateWake:
 
         assert agent.session_load_requests == [retained]
         assert agent.session_ids() == [retained]
-        assert agent.config_selections(retained)[-1] == (MODEL_OPTION_ID, "b")
+        assert agent.config_selections(retained)[switched:] == [(MODEL_OPTION_ID, "b")]
         assert live_url != stale_url
 
     @pytest.mark.asyncio
@@ -196,6 +199,65 @@ class TestRecovery:
         assert agent.session_ids() == [retained]
 
     @pytest.mark.asyncio
+    async def test_a_refused_selection_on_reload_keeps_the_session_and_selection(
+        self,
+    ) -> None:
+        agent = models("a", "a", "b").will_say("ok")
+        async with acp_adapter(agent) as session:
+            await session.send("hello")
+            await session.adapter.apply_model_selection(
+                ModelSelection(model="b"), room_id=DEFAULT_ROOM
+            )
+            retained = session.session_id(DEFAULT_ROOM)
+            room = await recover(session)
+            agent.knows_session(retained).advertises(model_select("a", "a"))
+
+            refused = await session.send("again")
+
+            assert refused.errors
+            assert room.session is not None
+            assert room.session.session_id == retained
+            assert session.adapter._room_selection(DEFAULT_ROOM) == ModelSelection(
+                model="b"
+            )
+        assert retained not in agent.closed_sessions
+
+    @pytest.mark.asyncio
+    async def test_a_failed_session_setup_reports_and_recovers_the_room(
+        self,
+    ) -> None:
+        agent = FakeACPAgent().will_say("ok").fails_next_new_session()
+        async with acp_adapter(agent) as session:
+            with pytest.raises(RequestError):
+                await session.send("hello")
+            failed = session.last_reply
+            first_runtime = session.room().runtime
+
+            await session.send("again")
+
+            assert failed.errors
+            assert session.runtime() is not first_runtime
+        assert len(agent.prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_superseded_generation_cannot_recover_its_successor(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(supports_session_load=True).will_say("ok")
+        async with acp_adapter(agent) as session:
+            await session.send("hello")
+            room = session.room()
+            superseded = room.generation
+            agent.knows_session(session.session_id(DEFAULT_ROOM))
+            await recover(session)
+            await session.send("again")
+            successor = session.runtime()
+
+            assert not room.retained.recover(generation=superseded, reason="late")
+            assert room.retained.snapshot.state == Residency.RESIDENT
+            assert session.runtime() is successor and not successor.closed
+
+    @pytest.mark.asyncio
     async def test_tools_are_bound_before_the_recovered_session_restores(
         self,
     ) -> None:
@@ -244,7 +306,7 @@ class TestFinalCleanup:
     """Leaving keeps the room owned until its process is confirmed closed."""
 
     @pytest.mark.asyncio
-    async def test_a_failed_exit_keeps_the_process_and_a_retry_closes_it(
+    async def test_a_failed_exit_keeps_the_room_owned_until_a_retry_succeeds(
         self,
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
@@ -339,11 +401,13 @@ class TestFinalCleanup:
             await closing.received.wait()
 
             cleanup = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(exiting.received.wait(), timeout=0.2)
+            for _ in range(RELEASE_TURNS):
+                await asyncio.sleep(0)
+            exited_under_a_held_close = exiting.received.is_set()
             closing.release.set()
             await exiting.received.wait()
 
+            assert not exited_under_a_held_close
             assert agent.closed_sessions == [retired]
             exiting.release.set()
             await cleanup
@@ -382,6 +446,30 @@ class TestIndependentRooms:
             assert not cleanup.done()
             exiting.release.set()
             await cleanup
+
+
+class TestStartup:
+    """A process spawns under its turn's lease, not the bounded acquisition."""
+
+    @pytest.mark.asyncio
+    async def test_a_start_outlasting_the_transition_timeout_serves_its_turn(
+        self,
+    ) -> None:
+        agent = FakeACPAgent().will_say("ok")
+        starting = agent.holds_next_initialize()
+        config = fake_agent_config(
+            retention=RoomRetentionConfig(transition_timeout_s=0.05)
+        )
+        async with acp_adapter(agent, config) as session:
+            turn = asyncio.create_task(session.send("hello"))
+            await starting.received.wait()
+            await asyncio.sleep(0.2)
+            starting.release.set()
+            await turn
+
+            assert session.room().generation == 1
+            assert session.room().retained.snapshot.state == Residency.RESIDENT
+        assert len(agent.prompts) == 1
 
 
 class QuestioningAgent(FakeACPAgent):
@@ -494,35 +582,110 @@ class TestCursorOrigin:
             assert session.last_reply.texts == []
 
 
+class TestCursorTurns:
+    """Every accepted Cursor turn is reachable by its room's controls."""
+
+    @pytest.mark.asyncio
+    async def test_an_interrupt_during_startup_ends_the_turn(self) -> None:
+        agent = FakeACPAgent().will_say("ok")
+        starting = agent.holds_next_initialize()
+        async with cursor(agent) as session:
+            turn = asyncio.create_task(session.send("hello"))
+            await starting.received.wait()
+
+            await session.adapter.on_interrupt(DEFAULT_ROOM, ControlMode.STOP)
+            starting.release.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+            assert agent.prompts == []
+
+    @pytest.mark.asyncio
+    async def test_an_interrupt_before_any_decision_cancels_the_prompt(
+        self,
+    ) -> None:
+        agent = FakeACPAgent()
+        prompting = Gate()
+
+        @agent.on_prompt
+        async def hold(peer: FakeACPAgent, session_id: str) -> None:
+            prompting.received.set()
+            await prompting.release.wait()
+
+        async with cursor(agent) as session:
+            turn = asyncio.create_task(session.send("hello"))
+            await prompting.received.wait()
+
+            await session.adapter.on_interrupt(DEFAULT_ROOM, ControlMode.INTERRUPT)
+
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+            assert agent.cancelled_sessions == [session.session_id(DEFAULT_ROOM)]
+            prompting.release.set()
+
+    @pytest.mark.asyncio
+    async def test_a_queued_message_never_blocks_the_answer_to_a_parked_one(
+        self,
+    ) -> None:
+        agent = FakeACPAgent()
+        answers: list[dict[str, object]] = []
+
+        @agent.on_prompt
+        async def ask_first(peer: FakeACPAgent, session_id: str) -> None:
+            if len(peer.prompts) == 1:
+                answers.append(
+                    await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+                )
+
+        async with cursor(agent) as session:
+            asked = await session.send("ask")
+            async with asyncio.timeout(5):
+                await session.send("queued")
+                await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            await accepted_work_finished(session.room())
+
+        assert answers == [answered("plan")]
+        assert len(agent.prompts) == 2
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage",
+    [ExitStage.EOF, ExitStage.PROMPT],
+    ids=["exits-at-close", "exited-before-close"],
+)
 async def test_a_descendant_holding_the_agents_pipes_keeps_its_room_owned(
-    tmp_path: Path,
+    tmp_path: Path, stage: ExitStage
 ) -> None:
-    """The agent exits, but a background descendant still holds its stdio, so
-    closure is unconfirmed: the room keeps its process and refuses a rejoin
-    until the descendant is gone and a retry confirms the exit."""
+    """The agent exits, at close or before it, but a background descendant
+    still holds its stdout, so closure is unconfirmed: the room keeps its
+    process until the descendant is gone and a retry confirms the exit."""
     holder_pid_file = tmp_path / "holder.pid"
     adapter = ACPClientAdapter(
         stdio_peer_config(
-            ExitStage.EOF,
+            stage,
             [],
             orphan_pid_file=holder_pid_file,
             retention=RoomRetentionConfig(transition_timeout_s=2.0),
+            # A held stdout hides the agent's death, so its prompt only ends
+            # at the turn deadline, whose recovery then waits on the pipes.
+            turn_timeout_s=1.0,
         ),
         workspace_for_room=lambda room_id: str(REPO_ROOT),
     )
     message = make_platform_message("hello", room_id=DEFAULT_ROOM)
     await adapter.on_started("Stdio peer", "Real subprocess")
     try:
-        await adapter.on_message(
-            message,
-            TranscriptTools(),
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id=DEFAULT_ROOM,
-        )
+        with suppress(Exception):
+            await adapter.on_message(
+                message,
+                TranscriptTools(),
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id=DEFAULT_ROOM,
+            )
         room = adapter._rooms[DEFAULT_ROOM]
         runtime = room.runtime
         assert runtime is not None

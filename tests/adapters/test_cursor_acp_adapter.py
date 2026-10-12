@@ -171,7 +171,8 @@ class CursorRoom:
 
 def activate(adapter: CursorACPAdapter, turn: CursorTurn) -> CursorTurn:
     """Make ``turn`` its room's open prompt, as a running turn does."""
-    adapter._turns[turn.room.room_id] = turn
+    turn.generation = turn.room.generation
+    adapter._turns.setdefault(turn.room.room_id, []).append(turn)
     return turn
 
 
@@ -1498,7 +1499,9 @@ class TestCursorACPAdapterControlMessages:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_exceeding_max_pending_decisions_evicts_the_oldest(self) -> None:
+    async def test_exceeding_max_pending_decisions_evicts_the_rooms_oldest(
+        self,
+    ) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(max_pending_decisions=1))
         first_tools = DecisionTools()
         second_tools = DecisionTools()
@@ -1511,12 +1514,10 @@ class TestCursorACPAdapterControlMessages:
             )
         )
         await first_tools.prompt_sent.wait()
-        assert len(adapter._pending_decisions) == 1
-
         second = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-2", second_tools, "user-2", "session-2"),
+                turn=_turn("room-1", second_tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
@@ -1526,6 +1527,29 @@ class TestCursorACPAdapterControlMessages:
         assert len(adapter._pending_decisions) == 1
         adapter._cancel_all_decisions()
         await second
+
+    @pytest.mark.asyncio
+    async def test_a_full_room_never_evicts_another_rooms_decision(self) -> None:
+        adapter = CursorACPAdapter(CursorACPAdapterConfig(max_pending_decisions=1))
+        rooms = ("room-1", "room-2")
+        tools = {room: DecisionTools() for room in rooms}
+        waits = [
+            asyncio.create_task(
+                adapter._wait_for_decision(
+                    kind="plan",
+                    turn=_turn(room, tools[room], "user-1", f"session-{room}"),
+                    prompt="Plan {token}",
+                )
+            )
+            for room in rooms
+        ]
+        for room in rooms:
+            await tools[room].prompt_sent.wait()
+
+        assert not any(wait.done() for wait in waits)
+        assert len(adapter._pending_decisions) == 2
+        adapter._cancel_all_decisions()
+        await asyncio.gather(*waits)
 
 
 def todo_sessions(session: AcpSession, room: str = "room-1") -> set[str]:
@@ -1568,11 +1592,16 @@ async def test_a_turn_still_running_at_cleanup_is_settled_before_its_process_clo
         await updating.wait()
         runtime = session.runtime("room-1")
         [detached] = accepted_work(session.room("room-1"))
+        exiting = agent.exits_slowly()
 
-        await adapter.on_cleanup("room-1")
+        cleanup = asyncio.create_task(adapter.on_cleanup("room-1"))
+        await exiting.received.wait()
+        settled_before_exit = detached.done()
+        exiting.release.set()
+        await cleanup
 
-        assert detached.done()
-        assert runtime.closed
+        assert settled_before_exit
+        assert runtime.closed and runtime.client is None
         assert "room-1" not in adapter._rooms
         await asyncio.gather(turn, return_exceptions=True)
 

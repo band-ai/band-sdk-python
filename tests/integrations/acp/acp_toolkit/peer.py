@@ -77,7 +77,9 @@ def spawn_pipe_holder(pid_file: Path) -> None:
     """Start a descendant that inherits this peer's stdout and stderr, as a
     background job does, and record its pid."""
     holder = subprocess.Popen(
-        [sys.executable, "-c", f"import time; time.sleep({ORPHAN_LIFETIME_S})"],
+        # Not sys.executable: under __PYVENV_LAUNCHER__ that is Windows' venv
+        # redirector, whose pid is not the child holding the pipes.
+        [sys._base_executable, "-c", f"import time; time.sleep({ORPHAN_LIFETIME_S})"],
         stdin=subprocess.DEVNULL,
         stdout=sys.stdout,
         stderr=sys.stderr,

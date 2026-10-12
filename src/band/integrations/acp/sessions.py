@@ -29,6 +29,9 @@ from band.integrations.mcp.backends import BandMCPTransport
 
 logger = logging.getLogger(__name__)
 ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
+# session/cancel is a notification; only a wedged agent that stops reading
+# stdin can hold its write, and a turn unwinding behind it holds its room.
+ACP_SESSION_CANCEL_TIMEOUT_SECONDS = 5.0
 Response = TypeVar("Response")
 
 
@@ -229,7 +232,8 @@ class ACPSessionOperations(ABC):
     async def cancel_turn(self, session_id: str) -> None:
         """Tell the agent to stop a room's in-flight prompt."""
         conn = await self.ensure_connection(can_respawn=False)
-        await self._request(conn.cancel(session_id))
+        async with asyncio.timeout(ACP_SESSION_CANCEL_TIMEOUT_SECONDS):
+            await self._request(conn.cancel(session_id))
 
     async def _request(self, operation: Awaitable[Response]) -> Response:
         try:

@@ -112,6 +112,7 @@ class FakeACPAgent:
         # Holds the next initialize, as a process slow to start.
         self._initialize_gate: Gate | None = None
         self._close_gate: Gate | None = None
+        self._new_session_error: RequestError | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -121,6 +122,7 @@ class FakeACPAgent:
         self.auth_methods: list[str] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
+        self.cancelled_sessions: list[str] = []
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -166,6 +168,11 @@ class FakeACPAgent:
     def advertises(self, *options: SessionConfigOption) -> FakeACPAgent:
         """Advertise exactly ``options`` from now on, as a restarted agent may."""
         self._config_options = list(options)
+        return self
+
+    def fails_next_new_session(self) -> FakeACPAgent:
+        """Refuse the next ``session/new``, once."""
+        self._new_session_error = RequestError.internal_error({"detail": "no session"})
         return self
 
     def holds_next_initialize(self) -> Gate:
@@ -647,6 +654,10 @@ class FakeACPAgent:
             ),
         )
 
+    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        del kwargs
+        self.cancelled_sessions.append(session_id)
+
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
         """Accept any auth method (Cursor's ``cursor_login``, for one)."""
         del kwargs
@@ -669,6 +680,9 @@ class FakeACPAgent:
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
     ) -> NewSessionResponse:
         del kwargs
+        if (error := self._new_session_error) is not None:
+            self._new_session_error = None
+            raise error
         sid = f"fake-session-{len(self.sessions) + 1}"
         self.sessions.append(
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}

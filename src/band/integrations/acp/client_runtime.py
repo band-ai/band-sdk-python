@@ -74,6 +74,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+STDOUT_DISCARD_CHUNK_BYTES = 65536
+
 
 class ACPRuntime(ACPSessionOperations):
     """Generic ACP subprocess runtime shared by outbound ACP bridges."""
@@ -228,17 +230,23 @@ class ACPRuntime(ACPSessionOperations):
 
     async def _exit_transport(self) -> None:
         """Exit the spawn context once; after that exit failed, only the
-        process is left to confirm."""
+        process is left to confirm.
+
+        Closure is confirmed at stdout EOF, not exit: ``Process.wait`` returns
+        at once for a process that already exited, while a descendant that
+        inherited stdout can still hold it.
+        """
+        process = self._transport
         if not self._exit_attempted and self._ctx is not None:
             self._exit_attempted = True
             await self._ctx.__aexit__(None, None, None)
-            return
-        process = self._transport
-        if isinstance(process, asyncio.subprocess.Process):
+        elif isinstance(process, asyncio.subprocess.Process):
             if process.returncode is None:
                 with suppress(ProcessLookupError):
                     process.kill()
             await process.wait()
+        if isinstance(process, asyncio.subprocess.Process) and process.stdout:
+            await _read_to_eof(process.stdout)
 
     def _forget_connection(self) -> None:
         self._ctx = None
@@ -279,3 +287,8 @@ class ACPRuntime(ACPSessionOperations):
         capabilities = getattr(init_response, "agent_capabilities", None)
         session_capabilities = getattr(capabilities, "session_capabilities", None)
         return getattr(session_capabilities, "close", None) is not None
+
+
+async def _read_to_eof(stream: asyncio.StreamReader) -> None:
+    while await stream.read(STDOUT_DISCARD_CHUNK_BYTES):
+        pass

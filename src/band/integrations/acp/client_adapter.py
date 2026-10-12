@@ -475,7 +475,9 @@ class ACPClientAdapter(
             await switch
         except (asyncio.CancelledError, RuntimeError):
             current = asyncio.current_task()
-            if (current is not None and current.cancelling()) or not room.closing:
+            if current is not None and current.cancelling():
+                raise
+            if not (room.closing or self._retention.stopping):
                 raise
             raise _session_ended_mid_switch(room_id) from None
 
@@ -672,10 +674,11 @@ class ACPClientAdapter(
         return room
 
     async def _acquire_room(self, room: ACPRoom, generation: int, resume: bool) -> None:
-        """Start the room's process; a deliberate wake restores its session exactly.
+        """Hold the room's next process; a deliberate wake also starts it and
+        restores its session exactly.
 
-        The runtime is held before its first await, so a failed or abandoned
-        start leaves it for the owner's recovery to close.
+        An ordinary turn spawns the process under its own lease instead, since
+        an agent's startup can outlast the bounded acquisition.
         """
         if room.runtime is not None:
             raise RuntimeError(
@@ -683,14 +686,26 @@ class ACPClientAdapter(
             )
         runtime = room.runtime = self._build_runtime(room, generation)
         room.generation = generation
-        await runtime.start()
         room.retained.observe(
             ProviderActivity.UNKNOWN,
             generation=generation,
             reason=self.config.retention_unavailable_reason,
         )
         if resume and room.session is not None:
+            await self._start_runtime(room, runtime)
             await self._restore_retained_session(room, runtime)
+
+    @staticmethod
+    async def _start_runtime(room: ACPRoom, runtime: ACPRuntime) -> None:
+        """Spawn the room's process once; a failed spawn retires its residency."""
+        try:
+            await runtime.start()
+        except BaseException as error:
+            room.retained.recover(
+                generation=room.generation,
+                reason=f"ACP agent failed to start: {error!r}",
+            )
+            raise
 
     async def _release_room(self, room: ACPRoom, cause: ReleaseCause) -> ReleaseOutcome:
         """Close the room's process and keep its session identity.
@@ -720,7 +735,8 @@ class ACPClientAdapter(
     async def _using_room(
         self, room: ACPRoom, tools: AgentToolsProtocol
     ) -> AsyncIterator[ACPRuntime]:
-        """Reserve the room, lease it, bind ``tools``, and yield its process.
+        """Reserve the room, lease it, bind ``tools``, and yield its process,
+        spawning it first when this residency has not started yet.
 
         The reservation serializes the room's prompts from session setup to
         their actual end. Tools bind under the lease, after earlier
@@ -733,9 +749,12 @@ class ACPClientAdapter(
                 room.tools = tools
 
         async with room.reservation, room.retained.use(prepare=bind_tools):
-            if room.runtime is None:
+            runtime = room.runtime
+            if runtime is None:
                 raise RuntimeError(f"Room {room.room_id} has no ACP process")
-            yield room.runtime
+            if runtime.closed:
+                await self._start_runtime(room, runtime)
+            yield runtime
 
     async def on_message(
         self,
@@ -789,6 +808,9 @@ class ACPClientAdapter(
                 room.retained.recover(generation=generation, reason=str(error))
             await self._report_config_error(tools, error)
             return
+        except Exception as error:
+            await self._fail_turn(room, generation, tools, error)
+            raise
         runtime.reset_session(session_id)
 
         # A just-created session holds no remote context (a restored one does),
@@ -888,11 +910,21 @@ class ACPClientAdapter(
             raise
         except InputNotAccepted:
             raise
-        except Exception as e:
-            logger.exception("ACP agent error")
-            room.retained.recover(generation=generation, reason=f"ACP agent error: {e}")
-            await tools.send_failure(_to_agent_failure(e))
+        except Exception as error:
+            await self._fail_turn(room, generation, tools, error)
             raise
+
+    @staticmethod
+    async def _fail_turn(
+        room: ACPRoom,
+        generation: int,
+        tools: AgentToolsProtocol,
+        error: Exception,
+    ) -> None:
+        """Report an agent failure and retire the residency it left unusable."""
+        logger.exception("ACP agent error")
+        room.retained.recover(generation=generation, reason=f"ACP agent error: {error}")
+        await tools.send_failure(_to_agent_failure(error))
 
     @staticmethod
     def _live_room_session(room: ACPRoom) -> RoomSession:
@@ -1229,7 +1261,9 @@ class ACPClientAdapter(
 
         restored = None
         if restore_id is not None:
-            restored = await self._restore_session(room, runtime, restore_id, mcp)
+            restored = await self._restore_session(
+                room, runtime, restore_id, mcp, retained=session is not None
+            )
         room.session = restored or await self._create_session(room, runtime, mcp)
         return room.session.session_id
 
@@ -1239,9 +1273,15 @@ class ACPClientAdapter(
         runtime: ACPRuntime,
         session_id: str,
         mcp: SessionMcpServers,
+        *,
+        retained: bool,
     ) -> RoomSession | None:
         """Reload and configure ``session_id``, or ``None`` when the agent
-        cannot restore it."""
+        cannot restore it.
+
+        A ``retained`` id is still the room's: a configuration refusal keeps
+        it and the room's selection. A bootstrap candidate is closed instead.
+        """
         loaded = await runtime.load_session_response(
             cwd=room.workspace,
             session_id=session_id,
@@ -1256,11 +1296,14 @@ class ACPClientAdapter(
             return None
 
         try:
-            await self._configure_session(runtime, room.room_id, session_id)
-        except BaseException:
-            await self._close_session(
-                runtime, session_id, reason=SessionCloseReason.UNCONFIGURED
+            await self._configure_session(
+                runtime, room.room_id, session_id, keep_refused_selection=retained
             )
+        except BaseException:
+            if not retained:
+                await self._close_session(
+                    runtime, session_id, reason=SessionCloseReason.UNCONFIGURED
+                )
             raise
         logger.debug("Loaded ACP session mapping: %s -> %s", room.room_id, session_id)
         return RoomSession(

@@ -117,22 +117,26 @@ Each room is one `ACPRoom`: its process, connection and session, composed with a
 `RetainedRoom` from the adapter's single `RoomRetention`. Detached work (a Cursor
 turn, a Copilot model switch) is owned by the room before it runs, and a prompt
 binds its tools under the room's lease, so an independent room never waits on
-another room's start, prompt or exit.
+another room's start, prompt or exit. A turn spawns its room's process under that
+lease, so a slow agent start is not cut short by `transition_timeout_s`.
 
 - **A deliberate wake reloads the exact session.** It calls `session/load` with a
   fresh Band MCP endpoint, then reapplies the room's model selection and verifies
   the result. A load or selection refusal fails the wake and keeps the session id and
-  selection; it never creates a replacement session. Only a session left behind by a
-  crashed process or a bootstrap resume candidate may fall back to a fresh session.
-- **A failed turn recovers its room.** A prompt error or timeout releases that
-  room's process for its generation; the next turn starts a new process and reloads
-  the same session.
+  selection; it never creates a replacement session. Idle release is off, so no
+  wake happens yet; this is the path a qualified provider will take.
+- **A failed turn recovers its room.** A session-setup or prompt error, or a
+  timeout, releases that room's process for its generation; the next turn starts a
+  new process and reloads the same session. If the agent no longer has it, the turn
+  falls back to a fresh session with a transcript replay; a refused selection fails
+  the turn and keeps both the session and the selection. Only a bootstrap resume
+  candidate is closed when its configuration is refused.
 - **Closure is confirmed, not assumed.** The process handle stays on the room until
-  `__aexit__` succeeds; a failed or cancelled exit leaves the room owned and a retry
-  closes the same process. Asyncio waits for every inherited pipe, so a descendant
-  holding the agent's stdout keeps the room closing until it exits. Final cleanup
-  shares one `transition_timeout_s` budget across the rooms and the shared Band MCP
-  server, and keeps that server open while any room is still held.
+  `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
+  inherited it keeps the room closing until it exits. A failed or cancelled exit
+  leaves the room owned, and a retry kills and waits for the same process. Final
+  cleanup shares one `transition_timeout_s` budget across the rooms and the shared
+  Band MCP server, and keeps that server open while any room is still held.
 - **Idle release stays off.** OMP, Cursor and Copilot report `ProviderActivity.UNKNOWN`,
   so an idle release always answers BUSY. Native qualification is still owed: OMP
   background jobs (including suppressed or acknowledged work), Cursor work beyond
@@ -162,7 +166,10 @@ failure fails that room turn visibly instead of falling back.
   turn closes or is interrupted. Cursor omits the session id on its
   extension requests, so each room process gets its own client profile and binds them to
   that room's active turn on that process; a request from a replaced process opens no
-  decision. Rooms run in parallel, one turn per room. Decision prompts, timeout notices and `/cursor`
+  decision. Rooms run in parallel, one turn per room; a message queued behind its room's
+  current turn hands the room's message queue back at once, so a `/cursor` reply never waits on
+  it. An interrupt or `/stop` cancels every accepted turn in the room, whether it is
+  starting, queued or parked. `max_pending_decisions` caps each room separately. Decision prompts, timeout notices and `/cursor`
   replies post through `send_notice`, so they never count as the model's reply, and a
   `/cursor` message settles its own turn without reaching the agent. A turn parked on a
   decision releases its message early (`tools.turn.detach()`), so it is judged when the
