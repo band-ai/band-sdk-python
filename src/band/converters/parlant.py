@@ -2,12 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Any
+from enum import StrEnum
+from typing import Any, TypedDict
 
 from band.core.protocols import HistoryConverter
 
-# Type alias for Parlant messages (simple dict format)
-ParlantMessages = list[dict[str, Any]]
+
+class ParlantRole(StrEnum):
+    """Who said a converted message: the customer side or an agent."""
+
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ParlantMessage(TypedDict, total=False):
+    """One converted history message, as the Parlant adapter replays it."""
+
+    role: ParlantRole
+    content: str
+    sender: str
+    sender_type: str
+
+
+ParlantMessages = list[ParlantMessage]
 
 
 class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
@@ -72,24 +89,24 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
                 # Include ALL assistant messages (this agent + other agents)
                 # Parlant needs full history to reconstruct session state
                 messages.append(
-                    {
-                        "role": "assistant",
-                        "content": content,
-                        "sender": sender_name,
-                        "sender_type": sender_type,
-                    }
+                    ParlantMessage(
+                        role=ParlantRole.ASSISTANT,
+                        content=content,
+                        sender=sender_name,
+                        sender_type=sender_type,
+                    )
                 )
             else:
                 # User messages
                 messages.append(
-                    {
-                        "role": "user",
-                        "content": f"[{sender_name}]: {content}"
+                    ParlantMessage(
+                        role=ParlantRole.USER,
+                        content=f"[{sender_name}]: {content}"
                         if sender_name
                         else content,
-                        "sender": sender_name,
-                        "sender_type": sender_type,
-                    }
+                        sender=sender_name,
+                        sender_type=sender_type,
+                    )
                 )
 
         return messages

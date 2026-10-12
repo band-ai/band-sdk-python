@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import UTC, datetime
+from base64 import urlsafe_b64decode
+from datetime import UTC, date, datetime
 from typing import get_type_hints
 
 import pytest
 from pydantic import BaseModel
 
+from band.client.rest import AgentContact
 from band.runtime.tools import (
     GetMemoryInput,
     get_tool_docstring_with_args,
     platform_tool,
     serialize_tool_result,
+    tool_result_text,
     validate_tool_arguments,
 )
 
@@ -28,12 +31,37 @@ class _Result(BaseModel):
     sub: _Sub | None = None
 
 
+class _Thumbnail(BaseModel):
+    png: bytes = b"\x89PNG"
+
+
+class BinaryResult(BaseModel):
+    payload: bytes
+
+
+class _Opaque:
+    def __str__(self) -> str:
+        return "opaque"
+
+
 class _MemoryResult(BaseModel):
     content: str
     inserted_at: datetime
 
 
 class TestSerializeToolResult:
+    @pytest.mark.parametrize("payload", [b"hello", b"\xfb\xff"])
+    @pytest.mark.parametrize("as_list", [False, True], ids=["model", "model-list"])
+    def test_model_bytes_round_trip_as_url_safe_base64(
+        self, payload: bytes, as_list: bool
+    ) -> None:
+        model = BinaryResult(payload=payload)
+        result = serialize_tool_result([model] if as_list else model)
+        encoded = result[0]["payload"] if as_list else result["payload"]
+
+        assert urlsafe_b64decode(encoded) == payload
+        assert not any(char in encoded for char in "+/")
+
     def test_model_becomes_a_plain_dict(self) -> None:
         assert serialize_tool_result(_Result(id="r1")) == {"id": "r1", "sub": None}
 
@@ -57,6 +85,64 @@ class TestSerializeToolResult:
     def test_a_plain_value_passes_through_unchanged(self) -> None:
         assert serialize_tool_result("already a string") == "already a string"
         assert serialize_tool_result({"id": "r1"}) == {"id": "r1"}
+
+
+@pytest.mark.parametrize(
+    ("result", "text"),
+    [
+        ("already text", "already text"),
+        ({date(2026, 5, 4): 2}, '{"2026-05-04": 2}'),
+        ({"png": b"\x89PNG"}, '{"png": "iVBORw=="}'),
+        ({"bytes": b"\xfb\xff"}, '{"bytes": "-_8="}'),
+        ({"bytes": b"hello"}, '{"bytes": "aGVsbG8="}'),
+        (
+            {"nested": BinaryResult(payload=b"\xfb\xff")},
+            '{"nested": {"payload": "-_8="}}',
+        ),
+        ({"thumb": _Thumbnail()}, '{"thumb": {"png": "iVBORw=="}}'),
+        ({"odd": _Opaque()}, '{"odd": "opaque"}'),
+    ],
+    ids=[
+        "text",
+        "non-text-keys",
+        "binary-bytes",
+        "url-safe-alphabet",
+        "utf8-bytes",
+        "url-safe-bytes-in-a-nested-model",
+        "binary-bytes-in-a-nested-model",
+        "unserializable-object",
+    ],
+)
+def test_tool_result_text_renders_any_result_a_tool_returned(result, text) -> None:
+    """The handler already ran, so rendering its result must never fail."""
+    assert tool_result_text(result) == text
+
+
+def test_tool_result_text_keeps_a_platform_models_unset_fields() -> None:
+    """A platform model renders through its own dump, so the model reads every
+    field, unset ones included."""
+    contact = AgentContact(
+        id="c1",
+        handle="bob",
+        name="Bob",
+        inserted_at="2025-01-01T00:00:00Z",
+        type="Agent",
+        online=True,
+    )
+
+    assert json.loads(tool_result_text(contact)) == {
+        "avatar_url": None,
+        "description": None,
+        "handle": "bob",
+        "id": "c1",
+        "inserted_at": "2025-01-01T00:00:00Z",
+        "is_external": None,
+        "listed_in_directory": None,
+        "name": "Bob",
+        "online": True,
+        "tags": None,
+        "type": "Agent",
+    }
 
 
 class TestPlatformTool:

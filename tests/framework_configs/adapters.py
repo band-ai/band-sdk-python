@@ -574,7 +574,6 @@ def _build_parlant_config() -> AdapterConfig:
         expected_initial_values={"config": ParlantAdapterConfig()},
         custom_kwargs={"config": custom},
         custom_expected={"config": custom},
-        has_custom_tools_attr=False,
         # on_started does a runtime `from parlant.core.application import Application`
         # which fails when parlant SDK is not installed (conflict group with crewai).
         skip_on_started_conformance=not _parlant_available,
