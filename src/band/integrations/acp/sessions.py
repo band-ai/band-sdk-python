@@ -32,6 +32,14 @@ ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
 Response = TypeVar("Response")
 
 
+class ACPSessionRestoreError(RuntimeError):
+    """A retained session could not be restored; its identity is kept."""
+
+    def __init__(self, session_id: str, reason: str) -> None:
+        super().__init__(f"ACP session {session_id} could not be restored: {reason}")
+        self.session_id = session_id
+
+
 class ACPSessionOperations(ABC):
     """Control sessions through a lifecycle-owned connection."""
 
@@ -124,6 +132,35 @@ class ACPSessionOperations(ABC):
         self._record_config_options(session_id, response)
         return response
 
+    async def restore_session_response(
+        self,
+        *,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[object],
+    ) -> LoadSessionResponse | None:
+        """Load exactly ``session_id``; any refusal raises instead of falling back.
+
+        Raises:
+            ACPSessionRestoreError: The connection does not advertise
+                ``loadSession`` or the agent refused the load.
+        """
+        if not self._agent_supports_session_load:
+            raise ACPSessionRestoreError(
+                session_id, "the connection does not advertise loadSession"
+            )
+        conn = await self.ensure_connection(can_respawn=False)
+        try:
+            response = await self._request(
+                conn.load_session(
+                    cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
+                )
+            )
+        except RequestError as error:
+            raise ACPSessionRestoreError(session_id, str(error)) from error
+        self._record_config_options(session_id, response)
+        return response
+
     async def set_config_option(
         self,
         *,
@@ -162,7 +199,7 @@ class ACPSessionOperations(ABC):
     async def close_session(self, session_id: str) -> None:
         """Close a session when the agent advertised lifecycle support."""
         if self._client is not None:
-            self._client.forget_config_options(session_id)
+            self._client.forget_session(session_id)
         if not self._agent_supports_session_close:
             return
         conn = await self.ensure_connection(can_respawn=False)

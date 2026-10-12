@@ -39,6 +39,7 @@ from acp.schema import (
 )
 from mcp.types import Tool
 
+from band.integrations.acp.client_profiles import CURSOR_ASK_QUESTION_METHOD
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
@@ -106,6 +107,11 @@ class FakeACPAgent:
         self.hang_up: Callable[[], None] = lambda: None
         # Holds the connection's shutdown, as a subprocess slow to exit.
         self.exit_gate: Gate | None = None
+        # Fails the next connection's shutdown, as a transport whose exit raised.
+        self.exit_failure: Exception | None = None
+        # Holds the next initialize, as a process slow to start.
+        self._initialize_gate: Gate | None = None
+        self._close_gate: Gate | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -147,6 +153,25 @@ class FakeACPAgent:
         """Hold every connection's shutdown until release."""
         self.exit_gate = Gate()
         return self.exit_gate
+
+    def fails_next_exit(self) -> None:
+        """Raise from the next connection's shutdown, once."""
+        self.exit_failure = RuntimeError("agent exit failed")
+
+    def holds_session_closes(self) -> Gate:
+        """Hold every ``session/close`` until release, before recording it."""
+        self._close_gate = Gate()
+        return self._close_gate
+
+    def advertises(self, *options: SessionConfigOption) -> FakeACPAgent:
+        """Advertise exactly ``options`` from now on, as a restarted agent may."""
+        self._config_options = list(options)
+        return self
+
+    def holds_next_initialize(self) -> Gate:
+        """Hold the next connection's ``initialize`` until release."""
+        self._initialize_gate = Gate()
+        return self._initialize_gate
 
     def advertises_models(
         self,
@@ -533,6 +558,25 @@ class FakeACPAgent:
             ),
         )
 
+    async def ask_cursor_question(
+        self, session_id: str, question_id: str, *option_ids: str
+    ) -> dict[str, Any]:
+        """Send Cursor's sessionless ``cursor/ask_question`` and return the reply."""
+        return await self._conn_for(session_id).ext_method(
+            CURSOR_ASK_QUESTION_METHOD,
+            {
+                "questions": [
+                    {
+                        "id": question_id,
+                        "prompt": question_id,
+                        "options": [
+                            {"id": option, "label": option} for option in option_ids
+                        ],
+                    }
+                ]
+            },
+        )
+
     async def ask_permission(
         self, session_id: str, tool_call: Any, options: list[Any]
     ) -> Any:
@@ -588,6 +632,10 @@ class FakeACPAgent:
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
     ) -> InitializeResponse:
         del client_capabilities, kwargs
+        if (gate := self._initialize_gate) is not None:
+            self._initialize_gate = None
+            gate.received.set()
+            await gate.release.wait()
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
@@ -671,6 +719,9 @@ class FakeACPAgent:
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""
         del kwargs
+        if (gate := self._close_gate) is not None:
+            gate.received.set()
+            await gate.release.wait()
         self.closed_sessions.append(session_id)
 
     def config_selections(self, session_id: str | None = None) -> list[tuple[str, str]]:

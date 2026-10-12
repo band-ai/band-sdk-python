@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from typing import Any, cast
 
 from acp import spawn_agent_process
@@ -13,6 +13,7 @@ from acp.schema import (
     ClientCapabilities,
 )
 
+from band.core.retention import task_failure
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -105,6 +106,9 @@ class ACPRuntime(ACPSessionOperations):
         self._ctx: (
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         ) = None
+        self._transport: object = None
+        self._exit_attempted = False
+        self._closure: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
         self._stderr = ACPStderrDrain(logger)
 
@@ -114,25 +118,24 @@ class ACPRuntime(ACPSessionOperations):
             await self._start(respawn=respawn)
 
     async def _start(self, *, respawn: bool) -> None:
+        if self._ctx is not None:
+            raise RuntimeError("ACP runtime is already started or not yet closed")
         self._connection_failed = False
         logger.info(
             "%s ACP agent subprocess",
             "Respawning" if respawn else "Spawning",
         )
 
-        ctx = self._spawn_context()
-        self._ctx = ctx
+        self._ctx = self._spawn_context()
         try:
-            self._conn, transport = await ctx.__aenter__()
-            if isinstance(transport, asyncio.subprocess.Process):
-                self._stderr.start(transport)
+            self._conn, self._transport = await self._ctx.__aenter__()
+            if isinstance(self._transport, asyncio.subprocess.Process):
+                self._stderr.start(self._transport)
             await self._initialize_connection(self._conn)
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            self._stderr.expect_exit(connection_failed=self._connection_failed)
-            await self._cleanup_failed_start(ctx, "init cancel")
-            raise
-        except Exception:
-            await self._cleanup_failed_start(ctx, "init failure")
+        except BaseException as error:
+            if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt)):
+                self._stderr.expect_exit(connection_failed=self._connection_failed)
+            await self._close_failed_start()
             raise
         # A connect-only transport (e.g. TCP) carries no command; describe it
         # rather than logging a blank suffix.
@@ -190,39 +193,69 @@ class ACPRuntime(ACPSessionOperations):
             raise RuntimeError("ACP client connection dropped before prompt")
         return conn
 
-    async def stop(self) -> None:
-        ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
-        async with self._stop_lock:
-            self._stderr.expect_exit(connection_failed=self._connection_failed)
-            ctx = self._ctx
-            self._ctx = None
-            self._conn = None
-            self._client = None
-            self._agent_supports_session_load = False
-            self._agent_supports_session_close = False
-            try:
-                if ctx is not None:
-                    await ctx.__aexit__(None, None, None)
-            except Exception:
-                logger.exception("Error during ACP runtime shutdown")
-            finally:
-                await self._stderr.finish()
+    @property
+    def closed(self) -> bool:
+        """Whether no process or connection remains to close."""
+        return self._ctx is None
 
-    async def _cleanup_failed_start(
-        self,
-        ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
-        reason: str,
-    ) -> None:
+    async def stop(self) -> None:
+        """Close the connection and confirm its process exited.
+
+        The closure is one owned task: a cancelled caller leaves it running
+        and the next ``stop`` joins it. After a failed closure the handles stay
+        held and the next ``stop`` closes that same process again.
+
+        Raises:
+            Exception: The closure failed; the runtime still holds its process.
+        """
+        if self._ctx is None:
+            return
+        self._stderr.expect_exit(connection_failed=self._connection_failed)
+        await self._closed()
+
+    async def _closed(self) -> None:
+        closure = self._closure
+        if closure is None or (closure.done() and task_failure(closure) is not None):
+            closure = self._closure = asyncio.create_task(self._close())
+        await asyncio.shield(closure)
+
+    async def _close(self) -> None:
         try:
-            await ctx.__aexit__(None, None, None)
-        except Exception:
-            logger.exception("Error cleaning up ACP subprocess after %s", reason)
+            await self._exit_transport()
         finally:
             await self._stderr.finish()
+        self._forget_connection()
+
+    async def _exit_transport(self) -> None:
+        """Exit the spawn context once; after that exit failed, only the
+        process is left to confirm."""
+        if not self._exit_attempted and self._ctx is not None:
+            self._exit_attempted = True
+            await self._ctx.__aexit__(None, None, None)
+            return
+        process = self._transport
+        if isinstance(process, asyncio.subprocess.Process):
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await process.wait()
+
+    def _forget_connection(self) -> None:
         self._ctx = None
         self._conn = None
+        self._client = None
+        self._transport = None
+        self._exit_attempted = False
+        self._closure = None
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
+
+    async def _close_failed_start(self) -> None:
+        """Close what a failed start opened; a failed close keeps it for ``stop``."""
+        try:
+            await self._closed()
+        except Exception:
+            logger.exception("Error cleaning up ACP subprocess after a failed start")
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> BandMCPTransport:

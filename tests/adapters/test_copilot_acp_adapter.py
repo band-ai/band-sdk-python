@@ -42,6 +42,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     DEFAULT_ROOM,
     AcpSession,
     launch_for,
+    room_holder,
     started_acp_adapter,
 )
 
@@ -94,7 +95,7 @@ class TestCopilotACPAdapterConstruction:
         # collecting client the runtime builds falls back to the no-op profile.
         adapter = CopilotACPAdapter()
         assert adapter._profile is None
-        client = adapter._build_runtime()._client_factory()
+        client = adapter._build_runtime(room_holder(adapter), 1)._client_factory()
         assert isinstance(client._profile, NoopACPClientProfile)
 
     @pytest.mark.parametrize(

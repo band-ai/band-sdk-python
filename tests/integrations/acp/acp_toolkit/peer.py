@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -26,6 +27,8 @@ from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 INITIALIZE_PENDING_LINE = "initialization pending"
 PEER_EXIT_CODE = 3
 CRASH_MARKER_ARG = "--crash-marker"
+ORPHAN_PID_FILE_ARG = "--orphan-pid-file"
+ORPHAN_LIFETIME_S = 120
 RECOVERED_REPLY = "Recovered after the connection failed."
 
 
@@ -42,7 +45,12 @@ class ExitStage(StrEnum):
 
 
 def stdio_peer_config(
-    stage: ExitStage, lines: list[str], *, crash_marker: Path | None = None
+    stage: ExitStage,
+    lines: list[str],
+    *,
+    crash_marker: Path | None = None,
+    orphan_pid_file: Path | None = None,
+    **settings: Any,
 ) -> ACPClientAdapterConfig:
     # Windows' venv redirector keeps stdout open until the peer exits.
     command = [
@@ -55,11 +63,26 @@ def stdio_peer_config(
     ]
     if crash_marker is not None:
         command.extend((CRASH_MARKER_ARG, str(crash_marker)))
+    if orphan_pid_file is not None:
+        command.extend((ORPHAN_PID_FILE_ARG, str(orphan_pid_file)))
     return ACPClientAdapterConfig(
         command=command,
         env={"__PYVENV_LAUNCHER__": sys.executable},
         inject_band_tools=crash_marker is not None,
+        **settings,
     )
+
+
+def spawn_pipe_holder(pid_file: Path) -> None:
+    """Start a descendant that inherits this peer's stdout and stderr, as a
+    background job does, and record its pid."""
+    holder = subprocess.Popen(
+        [sys.executable, "-c", f"import time; time.sleep({ORPHAN_LIFETIME_S})"],
+        stdin=subprocess.DEVNULL,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    pid_file.write_text(str(holder.pid))
 
 
 class StdioPeer(FakeACPAgent):
@@ -149,7 +172,10 @@ async def main() -> None:
     parser.add_argument("code", type=int)
     parser.add_argument("lines", nargs="*")
     parser.add_argument(CRASH_MARKER_ARG, type=Path)
+    parser.add_argument(ORPHAN_PID_FILE_ARG, type=Path)
     args = parser.parse_args()
+    if args.orphan_pid_file is not None:
+        spawn_pipe_holder(args.orphan_pid_file)
     peer = StdioPeer(args.stage, args.code, args.lines, args.crash_marker)
     await run_agent(peer)
     peer.exit_process()

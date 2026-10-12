@@ -153,8 +153,12 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
     def config_options(self, session_id: str) -> tuple[SessionConfigOption, ...]:
         return self._config_options.get(session_id, ())
 
-    def forget_config_options(self, session_id: str) -> None:
+    def forget_session(self, session_id: str) -> None:
+        """Drop a closed session's catalog and any state its profile keeps."""
         self._config_options.pop(session_id, None)
+        forget = getattr(self._profile, "forget_session", None)
+        if forget is not None:
+            forget(session_id)
 
     def reset_session(self, session_id: str) -> None:
         self._stream.reset_session(session_id)

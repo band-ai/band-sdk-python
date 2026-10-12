@@ -9,7 +9,6 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Coroutine,
     Mapping,
     Sequence,
 )
@@ -40,14 +39,25 @@ from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
-from band.core.exceptions import BandConfigError, InputNotAccepted
+from band.core.exceptions import (
+    BandConfigError,
+    CleanupIncompleteError,
+    InputNotAccepted,
+)
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.retention import RoomRetentionConfig, require_disabled_retention
+from band.core.retention import (
+    ProviderActivity,
+    ReleaseCause,
+    ReleaseOutcome,
+    RoomRetention,
+    RoomRetentionConfig,
+    require_disabled_retention,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -61,7 +71,9 @@ from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
+    ACPRoom,
     BandACPClient,
+    RoomSession,
 )
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.model_selection import (
@@ -91,7 +103,6 @@ from band.integrations.acp.session_config import (
     SessionConfigSetter,
     apply_session_config_selections,
 )
-from band.integrations.acp.transport import ACPConnectionProtocol
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp import (
     BandMCPBackend,
@@ -142,26 +153,7 @@ class ACPPermissionRequest:
     options: tuple[PermissionOptionValue, ...]
 
 
-@dataclass
-class SessionInitializer:
-    """One room's shared, not-yet-published session setup."""
-
-    task: asyncio.Task[tuple[str, bool]]
-    waiters: int = 0
-
-
 _PROVIDER = "acp"
-
-
-@dataclass
-class RoomSession:
-    """A room's ACP session and the Band MCP URL it dials, ``None`` when it
-    dials none."""
-
-    session_id: str
-    band_url: str | None
-    bootstrap_pending: bool = True
-    replay_pending: bool = True
 
 
 @dataclass(frozen=True)
@@ -437,17 +429,12 @@ class ACPClientAdapter(
         self._resolve_session_config = resolve_session_config
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
-        self._runtimes: dict[str, ACPRuntime] = {}
         self._workspaces = RoomWorkspaces(self._workspace_for_room)
-
-        self._room_to_session: dict[str, RoomSession] = {}
+        self._retention = RoomRetention(config.retention)
+        self._rooms: dict[str, ACPRoom] = {}
         # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
-        self._session_initializers: dict[str, SessionInitializer] = {}
-        self._room_tools: dict[str, AgentToolsProtocol] = {}
-        self._background_tasks: set[asyncio.Task[None]] = set()
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
-        self._session_lock = asyncio.Lock()
 
     @property
     def model_selection(self) -> ModelSelection:
@@ -477,32 +464,53 @@ class ACPClientAdapter(
             )
         if selection.is_empty:
             return
-        session = await self._live_session(room_id)
-        if session is None:
-            raise BandConfigError(f"room {room_id} has no live ACP session to switch")
-        session_id, runtime = session
-        async with runtime.config_lock:
-            try:
-                await self._apply_model_selection(runtime, session_id, selection)
-            except ACPConfigError:
-                # A cleanup while this switch queued or ran fails it however
-                # the dead runtime answered; the ended session is the cause.
-                await self._ensure_session_live(room_id, session)
-                logger.warning(
-                    "Switching room %s to %s failed; its session runs %s",
-                    room_id,
-                    selection,
-                    self._running_selection(runtime, session_id),
-                )
+        room = self._rooms.get(room_id)
+        if room is None:
+            raise _no_live_session(room_id)
+        # Owned by the room, so its disposal cancels and joins the switch
+        # instead of closing the process under it.
+        switch = asyncio.create_task(self._switch_room(room, selection))
+        try:
+            room.retained.own(switch)
+            await switch
+        except (asyncio.CancelledError, RuntimeError):
+            current = asyncio.current_task()
+            if (current is not None and current.cancelling()) or not room.closing:
                 raise
-            await self._ensure_session_live(room_id, session)
-            self._remember_room_selection(room_id, session_id, runtime)
+            raise _session_ended_mid_switch(room_id) from None
 
-    async def _ensure_session_live(
-        self, room_id: str, session: tuple[str, ACPRuntime]
-    ) -> None:
-        if await self._live_session(room_id) != session:
-            raise BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
+    async def _switch_room(self, room: ACPRoom, selection: ModelSelection) -> None:
+        async def require_live_session() -> None:
+            # Runs before acquisition: a switch never starts a process.
+            if room.live_session is None:
+                raise _no_live_session(room.room_id)
+
+        async with room.retained.use(prepare=require_live_session):
+            session = room.live_session
+            if session is None:
+                raise _no_live_session(room.room_id)
+            session_id, runtime = session
+            async with runtime.config_lock:
+                try:
+                    await self._apply_model_selection(runtime, session_id, selection)
+                except ACPConfigError:
+                    # A session replaced while this switch queued or ran fails
+                    # it however the old one answered; that is the cause.
+                    self._ensure_session_live(room, session)
+                    logger.warning(
+                        "Switching room %s to %s failed; its session runs %s",
+                        room.room_id,
+                        selection,
+                        self._running_selection(runtime, session_id),
+                    )
+                    raise
+                self._ensure_session_live(room, session)
+                self._remember_room_selection(room.room_id, session_id, runtime)
+
+    @staticmethod
+    def _ensure_session_live(room: ACPRoom, session: tuple[str, ACPRuntime]) -> None:
+        if room.live_session != session:
+            raise _session_ended_mid_switch(room.room_id)
 
     def _running_selection(
         self, runtime: ACPRuntime, session_id: str
@@ -522,14 +530,6 @@ class ACPClientAdapter(
 
     def _room_selection(self, room_id: str) -> ModelSelection:
         return self._room_selections.get(room_id, self.model_selection)
-
-    async def _live_session(self, room_id: str) -> tuple[str, ACPRuntime] | None:
-        async with self._session_lock:
-            session = self._room_to_session.get(room_id)
-            runtime = self._runtimes.get(room_id)
-        if session is None or runtime is None:
-            return None
-        return session.session_id, runtime
 
     def locate_model_options(
         self, options: Sequence[SessionConfigOption]
@@ -590,13 +590,14 @@ class ACPClientAdapter(
         )
         return definitions, names
 
-    def _build_runtime(self, workspace: str | None = None) -> ACPRuntime:
+    def _build_runtime(self, room: ACPRoom, generation: int) -> ACPRuntime:
+        """The process and connection for one residency of ``room``."""
         return ACPRuntime(
-            command=_resolve_launcher(self._spawn_command(workspace)),
+            command=_resolve_launcher(self._spawn_command(room.workspace)),
             env=self._spawn_env(),
-            cwd=self._spawn_cwd(workspace),
+            cwd=self._spawn_cwd(room.workspace),
             auth_method=self.config.auth_method,
-            client_factory=self._runtime_client_factory,
+            client_factory=partial(self._runtime_client_factory, room, generation),
             spawn_process=spawn_agent_process,
             client_capabilities=self._client_capabilities,
             use_unstable_protocol=self.config.use_unstable_protocol,
@@ -620,25 +621,121 @@ class ACPClientAdapter(
         """The subprocess-level cwd to launch the ACP agent with, for this room's workspace."""
         return workspace
 
-    def _runtime_client_factory(self) -> ACPCollectingClient:
+    def _runtime_client_factory(
+        self, room: ACPRoom, generation: int
+    ) -> ACPCollectingClient:
         return BandACPClient(
-            profile=self._profile,
+            profile=self._client_profile(room, generation),
             canonicalize_tool_name=self._canonical_tool_name,
         )
 
-    async def _runtime_for(self, room_id: str) -> ACPRuntime:
-        async with self._session_lock:
-            runtime = self._runtimes.get(room_id)
-            if runtime is None:
-                workspace = self._workspaces.claim(room_id)
-                runtime = self._build_runtime(workspace)
-                self._runtimes[room_id] = runtime
-            return runtime
+    def _client_profile(
+        self, room: ACPRoom, generation: int
+    ) -> ACPClientProfile | None:
+        """The extension profile for one residency's client."""
+        del room, generation
+        return self._profile
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
         # Agent.start() reuses this instance after cleanup_all(final=True).
+        self._renew_retention()
         await self._mcp.reopen()
+
+    def _renew_retention(self) -> None:
+        """Replace a stopped residency owner; a stop is terminal for its owner."""
+        if not self._retention.stopping:
+            return
+        if self._rooms:
+            raise CleanupIncompleteError(
+                "ACP rooms from the previous stop are still closing"
+            )
+        self._retention = RoomRetention(self.config.retention)
+
+    def _room(self, room_id: str) -> ACPRoom:
+        """The room's holder, registered with the residency owner on first use."""
+        room = self._rooms.get(room_id)
+        if room is not None:
+            return room
+        room = ACPRoom(room_id=room_id, workspace=self._workspaces.claim(room_id))
+        try:
+            room.retained = self._retention.register(
+                room_id,
+                acquire=partial(self._acquire_room, room),
+                release=partial(self._release_room, room),
+                dispose=partial(self._dispose_room, room),
+            )
+        except BaseException:
+            self._workspaces.release(room_id)
+            raise
+        self._rooms[room_id] = room
+        return room
+
+    async def _acquire_room(self, room: ACPRoom, generation: int, resume: bool) -> None:
+        """Start the room's process; a deliberate wake restores its session exactly.
+
+        The runtime is held before its first await, so a failed or abandoned
+        start leaves it for the owner's recovery to close.
+        """
+        if room.runtime is not None:
+            raise RuntimeError(
+                f"Room {room.room_id}'s previous ACP process is not confirmed closed"
+            )
+        runtime = room.runtime = self._build_runtime(room, generation)
+        room.generation = generation
+        await runtime.start()
+        room.retained.observe(
+            ProviderActivity.UNKNOWN,
+            generation=generation,
+            reason=self.config.retention_unavailable_reason,
+        )
+        if resume and room.session is not None:
+            await self._restore_retained_session(room, runtime)
+
+    async def _release_room(self, room: ACPRoom, cause: ReleaseCause) -> ReleaseOutcome:
+        """Close the room's process and keep its session identity.
+
+        No ACP signal proves a session idle, so an idle release is refused
+        before anything is torn down.
+        """
+        if cause == ReleaseCause.IDLE:
+            return ReleaseOutcome.BUSY
+        await asyncio.gather(*room.session_closes, return_exceptions=True)
+        if (runtime := room.runtime) is not None:
+            await runtime.stop()
+            room.runtime = None
+        if room.session is not None:
+            room.session.live = False
+        return ReleaseOutcome.RELEASED
+
+    async def _dispose_room(self, room: ACPRoom) -> None:
+        """Erase the room's session and workspace after its final release."""
+        room.session = None
+        room.tools = None
+        self._workspaces.release(room.room_id)
+        if self._rooms.get(room.room_id) is room:
+            del self._rooms[room.room_id]
+
+    @asynccontextmanager
+    async def _using_room(
+        self, room: ACPRoom, tools: AgentToolsProtocol
+    ) -> AsyncIterator[ACPRuntime]:
+        """Reserve the room, lease it, bind ``tools``, and yield its process.
+
+        The reservation serializes the room's prompts from session setup to
+        their actual end. Tools bind under the lease, after earlier
+        transitions settle and before acquisition, so a startup never serves
+        another prompt's tools.
+        """
+
+        async def bind_tools() -> None:
+            if self.config.inject_band_tools:
+                room.tools = tools
+
+        async with room.reservation, room.retained.use(prepare=bind_tools):
+            if room.runtime is None:
+                raise RuntimeError(f"Room {room.room_id} has no ACP process")
+            yield room.runtime
 
     async def on_message(
         self,
@@ -651,33 +748,54 @@ class ACPClientAdapter(
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        runtime = await self._runtime_for(room_id)
-        await self._ensure_connection(runtime)
-
-        if self.config.inject_band_tools:
-            async with self._session_lock:
-                self._room_tools[room_id] = tools
-
-        try:
-            session_id, _ = await self._get_or_create_session(
+        room = self._room(room_id)
+        async with self._using_room(room, tools) as runtime:
+            await self._prompt_room(
+                room,
                 runtime,
-                room_id,
+                msg,
+                tools,
+                history,
+                participants_msg,
+                contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
+            )
+
+    async def _prompt_room(
+        self,
+        room: ACPRoom,
+        runtime: ACPRuntime,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: ACPClientSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+    ) -> None:
+        """Prompt the room's session under the caller's lease; a failure that
+        leaves the process unusable requests its recovery."""
+        room_id, generation = room.room_id, room.generation
+        try:
+            session_id = await self._get_or_create_session(
+                room,
+                runtime,
                 history if is_session_bootstrap else None,
             )
         except ACPConfigError as error:
-            # An unanswered set may have left a dead connection the runtime
-            # never replaces; only a fresh runtime lets the next turn retry.
+            # An unanswered set may have left a dead connection; only a fresh
+            # process lets the next turn retry.
             if isinstance(error, ACPConfigUnreachableError):
-                await self.on_cleanup(room_id, expected_runtime=runtime)
+                room.retained.recover(generation=generation, reason=str(error))
             await self._report_config_error(tools, error)
             return
         runtime.reset_session(session_id)
 
         # A just-created session holds no remote context (a restored one does),
         # so seed it with the Band room's transcript. On bootstrap the converter
-        # carried it; a session minted later (the previous runtime was torn down
+        # carried it; a session minted later (the previous process was torn down
         # mid-run) re-fetches it.
-        session = self._room_to_session[room_id]
+        session = self._live_room_session(room)
         replay: list[str] | None = None
         if session.bootstrap_pending and session.replay_pending:
             replay = (
@@ -688,7 +806,7 @@ class ACPClientAdapter(
 
         prompt_text = self._build_prompt_text(
             room_id=room_id,
-            session_id=session_id,
+            session=session,
             msg=msg,
             replay=replay,
             participants_msg=participants_msg,
@@ -751,8 +869,9 @@ class ACPClientAdapter(
                     await self._await_shielded(
                         asyncio.create_task(
                             self._handle_turn_timeout(
+                                room,
                                 runtime,
-                                room_id=room_id,
+                                generation=generation,
                                 session_id=session_id,
                                 tools=tools,
                             )
@@ -771,27 +890,38 @@ class ACPClientAdapter(
             raise
         except Exception as e:
             logger.exception("ACP agent error")
-            await self.on_cleanup(room_id)
+            room.retained.recover(generation=generation, reason=f"ACP agent error: {e}")
             await tools.send_failure(_to_agent_failure(e))
             raise
 
+    @staticmethod
+    def _live_room_session(room: ACPRoom) -> RoomSession:
+        session = room.session
+        if session is None or not session.live:
+            raise RuntimeError(f"Room {room.room_id} has no live ACP session")
+        return session
+
     async def _handle_turn_timeout(
         self,
+        room: ACPRoom,
         runtime: ACPRuntime,
         *,
-        room_id: str,
+        generation: int,
         session_id: str,
         tools: AgentToolsProtocol,
     ) -> None:
-        """Cancel and report a prompt that exceeded the adapter timeout."""
+        """Cancel and report a prompt that exceeded the adapter timeout; its
+        process is recovered once the turn unwinds."""
         logger.error(
             "ACP turn timed out after %ss (room=%s, session=%s)",
             self.config.turn_timeout_s,
-            room_id,
+            room.room_id,
             session_id,
         )
-        await self._cancel_agent_turn(runtime, room_id=room_id, session_id=session_id)
-        await self.on_cleanup(room_id)
+        await self._cancel_agent_turn(
+            runtime, room_id=room.room_id, session_id=session_id
+        )
+        room.retained.recover(generation=generation, reason="ACP turn timed out")
         await tools.send_failure(
             AgentFailure(
                 _PROVIDER,
@@ -1026,18 +1156,22 @@ class ACPClientAdapter(
     def _mcp_settings(self) -> BandMCPBackendSettings:
         return BandMCPBackendSettings(
             tool_definitions=self._tool_definitions,
-            get_tools=self._room_tools.get,
+            get_tools=self._bound_tools,
             additional_tools=self._custom_tools,
             room_bound=True,
         )
 
-    def _forget_session(self, session_id: str) -> None:
-        """Drop per-session state a subclass keeps, once the session can
-        deliver no more updates: its connection stopped or it was closed.
-        Runs even when that stop or close is cancelled."""
+    def _bound_tools(self, room_id: str) -> AgentToolsProtocol | None:
+        """The tools the room's latest prompt bound.
+
+        A Band MCP call names only its room, so a background call that
+        outlives its prompt is served with a later prompt's tools.
+        """
+        room = self._rooms.get(room_id)
+        return None if room is None else room.tools
 
     def _retire_stale_session(
-        self, runtime: ACPRuntime, room_id: str, session: RoomSession
+        self, room: ACPRoom, runtime: ACPRuntime, session: RoomSession
     ) -> None:
         """Close a session built against a Band MCP URL the backend no longer
         serves; the room gets a fresh one on the live URL.
@@ -1049,200 +1183,150 @@ class ACPClientAdapter(
         logger.info(
             "Band MCP server replaced; replacing ACP session %s for room %s",
             session.session_id,
-            room_id,
+            room.room_id,
         )
         runtime.reset_session(session.session_id)
-        self._track_background_task(
-            self._close_session(
-                runtime,
-                session.session_id,
-                reason=SessionCloseReason.STALE_BAND_MCP_URL,
-            )
+        self._close_session_later(
+            room,
+            runtime,
+            session.session_id,
+            reason=SessionCloseReason.STALE_BAND_MCP_URL,
         )
 
-    async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
+    async def _get_or_start_band_mcp_server(
+        self, room_id: str, transport: BandMCPTransport
+    ) -> LocalMcpServerConfig:
         backend = await self._mcp.ensure()
-        runtime = await self._runtime_for(room_id)
-        return self._build_local_mcp_server_config(
-            backend, runtime.agent_mcp_transport, room_id
-        )
+        return self._build_local_mcp_server_config(backend, transport, room_id)
 
     async def _get_or_create_session(
         self,
+        room: ACPRoom,
         runtime: ACPRuntime,
-        room_id: str,
         history: ACPClientSessionState | None,
-    ) -> tuple[str, bool]:
-        """This room's ACP session id, plus whether it was created just now.
+    ) -> str:
+        """The room's live session id, restored or created when it has none.
 
-        A session is reused only while it dials the room's current Band MCP
-        URL. A just-created session is fresh and holds no conversation
-        context; the caller owes it a transcript replay.
+        A live session is reused only while it dials the room's current Band
+        MCP URL; a stale one is retired for a fresh session. A session kept
+        from a recovered process, or one persisted in bootstrap ``history``,
+        is reloaded when the agent still has it. A fresh session holds no
+        conversation context; the caller owes it a transcript replay.
         """
-        mcp = await self._session_mcp_servers(room_id)
-        async with self._session_lock:
-            stale = self._room_to_session.get(room_id)
-            if stale is not None and stale.band_url == mcp.band_url:
-                return stale.session_id, False
-            if stale is not None:
-                del self._room_to_session[room_id]
-                # Never restore: the persisted id may be the one being retired.
-                history = None
-            initializer = self._session_initializers.get(room_id)
-            if initializer is not None and self._is_spent(
-                initializer, published_session_retired=stale is not None
-            ):
-                self._session_initializers.pop(room_id)
-                initializer = None
-            if initializer is None:
-                initializer = SessionInitializer(
-                    task=asyncio.create_task(
-                        self._initialize_session(runtime, room_id, history, mcp),
-                        name=f"acp-session:{room_id}",
-                    )
-                )
-                self._session_initializers[room_id] = initializer
-            initializer.waiters += 1
+        mcp = await self._session_mcp_servers(room, runtime)
+        session = room.session
+        restore_id: str | None = None
+        if session is not None and session.live:
+            if session.band_url == mcp.band_url:
+                return session.session_id
+            # Never restore: the retained id is the one being retired.
+            room.session = None
+            self._retire_stale_session(room, runtime, session)
+        elif session is not None:
+            restore_id = session.session_id
+        elif history is not None:
+            restore_id = history.room_to_session.get(room.room_id)
 
-        if stale is not None:
-            self._retire_stale_session(runtime, room_id, stale)
-
-        try:
-            return await asyncio.shield(initializer.task)
-        finally:
-            await self._release_session_initializer(room_id, initializer)
-
-    @staticmethod
-    def _is_spent(
-        initializer: SessionInitializer, *, published_session_retired: bool
-    ) -> bool:
-        """Whether a finished setup can't serve the next turn: it failed, or it
-        built the very session that was just retired."""
-        task = initializer.task
-        if not task.done():
-            return False
-        return (
-            published_session_retired
-            or task.cancelled()
-            or task.exception() is not None
-        )
-
-    async def _release_session_initializer(
-        self,
-        room_id: str,
-        initializer: SessionInitializer,
-    ) -> None:
-        """Drop a completed setup or cancel one no turn is still awaiting."""
-        async with self._session_lock:
-            if self._session_initializers.get(room_id) is not initializer:
-                return
-            initializer.waiters -= 1
-            if initializer.waiters:
-                return
-            self._session_initializers.pop(room_id)
-
-        if not initializer.task.done():
-            initializer.task.cancel()
-            await asyncio.gather(initializer.task, return_exceptions=True)
-
-    async def _initialize_session(
-        self,
-        runtime: ACPRuntime,
-        room_id: str,
-        history: ACPClientSessionState | None,
-        mcp: SessionMcpServers,
-    ) -> tuple[str, bool]:
-        """Restore or create one room session outside the shared state lock."""
-        restored_session_id = await self._restore_session(
-            runtime,
-            room_id,
-            history,
-            mcp,
-        )
-        if restored_session_id is not None:
-            return restored_session_id, False
-
-        return await self._create_session(runtime, room_id, mcp), True
+        restored = None
+        if restore_id is not None:
+            restored = await self._restore_session(room, runtime, restore_id, mcp)
+        room.session = restored or await self._create_session(room, runtime, mcp)
+        return room.session.session_id
 
     async def _restore_session(
         self,
+        room: ACPRoom,
         runtime: ACPRuntime,
-        room_id: str,
-        history: ACPClientSessionState | None,
+        session_id: str,
         mcp: SessionMcpServers,
-    ) -> str | None:
-        """Restore and configure the persisted session for this room, if available."""
-        session_id = history.room_to_session.get(room_id) if history else None
-        if session_id is None:
-            return None
-
+    ) -> RoomSession | None:
+        """Reload and configure ``session_id``, or ``None`` when the agent
+        cannot restore it."""
         loaded = await runtime.load_session_response(
-            cwd=self._workspaces.workspace(room_id),
+            cwd=room.workspace,
             session_id=session_id,
             mcp_servers=mcp.servers,
         )
         if loaded is None:
             logger.info(
-                "Persisted ACP session %s is unavailable for room %s; using a new session",
+                "ACP session %s is unavailable for room %s; using a new session",
                 session_id,
-                room_id,
+                room.room_id,
             )
             return None
 
         try:
-            await self._configure_session(runtime, room_id, session_id)
+            await self._configure_session(runtime, room.room_id, session_id)
         except BaseException:
             await self._close_session(
                 runtime, session_id, reason=SessionCloseReason.UNCONFIGURED
             )
             raise
-        await self._record_session(
-            room_id,
-            RoomSession(
-                session_id=session_id, band_url=mcp.band_url, replay_pending=False
-            ),
+        logger.debug("Loaded ACP session mapping: %s -> %s", room.room_id, session_id)
+        return RoomSession(
+            session_id=session_id, band_url=mcp.band_url, replay_pending=False
         )
-        logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
-        return session_id
+
+    async def _restore_retained_session(
+        self, room: ACPRoom, runtime: ACPRuntime
+    ) -> None:
+        """Wake the room's retained session on a new process, exactly.
+
+        The load gets fresh MCP servers and cwd and the acknowledged selection
+        is reapplied against the new connection's catalog. A refusal raises
+        and keeps both the session identity and the selection; it never falls
+        back to a new session or a transcript replay.
+        """
+        session = room.session
+        if session is None:
+            return
+        mcp = await self._session_mcp_servers(room, runtime)
+        await runtime.restore_session_response(
+            cwd=room.workspace,
+            session_id=session.session_id,
+            mcp_servers=mcp.servers,
+        )
+        await self._configure_session(
+            runtime, room.room_id, session.session_id, keep_refused_selection=True
+        )
+        session.band_url = mcp.band_url
+        session.live = True
 
     async def _create_session(
-        self, runtime: ACPRuntime, room_id: str, mcp: SessionMcpServers
-    ) -> str:
-        """Create, configure, and publish a session for one room."""
-        async with self._fresh_session(runtime, room_id, mcp.servers) as session:
-            await self._configure_session(runtime, room_id, session.session_id)
-            await self._record_session(
-                room_id,
-                RoomSession(session_id=session.session_id, band_url=mcp.band_url),
-            )
+        self, room: ACPRoom, runtime: ACPRuntime, mcp: SessionMcpServers
+    ) -> RoomSession:
+        """Create and configure a session for one room."""
+        async with self._fresh_session(room, runtime, mcp.servers) as session:
+            await self._configure_session(runtime, room.room_id, session.session_id)
 
         logger.info(
             "Created ACP session %s for room %s (mcp_servers=%d)",
             session.session_id,
-            room_id,
+            room.room_id,
             len(mcp.servers),
         )
-        return session.session_id
+        return RoomSession(session_id=session.session_id, band_url=mcp.band_url)
 
     @asynccontextmanager
     async def _fresh_session(
         self,
+        room: ACPRoom,
         runtime: ACPRuntime,
-        room_id: str,
         mcp_servers: list[object],
     ) -> AsyncIterator[NewSessionResponse]:
         """Yield a new session, closing it unless initialization completes."""
         session = await runtime.create_session_response(
-            cwd=self._workspaces.workspace(room_id),
+            cwd=room.workspace,
             mcp_servers=mcp_servers,
         )
         try:
             yield session
         except asyncio.CancelledError:
-            self._track_background_task(
-                self._close_session(
-                    runtime, session.session_id, reason=SessionCloseReason.UNCONFIGURED
-                )
+            self._close_session_later(
+                room,
+                runtime,
+                session.session_id,
+                reason=SessionCloseReason.UNCONFIGURED,
             )
             raise
         except BaseException:
@@ -1250,11 +1334,6 @@ class ACPClientAdapter(
                 runtime, session.session_id, reason=SessionCloseReason.UNCONFIGURED
             )
             raise
-
-    async def _record_session(self, room_id: str, session: RoomSession) -> None:
-        """Publish a fully initialized session to its room."""
-        async with self._session_lock:
-            self._room_to_session[room_id] = session
 
     async def _close_session(
         self, runtime: ACPRuntime, session_id: str, *, reason: SessionCloseReason
@@ -1281,60 +1360,55 @@ class ACPClientAdapter(
                 reason,
                 exc_info=True,
             )
-        finally:
-            self._forget_session(session_id)
 
-    def _track_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
-        """Run a fire-and-forget task that outlives its caller.
+    def _close_session_later(
+        self,
+        room: ACPRoom,
+        runtime: ACPRuntime,
+        session_id: str,
+        *,
+        reason: SessionCloseReason,
+    ) -> None:
+        """Close a retired session without delaying its caller; the room's
+        release waits for it before closing the process."""
+        task = asyncio.create_task(
+            self._close_session(runtime, session_id, reason=reason)
+        )
+        room.session_closes.add(task)
+        task.add_done_callback(room.session_closes.discard)
+        task.add_done_callback(_log_session_close_failure)
 
-        An untracked ``asyncio.create_task`` result can be garbage-collected
-        before it runs (the event loop only keeps a weak reference), silently
-        dropping the work. Keeping it here until it finishes also gives a
-        crash somewhere to be logged instead of vanishing.
-        """
-        task = asyncio.create_task(coro)
-        self._background_tasks.add(task)
-        task.add_done_callback(self._on_background_task_done)
-
-    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
-        self._background_tasks.discard(task)
-        if task.cancelled():
-            return
-        error = task.exception()
-        if error is not None:
-            logger.warning("ACP background task failed", exc_info=error)
-
-    async def _drain_background_tasks(self) -> None:
-        """Let in-flight fire-and-forget cleanup finish before the runtime it
-        depends on stops.
-
-        Discards the awaited snapshot itself rather than relying on
-        ``_on_background_task_done`` to shrink the set: when every task in
-        the snapshot is already finished, ``asyncio.gather`` resolves
-        eagerly without ever suspending, so a callback-only removal would
-        spin here forever waiting for a yield that never happens.
-        """
-        while self._background_tasks:
-            pending = tuple(self._background_tasks)
-            await asyncio.gather(*pending, return_exceptions=True)
-            self._background_tasks.difference_update(pending)
-
-    async def _session_mcp_servers(self, room_id: str) -> SessionMcpServers:
+    async def _session_mcp_servers(
+        self, room: ACPRoom, runtime: ACPRuntime
+    ) -> SessionMcpServers:
         """The MCP configuration supplied when creating or loading a session."""
         servers: list[object] = list(self.config.mcp_servers)
         if not self.config.inject_band_tools:
             return SessionMcpServers(servers=servers, band_url=None)
-        band_server = await self._get_or_start_band_mcp_server(room_id)
+        band_server = await self._get_or_start_band_mcp_server(
+            room.room_id, runtime.agent_mcp_transport
+        )
         return SessionMcpServers(
             servers=[*servers, band_server], band_url=band_server.url
         )
 
     async def _configure_session(
-        self, runtime: ACPRuntime, room_id: str, session_id: str
+        self,
+        runtime: ACPRuntime,
+        room_id: str,
+        session_id: str,
+        *,
+        keep_refused_selection: bool = False,
     ) -> None:
-        """Apply caller-selected values from the session's live ACP catalog."""
+        """Apply caller-selected values from the session's live ACP catalog.
+
+        ``keep_refused_selection`` keeps a room's switched selection when the
+        session refuses it, for a wake that must restore it rather than revert.
+        """
         selection = self._room_selection(room_id)
-        if not selection.is_empty:
+        if keep_refused_selection and not selection.is_empty:
+            await self._apply_model_selection(runtime, session_id, selection)
+        elif not selection.is_empty:
             await self._apply_room_selection(runtime, room_id, session_id, selection)
         elif self._resolve_session_config is not None:
             await self._apply_resolved_config(
@@ -1468,7 +1542,7 @@ class ACPClientAdapter(
         self,
         *,
         room_id: str,
-        session_id: str,
+        session: RoomSession,
         msg: PlatformMessage,
         replay: list[str] | None = None,
         participants_msg: str | None = None,
@@ -1483,7 +1557,7 @@ class ACPClientAdapter(
         live_message = msg.format_for_llm()
         system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        if not self._room_to_session[room_id].bootstrap_pending:
+        if not session.bootstrap_pending:
             return "\n\n".join([*system_updates, live_message])
 
         sections = [self._build_system_context(room_id, msg), *system_updates]
@@ -1492,88 +1566,74 @@ class ACPClientAdapter(
             logger.info(
                 "Replaying %d room history lines into new ACP session %s for room %s",
                 len(replay),
-                session_id,
+                session.session_id,
                 room_id,
             )
         else:
             sections.append(live_message)
         return "\n\n".join(sections)
 
-    async def on_cleanup(
-        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
-    ) -> None:
-        async with self._session_lock:
-            if (
-                expected_runtime is not None
-                and self._runtimes.get(room_id) is not expected_runtime
-            ):
-                return
-            session = self._room_to_session.pop(room_id, None)
-            initializer = self._session_initializers.pop(room_id, None)
-            self._room_tools.pop(room_id, None)
-            runtime = self._runtimes.pop(room_id, None)
-            self._workspaces.release(room_id)
+    async def on_cleanup(self, room_id: str) -> None:
+        """Dispose the room: settle its work, close its process for good, then
+        erase its session and workspace.
 
-        try:
-            await self._cancel_session_initializers(initializer)
-            if runtime is not None:
-                await runtime.stop()
-        finally:
-            if session is not None:
-                self._forget_session(session.session_id)
-
+        Raises:
+            CleanupIncompleteError: The disposal outlived the transition
+                timeout, or was requested by the room's own work; the room keeps
+                its process and a retry joins the same disposal.
+        """
+        room = self._rooms.get(room_id)
+        if room is not None:
+            await room.retained.dispose()
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
-
-    @staticmethod
-    async def _stop_runtimes(runtimes: list[ACPRuntime]) -> None:
-        await asyncio.gather(*(runtime.stop() for runtime in runtimes))
 
     async def cleanup_all(self, *, final: bool = True) -> None:
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
-        Room-owned ACP subprocesses are released by ``on_cleanup``; this method
-        releases every remaining runtime and the shared local Band MCP server.
-        Idempotent — safe to call again from ``stop()``.
+        Disposes every room, then stops the shared Band MCP server, within one
+        ``retention.transition_timeout_s`` budget. Anything unfinished stays
+        owned and the next call resumes it. The MCP server stops only after
+        every room's process closed.
 
         ``final`` distinguishes real process shutdown (the default: no future turn
         can arrive, so a still-parked one must fail rather than start resources
-        nothing will ever stop) from the ``on_message`` error path's use of this
-        same teardown to recover a wedged connection — there, a *later* turn on
-        any room is expected to self-heal by lazily respawning both the ACP
-        connection (``_ensure_connection``'s ``can_respawn``) and the MCP backend,
-        so ``final=False`` must leave that path open.
+        nothing will ever stop) from a teardown after which later turns start
+        afresh, which ``final=False`` keeps open.
+
+        Raises:
+            CleanupIncompleteError: A room or the MCP server is still closing.
         """
-        async with self._session_lock:
-            initializers = tuple(self._session_initializers.values())
-            self._session_initializers.clear()
-            self._room_to_session.clear()
-            self._room_tools.clear()
-            runtimes = list(self._runtimes.values())
-            self._runtimes.clear()
-            for room_id in self._workspaces.rooms:
-                self._workspaces.release(room_id)
-        await self._cancel_session_initializers(*initializers)
-        await self._drain_background_tasks()
-        await self._mcp.close(final=final)
-        await self._stop_runtimes(runtimes)
+        deadline = (
+            asyncio.get_running_loop().time()
+            + self.config.retention.transition_timeout_s
+        )
+        await self._retention.stop()
+        await self._close_mcp(final=final, deadline=deadline)
+        if not final:
+            self._renew_retention()
         logger.info("ACP client adapter stopped")
 
-    async def stop(self) -> None:
-        """Tear down now (used by the ``on_message`` error path); see ``cleanup_all``."""
-        await self.cleanup_all(final=False)
+    async def _close_mcp(self, *, final: bool, deadline: float) -> None:
+        """Stop the shared MCP server within what remains of ``deadline``.
 
-    async def _cancel_session_initializers(
-        self,
-        *initializers: SessionInitializer | None,
-    ) -> None:
-        """Cancel in-flight setup before its runtime can be torn down."""
-        pending = tuple(
-            initializer.task for initializer in initializers if initializer is not None
-        )
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        A final stop is owned by the backend, so the bounded wait leaves it
+        running for a retry to join. A non-final detach hands its backend to
+        this caller, so that stop is awaited to completion.
+        """
+        if not final:
+            await self._mcp.close(final=False)
+            return
+        try:
+            async with asyncio.timeout_at(deadline):
+                await self._mcp.close(final=True)
+        except TimeoutError as error:
+            raise CleanupIncompleteError(
+                "Band MCP backend is still stopping"
+            ) from error
+
+    async def stop(self) -> None:
+        """Tear down every room and the MCP server; later turns start afresh."""
+        await self.cleanup_all(final=False)
 
     async def _fetch_replay(
         self,
@@ -1600,7 +1660,15 @@ class ACPClientAdapter(
         raw = messages_before(context.get("data") or [], msg.id)
         return build_replay_messages([m for m in raw if m.get("id") != msg.id])
 
-    async def _ensure_connection(self, runtime: ACPRuntime) -> ACPConnectionProtocol:
-        return await runtime.ensure_connection(
-            can_respawn=True,
-        )
+
+def _no_live_session(room_id: str) -> BandConfigError:
+    return BandConfigError(f"room {room_id} has no live ACP session to switch")
+
+
+def _session_ended_mid_switch(room_id: str) -> BandConfigError:
+    return BandConfigError(f"room {room_id}'s ACP session ended mid-switch")
+
+
+def _log_session_close_failure(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.warning("ACP session close failed", exc_info=error)

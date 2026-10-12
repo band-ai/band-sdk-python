@@ -121,14 +121,25 @@ class NoopACPClientProfile:
 class CursorACPClientProfile:
     """Cursor-specific ACP extension handling."""
 
-    def __init__(self, resolve_method: CursorMethodResolver | None = None) -> None:
+    def __init__(
+        self,
+        resolve_method: CursorMethodResolver | None = None,
+        *,
+        active_session: Callable[[], str | None] | None = None,
+    ) -> None:
+        """``active_session`` names the session sessionless notifications
+        belong to; it overrides ``bind_session`` for a profile bound to one
+        process."""
         self._resolve_method = resolve_method
+        self._active_session = active_session
         self._session_id: str | None = None
         self._todos_by_session: dict[str, dict[str, tuple[str, str]]] = {}
 
     @property
     def extension_session_id(self) -> str | None:
         """The session receiving Cursor notifications without a session id."""
+        if self._active_session is not None:
+            return self._active_session()
         return self._session_id
 
     def bind_session(self, session_id: str | None) -> None:
@@ -136,12 +147,8 @@ class CursorACPClientProfile:
         self._session_id = session_id
 
     def forget_session(self, session_id: str) -> None:
-        """Drop todo state when the adapter releases its ACP session."""
+        """Drop todo state when the adapter closes its ACP session."""
         self._todos_by_session.pop(session_id, None)
-
-    def clear_sessions(self) -> None:
-        """Drop all todo state during adapter-wide teardown."""
-        self._todos_by_session.clear()
 
     async def ext_method(
         self,
@@ -205,7 +212,9 @@ class CursorACPClientProfile:
         # notification's own id -- the same precedence ACPCollectingClient
         # already uses to route this chunk to a transcript.
         session_id = (
-            params.get("sessionId") or params.get("session_id") or self._session_id
+            params.get("sessionId")
+            or params.get("session_id")
+            or self.extension_session_id
         )
         if not isinstance(todos, list) or not isinstance(session_id, str):
             return []

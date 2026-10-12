@@ -13,6 +13,7 @@ from acp.schema import (
     ElicitationFormSessionMode,
     ElicitationSchema,
     ElicitationStringPropertySchema,
+    NewSessionResponse,
 )
 from pydantic import BaseModel
 
@@ -22,7 +23,7 @@ from band.adapters.omp_acp import (
     OmpACPCollectingClient,
 )
 from band.integrations.acp.client_adapter import ACPPermissionRequest
-from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.omp import (
@@ -37,7 +38,13 @@ from band.integrations.omp import (
     XD_MCP_PREFIX,
 )
 from band.testing import FakeAgentTools
-from tests.integrations.acp.acp_toolkit import launch_for
+from tests.integrations.acp.acp_toolkit import (
+    FakeSpawn,
+    inject_acp_spawn,
+    launch_for,
+    make_acp_connection,
+    room_holder,
+)
 from tests.integrations.acp.conftest import make_platform_message
 
 
@@ -189,7 +196,7 @@ class TestOmpACPAdapterLaunch:
 
     def test_runtime_client_factory_is_omp_collecting_client(self) -> None:
         adapter = OmpACPAdapter()
-        client = adapter._runtime_client_factory()
+        client = adapter._runtime_client_factory(room_holder(adapter), 1)
         assert isinstance(client, OmpACPCollectingClient)
 
 
@@ -224,7 +231,7 @@ class TestOmpWorkspaceSpawn:
     ) -> None:
         adapter = OmpACPAdapter()
 
-        runtime = adapter._build_runtime(str(tmp_path))
+        runtime = adapter._build_runtime(ACPRoom("room-1", workspace=str(tmp_path)), 1)
 
         assert runtime._cwd is None
         assert f"--cwd={tmp_path}" in runtime._command
@@ -322,7 +329,7 @@ class TestOmpElicitationHandler:
             return OMP_APPROVE_OPTION_ID
 
         adapter._resolve_permission = approve
-        client = adapter._runtime_client_factory()
+        client = adapter._runtime_client_factory(room_holder(adapter), 1)
         handler = adapter._make_elicitation_handler(MagicMock(), "room-1", "sess-live")
         assert handler is not None
         client.set_elicitation_handler("sess-live", handler)
@@ -400,7 +407,7 @@ class TestOmpElicitationHandler:
         adapter._resolve_permission = deny
         emitter = MagicMock()
         emitter.open_permission = AsyncMock()
-        client = adapter._runtime_client_factory()
+        client = adapter._runtime_client_factory(room_holder(adapter), 1)
         handler = adapter._make_elicitation_handler(emitter, "room-1", "sess-deny")
         assert handler is not None
         client.set_elicitation_handler("sess-deny", handler)
@@ -431,26 +438,24 @@ class TestOmpElicitationHandlerWiring:
     async def test_elicitation_handler_wired_on_message(self) -> None:
         """``on_message`` must register the OMP form elicitation handler."""
         adapter = OmpACPAdapter(OmpACPAdapterConfig(inject_band_tools=False))
-        runtime = await adapter._runtime_for("room-123")
-        runtime._conn = AsyncMock()
-        mock_session = MagicMock()
-        mock_session.session_id = "acp-session-123"
-        runtime._conn.new_session = AsyncMock(return_value=mock_session)
-        runtime._conn.prompt = AsyncMock()
-        runtime._client = adapter._runtime_client_factory()
+        conn = make_acp_connection()
+        conn.new_session = AsyncMock(
+            return_value=NewSessionResponse(session_id="acp-session-123")
+        )
+        inject_acp_spawn(adapter, FakeSpawn(conn=conn))
 
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello", room_id="room-123")
         await adapter.on_message(
-            msg,
-            tools,
+            make_platform_message("Hello", room_id="room-123"),
+            FakeAgentTools(),
             ACPClientSessionState(),
             None,
             None,
             is_session_bootstrap=False,
             room_id="room-123",
         )
-        assert "acp-session-123" in runtime._client._elicitation_handlers
+
+        client = adapter._rooms["room-123"].runtime.client
+        assert "acp-session-123" in client._elicitation_handlers
 
 
 class TestOmpDeterministicMcpReply:

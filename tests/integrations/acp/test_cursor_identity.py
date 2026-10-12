@@ -12,6 +12,7 @@ from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool, mcp_tool_spelling
 from band.testing import FakeAgentTools, events_of_type
+from tests.integrations.acp.acp_toolkit import room_holder
 
 
 class AliasArguments(BaseModel):
@@ -47,7 +48,7 @@ async def test_cursor_title_preserves_reply_identity_in_room_events(
     adapter = CursorACPAdapter(
         additional_tools=[(alias_model, alias_reply)] if with_alias else None,
     )
-    client = adapter._runtime_client_factory()
+    client = adapter._runtime_client_factory(room_holder(adapter), 1)
     tools = FakeAgentTools()
     async with RoomTurnEmitter(
         tools, session_id="session", room_id="room", records_tool_effects=True

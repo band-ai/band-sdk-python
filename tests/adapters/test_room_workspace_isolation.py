@@ -82,7 +82,7 @@ async def test_adapters_refuse_a_relative_workspace(
     with pytest.raises(ValueError, match="must return an absolute path"):
         codex._room_client("room-a")
     with pytest.raises(ValueError, match="must return an absolute path"):
-        await acp._runtime_for("room-a")
+        acp._room("room-a")
     assert not (tmp_path / "workspace").exists()
 
 
@@ -101,12 +101,12 @@ async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
     )
 
     codex._room_client("room-a")
-    await acp._runtime_for("room-a")
+    acp._room("room-a")
 
     with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
         codex._room_client("room-b")
     with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
-        await acp._runtime_for("room-b")
+        acp._room("room-b")
 
 
 @pytest.mark.asyncio
