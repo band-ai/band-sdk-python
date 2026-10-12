@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
@@ -49,6 +50,22 @@ class ExecutionFactory(Protocol):
         *,
         hub_room_id: str | None = None,
     ) -> Execution: ...
+
+
+@dataclass
+class RoomLifecycle:
+    """One room's membership intent and the execution it owns.
+
+    ``execution`` stays owned from construction until its cleanup succeeds;
+    it receives work only while it is also the room's routed execution.
+    ``task`` is the room's single owned startup/retirement operation, and
+    ``intent`` counts withdrawals so a startup that outlived one is retired.
+    """
+
+    wanted: bool = False
+    intent: int = 0
+    execution: Execution | None = None
+    task: asyncio.Task[bool] | None = None
 
 
 class AgentRuntime:
@@ -144,14 +161,13 @@ class AgentRuntime:
         # RoomPresence for cross-room management
         self.presence = RoomPresence(link, room_filter)
 
-        # Per-room executions. Only ``executions`` receives work and control;
-        # a retiring execution stays owned until its cleanup succeeds, and a
-        # room rejoined meanwhile waits in ``_admitting`` for that cleanup.
+        # Only ``executions`` receives work and control. ``_rooms`` owns every
+        # execution, routed or not, until its cleanup succeeds.
         self.executions: dict[str, Execution] = {}
-        self._retiring: dict[str, Execution] = {}
-        self._admitting: set[str] = set()
-        self._lifecycles: dict[str, asyncio.Task[bool]] = {}
+        self._rooms: dict[str, RoomLifecycle] = {}
         self._accepting_rooms = True
+        # Accumulates across stop() retries so a cancelled room stays reported.
+        self._stop_graceful = True
 
         # Control-signal dedup. The server does not deduplicate
         # agent.control pushes, so we drop repeats by correlation_id. Bounded
@@ -176,8 +192,21 @@ class AgentRuntime:
 
     @property
     def cleanup_pending(self) -> bool:
-        """Whether a room's execution or adapter cleanup has not yet succeeded."""
-        return bool(self._retiring)
+        """Whether a room still owns an execution that is not serving it:
+        startup or cleanup that has not yet succeeded."""
+        return any(
+            record.execution is not None and not self._serving(room_id)
+            for room_id, record in self._rooms.items()
+        )
+
+    def _serving(self, room_id: str) -> bool:
+        record = self._rooms.get(room_id)
+        execution = self.executions.get(room_id)
+        return (
+            record is not None
+            and execution is not None
+            and execution is record.execution
+        )
 
     def set_hub_room_id(self, hub_room_id: str | None) -> None:
         """Register the hub-room ID so future executions can auto-enable contact tools.
@@ -198,6 +227,7 @@ class AgentRuntime:
         """
         logger.info("Starting AgentRuntime for agent %s", self.agent_id)
         self._accepting_rooms = True
+        self._stop_graceful = True
         try:
             await self.presence.start()
         except BaseException:
@@ -213,8 +243,8 @@ class AgentRuntime:
                      in each execution context. None means cancel immediately.
 
         Returns:
-            True if all executions stopped gracefully, False if any had to be
-            cancelled mid-processing.
+            True if every execution stopped gracefully, including those
+            stopped by an earlier attempt; False if any had to be cancelled.
 
         Raises:
             ExceptionGroup: Some room cleanup failed after every room was
@@ -226,19 +256,17 @@ class AgentRuntime:
         3. Disconnects the link (wakes ``run(install_signal_handlers=False)``)
         """
         self._accepting_rooms = False
-        self._admitting.clear()
         logger.info("Stopping AgentRuntime for agent %s", self.agent_id)
 
-        all_graceful = True
         failures: list[Exception] = []
         try:
-            for room_id in dict.fromkeys([*self.executions, *self._retiring]):
+            for room_id in list(self._rooms):
                 try:
                     graceful = await self._destroy_execution(room_id, timeout=timeout)
                 except Exception as error:  # noqa: BLE001 -- every room must be attempted; failures are raised together below
                     failures.append(error)
                 else:
-                    all_graceful = all_graceful and graceful
+                    self._stop_graceful = self._stop_graceful and graceful
 
             await self.presence.stop()
         finally:
@@ -247,7 +275,7 @@ class AgentRuntime:
             await self.link.disconnect()
         if failures:
             raise ExceptionGroup("Room cleanup remains incomplete", failures)
-        return all_graceful
+        return self._stop_graceful
 
     async def run(self, *, install_signal_handlers: bool = True) -> None:
         """
@@ -271,13 +299,22 @@ class AgentRuntime:
     # --- Presence callbacks ---
 
     async def _on_room_joined(self, room_id: str, payload: dict) -> None:
-        """Handle room joined - create execution context."""
+        """Record membership and request owned admission without waiting, so
+        a slow startup never holds up the presence consumer."""
         if self._accepting_rooms:
-            await self._create_execution(room_id)
+            self._request_admission(room_id)
 
     async def _on_room_left(self, room_id: str) -> None:
-        """Handle room left - destroy execution context."""
-        await self._destroy_execution(room_id)
+        """Fence the room at once and request its owned cleanup.
+
+        Physical teardown is not awaited, so a slow cleanup never holds up
+        the presence consumer; a failure stays owned for a later retry.
+        """
+        record = self._rooms.get(room_id)
+        if record is None or not record.wanted:
+            return
+        self._fence(room_id)
+        self._lifecycle(room_id)
 
     async def _on_room_event(self, room_id: str, event: PlatformEvent) -> None:
         """Handle room event - forward to execution context.
@@ -286,10 +323,11 @@ class AgentRuntime:
         retries instead, and the new execution's /next resync recovers work.
         """
         execution = self.executions.get(room_id)
+        record = self._rooms.get(room_id)
         if execution:
             await execution.on_event(event)
-        elif room_id in self._admitting:
-            self._request_lifecycle(room_id)
+        elif record is not None and record.wanted:
+            self._lifecycle(room_id)
         else:
             logger.warning("No execution for room %s, event dropped", room_id)
 
@@ -299,8 +337,9 @@ class AgentRuntime:
         Messages may have arrived while the socket was down. Each execution
         context re-polls /next to catch anything the server didn't push.
         """
-        for room_id in tuple(self._admitting):
-            self._request_lifecycle(room_id)
+        for room_id in list(self._rooms):
+            if not self._serving(room_id):
+                self._lifecycle(room_id)
         logger.info(
             "AgentRuntime: Requesting /next resync for %d execution(s) after reconnect",
             len(self.executions),
@@ -427,23 +466,31 @@ class AgentRuntime:
     # --- Execution management ---
 
     async def _create_execution(self, room_id: str) -> Execution | None:
-        """Create and start execution context for a room.
+        """Admit a room through its owned lifecycle.
 
-        Returns None while the room's previous execution is still being
-        cleaned up; admission completes once that cleanup succeeds.
+        Waits for a fresh room's startup. Returns None without waiting when an
+        earlier execution must be cleaned up first; admission then completes
+        through the same owned operation once that cleanup succeeds.
         """
         if not self._accepting_rooms:
             raise RuntimeError("Agent runtime is stopping or stopped")
-        if room_id in self.executions:
+        if self._serving(room_id):
             logger.debug("Execution already exists for room %s", room_id)
             return self.executions[room_id]
-        if room_id in self._retiring:
-            self._admitting.add(room_id)
-            self._request_lifecycle(room_id)
+        previous = self._rooms.get(room_id)
+        cleanup_first = previous is not None and previous.execution is not None
+        lifecycle = self._request_admission(room_id)
+        if cleanup_first:
             return None
-        return await self._start_execution(room_id)
+        await asyncio.shield(lifecycle)
+        return self.executions.get(room_id)
 
-    async def _start_execution(self, room_id: str) -> Execution:
+    def _request_admission(self, room_id: str) -> asyncio.Task[bool]:
+        record = self._rooms.setdefault(room_id, RoomLifecycle())
+        record.wanted = True
+        return self._lifecycle(room_id)
+
+    def _build_execution(self, room_id: str) -> Execution:
         # Use factory if provided, otherwise create ExecutionContext
         if self._execution_factory:
             try:
@@ -470,11 +517,6 @@ class AgentRuntime:
                 claim_registry=self._claim_registry,
                 on_platform_stop=self._on_platform_stop,
             )
-
-        self.executions[room_id] = execution
-        await execution.start()
-
-        logger.debug("Created execution for room %s", room_id)
         return execution
 
     async def _on_platform_stop(self, ctx: ExecutionContext, scope: TurnScope) -> None:
@@ -485,11 +527,10 @@ class AgentRuntime:
         self, room_id: str, timeout: float | None = None
     ) -> bool:
         """
-        Stop and cleanup execution context for a room.
+        Stop and clean up a room's execution, waiting for its owned cleanup.
 
-        The execution leaves routing at once and stays owned until both its
-        settlement and the adapter's room cleanup succeed; a failure raises
-        and a later leave, rejoin, reconnect or stop retries it.
+        A failure raises; the execution stays owned and a later leave,
+        rejoin, reconnect or stop retries it.
 
         Args:
             room_id: Room ID to destroy execution for.
@@ -498,49 +539,84 @@ class AgentRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        self._admitting.discard(room_id)
-        if (execution := self.executions.pop(room_id, None)) is not None:
-            self._retiring[room_id] = execution
+        record = self._fence(room_id)
         graceful = True
-        while room_id in self._retiring:
-            lifecycle = self._room_lifecycle(room_id, timeout=timeout)
+        while record is not None and self._rooms.get(room_id) is record:
+            lifecycle = self._lifecycle(room_id, timeout=timeout)
             graceful = await asyncio.shield(lifecycle) and graceful
         return graceful
 
-    def _request_lifecycle(self, room_id: str) -> None:
-        """Start or join the room's owned cleanup without waiting for it."""
-        lifecycle = self._room_lifecycle(room_id, timeout=None)
-        lifecycle.add_done_callback(self._observe_lifecycle)
+    def _fence(self, room_id: str) -> RoomLifecycle | None:
+        """Withdraw membership: no admission completes and no work routes."""
+        self.executions.pop(room_id, None)
+        record = self._rooms.get(room_id)
+        if record is not None:
+            record.wanted = False
+            record.intent += 1
+        return record
 
-    def _room_lifecycle(
-        self, room_id: str, *, timeout: float | None
+    def _lifecycle(
+        self, room_id: str, *, timeout: float | None = None
     ) -> asyncio.Task[bool]:
-        lifecycle = self._lifecycles.get(room_id)
-        if lifecycle is None or lifecycle.done():
-            lifecycle = asyncio.create_task(self._run_lifecycle(room_id, timeout))
-            self._lifecycles[room_id] = lifecycle
-        return lifecycle
+        """Join the room's owned operation, or start one after the last settled."""
+        record = self._rooms[room_id]
+        if record.task is None or record.task.done():
+            record.task = asyncio.create_task(self._reconcile(room_id, record, timeout))
+            record.task.add_done_callback(self._observe_lifecycle)
+        return record.task
 
     @staticmethod
     def _observe_lifecycle(lifecycle: asyncio.Task[bool]) -> None:
         if not lifecycle.cancelled() and (error := lifecycle.exception()):
-            logger.warning("Room cleanup remains pending: %s", error)
+            logger.warning("Room lifecycle remains pending: %s", error)
 
-    async def _run_lifecycle(self, room_id: str, timeout: float | None) -> bool:
-        """Retire the old execution, then admit only a still-desired rejoin."""
+    async def _reconcile(
+        self, room_id: str, record: RoomLifecycle, timeout: float | None
+    ) -> bool:
+        """Converge the room's execution to its current membership intent.
+
+        Intent is re-read after every await, so a leave or stop during a held
+        startup retires that execution instead of publishing it.
+        """
         graceful = True
-        if (execution := self._retiring.get(room_id)) is not None:
-            graceful = await self._retire(room_id, execution, timeout)
-        if room_id in self._admitting and self._accepting_rooms:
-            self._admitting.discard(room_id)
-            admitted = await self._start_execution(room_id)
-            await self._request_resync(room_id, admitted)
-        return graceful
+        readmission = record.execution is not None
+        while True:
+            execution = record.execution
+            admit = record.wanted and self._accepting_rooms
+            if self._serving(room_id):
+                if admit:
+                    return graceful
+                self.executions.pop(room_id)
+            if execution is not None:
+                graceful = await self._retire(room_id, record, timeout) and graceful
+            elif not admit:
+                if self._rooms.get(room_id) is record:
+                    del self._rooms[room_id]
+                return graceful
+            else:
+                await self._admit(room_id, record, resync=readmission)
+
+    async def _admit(
+        self, room_id: str, record: RoomLifecycle, *, resync: bool
+    ) -> None:
+        """Start an owned execution; route it only if the membership intent it
+        started under still stands."""
+        intent = record.intent
+        execution = self._build_execution(room_id)
+        record.execution = execution
+        await execution.start()
+        if not (record.wanted and self._accepting_rooms and record.intent == intent):
+            return
+        self.executions[room_id] = execution
+        logger.debug("Created execution for room %s", room_id)
+        if resync:
+            await self._request_resync(room_id, execution)
 
     async def _retire(
-        self, room_id: str, execution: Execution, timeout: float | None
+        self, room_id: str, record: RoomLifecycle, timeout: float | None
     ) -> bool:
-        graceful = await execution.stop(timeout=timeout)
+        assert record.execution is not None
+        graceful = await record.execution.stop(timeout=timeout)
 
         # Durable completion state is safe to release with the room. Pending
         # acknowledgements remain in the shared registry so a later rejoin
@@ -551,6 +627,6 @@ class AgentRuntime:
         if self._on_session_cleanup:
             await self._on_session_cleanup(room_id)
 
-        del self._retiring[room_id]
+        record.execution = None
         logger.debug("Destroyed execution for room %s", room_id)
         return graceful

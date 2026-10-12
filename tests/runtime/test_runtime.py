@@ -7,12 +7,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 
 # Import test helpers from conftest
-from tests.conftest import make_message_event, make_participant_added_event
+from tests.conftest import (
+    make_message_event,
+    make_participant_added_event,
+    make_room_added_event,
+    make_room_removed_event,
+)
+from tests.runtime.conftest import wait_for_condition
 from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
@@ -187,6 +192,7 @@ class TestAgentRuntimeExecutionManagement:
         await runtime.start()
         try:
             await runtime.presence.on_room_joined("room-2", {})
+            await _settled(runtime, "room-2")
             assert set(runtime.active_sessions) == {"room-2"}
         finally:
             await runtime.stop()
@@ -195,7 +201,7 @@ class TestAgentRuntimeExecutionManagement:
         """Room joined should create execution context."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
-        await runtime._on_room_joined("room-123", {"id": "room-123"})
+        await _joined(runtime, "room-123")
 
         assert "room-123" in runtime.executions
         assert isinstance(runtime.executions["room-123"], ExecutionContext)
@@ -231,7 +237,7 @@ class TestAgentRuntimeExecutionManagement:
 
         room_a = await runtime._create_execution("room-a")
         room_b = await runtime._create_execution("room-b")
-        await runtime._on_room_left("room-a")
+        await _left(runtime, "room-a")
         room_a_again = await runtime._create_execution("room-a")
 
         assert room_a.claims is room_b.claims
@@ -266,7 +272,7 @@ class TestAgentRuntimeExecutionManagement:
         original.claims.remember_completed("room-a", "msg-completed")
         original.claims.remember_ack_pending("room-a", "msg-ack-pending")
 
-        await runtime._on_room_left("room-a")
+        await _left(runtime, "room-a")
         recreated = await runtime._create_execution("room-a")
 
         assert not recreated.claims.is_completed("room-a", "msg-completed")
@@ -392,6 +398,7 @@ class TestAgentRuntimePresenceIntegration:
 
         # Verify they work correctly by calling them
         await runtime.presence.on_room_joined("room-test", {"id": "room-test"})
+        await _settled(runtime, "room-test")
         assert "room-test" in runtime.executions
 
         await runtime.presence.on_room_left("room-test")
@@ -470,6 +477,7 @@ class RoomCleanup:
         self.release = asyncio.Event()
         self.release.set()
         self.failing = False
+        self.failing_rooms: set[str] = set()
 
     def hold(self) -> None:
         self.entered.clear()
@@ -478,7 +486,7 @@ class RoomCleanup:
     async def __call__(self, room_id: str) -> None:
         self.entered.set()
         await self.release.wait()
-        if self.failing:
+        if self.failing or room_id in self.failing_rooms:
             raise RuntimeError("room cleanup failed")
         self.rooms.append(room_id)
 
@@ -505,7 +513,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
     async def test_held_cleanup_fences_rejoin_until_it_succeeds(
         self, runtime: AgentRuntime, room_cleanup: RoomCleanup, mock_handler
     ):
-        await runtime._on_room_joined("room-1", {})
+        await _joined(runtime, "room-1")
         old = runtime.executions["room-1"]
         room_cleanup.hold()
         leaving = asyncio.create_task(runtime._on_room_left("room-1"))
@@ -528,10 +536,9 @@ class TestAgentRuntimeRoomCleanupOwnership:
     async def test_failed_cleanup_is_retained_and_retried_by_admission(
         self, runtime: AgentRuntime, room_cleanup: RoomCleanup, retry: str
     ):
-        await runtime._on_room_joined("room-1", {})
+        await _joined(runtime, "room-1")
         room_cleanup.failing = True
-        with pytest.raises(RuntimeError, match="room cleanup failed"):
-            await runtime._on_room_left("room-1")
+        await _left(runtime, "room-1")
         assert runtime.cleanup_pending
 
         await runtime._on_room_joined("room-1", {})
@@ -555,7 +562,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
     async def test_newer_leave_invalidates_pending_admission(
         self, runtime: AgentRuntime, room_cleanup: RoomCleanup
     ):
-        await runtime._on_room_joined("room-1", {})
+        await _joined(runtime, "room-1")
         room_cleanup.hold()
         leaving = asyncio.create_task(runtime._on_room_left("room-1"))
         await room_cleanup.entered.wait()
@@ -571,8 +578,8 @@ class TestAgentRuntimeRoomCleanupOwnership:
     async def test_stop_attempts_every_room_and_retries_failed_cleanup(
         self, runtime: AgentRuntime, room_cleanup: RoomCleanup, mock_link
     ):
-        await runtime._on_room_joined("room-1", {})
-        await runtime._on_room_joined("room-2", {})
+        await _joined(runtime, "room-1")
+        await _joined(runtime, "room-2")
         room_cleanup.failing = True
         with pytest.raises(ExceptionGroup) as failures:
             await runtime.stop()
@@ -602,11 +609,11 @@ class TestAgentRuntimeRoomCleanupOwnership:
         runtime = AgentRuntime(
             mock_link, "agent-123", stubborn, on_session_cleanup=room_cleanup
         )
-        await runtime._on_room_joined("room-1", {})
+        await _joined(runtime, "room-1")
         await runtime._on_room_event("room-1", make_message_event(room_id="room-1"))
         await started.wait()
-        with pytest.raises(CleanupIncompleteError):
-            await runtime._on_room_left("room-1")
+        await _left(runtime, "room-1")
+        assert runtime.cleanup_pending
         assert room_cleanup.rooms == []
 
         await runtime._on_room_joined("room-1", {})
@@ -622,11 +629,241 @@ class TestAgentRuntimeRoomCleanupOwnership:
 
 async def _settled(runtime: AgentRuntime, room_id: str) -> None:
     """Let the room's owned lifecycle task finish, whatever its outcome."""
-    if (lifecycle := runtime._lifecycles.get(room_id)) is not None:
-        await asyncio.wait({lifecycle})
+    record = runtime._rooms.get(room_id)
+    if record is not None and record.task is not None:
+        await asyncio.wait({record.task})
+
+
+async def _joined(runtime: AgentRuntime, room_id: str) -> None:
+    """Join as presence does, then let the requested admission settle."""
+    await runtime._on_room_joined(room_id, {})
+    await _settled(runtime, room_id)
+
+
+async def _left(runtime: AgentRuntime, room_id: str) -> None:
+    """Leave as presence does, then let the requested cleanup settle."""
+    await runtime._on_room_left(room_id)
+    await _settled(runtime, room_id)
 
 
 async def _admitted(runtime: AgentRuntime, room_id: str) -> None:
     while room_id not in runtime.executions:
         await _settled(runtime, room_id)
         await asyncio.sleep(0)
+
+
+class HeldExecution:
+    """A custom execution whose start can be held or failed."""
+
+    def __init__(self, room_id: str, gate: StartGate) -> None:
+        self.room_id = room_id
+        self.gate = gate
+        self.started = False
+        self.stopped = False
+        self.events: list[object] = []
+
+    async def start(self) -> None:
+        self.gate.entered.set()
+        await self.gate.release.wait()
+        if self.gate.failures:
+            self.gate.failures -= 1
+            raise RuntimeError("execution start failed")
+        self.started = True
+
+    async def stop(self, timeout: float | None = None) -> bool:
+        self.stopped = True
+        return self.gate.graceful
+
+    async def on_event(self, event: object) -> None:
+        self.events.append(event)
+
+
+class StartGate:
+    """Builds ``HeldExecution``s; each start waits for ``release``."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.failures = 0
+        self.graceful = True
+        self.built: list[HeldExecution] = []
+
+    def hold(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+
+    def __call__(self, room_id: str, link, *, hub_room_id=None) -> HeldExecution:
+        execution = HeldExecution(room_id, self)
+        self.built.append(execution)
+        return execution
+
+
+@pytest.fixture
+def start_gate() -> StartGate:
+    return StartGate()
+
+
+@pytest.fixture
+async def held_runtime(mock_link, mock_handler, room_cleanup, start_gate):
+    runtime = AgentRuntime(
+        mock_link,
+        "agent-123",
+        mock_handler,
+        execution_factory=start_gate,
+        on_session_cleanup=room_cleanup,
+    )
+    yield runtime
+    start_gate.release.set()
+    room_cleanup.failing = False
+    room_cleanup.release.set()
+    await runtime.stop()
+
+
+class TestAgentRuntimeStartupOwnership:
+    """Execution startup is owned with retirement and routed only when ready."""
+
+    @pytest.mark.parametrize("withdrawal", ["leave", "stop"])
+    async def test_held_start_never_routes_after_withdrawal(
+        self,
+        held_runtime: AgentRuntime,
+        start_gate: StartGate,
+        room_cleanup: RoomCleanup,
+        withdrawal: str,
+    ):
+        start_gate.hold()
+        joining = asyncio.create_task(held_runtime._on_room_joined("room-1", {}))
+        await start_gate.entered.wait()
+        assert held_runtime.active_sessions == {}
+
+        if withdrawal == "leave":
+            await held_runtime._on_room_left("room-1")
+            withdrawn = _settled(held_runtime, "room-1")
+        else:
+            withdrawn = held_runtime.stop()
+        start_gate.release.set()
+        await asyncio.gather(joining, withdrawn)
+
+        (execution,) = start_gate.built
+        assert execution.started and execution.stopped
+        assert held_runtime.active_sessions == {}
+        assert room_cleanup.rooms == ["room-1"]
+
+    async def test_failed_start_is_not_routed_and_is_retried(
+        self, held_runtime: AgentRuntime, start_gate: StartGate
+    ):
+        start_gate.failures = 1
+        await _joined(held_runtime, "room-1")
+        assert held_runtime.active_sessions == {}
+        assert held_runtime.cleanup_pending
+
+        await held_runtime._on_room_event(
+            "room-1", make_message_event(room_id="room-1")
+        )
+        await asyncio.wait_for(_admitted(held_runtime, "room-1"), timeout=1)
+        failed, admitted = start_gate.built
+        assert failed.stopped and not failed.started
+        assert held_runtime.executions["room-1"] is admitted
+        assert not held_runtime.cleanup_pending
+
+    async def test_rejoin_during_held_start_admits_a_fresh_execution(
+        self, held_runtime: AgentRuntime, start_gate: StartGate
+    ):
+        start_gate.hold()
+        joining = asyncio.create_task(held_runtime._on_room_joined("room-1", {}))
+        await start_gate.entered.wait()
+        await held_runtime._on_room_left("room-1")
+        assert await held_runtime._create_execution("room-1") is None
+
+        start_gate.release.set()
+        await joining
+        await asyncio.wait_for(_admitted(held_runtime, "room-1"), timeout=1)
+        withdrawn, admitted = start_gate.built
+        assert withdrawn.stopped
+        assert held_runtime.executions["room-1"] is admitted
+
+
+async def test_stop_retry_keeps_an_earlier_cancelled_room_reported(
+    held_runtime: AgentRuntime, start_gate: StartGate, room_cleanup: RoomCleanup
+):
+    await _joined(held_runtime, "room-1")
+    await _joined(held_runtime, "room-2")
+    start_gate.graceful = False
+    room_cleanup.failing_rooms = {"room-2"}
+    with pytest.raises(ExceptionGroup):
+        await held_runtime.stop()
+
+    start_gate.graceful = True
+    room_cleanup.failing_rooms = set()
+    assert await held_runtime.stop() is False
+    assert sorted(room_cleanup.rooms) == ["room-1", "room-2"]
+
+
+class QueueLink:
+    """Feeds platform events to the real presence consumer."""
+
+    def __init__(self, link: MagicMock) -> None:
+        self.events: asyncio.Queue[object] = asyncio.Queue()
+
+        async def stream():
+            while True:
+                yield await self.events.get()
+
+        link.__aiter__ = lambda _self: stream()
+
+
+async def test_held_room_cleanup_does_not_block_other_rooms_events(
+    mock_link, mock_handler, room_cleanup: RoomCleanup
+):
+    feed = QueueLink(mock_link)
+    handled = asyncio.Event()
+    mock_handler.side_effect = lambda ctx, event: handled.set()
+    runtime = AgentRuntime(
+        mock_link, "agent-123", mock_handler, on_session_cleanup=room_cleanup
+    )
+    await runtime.start()
+    try:
+        feed.events.put_nowait(make_room_added_event("room-1"))
+        feed.events.put_nowait(make_room_added_event("room-2"))
+        await wait_for_condition(lambda: "room-2" in runtime.executions)
+
+        room_cleanup.hold()
+        feed.events.put_nowait(make_room_removed_event("room-1"))
+        await room_cleanup.entered.wait()
+        feed.events.put_nowait(make_message_event(room_id="room-2", msg_id="m-2"))
+        await asyncio.wait_for(handled.wait(), timeout=1)
+        assert room_cleanup.rooms == []
+        assert "room-1" not in runtime.executions
+    finally:
+        room_cleanup.release.set()
+        await runtime.stop()
+
+
+async def test_leave_behind_a_held_start_is_consumed_and_wins(
+    mock_link, mock_handler, room_cleanup: RoomCleanup, start_gate: StartGate
+):
+    feed = QueueLink(mock_link)
+    runtime = AgentRuntime(
+        mock_link,
+        "agent-123",
+        mock_handler,
+        execution_factory=start_gate,
+        on_session_cleanup=room_cleanup,
+    )
+    await runtime.start()
+    try:
+        start_gate.hold()
+        feed.events.put_nowait(make_room_added_event("room-1"))
+        await start_gate.entered.wait()
+        feed.events.put_nowait(make_room_removed_event("room-1"))
+        await wait_for_condition(lambda: not runtime._rooms["room-1"].wanted)
+
+        start_gate.release.set()
+        await _settled(runtime, "room-1")
+        (execution,) = start_gate.built
+        assert execution.started and execution.stopped
+        assert runtime.active_sessions == {}
+        assert room_cleanup.rooms == ["room-1"]
+    finally:
+        start_gate.release.set()
+        await runtime.stop()
