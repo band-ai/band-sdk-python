@@ -483,6 +483,30 @@ class Sandbox:
         """
         return self.exec(f"python3 -c {shlex.quote(_CERT_PROBE)} {shlex.quote(host)}")
 
+    @contextmanager
+    def restarted(self) -> Iterator[None]:
+        """Stop the sandbox, then hold a fresh attached `sbx run` for the block.
+
+        This re-runs the kit's entrypoint the way a host reboot, or an idle
+        auto-stop followed by a supervisor re-attach, does. The block starts
+        once the entrypoint has rebuilt ``$BAND_CA_BUNDLE`` for the new
+        session; checking before that would read the previous session's file.
+        """
+        stopped_at = int(self.exec("date +%s"))
+        subprocess.run(
+            [SBX, "stop", self.name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=EXEC_TIMEOUT_S,
+        )
+        with attached_run(self.name):
+            self.exec(
+                f'until [ "$(stat -c %Y "$BAND_CA_BUNDLE")" -gt {stopped_at} ]; '
+                "do sleep 1; done"
+            )
+            yield
+
     def shell_env(self) -> str:
         """The exec shell's own environment (``env``)."""
         return self.exec("env")

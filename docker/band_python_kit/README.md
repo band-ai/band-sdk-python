@@ -380,22 +380,33 @@ of them (e.g. `crewai` versus `parlant`/`pydantic-ai`). Multi-arch builds work w
 ### CA trust and privilege drop
 
 Docker Sandboxes generates a per-session proxy CA and passes it to the
-container as base64 in `PROXY_CA_CERT_B64`. The entrypoint decodes it into
-the system trust store (`update-ca-certificates` needs root, which is why
-the container starts as root) and then always drops to `agent` (uid 1000)
+container as base64 in `PROXY_CA_CERT_B64`. The entrypoint validates it and
+writes the kit's own CA bundle, `$BAND_CA_BUNDLE`: the image's build-time
+system roots (`$BAND_CA_ROOTS`, read-only) plus the proxy CA. Writing that
+root-owned file is why the container starts as root. The entrypoint then
+always drops to `agent` (uid 1000)
 via `setpriv` before executing anything else — nothing of yours ever runs
 as root. To verify the drop, inspect the process table (`docker top`, or
 `ps` inside the sandbox) rather than `docker exec ... whoami`: a fresh
 `exec` process defaults to root regardless of what PID 1 dropped to.
 
-`SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` are baked in pointing at the
-*whole* system bundle so `httpx` (which otherwise trusts only its vendored
-certifi bundle) sees the proxy CA too; `websockets` already defaults to
-`ssl.create_default_context()` and needs no extra wiring. Never override
-them to a narrower CA file — public TLS verification must keep working
-alongside the proxy.
+`SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` are baked in pointing at
+`$BAND_CA_BUNDLE`, the *whole* root set plus the proxy CA. That way `httpx`
+(which otherwise trusts only its vendored certifi bundle), `uv`, and
+`websockets` (via `ssl.create_default_context()`) all see the proxy CA, and
+public TLS verification keeps working. Never override them to a narrower CA
+file.
+
+The entrypoint never touches `/etc/ssl/certs`. `sbx` installs the proxy CA
+into the system store and regenerates that bundle on every sandbox start. A
+second, concurrent `update-ca-certificates` would race it and truncate the
+shared bundle on restart, breaking dependency sync and the Band connection.
+Each start instead rebuilds `$BAND_CA_BUNDLE` from the read-only snapshot,
+so restarts are idempotent.
+
 When `PROXY_CA_CERT_B64` is unset (e.g. a plain `docker run` outside a
-sandbox), the install step is skipped and standard TLS verification applies.
+sandbox), `$BAND_CA_BUNDLE` stays the plain system roots and standard TLS
+verification applies.
 
 ### Running the image directly
 

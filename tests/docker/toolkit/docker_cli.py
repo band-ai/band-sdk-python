@@ -27,6 +27,12 @@ BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "Dockerfile"
 BUILD_TIMEOUT_S = 600
 
 
+def certificate_count_command(path: str) -> str:
+    """A shell command printing how many certificates the PEM bundle at
+    ``path`` holds. ``path`` may be a ``$VAR`` the container's shell expands."""
+    return f'grep -c "BEGIN CERTIFICATE" "{path}"'
+
+
 @dataclass(frozen=True)
 class Image:
     """A built Docker image, identified by its unique tag.
@@ -103,6 +109,27 @@ class Container:
             subprocess.run(
                 ["docker", "rm", "-f", name], capture_output=True, check=False
             )
+
+    @staticmethod
+    def run_to_exit(
+        image: Image | str, *, env: dict[str, str] | None = None, command: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        """Run ``image`` in the foreground until it exits; return the result.
+
+        For asserting how the entrypoint itself ends (exit code, stderr), which
+        a detached ``Container.run`` can't observe.
+        """
+        tag = image.tag if isinstance(image, Image) else image
+        run_command = ["docker", "run", "--rm"]
+        for key, value in (env or {}).items():
+            run_command += ["-e", f"{key}={value}"]
+        return subprocess.run(
+            [*run_command, tag, *command],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
 
     def exec(self, command: str, *, user: str | None = None, timeout: int = 60) -> str:
         """Run ``command`` via ``bash -c`` inside the container; return stripped stdout.
