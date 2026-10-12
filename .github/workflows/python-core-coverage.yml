@@ -1,4 +1,4 @@
-name: PR776 Windows shell diagnosis
+name: PR776 Windows shell launch measurements
 on:
   workflow_dispatch:
 permissions:
@@ -32,8 +32,10 @@ jobs:
           wpr -exportprofile CPU artifacts/shell-diagnostic/cpu-profile.wprp
           wpr -start CPU
           wpr -status collectors -details > artifacts/shell-diagnostic/wpr-start.txt
-      - name: Run original full suite once
-        run: uv run --all-packages pytest
+      - name: Restore original inspected workflow before diagnostic measurements
+        run: git show 4a1abcaf:.github/workflows/python-core-coverage.yml > .github/workflows/python-core-coverage.yml
+      - name: Measure twenty original command launches independently
+        run: uv run --all-packages python .github/scripts/measure-shell.py
       - name: Preserve recorder and validate wait tool after original suite
         if: always()
         run: |
